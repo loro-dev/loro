@@ -1,3 +1,4 @@
+use rle::RleVec;
 use std::collections::HashMap;
 use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
@@ -7,5 +8,5 @@ use crate::id::ClientID;
 struct Change {}
 
 struct Store {
-    map: HashMap<ClientID, Vec<Change>>,
+    map: HashMap<ClientID, RleVec<Change>>,
 }

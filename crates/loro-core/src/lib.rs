@@ -1,5 +1,8 @@
 #![allow(dead_code, unused_imports)]
+mod change;
 mod id;
+mod id_span;
+mod op;
 mod store;
 
 #[cfg(test)]

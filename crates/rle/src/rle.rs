@@ -10,6 +10,7 @@
 /// - len() returns the number of atom elements in the array.
 /// - get(index) returns the atom element at the index.
 /// - slice(from, to) returns a slice of atom elements from the index from to the index to.
+#[derive(Debug, Clone)]
 pub struct RleVec<T> {
     vec: Vec<T>,
     _len: usize,
@@ -22,7 +23,13 @@ pub trait Mergable {
 }
 
 pub trait Sliceable {
-    fn slice(&self, start: usize, end: usize) -> Self;
+    fn slice(&self, from: usize, to: usize) -> Self;
+}
+
+impl<T: Sliceable> Slice<'_, T> {
+    pub fn into_inner(&self) -> T {
+        self.value.slice(self.start, self.end)
+    }
 }
 
 pub trait HasLength {
@@ -39,7 +46,7 @@ pub struct SearchResult<'a, T> {
     offset: usize,
 }
 
-impl<T: Mergable + Sliceable + HasLength> RleVec<T> {
+impl<T: Mergable + HasLength> RleVec<T> {
     /// push a new element to the end of the array. It may be merged with last element.
     pub fn push(&mut self, value: T) {
         self._len += value.len();
@@ -100,7 +107,7 @@ impl<T: Mergable + Sliceable + HasLength> RleVec<T> {
     }
 
     /// get a slice from `from` to `to` with atom indexes
-    pub fn slice(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
+    pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
         let from_result = self.get(from);
         let to_result = self.get(to);
         SliceIterator {
@@ -121,11 +128,29 @@ impl<T> RleVec<T> {
             index: Vec::new(),
         }
     }
+
+    pub fn merged_len(&self) -> usize {
+        self.vec.len()
+    }
+
+    pub fn to_vec(self) -> Vec<T> {
+        self.vec
+    }
 }
 
 impl<T> Default for RleVec<T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T: Mergable + HasLength> FromIterator<T> for RleVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut vec = RleVec::new();
+        for item in iter {
+            vec.push(item);
+        }
+        vec
     }
 }
 
@@ -139,9 +164,9 @@ pub struct SliceIterator<'a, T> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Slice<'a, T> {
-    value: &'a T,
-    start: usize,
-    end: usize,
+    pub value: &'a T,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
@@ -171,6 +196,32 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         self.cur_index += 1;
         self.cur_offset = 0;
         Some(ans)
+    }
+}
+
+impl<T: Mergable + HasLength + Sliceable + Clone> Mergable for RleVec<T> {
+    fn is_mergable(&self, _: &Self) -> bool {
+        true
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for item in other.vec.iter() {
+            self.push(item.clone());
+        }
+    }
+}
+
+impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVec<T> {
+    fn slice(&self, start: usize, end: usize) -> Self {
+        self.slice_iter(start, end)
+            .map(|x| x.into_inner())
+            .collect()
+    }
+}
+
+impl<T> HasLength for RleVec<T> {
+    fn len(&self) -> usize {
+        self._len
     }
 }
 
@@ -223,7 +274,7 @@ mod test {
             vec.push("56".to_string());
             vec.push("78".to_string());
             vec.push("12345678".to_string());
-            let mut iter = vec.slice(4, 12);
+            let mut iter = vec.slice_iter(4, 12);
             let first = iter.next().unwrap();
             assert_eq!(first.value, "12345678");
             assert_eq!(first.start, 4);
