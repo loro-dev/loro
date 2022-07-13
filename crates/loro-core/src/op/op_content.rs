@@ -4,11 +4,11 @@ use crate::{id::ID, id_span::IdSpan};
 
 use super::InsertContent;
 
-#[derive(Debug, Clone)]
-pub(crate) enum OpContent {
+#[derive(Debug)]
+pub enum OpContent {
     Insert {
         container: ID,
-        content: Box<InsertContent>,
+        content: Box<dyn InsertContent>,
     },
     Delete {
         target: RleVec<IdSpan>,
@@ -20,12 +20,41 @@ pub(crate) enum OpContent {
     },
 }
 
+impl HasLength for OpContent {
+    fn len(&self) -> usize {
+        match self {
+            OpContent::Insert { content, .. } => content.len(),
+            OpContent::Delete { target, .. } => target.len(),
+            OpContent::Restore { target, .. } => target.len(),
+        }
+    }
+}
+
+impl Clone for OpContent {
+    fn clone(&self) -> Self {
+        match self {
+            OpContent::Insert { container, content } => OpContent::Insert {
+                container: *container,
+                content: content.clone_content(),
+            },
+            OpContent::Delete { target, lamport } => OpContent::Delete {
+                target: target.clone(),
+                lamport: *lamport,
+            },
+            OpContent::Restore { target, lamport } => OpContent::Restore {
+                target: target.clone(),
+                lamport: *lamport,
+            },
+        }
+    }
+}
+
 impl Sliceable for OpContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             OpContent::Insert { container, content } => OpContent::Insert {
                 container: *container,
-                content: Box::new(content.slice(from, to)),
+                content: content.slice(from, to),
             },
             OpContent::Delete { target, lamport } => OpContent::Delete {
                 target: target.slice(from, to),

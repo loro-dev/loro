@@ -1,11 +1,10 @@
+use crate::{id::ID, id_span::IdSpan};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
 
 pub use insert_content::*;
 pub use op_content::*;
-
-use crate::{id::ID, id_span::IdSpan};
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,13 +15,16 @@ pub enum OpType {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Op {
+pub struct Op {
     id: ID,
-    len: usize,
     content: OpContent,
 }
 
 impl Op {
+    pub fn new(id: ID, content: OpContent) -> Self {
+        Op { id, content }
+    }
+
     pub fn op_type(&self) -> OpType {
         match self.content {
             OpContent::Insert { .. } => OpType::Insert,
@@ -31,14 +33,14 @@ impl Op {
         }
     }
 
-    pub fn insert_content(&self) -> &InsertContent {
+    pub fn content(&self) -> &Box<dyn InsertContent> {
         match &self.content {
             OpContent::Insert { content, .. } => content,
             _ => unreachable!(),
         }
     }
 
-    pub fn insert_container(&self) -> &ID {
+    pub fn container(&self) -> &ID {
         match &self.content {
             OpContent::Insert { container, .. } => container,
             _ => unreachable!(),
@@ -53,7 +55,7 @@ impl Mergable for Op {
                 OpContent::Insert {
                     container: other_container,
                     content: ref other_content,
-                } => container == &other_container && content.is_mergable(other_content),
+                } => container == &other_container && content.is_mergable(&**other_content),
                 _ => false,
             },
             OpContent::Delete { target, lamport } => match other.content {
@@ -81,7 +83,7 @@ impl Mergable for Op {
                     content: other_content,
                 } => {
                     assert_eq!(container, other_container);
-                    content.merge(other_content);
+                    content.merge(&**other_content);
                 }
                 _ => unreachable!(),
             },
@@ -105,7 +107,7 @@ impl Mergable for Op {
 
 impl HasLength for Op {
     fn len(&self) -> usize {
-        self.len
+        self.content.len()
     }
 }
 
@@ -118,7 +120,6 @@ impl Sliceable for Op {
                 client_id: self.id.client_id,
                 counter: (self.id.counter + from as u32),
             },
-            len: to - from,
             content,
         }
     }

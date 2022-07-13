@@ -2,11 +2,9 @@ use rle::RleVec;
 use std::collections::HashMap;
 use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
-use crate::id::ClientID;
-
-#[non_exhaustive]
-struct Change {}
+use crate::{change::Change, id::ClientID};
 
 struct Store {
     map: HashMap<ClientID, RleVec<Change>>,
+    lamport: usize,
 }

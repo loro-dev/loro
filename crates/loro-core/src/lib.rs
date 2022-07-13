@@ -1,15 +1,13 @@
 #![allow(dead_code, unused_imports)]
+#![feature(trait_upcasting)]
+
 mod change;
 mod id;
 mod id_span;
 mod op;
 mod store;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+pub use change::*;
+pub use id::{ClientID, ID};
+pub use op::*;
+pub use store::*;

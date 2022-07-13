@@ -18,8 +18,12 @@ pub struct RleVec<T> {
 }
 
 pub trait Mergable {
-    fn is_mergable(&self, other: &Self) -> bool;
-    fn merge(&mut self, other: &Self);
+    fn is_mergable(&self, other: &Self) -> bool
+    where
+        Self: Sized;
+    fn merge(&mut self, other: &Self)
+    where
+        Self: Sized;
 }
 
 pub trait Sliceable {
@@ -135,6 +139,10 @@ impl<T> RleVec<T> {
 
     pub fn to_vec(self) -> Vec<T> {
         self.vec
+    }
+
+    pub fn get_merged(&self, index: usize) -> &T {
+        &self.vec[index]
     }
 }
 

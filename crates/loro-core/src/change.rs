@@ -1,11 +1,16 @@
-use rle::{HasLength, Mergable, RleVec};
+use std::char::MAX;
 
 use crate::{id::ID, op::Op};
+use rle::{HasLength, Mergable, RleVec};
 
-pub(crate) struct Change {
+pub type Timestamp = i64;
+const MAX_CHANGE_LENGTH: usize = 256;
+const MAX_MERGABLE_INTERVAL: Timestamp = 256;
+pub struct Change {
     pub(crate) ops: RleVec<Op>,
     pub(crate) id: ID,
-    pub(crate) timestamp: i64,
+    pub(crate) timestamp: Timestamp,
+    /// Imported elements should be freezed, i.e. it cannot be merged with incoming changes.
     pub(crate) freezed: bool,
 }
 
@@ -33,6 +38,14 @@ impl Mergable for Change {
 
     fn is_mergable(&self, other: &Self) -> bool {
         if self.freezed {
+            return false;
+        }
+
+        if self.len() > MAX_CHANGE_LENGTH {
+            return false;
+        }
+
+        if other.timestamp - self.timestamp > MAX_MERGABLE_INTERVAL {
             return false;
         }
 
