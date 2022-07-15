@@ -11,17 +11,18 @@
 /// - get(index) returns the atom element at the index.
 /// - slice(from, to) returns a slice of atom elements from the index from to the index to.
 #[derive(Debug, Clone)]
-pub struct RleVec<T> {
+pub struct RleVec<T, Cfg = ()> {
     vec: Vec<T>,
     _len: usize,
     index: Vec<usize>,
+    cfg: Cfg,
 }
 
-pub trait Mergable {
-    fn is_mergable(&self, other: &Self) -> bool
+pub trait Mergable<Cfg = ()> {
+    fn is_mergable(&self, other: &Self, conf: &Cfg) -> bool
     where
         Self: Sized;
-    fn merge(&mut self, other: &Self)
+    fn merge(&mut self, other: &Self, conf: &Cfg)
     where
         Self: Sized;
 }
@@ -45,12 +46,12 @@ pub trait HasLength {
 }
 
 pub struct SearchResult<'a, T> {
-    element: &'a T,
-    merged_index: usize,
-    offset: usize,
+    pub element: &'a T,
+    pub merged_index: usize,
+    pub offset: usize,
 }
 
-impl<T: Mergable + HasLength> RleVec<T> {
+impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
     /// push a new element to the end of the array. It may be merged with last element.
     pub fn push(&mut self, value: T) {
         self._len += value.len();
@@ -62,8 +63,8 @@ impl<T: Mergable + HasLength> RleVec<T> {
         }
 
         let last = self.vec.last_mut().unwrap();
-        if last.is_mergable(&value) {
-            last.merge(&value);
+        if last.is_mergable(&value, &self.cfg) {
+            last.merge(&value, &self.cfg);
             *self.index.last_mut().unwrap() = self._len;
             return;
         }
@@ -75,13 +76,18 @@ impl<T: Mergable + HasLength> RleVec<T> {
         self.vec.is_empty()
     }
 
+    /// number of atom elements in the array.
     pub fn len(&self) -> usize {
         self._len
     }
 
     /// get the element at the given atom index.
     /// return: (element, merged_index, offset)
-    pub fn get(&self, index: usize) -> SearchResult<'_, T> {
+    pub fn get(&self, index: usize) -> Option<SearchResult<'_, T>> {
+        if index > self.len() {
+            return None;
+        }
+
         let mut start = 0;
         let mut end = self.index.len() - 1;
         while start < end {
@@ -103,17 +109,17 @@ impl<T: Mergable + HasLength> RleVec<T> {
         }
 
         let value = &self.vec[start];
-        SearchResult {
+        Some(SearchResult {
             element: value,
             merged_index: start,
             offset: index - self.index[start],
-        }
+        })
     }
 
     /// get a slice from `from` to `to` with atom indexes
     pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
-        let from_result = self.get(from);
-        let to_result = self.get(to);
+        let from_result = self.get(from).unwrap();
+        let to_result = self.get(to).unwrap();
         SliceIterator {
             vec: &self.vec,
             cur_index: from_result.merged_index,
@@ -124,12 +130,24 @@ impl<T: Mergable + HasLength> RleVec<T> {
     }
 }
 
-impl<T> RleVec<T> {
+impl<T, Conf: Default> RleVec<T, Conf> {
     pub fn new() -> Self {
         RleVec {
             vec: Vec::new(),
             _len: 0,
             index: Vec::new(),
+            cfg: Default::default(),
+        }
+    }
+}
+
+impl<T, Conf> RleVec<T, Conf> {
+    pub fn new_cfg(cfg: Conf) -> Self {
+        RleVec {
+            vec: Vec::new(),
+            _len: 0,
+            index: Vec::new(),
+            cfg,
         }
     }
 
@@ -207,12 +225,12 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
     }
 }
 
-impl<T: Mergable + HasLength + Sliceable + Clone> Mergable for RleVec<T> {
-    fn is_mergable(&self, _: &Self) -> bool {
+impl<T: Mergable<Cfg> + HasLength + Sliceable + Clone, Cfg> Mergable<Cfg> for RleVec<T, Cfg> {
+    fn is_mergable(&self, _: &Self, _: &Cfg) -> bool {
         true
     }
 
-    fn merge(&mut self, other: &Self) {
+    fn merge(&mut self, other: &Self, _: &Cfg) {
         for item in other.vec.iter() {
             self.push(item.clone());
         }
@@ -245,11 +263,11 @@ mod test {
         }
 
         impl Mergable for String {
-            fn is_mergable(&self, _: &Self) -> bool {
+            fn is_mergable(&self, _: &Self, _: &()) -> bool {
                 self.len() < 8
             }
 
-            fn merge(&mut self, other: &Self) {
+            fn merge(&mut self, other: &Self, _: &()) {
                 self.push_str(other);
             }
         }
@@ -266,13 +284,13 @@ mod test {
             vec.push("1234".to_string());
             vec.push("5678".to_string());
             vec.push("12345678".to_string());
-            assert_eq!(vec.get(4).element, "12345678");
-            assert_eq!(vec.get(4).merged_index, 0);
-            assert_eq!(vec.get(4).offset, 4);
+            assert_eq!(vec.get(4).unwrap().element, "12345678");
+            assert_eq!(vec.get(4).unwrap().merged_index, 0);
+            assert_eq!(vec.get(4).unwrap().offset, 4);
 
-            assert_eq!(vec.get(8).element, "12345678");
-            assert_eq!(vec.get(8).merged_index, 1);
-            assert_eq!(vec.get(8).offset, 0);
+            assert_eq!(vec.get(8).unwrap().element, "12345678");
+            assert_eq!(vec.get(8).unwrap().merged_index, 1);
+            assert_eq!(vec.get(8).unwrap().offset, 0);
         }
 
         #[test]

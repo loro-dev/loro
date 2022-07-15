@@ -2,10 +2,10 @@ use rle::RleVec;
 use std::collections::HashMap;
 use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
-use crate::{change::Change, id::ClientID, Lamport, ID};
+use crate::{change::Change, id::ClientID, ChangeMergeCfg, Lamport, ID};
 
 pub struct LogStore {
-    ops: HashMap<ClientID, RleVec<Change>>,
+    ops: HashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     lamport: Lamport,
 }
 

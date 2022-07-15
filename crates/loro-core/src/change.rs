@@ -6,9 +6,6 @@ use smallvec::SmallVec;
 
 pub type Timestamp = i64;
 pub type Lamport = u64;
-const MAX_CHANGE_LENGTH: usize = 256;
-/// TODO: Should this be configurable?
-const MAX_MERGABLE_INTERVAL: Timestamp = 60;
 
 /// Change
 #[derive(Debug)]
@@ -54,12 +51,17 @@ impl HasLength for Change {
     }
 }
 
-impl Mergable for Change {
-    fn merge(&mut self, other: &Self) {
-        self.ops.merge(&other.ops);
+pub struct ChangeMergeCfg {
+    max_change_length: usize,
+    max_change_interval: usize,
+}
+
+impl Mergable<ChangeMergeCfg> for Change {
+    fn merge(&mut self, other: &Self, cfg: &ChangeMergeCfg) {
+        self.ops.merge(&other.ops, &());
     }
 
-    fn is_mergable(&self, other: &Self) -> bool {
+    fn is_mergable(&self, other: &Self, cfg: &ChangeMergeCfg) -> bool {
         if self.freezed {
             return false;
         }
@@ -68,11 +70,11 @@ impl Mergable for Change {
             return false;
         }
 
-        if self.len() > MAX_CHANGE_LENGTH {
+        if self.len() > cfg.max_change_length {
             return false;
         }
 
-        if other.timestamp - self.timestamp > MAX_MERGABLE_INTERVAL {
+        if other.timestamp - self.timestamp > cfg.max_change_interval as i64 {
             return false;
         }
 

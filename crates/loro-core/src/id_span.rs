@@ -60,11 +60,11 @@ impl Sliceable for IdSpan {
 }
 
 impl Mergable for IdSpan {
-    fn is_mergable(&self, other: &Self) -> bool {
+    fn is_mergable(&self, other: &Self, _: &()) -> bool {
         self.client_id == other.client_id && self.to == other.from
     }
 
-    fn merge(&mut self, other: &Self) {
+    fn merge(&mut self, other: &Self, _: &()) {
         self.to = other.to;
     }
 }

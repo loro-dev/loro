@@ -49,7 +49,7 @@ impl Op {
 }
 
 impl Mergable for Op {
-    fn is_mergable(&self, other: &Self) -> bool {
+    fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
         match &self.content {
             OpContent::Insert { container, content } => match other.content {
                 OpContent::Insert {
@@ -62,20 +62,26 @@ impl Mergable for Op {
                 OpContent::Delete {
                     target: ref other_target,
                     lamport: ref other_lamport,
-                } => lamport + target.len() == *other_lamport && target.is_mergable(other_target),
+                } => {
+                    lamport + target.len() == *other_lamport
+                        && target.is_mergable(other_target, cfg)
+                }
                 _ => false,
             },
             OpContent::Restore { target, lamport } => match other.content {
                 OpContent::Restore {
                     target: ref other_target,
                     lamport: ref other_lamport,
-                } => lamport + target.len() == *other_lamport && target.is_mergable(other_target),
+                } => {
+                    lamport + target.len() == *other_lamport
+                        && target.is_mergable(other_target, cfg)
+                }
                 _ => false,
             },
         }
     }
 
-    fn merge(&mut self, other: &Self) {
+    fn merge(&mut self, other: &Self, cfg: &()) {
         match &mut self.content {
             OpContent::Insert { container, content } => match &other.content {
                 OpContent::Insert {
@@ -91,14 +97,14 @@ impl Mergable for Op {
                 OpContent::Delete {
                     target: other_target,
                     ..
-                } => target.merge(other_target),
+                } => target.merge(other_target, cfg),
                 _ => unreachable!(),
             },
             OpContent::Restore { target, .. } => match &other.content {
                 OpContent::Restore {
                     target: other_target,
                     ..
-                } => target.merge(other_target),
+                } => target.merge(other_target, cfg),
                 _ => unreachable!(),
             },
         }
