@@ -1,15 +1,15 @@
-use loro_core::{content, ContentTypeID, InsertContent, ID};
+use crate::{content, ContentType, InsertContent, ID};
 use rle::{HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone)]
-pub struct TextInsertContent {
+pub struct TextContent {
     origin_left: ID,
     origin_right: ID,
     id: ID,
     text: String,
 }
 
-impl Mergable for TextInsertContent {
+impl Mergable for TextContent {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
             && self.id.counter + self.len() as u32 == other.id.counter
@@ -23,17 +23,17 @@ impl Mergable for TextInsertContent {
     }
 }
 
-impl Sliceable for TextInsertContent {
+impl Sliceable for TextContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         if from == 0 {
-            TextInsertContent {
+            TextContent {
                 origin_left: self.origin_left,
                 origin_right: self.origin_right,
                 id: self.id,
                 text: self.text[..to].to_owned(),
             }
         } else {
-            TextInsertContent {
+            TextContent {
                 origin_left: ID {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as u32 - 1,
@@ -49,13 +49,13 @@ impl Sliceable for TextInsertContent {
     }
 }
 
-impl InsertContent for TextInsertContent {
-    fn id(&self) -> ContentTypeID {
-        ContentTypeID::Text
+impl InsertContent for TextContent {
+    fn id(&self) -> ContentType {
+        ContentType::Text
     }
 }
 
-impl HasLength for TextInsertContent {
+impl HasLength for TextContent {
     fn len(&self) -> usize {
         self.text.len()
     }
@@ -63,10 +63,10 @@ impl HasLength for TextInsertContent {
 
 #[cfg(test)]
 mod test {
-    use loro_core::{content, ContentTypeID, Op, OpContent, ID};
+    use crate::{content, ContentType, Op, OpContent, ID};
     use rle::RleVec;
 
-    use crate::TextInsertContent;
+    use super::TextContent;
 
     #[test]
     fn test_merge() {
@@ -75,7 +75,7 @@ mod test {
             ID::new(0, 1),
             OpContent::Insert {
                 container: ID::new(0, 0),
-                content: Box::new(TextInsertContent {
+                content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
@@ -87,7 +87,7 @@ mod test {
             ID::new(0, 2),
             OpContent::Insert {
                 container: ID::new(0, 0),
-                content: Box::new(TextInsertContent {
+                content: Box::new(TextContent {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
@@ -97,8 +97,8 @@ mod test {
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0);
-        assert_eq!(merged.content().id(), ContentTypeID::Text);
-        let text_content = content::downcast_ref::<TextInsertContent>(&**merged.content()).unwrap();
+        assert_eq!(merged.content().id(), ContentType::Text);
+        let text_content = content::downcast_ref::<TextContent>(&**merged.content()).unwrap();
         assert_eq!(text_content.text, "ab");
     }
 
@@ -109,7 +109,7 @@ mod test {
             ID::new(0, 1),
             OpContent::Insert {
                 container: ID::new(0, 0),
-                content: Box::new(TextInsertContent {
+                content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
@@ -121,7 +121,7 @@ mod test {
             ID::new(0, 2),
             OpContent::Insert {
                 container: ID::new(0, 0),
-                content: Box::new(TextInsertContent {
+                content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
@@ -133,7 +133,7 @@ mod test {
         assert_eq!(
             vec.slice_iter(2, 6)
                 .map(
-                    |x| content::downcast_ref::<TextInsertContent>(&**x.into_inner().content())
+                    |x| content::downcast_ref::<TextContent>(&**x.into_inner().content())
                         .unwrap()
                         .text
                         .clone()

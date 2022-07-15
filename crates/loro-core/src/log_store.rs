@@ -1,8 +1,13 @@
+use fxhash::FxHashMap;
 use rle::RleVec;
-use std::collections::HashMap;
 use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
-use crate::{change::Change, id::ClientID, ChangeMergeCfg, Lamport, ID};
+use crate::{
+    change::{Change, ChangeMergeCfg},
+    container::Container,
+    id::ClientID,
+    Lamport, ID,
+};
 const YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
 
@@ -26,19 +31,22 @@ pub struct Configure {
 }
 
 pub struct LogStore {
-    ops: HashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+    ops: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Lamport,
+
+    containers: FxHashMap<ID, Box<dyn Container>>,
 }
 
 impl LogStore {
     pub fn new(cfg: Configure) -> Self {
         Self {
             cfg,
-            ops: HashMap::new(),
+            ops: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
+            containers: Default::default(),
         }
     }
 

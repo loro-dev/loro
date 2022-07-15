@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+fxhash = "0.2.1"
 loro-core = {path = "../loro-core"}
 ring = "0.16.20"
 rle = {path = "../rle"}

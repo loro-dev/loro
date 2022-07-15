@@ -2,10 +2,14 @@ use std::any::{Any, TypeId};
 
 use crate::id::ID;
 use rle::{HasLength, Mergable, Sliceable};
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum ContentTypeID {
+pub enum ContentType {
+    /// See [`crate::container::ContainerContent`]
     Container,
+    /// See [`crate::text::TextContent`]
     Text,
+    /// Users can define their own content types.
     Custom(u16),
 }
 
@@ -25,7 +29,7 @@ pub trait CloneContent {
 pub trait InsertContent:
     HasLength + std::fmt::Debug + Any + MergeableContent + SliceableContent + CloneContent
 {
-    fn id(&self) -> ContentTypeID;
+    fn id(&self) -> ContentType;
 }
 
 impl<T: Sliceable + InsertContent> SliceableContent for T {

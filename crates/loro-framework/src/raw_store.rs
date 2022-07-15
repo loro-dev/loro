@@ -1,22 +1,21 @@
-use std::collections::HashMap;
-
+use fxhash::FxHashMap;
 use loro_core::ClientID;
-use rle::{RleVec, SearchResult};
+use rle::RleVec;
 
 use crate::raw_change::{ChangeData, ChangeHash};
 
-pub type VersionVector = HashMap<ClientID, u32>;
+pub type VersionVector = FxHashMap<ClientID, u32>;
 pub type Mac = [u8; 32];
 
 pub struct RawStore {
-    changes: HashMap<ClientID, RleVec<ChangeData>>,
-    macs: Option<HashMap<ClientID, Mac>>,
+    changes: FxHashMap<ClientID, RleVec<ChangeData>>,
+    macs: Option<FxHashMap<ClientID, Mac>>,
 }
 
 impl RawStore {
     pub fn new() -> Self {
         Self {
-            changes: HashMap::new(),
+            changes: FxHashMap::default(),
             macs: None,
         }
     }
@@ -74,7 +73,7 @@ impl RawStore {
     }
 
     pub fn version_vector(&self) -> VersionVector {
-        let mut version_vector = HashMap::new();
+        let mut version_vector = FxHashMap::default();
         for (client_id, changes) in &self.changes {
             version_vector.insert(*client_id, changes.len() as u32);
         }
