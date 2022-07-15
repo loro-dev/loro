@@ -1,5 +1,5 @@
 use loro_core::{content, ContentTypeID, InsertContent, ID};
-use rle::{HasLength, Mergable};
+use rle::{HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone)]
 pub struct TextInsertContent {
@@ -23,21 +23,17 @@ impl Mergable for TextInsertContent {
     }
 }
 
-impl InsertContent for TextInsertContent {
-    fn id(&self) -> ContentTypeID {
-        ContentTypeID::Text
-    }
-
-    fn slice(&self, from: usize, to: usize) -> Box<dyn InsertContent> {
+impl Sliceable for TextInsertContent {
+    fn slice(&self, from: usize, to: usize) -> Self {
         if from == 0 {
-            Box::new(TextInsertContent {
+            TextInsertContent {
                 origin_left: self.origin_left,
                 origin_right: self.origin_right,
                 id: self.id,
                 text: self.text[..to].to_owned(),
-            })
+            }
         } else {
-            Box::new(TextInsertContent {
+            TextInsertContent {
                 origin_left: ID {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as u32 - 1,
@@ -48,12 +44,14 @@ impl InsertContent for TextInsertContent {
                     counter: self.id.counter + from as u32,
                 },
                 text: self.text[from..to].to_owned(),
-            })
+            }
         }
     }
+}
 
-    fn clone_content(&self) -> Box<dyn InsertContent> {
-        Box::new(self.clone())
+impl InsertContent for TextInsertContent {
+    fn id(&self) -> ContentTypeID {
+        ContentTypeID::Text
     }
 }
 

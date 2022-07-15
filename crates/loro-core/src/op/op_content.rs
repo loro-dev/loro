@@ -12,11 +12,9 @@ pub enum OpContent {
     },
     Delete {
         target: RleVec<IdSpan>,
-        lamport: usize,
     },
     Restore {
         target: RleVec<IdSpan>,
-        lamport: usize,
     },
 }
 
@@ -37,13 +35,11 @@ impl Clone for OpContent {
                 container: *container,
                 content: content.clone_content(),
             },
-            OpContent::Delete { target, lamport } => OpContent::Delete {
+            OpContent::Delete { target } => OpContent::Delete {
                 target: target.clone(),
-                lamport: *lamport,
             },
-            OpContent::Restore { target, lamport } => OpContent::Restore {
+            OpContent::Restore { target } => OpContent::Restore {
                 target: target.clone(),
-                lamport: *lamport,
             },
         }
     }
@@ -54,15 +50,13 @@ impl Sliceable for OpContent {
         match self {
             OpContent::Insert { container, content } => OpContent::Insert {
                 container: *container,
-                content: content.slice(from, to),
+                content: content.slice_content(from, to),
             },
-            OpContent::Delete { target, lamport } => OpContent::Delete {
+            OpContent::Delete { target } => OpContent::Delete {
                 target: target.slice(from, to),
-                lamport: lamport + from,
             },
-            OpContent::Restore { target, lamport } => OpContent::Restore {
+            OpContent::Restore { target } => OpContent::Restore {
                 target: target.slice(from, to),
-                lamport: lamport + from,
             },
         }
     }

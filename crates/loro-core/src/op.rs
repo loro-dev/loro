@@ -2,6 +2,7 @@ use crate::{id::ID, id_span::IdSpan};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
+mod op_proxy;
 
 pub use insert_content::*;
 pub use op_content::*;
@@ -15,6 +16,14 @@ pub enum OpType {
 }
 
 #[derive(Debug, Clone)]
+/// Operation is a unit of change.
+///
+/// It has 3 types:
+/// - Insert
+/// - Delete
+/// - Restore
+///
+/// A Op may have multiple atomic operations, since Op can be merged.
 pub struct Op {
     id: ID,
     content: OpContent,
@@ -59,24 +68,16 @@ impl Mergable for Op {
                 } => container == &other_container && content.is_mergable_content(&**other_content),
                 _ => false,
             },
-            OpContent::Delete { target, lamport } => match other.content {
+            OpContent::Delete { target } => match other.content {
                 OpContent::Delete {
                     target: ref other_target,
-                    lamport: ref other_lamport,
-                } => {
-                    lamport + target.len() == *other_lamport
-                        && target.is_mergable(other_target, cfg)
-                }
+                } => target.is_mergable(other_target, cfg),
                 _ => false,
             },
-            OpContent::Restore { target, lamport } => match other.content {
+            OpContent::Restore { target } => match other.content {
                 OpContent::Restore {
                     target: ref other_target,
-                    lamport: ref other_lamport,
-                } => {
-                    lamport + target.len() == *other_lamport
-                        && target.is_mergable(other_target, cfg)
-                }
+                } => target.is_mergable(other_target, cfg),
                 _ => false,
             },
         }

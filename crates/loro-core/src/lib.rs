@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_imports)]
-#![feature(trait_upcasting)]
 
 mod change;
+mod container;
 mod id;
 mod id_span;
 mod log_store;

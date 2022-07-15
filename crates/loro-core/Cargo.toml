@@ -9,3 +9,4 @@ edition = "2021"
 string_cache = "0.8.3"
 rle = {path = "../rle"}
 smallvec = "1.8.0"
+smartstring = "1.0.1"

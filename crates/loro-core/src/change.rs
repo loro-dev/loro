@@ -5,9 +5,9 @@ use rle::{HasLength, Mergable, RleVec};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
-pub type Lamport = u64;
+pub type Lamport = u32;
 
-/// Change
+/// A `Change` contains a list of [Op]s.
 #[derive(Debug)]
 pub struct Change {
     pub(crate) ops: RleVec<Op>,
@@ -89,5 +89,6 @@ impl Mergable<ChangeMergeCfg> for Change {
 
         self.id.client_id == other.id.client_id
             && self.id.counter + self.len() as u32 == other.id.counter
+            && self.lamport + self.len() as Lamport == other.lamport
     }
 }
