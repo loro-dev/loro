@@ -2,24 +2,47 @@ use std::char::MAX;
 
 use crate::{id::ID, op::Op};
 use rle::{HasLength, Mergable, RleVec};
+use smallvec::SmallVec;
 
 pub type Timestamp = i64;
+pub type Lamport = u64;
 const MAX_CHANGE_LENGTH: usize = 256;
-const MAX_MERGABLE_INTERVAL: Timestamp = 256;
+/// TODO: Should this be configurable?
+const MAX_MERGABLE_INTERVAL: Timestamp = 60;
+
+/// Change
+#[derive(Debug)]
 pub struct Change {
     pub(crate) ops: RleVec<Op>,
+    pub(crate) deps: SmallVec<[ID; 2]>,
+    /// id of the first op in the change
     pub(crate) id: ID,
+    /// Lamport timestamp of the change. It can be calculated from deps
+    pub(crate) lamport: Lamport,
+    /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+    /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// Imported elements should be freezed, i.e. it cannot be merged with incoming changes.
+    /// Whether this change can be merged with the next change
+    /// - Only the last change in a chain can be merged with the next change
+    /// - Imported changes should be freezed
     pub(crate) freezed: bool,
 }
 
 impl Change {
-    pub(crate) fn new(id: ID, timestamp: i64, ops: RleVec<Op>, freezed: bool) -> Self {
+    pub fn new(
+        ops: RleVec<Op>,
+        deps: SmallVec<[ID; 2]>,
+        id: ID,
+        lamport: Lamport,
+        timestamp: Timestamp,
+        freezed: bool,
+    ) -> Self {
         Change {
-            id,
-            timestamp,
             ops,
+            deps,
+            id,
+            lamport,
+            timestamp,
             freezed,
         }
     }
@@ -38,6 +61,10 @@ impl Mergable for Change {
 
     fn is_mergable(&self, other: &Self) -> bool {
         if self.freezed {
+            return false;
+        }
+
+        if !other.deps.is_empty() {
             return false;
         }
 
