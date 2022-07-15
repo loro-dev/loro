@@ -133,7 +133,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
     }
 
     pub fn slice_merged(&self, range: Range<usize>) -> &[T] {
-        todo!()
+        &self.vec[range]
     }
 }
 
