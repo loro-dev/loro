@@ -81,6 +81,10 @@ impl RawStore {
 
         version_vector
     }
+
+    pub fn sign(&self, pub_key: ()) {
+        unimplemented!()
+    }
 }
 
 impl Default for RawStore {

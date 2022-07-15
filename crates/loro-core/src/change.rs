@@ -52,8 +52,17 @@ impl HasLength for Change {
 }
 
 pub struct ChangeMergeCfg {
-    max_change_length: usize,
-    max_change_interval: usize,
+    pub max_change_length: usize,
+    pub max_change_interval: usize,
+}
+
+impl Default for ChangeMergeCfg {
+    fn default() -> Self {
+        ChangeMergeCfg {
+            max_change_length: 1024,
+            max_change_interval: 60,
+        }
+    }
 }
 
 impl Mergable<ChangeMergeCfg> for Change {
