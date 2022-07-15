@@ -33,6 +33,7 @@ impl Op {
         }
     }
 
+    #[allow(clippy::borrowed_box)]
     pub fn content(&self) -> &Box<dyn InsertContent> {
         match &self.content {
             OpContent::Insert { content, .. } => content,
@@ -55,7 +56,7 @@ impl Mergable for Op {
                 OpContent::Insert {
                     container: other_container,
                     content: ref other_content,
-                } => container == &other_container && content.is_mergable(&**other_content),
+                } => container == &other_container && content.is_mergable_content(&**other_content),
                 _ => false,
             },
             OpContent::Delete { target, lamport } => match other.content {
@@ -89,7 +90,7 @@ impl Mergable for Op {
                     content: other_content,
                 } => {
                     assert_eq!(container, other_container);
-                    content.merge(&**other_content);
+                    content.merge_content(&**other_content);
                 }
                 _ => unreachable!(),
             },

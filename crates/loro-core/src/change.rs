@@ -57,7 +57,7 @@ pub struct ChangeMergeCfg {
 }
 
 impl Mergable<ChangeMergeCfg> for Change {
-    fn merge(&mut self, other: &Self, cfg: &ChangeMergeCfg) {
+    fn merge(&mut self, other: &Self, _: &ChangeMergeCfg) {
         self.ops.merge(&other.ops, &());
     }
 

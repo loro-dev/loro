@@ -8,12 +8,30 @@ pub enum ContentTypeID {
     Custom(u16),
 }
 
-pub trait InsertContent: HasLength + std::fmt::Debug + Any {
+pub trait MergeableInsertContent {
+    fn is_mergable_content(&self, other: &dyn InsertContent) -> bool;
+    fn merge_content(&mut self, other: &dyn InsertContent);
+}
+
+pub trait InsertContent: HasLength + std::fmt::Debug + Any + MergeableInsertContent {
     fn id(&self) -> ContentTypeID;
-    fn is_mergable(&self, other: &dyn InsertContent) -> bool;
-    fn merge(&mut self, other: &dyn InsertContent);
     fn slice(&self, from: usize, to: usize) -> Box<dyn InsertContent>;
     fn clone_content(&self) -> Box<dyn InsertContent>;
+}
+
+impl<T: Mergable + Any> MergeableInsertContent for T {
+    fn is_mergable_content(&self, other: &dyn InsertContent) -> bool {
+        if self.type_id() == other.type_id() {
+            self.is_mergable(unsafe { &*(other as *const dyn Any as *const T) }, &())
+        } else {
+            false
+        }
+    }
+
+    fn merge_content(&mut self, other: &dyn InsertContent) {
+        let other = unsafe { &*(other as *const dyn Any as *const T) };
+        self.merge(other, &());
+    }
 }
 
 pub mod content {

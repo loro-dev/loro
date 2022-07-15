@@ -1,5 +1,5 @@
 use loro_core::{content, ContentTypeID, InsertContent, ID};
-use rle::HasLength;
+use rle::{HasLength, Mergable};
 
 #[derive(Debug, Clone)]
 pub struct TextInsertContent {
@@ -9,29 +9,23 @@ pub struct TextInsertContent {
     text: String,
 }
 
+impl Mergable for TextInsertContent {
+    fn is_mergable(&self, other: &Self, _: &()) -> bool {
+        other.id.client_id == self.id.client_id
+            && self.id.counter + self.len() as u32 == other.id.counter
+            && self.id.client_id == other.origin_left.client_id
+            && self.id.counter + self.len() as u32 - 1 == other.origin_left.counter
+            && self.origin_right == other.origin_right
+    }
+
+    fn merge(&mut self, other: &Self, _: &()) {
+        self.text.push_str(&other.text);
+    }
+}
+
 impl InsertContent for TextInsertContent {
     fn id(&self) -> ContentTypeID {
         ContentTypeID::Text
-    }
-
-    fn is_mergable(&self, other: &dyn InsertContent) -> bool {
-        if let Some(other) = content::downcast_ref::<TextInsertContent>(other) {
-            other.id.client_id == self.id.client_id
-                && self.id.counter + self.len() as u32 == other.id.counter
-                && self.id.client_id == other.origin_left.client_id
-                && self.id.counter + self.len() as u32 - 1 == other.origin_left.counter
-                && self.origin_right == other.origin_right
-        } else {
-            false
-        }
-    }
-
-    fn merge(&mut self, other: &dyn InsertContent) {
-        if let Some(other) = content::downcast_ref::<TextInsertContent>(other) {
-            self.text.push_str(&other.text);
-        } else {
-            unreachable!()
-        }
     }
 
     fn slice(&self, from: usize, to: usize) -> Box<dyn InsertContent> {

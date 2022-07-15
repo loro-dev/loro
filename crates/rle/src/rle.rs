@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 /// RleVec<T> is a vector that can be compressed using run-length encoding.
 ///
 /// A T value may be merged with its neighbors. When we push new element, the new value
@@ -22,6 +24,7 @@ pub trait Mergable<Cfg = ()> {
     fn is_mergable(&self, other: &Self, conf: &Cfg) -> bool
     where
         Self: Sized;
+
     fn merge(&mut self, other: &Self, conf: &Cfg)
     where
         Self: Sized;
@@ -128,6 +131,10 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
             end_offset: to_result.offset,
         }
     }
+
+    pub fn slice_merged(&self, range: Range<usize>) -> &[T] {
+        todo!()
+    }
 }
 
 impl<T, Conf: Default> RleVec<T, Conf> {
@@ -157,6 +164,14 @@ impl<T, Conf> RleVec<T, Conf> {
 
     pub fn to_vec(self) -> Vec<T> {
         self.vec
+    }
+
+    pub fn vec(&self) -> &Vec<T> {
+        &self.vec
+    }
+
+    pub fn vec_mut(&mut self) -> &mut Vec<T> {
+        &mut self.vec
     }
 
     pub fn get_merged(&self, index: usize) -> &T {

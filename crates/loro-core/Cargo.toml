@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 string_cache = "0.8.3"
 rle = {path = "../rle"}
-smallvec = "1.9.0"
+smallvec = "1.8.0"
