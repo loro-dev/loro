@@ -47,17 +47,15 @@ impl<T: Clone + InsertContent> CloneContent for T {
 impl<T: Mergable + Any> MergeableContent for T {
     fn is_mergable_content(&self, other: &dyn InsertContent) -> bool {
         if self.type_id() == other.type_id() {
-            self.is_mergable(
-                unsafe { &*(other as *const dyn InsertContent as *const T) },
-                &(),
-            )
+            let other: &T = content::downcast_ref(other).unwrap();
+            self.is_mergable(other, &())
         } else {
             false
         }
     }
 
     fn merge_content(&mut self, other: &dyn InsertContent) {
-        let other = unsafe { &*(other as *const dyn InsertContent as *const T) };
+        let other: &T = content::downcast_ref(other).unwrap();
         self.merge(other, &());
     }
 }
