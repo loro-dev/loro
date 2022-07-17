@@ -1,4 +1,4 @@
-use crate::{id::ID, id_span::IdSpan};
+use crate::{container::ContainerID, id::ID, id_span::IdSpan};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
@@ -50,7 +50,7 @@ impl Op {
         }
     }
 
-    pub fn container(&self) -> &ID {
+    pub fn container(&self) -> &ContainerID {
         match &self.content {
             OpContent::Insert { container, .. } => container,
             _ => unreachable!(),
@@ -63,9 +63,9 @@ impl Mergable for Op {
         match &self.content {
             OpContent::Insert { container, content } => match other.content {
                 OpContent::Insert {
-                    container: other_container,
+                    container: ref other_container,
                     content: ref other_content,
-                } => container == &other_container && content.is_mergable_content(&**other_content),
+                } => container == other_container && content.is_mergable_content(&**other_content),
                 _ => false,
             },
             OpContent::Delete { target } => match other.content {

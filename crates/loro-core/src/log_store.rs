@@ -4,7 +4,7 @@ use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
-    container::Container,
+    container::{Container, ContainerID},
     id::ClientID,
     Lamport, ID,
 };
@@ -36,7 +36,7 @@ pub struct LogStore {
     latest_lamport: Lamport,
     latest_timestamp: Lamport,
 
-    containers: FxHashMap<ID, Box<dyn Container>>,
+    containers: FxHashMap<ContainerID, Box<dyn Container>>,
 }
 
 impl LogStore {

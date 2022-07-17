@@ -2,16 +2,10 @@ use crate::{InsertContent, SmString, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use std::alloc::Layout;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Parent {
-    Container(ID),
-    Root(SmString),
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum Slot {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,
@@ -26,7 +20,7 @@ pub enum ContainerType {
 ///
 #[derive(Debug, Clone)]
 pub struct ContainerContent {
-    parent: Parent,
+    parent: ID,
     container_type: ContainerType,
 }
 

@@ -1,13 +1,13 @@
 use rle::{HasLength, RleVec, Sliceable};
 
-use crate::{id::ID, id_span::IdSpan};
+use crate::{container::ContainerID, id::ID, id_span::IdSpan};
 
 use super::InsertContent;
 
 #[derive(Debug)]
 pub enum OpContent {
     Insert {
-        container: ID,
+        container: ContainerID,
         content: Box<dyn InsertContent>,
     },
     Delete {
@@ -32,7 +32,7 @@ impl Clone for OpContent {
     fn clone(&self) -> Self {
         match self {
             OpContent::Insert { container, content } => OpContent::Insert {
-                container: *container,
+                container: container.clone(),
                 content: content.clone_content(),
             },
             OpContent::Delete { target } => OpContent::Delete {
@@ -49,7 +49,7 @@ impl Sliceable for OpContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             OpContent::Insert { container, content } => OpContent::Insert {
-                container: *container,
+                container: container.clone(),
                 content: content.slice_content(from, to),
             },
             OpContent::Delete { target } => OpContent::Delete {
