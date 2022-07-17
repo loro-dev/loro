@@ -21,13 +21,19 @@ pub struct RleVec<T, Cfg = ()> {
 }
 
 pub trait Mergable<Cfg = ()> {
-    fn is_mergable(&self, other: &Self, conf: &Cfg) -> bool
+    fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool
     where
-        Self: Sized;
+        Self: Sized,
+    {
+        false
+    }
 
-    fn merge(&mut self, other: &Self, conf: &Cfg)
+    fn merge(&mut self, _other: &Self, _conf: &Cfg)
     where
-        Self: Sized;
+        Self: Sized,
+    {
+        unreachable!()
+    }
 }
 
 pub trait Sliceable {
@@ -91,6 +97,20 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
             return None;
         }
 
+        // TODO: test this threshold
+        if self.vec.len() < 8 {
+            for (i, v) in self.vec.iter().enumerate() {
+                if self.index[i] <= index && index < self.index[i + 1] {
+                    return Some(SearchResult {
+                        element: v,
+                        merged_index: i,
+                        offset: index - self.index[i],
+                    });
+                }
+            }
+            unreachable!();
+        }
+
         let mut start = 0;
         let mut end = self.index.len() - 1;
         while start < end {
@@ -145,6 +165,25 @@ impl<T, Conf: Default> RleVec<T, Conf> {
             index: Vec::new(),
             cfg: Default::default(),
         }
+    }
+}
+
+impl<T, Conf> RleVec<T, Conf> {
+    pub fn with_capacity(&mut self, capacity: usize) -> &mut Self {
+        self.vec.reserve(capacity);
+        self.index.reserve(capacity + 1);
+        self
+    }
+}
+
+impl<T: Mergable<Conf> + HasLength, Conf: Default> From<Vec<T>> for RleVec<T, Conf> {
+    fn from(vec: Vec<T>) -> Self {
+        let mut ans: RleVec<T, Conf> = RleVec::new();
+        ans.with_capacity(vec.len());
+        for v in vec {
+            ans.push(v);
+        }
+        ans
     }
 }
 

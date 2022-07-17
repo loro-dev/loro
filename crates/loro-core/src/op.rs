@@ -6,6 +6,7 @@ mod op_proxy;
 
 pub use insert_content::*;
 pub use op_content::*;
+pub use op_proxy::*;
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,8 +26,8 @@ pub enum OpType {
 ///
 /// A Op may have multiple atomic operations, since Op can be merged.
 pub struct Op {
-    id: ID,
-    content: OpContent,
+    pub(crate) id: ID,
+    pub(crate) content: OpContent,
 }
 
 impl Op {

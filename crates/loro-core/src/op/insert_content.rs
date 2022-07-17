@@ -7,8 +7,10 @@ use rle::{HasLength, Mergable, Sliceable};
 pub enum ContentType {
     /// See [`crate::container::ContainerContent`]
     Container,
-    /// See [`crate::text::TextContent`]
+    /// See [`crate::container::text::TextContent`]
     Text,
+    /// See [`crate::container::map::MapInsertContent`]
+    Map,
     /// Users can define their own content types.
     Custom(u16),
 }
