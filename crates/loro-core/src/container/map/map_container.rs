@@ -4,8 +4,9 @@ use fxhash::FxHashMap;
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    op::content::downcast_ref,
-    op::OpProxy,
+    id::ID,
+    op::{utils::downcast_ref, Op},
+    op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
     ClientID, InternalString, Lamport, LogStore, OpType, Snapshot,
 };
@@ -51,12 +52,31 @@ impl MapContainer {
     }
 
     pub fn insert(&mut self, key: InternalString, value: InsertValue) {
+        let self_id = self.id.clone();
         let store = self.log_store();
+        let client_id = store.this_client_id;
         let order = TotalOrder {
+            client_id,
             lamport: store.next_lamport(),
-            client_id: store.this_client_id,
         };
+
+        store.append_local_ops(vec![Op {
+            id: store.next_id(client_id),
+            content: OpContent::Insert {
+                container: self_id,
+                content: Box::new(MapInsertContent {
+                    key: key.clone(),
+                    value: value.clone(),
+                }),
+            },
+        }]);
+
         self.state.insert(key, ValueSlot { value, order });
+    }
+
+    #[inline(always)]
+    pub fn delete(&mut self, key: InternalString) {
+        self.insert(key, InsertValue::Null);
     }
 }
 
@@ -66,7 +86,7 @@ impl Container for MapContainer {
         &self.id
     }
 
-    fn type_id(&self) -> ContainerType {
+    fn container_type(&self) -> ContainerType {
         ContainerType::Map
     }
 

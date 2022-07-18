@@ -49,7 +49,7 @@ impl<T: Clone + InsertContent> CloneContent for T {
 impl<T: Mergable + Any> MergeableContent for T {
     fn is_mergable_content(&self, other: &dyn InsertContent) -> bool {
         if self.type_id() == other.type_id() {
-            let other: &T = content::downcast_ref(other).unwrap();
+            let other: &T = utils::downcast_ref(other).unwrap();
             self.is_mergable(other, &())
         } else {
             false
@@ -57,12 +57,12 @@ impl<T: Mergable + Any> MergeableContent for T {
     }
 
     fn merge_content(&mut self, other: &dyn InsertContent) {
-        let other: &T = content::downcast_ref(other).unwrap();
+        let other: &T = utils::downcast_ref(other).unwrap();
         self.merge(other, &());
     }
 }
 
-pub mod content {
+pub mod utils {
     use super::*;
     pub fn downcast_ref<T: Any>(content: &dyn InsertContent) -> Option<&T> {
         let t = TypeId::of::<T>();

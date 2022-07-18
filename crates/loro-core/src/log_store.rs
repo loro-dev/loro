@@ -43,7 +43,7 @@ pub struct LogStore {
     frontier: SmallVec<[ID; 2]>,
 
     /// CRDT container manager
-    container: ContainerManager,
+    pub(crate) container: ContainerManager,
 }
 
 impl LogStore {
@@ -73,9 +73,17 @@ impl LogStore {
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn next_lamport(&self) -> Lamport {
         self.latest_lamport + 1
+    }
+
+    #[inline(always)]
+    pub fn next_id(&self, client_id: ClientID) -> ID {
+        ID {
+            client_id,
+            counter: self.get_next_counter(client_id),
+        }
     }
 
     pub fn append_local_ops(&mut self, ops: Vec<Op>) {
@@ -152,9 +160,8 @@ impl LogStore {
     /// this function assume op is not included in the log, and its deps are included.
     #[inline]
     fn apply_remote_op(self: &mut Pin<&mut Self>, change: &Change, op: &Op) {
-        self.container
-            .get_or_create(op.container())
-            .apply(&OpProxy::new(change, op, None));
+        let container = self.container.get_or_create(op.container());
+        container.get_mut().apply(&OpProxy::new(change, op, None));
     }
 
     #[inline]

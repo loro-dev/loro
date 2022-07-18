@@ -9,7 +9,12 @@ use crate::{
     LogStore, Op, SmString, ID,
 };
 use rle::{HasLength, Mergable, Sliceable};
-use std::{alloc::Layout, fmt::Debug};
+use std::{
+    alloc::Layout,
+    any::{self, Any, TypeId},
+    fmt::Debug,
+    pin::Pin,
+};
 
 mod container_content;
 mod manager;
@@ -19,12 +24,29 @@ pub mod text;
 pub use container_content::*;
 pub use manager::*;
 
-pub trait Container: Debug {
+pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
-    fn type_id(&self) -> ContainerType;
+    fn container_type(&self) -> ContainerType;
     fn apply(&mut self, op: &OpProxy);
     fn snapshot(&mut self) -> &Snapshot;
     fn checkout_version(&mut self, vv: &VersionVector, log: &LogStore);
+}
+
+pub(crate) trait Cast<T> {
+    fn cast(&self) -> &T;
+    fn cast_mut(&mut self) -> &mut T;
+}
+
+impl<T: Any> Cast<T> for dyn Container {
+    fn cast(&self) -> &T {
+        let t = self as *const dyn Container as *const T;
+        unsafe { &*t }
+    }
+
+    fn cast_mut(&mut self) -> &mut T {
+        let t = self as *mut dyn Container as *mut T;
+        unsafe { &mut *t }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]

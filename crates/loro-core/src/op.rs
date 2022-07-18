@@ -36,6 +36,16 @@ impl Op {
         Op { id, content }
     }
 
+    #[inline]
+    pub fn new_insert_op(id: ID, container: ContainerID, content: Box<dyn InsertContent>) -> Self {
+        Op::new(id, OpContent::Insert { container, content })
+    }
+
+    #[inline]
+    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<IdSpan>) -> Self {
+        Op::new(id, OpContent::Delete { container, target })
+    }
+
     pub fn op_type(&self) -> OpType {
         match self.content {
             OpContent::Insert { .. } => OpType::Insert,

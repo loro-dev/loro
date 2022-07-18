@@ -1,7 +1,7 @@
 //! # Loro
 //!
 //!
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, clippy::explicit_auto_deref)]
 
 pub mod change;
 pub mod configure;
@@ -16,6 +16,7 @@ mod loro;
 mod snapshot;
 mod value;
 
+pub(crate) mod macros;
 pub(crate) use change::{Change, Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
 pub(crate) use snapshot::Snapshot;
@@ -23,6 +24,7 @@ pub(crate) type SmString = SmartString<LazyCompact>;
 pub(crate) use op::{ContentType, InsertContent, Op, OpContent, OpType};
 pub(crate) type InternalString = DefaultAtom;
 
+pub use container::ContainerType;
 pub use log_store::LogStore;
 pub use loro::*;
 pub use value::LoroValue;

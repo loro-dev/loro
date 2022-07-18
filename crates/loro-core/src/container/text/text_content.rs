@@ -109,7 +109,7 @@ mod test {
         let merged = vec.get_merged(0);
         assert_eq!(merged.insert_content().id(), ContentType::Text);
         let text_content =
-            crate::op::content::downcast_ref::<TextContent>(&**merged.insert_content()).unwrap();
+            crate::op::utils::downcast_ref::<TextContent>(&**merged.insert_content()).unwrap();
         assert_eq!(text_content.text, "ab");
     }
 
@@ -149,7 +149,7 @@ mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(|x| crate::op::content::downcast_ref::<TextContent>(
+                .map(|x| crate::op::utils::downcast_ref::<TextContent>(
                     &**x.into_inner().insert_content()
                 )
                 .unwrap()

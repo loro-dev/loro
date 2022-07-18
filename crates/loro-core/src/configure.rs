@@ -40,3 +40,14 @@ impl SecureRandomGenerator for SystemRandom {
         self.fill(dest).unwrap();
     }
 }
+
+impl Default for Configure {
+    fn default() -> Self {
+        Self {
+            change: ChangeMergeCfg::default(),
+            gc: GcConfig::default(),
+            get_time: || 0,
+            rand: Box::new(SystemRandom::new()),
+        }
+    }
+}

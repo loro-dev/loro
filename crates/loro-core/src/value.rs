@@ -27,7 +27,7 @@ impl From<InsertValue> for LoroValue {
             InsertValue::Null => LoroValue::Null,
             InsertValue::Bool(b) => LoroValue::Bool(b),
             InsertValue::Double(d) => LoroValue::Double(d),
-            InsertValue::Integer(i) => LoroValue::Integer(i),
+            InsertValue::Int32(i) => LoroValue::Integer(i),
             InsertValue::String(s) => LoroValue::String(s),
             InsertValue::Container(c) => LoroValue::Unresolved(c),
         }
@@ -40,7 +40,7 @@ pub enum InsertValue {
     Null,
     Bool(bool),
     Double(f64),
-    Integer(i32),
+    Int32(i32),
     String(SmString),
     Container(ContainerID),
 }
