@@ -11,9 +11,9 @@ pub use op_proxy::*;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpType {
-    Insert,
-    Delete,
-    Restore,
+    Normal,
+    Undo,
+    Redo,
 }
 
 /// Operation is a unit of change.
@@ -38,25 +38,25 @@ impl Op {
 
     #[inline]
     pub fn new_insert_op(id: ID, container: ContainerID, content: Box<dyn InsertContent>) -> Self {
-        Op::new(id, OpContent::Insert { container, content })
+        Op::new(id, OpContent::Normal { container, content })
     }
 
     #[inline]
     pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<IdSpan>) -> Self {
-        Op::new(id, OpContent::Delete { container, target })
+        Op::new(id, OpContent::Undo { container, target })
     }
 
     pub fn op_type(&self) -> OpType {
         match self.content {
-            OpContent::Insert { .. } => OpType::Insert,
-            OpContent::Delete { .. } => OpType::Delete,
-            OpContent::Restore { .. } => OpType::Restore,
+            OpContent::Normal { .. } => OpType::Normal,
+            OpContent::Undo { .. } => OpType::Undo,
+            OpContent::Redo { .. } => OpType::Redo,
         }
     }
 
     pub fn container(&self) -> &ContainerID {
         match &self.content {
-            OpContent::Insert { container, .. } => container,
+            OpContent::Normal { container, .. } => container,
             _ => unreachable!(),
         }
     }
@@ -64,7 +64,7 @@ impl Op {
     #[allow(clippy::borrowed_box)]
     pub fn insert_content(&self) -> &Box<dyn InsertContent> {
         match &self.content {
-            OpContent::Insert { content, .. } => content,
+            OpContent::Normal { content, .. } => content,
             _ => unreachable!(),
         }
     }
@@ -78,8 +78,8 @@ impl Mergable for Op {
 
     fn merge(&mut self, other: &Self, cfg: &()) {
         match &mut self.content {
-            OpContent::Insert { container, content } => match &other.content {
-                OpContent::Insert {
+            OpContent::Normal { container, content } => match &other.content {
+                OpContent::Normal {
                     container: other_container,
                     content: other_content,
                 } => {
@@ -88,15 +88,15 @@ impl Mergable for Op {
                 }
                 _ => unreachable!(),
             },
-            OpContent::Delete { target, .. } => match &other.content {
-                OpContent::Delete {
+            OpContent::Undo { target, .. } => match &other.content {
+                OpContent::Undo {
                     target: other_target,
                     ..
                 } => target.merge(other_target, cfg),
                 _ => unreachable!(),
             },
-            OpContent::Restore { target, .. } => match &other.content {
-                OpContent::Restore {
+            OpContent::Redo { target, .. } => match &other.content {
+                OpContent::Redo {
                     target: other_target,
                     ..
                 } => target.merge(other_target, cfg),

@@ -77,7 +77,7 @@ mod test {
         let mut vec: RleVec<Op> = RleVec::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            OpContent::Insert {
+            OpContent::Normal {
                 container: ContainerID::Normal {
                     id: ROOT_ID,
                     container_type: ContainerType::Text,
@@ -92,7 +92,7 @@ mod test {
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            OpContent::Insert {
+            OpContent::Normal {
                 container: ContainerID::Normal {
                     id: ROOT_ID,
                     container_type: ContainerType::Text,
@@ -106,7 +106,7 @@ mod test {
             },
         ));
         assert_eq!(vec.merged_len(), 1);
-        let merged = vec.get_merged(0);
+        let merged = vec.get_merged(0).unwrap();
         assert_eq!(merged.insert_content().id(), ContentType::Text);
         let text_content =
             crate::op::utils::downcast_ref::<TextContent>(&**merged.insert_content()).unwrap();
@@ -118,7 +118,7 @@ mod test {
         let mut vec: RleVec<Op> = RleVec::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            OpContent::Insert {
+            OpContent::Normal {
                 container: ContainerID::Normal {
                     id: ROOT_ID,
                     container_type: ContainerType::Text,
@@ -133,7 +133,7 @@ mod test {
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            OpContent::Insert {
+            OpContent::Normal {
                 container: ContainerID::Normal {
                     id: ROOT_ID,
                     container_type: ContainerType::Text,

@@ -26,6 +26,15 @@ pub struct Change {
     /// - Only the last change in a chain can be merged with the next change
     /// - Imported changes should be freezed
     pub(crate) freezed: bool,
+    /// if other changes dep on the middle of this change, we need to record a break point here.
+    /// So that we can iter the ops in the correct order.
+    ///
+    /// If some change deps on counter `t`, then there will be a break point at counter `t`.
+    /// - In that case we need to slice the change by counter range of [`start_counter`, `t` + 1)
+    ///
+    /// TODO: Need tests
+    /// Seems like we only need to record it when other changes dep on this change
+    pub(crate) break_points: SmallVec<[Counter; 2]>,
 }
 
 impl Change {
@@ -44,6 +53,7 @@ impl Change {
             lamport,
             timestamp,
             freezed,
+            break_points: SmallVec::new(),
         }
     }
 

@@ -8,7 +8,38 @@ use crate::{container::ContainerID, Change, Lamport, Op, OpContent, OpType, Time
 pub struct OpProxy<'a> {
     change: &'a Change,
     op: &'a Op,
+    /// slice range of the op, op[slice_range]
     slice_range: Range<u32>,
+}
+
+impl PartialEq for OpProxy<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.op.id == other.op.id && self.slice_range == other.slice_range
+    }
+}
+
+impl Eq for OpProxy<'_> {}
+
+impl PartialOrd for OpProxy<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let cmp = self.lamport().cmp(&other.lamport());
+        if let std::cmp::Ordering::Equal = cmp {
+            Some(self.op.id.client_id.cmp(&other.op.id.client_id))
+        } else {
+            Some(cmp)
+        }
+    }
+}
+
+impl Ord for OpProxy<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let cmp = self.lamport().cmp(&other.lamport());
+        if let std::cmp::Ordering::Equal = cmp {
+            self.op.id.client_id.cmp(&other.op.id.client_id)
+        } else {
+            cmp
+        }
+    }
 }
 
 impl<'a> OpProxy<'a> {
@@ -19,7 +50,7 @@ impl<'a> OpProxy<'a> {
             slice_range: if let Some(range) = range {
                 range
             } else {
-                op.id.counter..op.id.counter + op.len() as u32
+                0..op.len() as u32
             },
         }
     }

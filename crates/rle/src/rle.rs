@@ -188,6 +188,7 @@ impl<T: Mergable<Conf> + HasLength, Conf: Default> From<Vec<T>> for RleVec<T, Co
 }
 
 impl<T, Conf> RleVec<T, Conf> {
+    #[inline]
     pub fn new_cfg(cfg: Conf) -> Self {
         RleVec {
             vec: Vec::new(),
@@ -197,28 +198,34 @@ impl<T, Conf> RleVec<T, Conf> {
         }
     }
 
+    #[inline]
     pub fn merged_len(&self) -> usize {
         self.vec.len()
     }
 
+    #[inline]
     pub fn to_vec(self) -> Vec<T> {
         self.vec
     }
 
+    #[inline]
     pub fn vec(&self) -> &Vec<T> {
         &self.vec
     }
 
+    #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.vec.iter()
     }
 
+    #[inline]
     pub fn vec_mut(&mut self) -> &mut Vec<T> {
         &mut self.vec
     }
 
-    pub fn get_merged(&self, index: usize) -> &T {
-        &self.vec[index]
+    #[inline]
+    pub fn get_merged(&self, index: usize) -> Option<&T> {
+        self.vec.get(index)
     }
 }
 

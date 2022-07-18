@@ -8,12 +8,13 @@ use crate::{
     op::{utils::downcast_ref, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
+    version::TotalOrderStamp,
     ClientID, InternalString, Lamport, LogStore, OpType, Snapshot,
 };
 
 use super::MapInsertContent;
 
-/// we can only insert to Map
+/// We can only insert to Map
 /// delete = set null
 ///
 #[derive(Debug)]
@@ -24,16 +25,10 @@ pub struct MapContainer {
     log_store: NonNull<LogStore>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-struct TotalOrder {
-    lamport: Lamport,
-    client_id: ClientID,
-}
-
 #[derive(Debug)]
 struct ValueSlot {
     value: InsertValue,
-    order: TotalOrder,
+    order: TotalOrderStamp,
 }
 
 impl MapContainer {
@@ -55,14 +50,14 @@ impl MapContainer {
         let self_id = self.id.clone();
         let store = self.log_store();
         let client_id = store.this_client_id;
-        let order = TotalOrder {
+        let order = TotalOrderStamp {
             client_id,
             lamport: store.next_lamport(),
         };
 
         store.append_local_ops(vec![Op {
             id: store.next_id(client_id),
-            content: OpContent::Insert {
+            content: OpContent::Normal {
                 container: self_id,
                 content: Box::new(MapInsertContent {
                     key: key.clone(),
@@ -92,10 +87,10 @@ impl Container for MapContainer {
 
     fn apply(&mut self, op: &OpProxy) {
         match op.content() {
-            crate::OpContent::Insert { container, content } => {
+            OpContent::Normal { container, content } => {
                 debug_assert!(*container == self.id);
                 let v: &MapInsertContent = downcast_ref(&**content).unwrap();
-                let order = TotalOrder {
+                let order = TotalOrderStamp {
                     lamport: op.lamport(),
                     client_id: op.id().client_id,
                 };

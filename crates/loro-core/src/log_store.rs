@@ -1,4 +1,5 @@
-use std::{pin::Pin, ptr::NonNull};
+mod iter;
+use std::{collections::BinaryHeap, pin::Pin, ptr::NonNull};
 
 use fxhash::FxHashMap;
 use moveit::New;
@@ -14,6 +15,7 @@ use crate::{
     id::{ClientID, Counter},
     id_span::IdSpan,
     op::OpProxy,
+    version::TotalOrderStamp,
     Lamport, Op, Timestamp, ID,
 };
 const YEAR: u64 = 365 * 24 * 60 * 60;
@@ -34,6 +36,7 @@ impl Default for GcConfig {
 }
 
 /// Entry of the loro inner state.
+/// This is a self-referential structure. So it need to be pinned.
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     cfg: Configure,
@@ -100,6 +103,7 @@ impl LogStore {
             lamport,
             timestamp,
             freezed: false,
+            break_points: Default::default(),
         };
 
         change.deps.push(ID::new(
@@ -178,5 +182,19 @@ impl LogStore {
             .get(&client_id)
             .map(|changes| changes.len())
             .unwrap_or(0) as Counter
+    }
+
+    #[inline]
+    pub(crate) fn iter_client_op(&self, client_id: ClientID) -> iter::ClientOpIter<'_> {
+        iter::ClientOpIter {
+            change_index: 0,
+            op_index: 0,
+            changes: self.changes.get(&client_id),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
+        iter::OpIter::new(&self.changes)
     }
 }

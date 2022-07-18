@@ -6,15 +6,15 @@ use super::{InsertContent, MergeableContent};
 
 #[derive(Debug)]
 pub enum OpContent {
-    Insert {
+    Normal {
         container: ContainerID,
         content: Box<dyn InsertContent>,
     },
-    Delete {
+    Undo {
         container: ContainerID,
         target: RleVec<IdSpan>,
     },
-    Restore {
+    Redo {
         container: ContainerID,
         target: RleVec<IdSpan>,
     },
@@ -23,9 +23,9 @@ pub enum OpContent {
 impl OpContent {
     pub fn op_type(&self) -> OpType {
         match self {
-            OpContent::Insert { .. } => OpType::Insert,
-            OpContent::Delete { .. } => OpType::Delete,
-            OpContent::Restore { .. } => OpType::Restore,
+            OpContent::Normal { .. } => OpType::Normal,
+            OpContent::Undo { .. } => OpType::Undo,
+            OpContent::Redo { .. } => OpType::Redo,
         }
     }
 }
@@ -33,9 +33,9 @@ impl OpContent {
 impl HasLength for OpContent {
     fn len(&self) -> usize {
         match self {
-            OpContent::Insert { content, .. } => content.len(),
-            OpContent::Delete { target, .. } => target.len(),
-            OpContent::Restore { target, .. } => target.len(),
+            OpContent::Normal { content, .. } => content.len(),
+            OpContent::Undo { target, .. } => target.len(),
+            OpContent::Redo { target, .. } => target.len(),
         }
     }
 }
@@ -43,15 +43,15 @@ impl HasLength for OpContent {
 impl Clone for OpContent {
     fn clone(&self) -> Self {
         match self {
-            OpContent::Insert { container, content } => OpContent::Insert {
+            OpContent::Normal { container, content } => OpContent::Normal {
                 container: container.clone(),
                 content: content.clone_content(),
             },
-            OpContent::Delete { target, container } => OpContent::Delete {
+            OpContent::Undo { target, container } => OpContent::Undo {
                 container: container.clone(),
                 target: target.clone(),
             },
-            OpContent::Restore { target, container } => OpContent::Restore {
+            OpContent::Redo { target, container } => OpContent::Redo {
                 container: container.clone(),
                 target: target.clone(),
             },
@@ -62,15 +62,15 @@ impl Clone for OpContent {
 impl Sliceable for OpContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            OpContent::Insert { container, content } => OpContent::Insert {
+            OpContent::Normal { container, content } => OpContent::Normal {
                 container: container.clone(),
                 content: content.slice_content(from, to),
             },
-            OpContent::Delete { target, container } => OpContent::Delete {
+            OpContent::Undo { target, container } => OpContent::Undo {
                 container: container.clone(),
                 target: target.slice(from, to),
             },
-            OpContent::Restore { target, container } => OpContent::Restore {
+            OpContent::Redo { target, container } => OpContent::Redo {
                 container: container.clone(),
                 target: target.slice(from, to),
             },
@@ -84,22 +84,22 @@ impl Mergable for OpContent {
         Self: Sized,
     {
         match &self {
-            OpContent::Insert { container, content } => match other {
-                OpContent::Insert {
+            OpContent::Normal { container, content } => match other {
+                OpContent::Normal {
                     container: ref other_container,
                     content: ref other_content,
                 } => container == other_container && content.is_mergable_content(&**other_content),
                 _ => false,
             },
-            OpContent::Delete { target, container } => match other {
-                OpContent::Delete {
+            OpContent::Undo { target, container } => match other {
+                OpContent::Undo {
                     target: ref other_target,
                     container: other_container,
                 } => container == other_container && target.is_mergable(other_target, cfg),
                 _ => false,
             },
-            OpContent::Restore { target, container } => match other {
-                OpContent::Restore {
+            OpContent::Redo { target, container } => match other {
+                OpContent::Redo {
                     target: ref other_target,
                     container: ref other_container,
                 } => container == other_container && target.is_mergable(other_target, cfg),

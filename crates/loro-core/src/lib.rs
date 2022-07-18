@@ -14,6 +14,7 @@ mod id_span;
 mod log_store;
 mod loro;
 mod snapshot;
+mod tests;
 mod value;
 
 pub(crate) mod macros;
