@@ -1,10 +1,9 @@
 use fxhash::FxHashMap;
-use loro_core::ClientID;
+use loro_core::{id::ClientID, version::VersionVector};
 use rle::RleVec;
 
 use crate::raw_change::{ChangeData, ChangeHash};
 
-pub type VersionVector = FxHashMap<ClientID, u32>;
 pub type Mac = [u8; 32];
 
 pub struct RawStore {
@@ -39,7 +38,7 @@ impl RawStore {
 
         self.calc_hash();
         for (clientId, mac) in self.macs.as_ref().unwrap().iter() {
-            todo!();
+            todo!("pending");
         }
 
         true

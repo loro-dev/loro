@@ -1,4 +1,7 @@
+use std::{pin::Pin, ptr::NonNull};
+
 use fxhash::FxHashMap;
+use moveit::New;
 use ring::rand::SystemRandom;
 use rle::{HasLength, RleVec};
 use smallvec::SmallVec;
@@ -10,6 +13,7 @@ use crate::{
     container::{Container, ContainerID, ContainerManager},
     id::{ClientID, Counter},
     id_span::IdSpan,
+    op::OpProxy,
     Lamport, Op, Timestamp, ID,
 };
 const YEAR: u64 = 365 * 24 * 60 * 60;
@@ -43,25 +47,33 @@ pub struct LogStore {
 }
 
 impl LogStore {
-    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Self {
+    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Pin<Box<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        Self {
+        let mut this = Box::pin(Self {
             cfg,
             this_client_id,
             changes: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
-            container: Default::default(),
+            container: ContainerManager {
+                containers: Default::default(),
+                store: NonNull::dangling(),
+            },
             frontier: Default::default(),
-        }
+        });
+
+        this.container.store = NonNull::new(this.as_mut().get_mut() as *mut _).unwrap();
+        this
     }
 
+    #[inline]
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
         self.changes
             .get(&id.client_id)
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
+    #[inline]
     pub fn next_lamport(&self) -> Lamport {
         self.latest_lamport + 1
     }
@@ -94,14 +106,14 @@ impl LogStore {
             .push(change);
     }
 
-    pub fn apply_remote_change(&mut self, mut change: Change) {
+    pub fn apply_remote_change(self: &mut Pin<&mut Self>, mut change: Change) {
         change.freezed = true;
-        if self.includes(change.last_id()) {
+        if self.contains(change.last_id()) {
             return;
         }
 
         for dep in &change.deps {
-            if !self.includes(*dep) {
+            if !self.contains(*dep) {
                 unimplemented!("need impl pending changes");
             }
         }
@@ -123,7 +135,7 @@ impl LogStore {
         }
 
         for op in change.ops.iter() {
-            self.apply_remote_op(op);
+            self.apply_remote_op(&change, op);
         }
 
         self.push_change(change);
@@ -138,35 +150,26 @@ impl LogStore {
     }
 
     /// this function assume op is not included in the log, and its deps are included.
-    fn apply_remote_op(&mut self, op: &Op) {
-        todo!()
+    #[inline]
+    fn apply_remote_op(self: &mut Pin<&mut Self>, change: &Change, op: &Op) {
+        self.container
+            .get_or_create(op.container())
+            .apply(&OpProxy::new(change, op, None));
     }
 
-    pub fn includes(&self, id: ID) -> bool {
+    #[inline]
+    pub fn contains(&self, id: ID) -> bool {
         self.changes
             .get(&id.client_id)
             .map_or(0, |changes| changes.len())
             > id.counter as usize
     }
 
+    #[inline]
     fn get_next_counter(&self, client_id: ClientID) -> Counter {
         self.changes
             .get(&client_id)
             .map(|changes| changes.len())
             .unwrap_or(0) as Counter
-    }
-}
-
-impl Default for LogStore {
-    fn default() -> Self {
-        Self::new(
-            Configure {
-                change: Default::default(),
-                gc: Default::default(),
-                get_time: || 0,
-                rand: Box::new(SystemRandom::new()),
-            },
-            None,
-        )
     }
 }

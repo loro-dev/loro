@@ -1,4 +1,4 @@
-use std::{pin::Pin, ptr::NonNull};
+use std::{pin::Pin, ptr::NonNull, rc::Weak};
 
 use fxhash::FxHashMap;
 
@@ -37,12 +37,12 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub fn new(id: ContainerID, store: Pin<&mut LogStore>) -> Self {
+    pub fn new(id: ContainerID, store: NonNull<LogStore>) -> Self {
         MapContainer {
             id,
             state: FxHashMap::default(),
             snapshot: None,
-            log_store: NonNull::new(store.get_mut()).unwrap(),
+            log_store: store,
         }
     }
 

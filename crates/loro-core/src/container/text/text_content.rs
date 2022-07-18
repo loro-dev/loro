@@ -63,7 +63,11 @@ impl HasLength for TextContent {
 
 #[cfg(test)]
 mod test {
-    use crate::{container::ContainerID, id::ROOT_ID, ContentType, Op, OpContent, ID};
+    use crate::{
+        container::{ContainerID, ContainerType},
+        id::ROOT_ID,
+        ContentType, Op, OpContent, ID,
+    };
     use rle::RleVec;
 
     use super::TextContent;
@@ -74,7 +78,10 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Insert {
-                container: ContainerID::Normal(ROOT_ID),
+                container: ContainerID::Normal {
+                    id: ROOT_ID,
+                    container_type: ContainerType::Text,
+                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
@@ -86,7 +93,10 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Insert {
-                container: ContainerID::Normal(ROOT_ID),
+                container: ContainerID::Normal {
+                    id: ROOT_ID,
+                    container_type: ContainerType::Text,
+                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
@@ -109,7 +119,10 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Insert {
-                container: ContainerID::Normal(ROOT_ID),
+                container: ContainerID::Normal {
+                    id: ROOT_ID,
+                    container_type: ContainerType::Text,
+                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
@@ -121,7 +134,10 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Insert {
-                container: ContainerID::Normal(ROOT_ID),
+                container: ContainerID::Normal {
+                    id: ROOT_ID,
+                    container_type: ContainerType::Text,
+                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),

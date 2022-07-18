@@ -34,5 +34,49 @@ pub enum ContainerID {
         name: InternalString,
         container_type: ContainerType,
     },
-    Normal(ID),
+    Normal {
+        id: ID,
+        container_type: ContainerType,
+    },
+}
+
+impl ContainerID {
+    #[inline]
+    pub fn new_normal(id: ID, container_type: ContainerType) -> Self {
+        ContainerID::Normal { id, container_type }
+    }
+
+    #[inline]
+    pub fn new_root(name: InternalString, container_type: ContainerType) -> Self {
+        ContainerID::Root {
+            name,
+            container_type,
+        }
+    }
+
+    #[inline]
+    pub fn is_root(&self) -> bool {
+        matches!(self, ContainerID::Root { .. })
+    }
+
+    #[inline]
+    pub fn is_normal(&self) -> bool {
+        matches!(self, ContainerID::Normal { .. })
+    }
+
+    #[inline]
+    pub fn name(&self) -> &InternalString {
+        match self {
+            ContainerID::Root { name, .. } => name,
+            ContainerID::Normal { .. } => unreachable!(),
+        }
+    }
+
+    #[inline]
+    pub fn container_type(&self) -> ContainerType {
+        match self {
+            ContainerID::Root { container_type, .. } => *container_type,
+            ContainerID::Normal { container_type, .. } => *container_type,
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{num::NonZeroI128, pin::Pin, ptr::NonNull, rc::Weak};
 
 use fxhash::FxHashMap;
 
@@ -6,9 +6,10 @@ use crate::LogStore;
 
 use super::{map::MapContainer, Container, ContainerID, ContainerType};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ContainerManager {
-    containers: FxHashMap<ContainerID, Box<dyn Container>>,
+    pub(crate) containers: FxHashMap<ContainerID, Box<dyn Container>>,
+    pub(crate) store: NonNull<LogStore>,
 }
 
 impl ContainerManager {
@@ -17,7 +18,7 @@ impl ContainerManager {
         &mut self,
         id: ContainerID,
         container_type: ContainerType,
-        store: Pin<&mut LogStore>,
+        store: NonNull<LogStore>,
     ) -> Box<dyn Container> {
         match container_type {
             ContainerType::Map => Box::new(MapContainer::new(id, store)),
@@ -31,8 +32,8 @@ impl ContainerManager {
     }
 
     #[inline]
-    pub fn get_mut(&mut self, id: ContainerID) -> Option<&mut Box<dyn Container>> {
-        self.containers.get_mut(&id)
+    pub fn get_mut(&mut self, id: &ContainerID) -> Option<&mut Box<dyn Container>> {
+        self.containers.get_mut(id)
     }
 
     #[inline]
@@ -40,14 +41,9 @@ impl ContainerManager {
         self.containers.insert(id, container);
     }
 
-    pub fn get_or_create(
-        &mut self,
-        id: ContainerID,
-        container_type: ContainerType,
-        store: Pin<&mut LogStore>,
-    ) -> &mut Box<dyn Container> {
-        if !self.containers.contains_key(&id) {
-            let container = self.create(id.clone(), container_type, store);
+    pub fn get_or_create(&mut self, id: &ContainerID) -> &mut Box<dyn Container> {
+        if !self.containers.contains_key(id) {
+            let container = self.create(id.clone(), id.container_type(), self.store);
             self.insert(id.clone(), container);
         }
 

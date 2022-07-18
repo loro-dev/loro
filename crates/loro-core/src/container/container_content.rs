@@ -5,7 +5,7 @@ use std::alloc::Layout;
 #[derive(Debug, Clone)]
 pub(crate) enum Slot {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,
