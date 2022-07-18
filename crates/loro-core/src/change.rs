@@ -1,6 +1,9 @@
 use std::char::MAX;
 
-use crate::{id::ID, op::Op};
+use crate::{
+    id::{Counter, ID},
+    op::Op,
+};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::SmallVec;
 
@@ -43,6 +46,14 @@ impl Change {
             freezed,
         }
     }
+
+    pub fn last_id(&self) -> ID {
+        self.id.inc(self.len() as Counter - 1)
+    }
+
+    pub fn last_lamport(&self) -> Lamport {
+        self.lamport + self.len() as Lamport - 1
+    }
 }
 
 impl HasLength for Change {
@@ -75,7 +86,9 @@ impl Mergable<ChangeMergeCfg> for Change {
             return false;
         }
 
-        if !other.deps.is_empty() {
+        if other.deps.is_empty()
+            || (other.deps.len() == 1 && self.id.is_connected_id(&other.deps[0], self.len() as u32))
+        {
             return false;
         }
 

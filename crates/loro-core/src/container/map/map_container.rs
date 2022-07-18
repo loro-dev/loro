@@ -4,9 +4,9 @@ use fxhash::FxHashMap;
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    content::downcast_ref,
+    op::content::downcast_ref,
     op::OpProxy,
-    value::{InsertValue, SnapshotValue},
+    value::{InsertValue, LoroValue},
     ClientID, InternalString, Lamport, LogStore, OpType, Snapshot,
 };
 
@@ -14,6 +14,8 @@ use super::MapInsertContent;
 
 /// we can only insert to Map
 /// delete = set null
+///
+#[derive(Debug)]
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
@@ -27,12 +29,14 @@ struct TotalOrder {
     client_id: ClientID,
 }
 
+#[derive(Debug)]
 struct ValueSlot {
     value: InsertValue,
     order: TotalOrder,
 }
 
 impl MapContainer {
+    #[inline]
     pub fn new(id: ContainerID, store: Pin<&mut LogStore>) -> Self {
         MapContainer {
             id,
@@ -57,6 +61,7 @@ impl MapContainer {
 }
 
 impl Container for MapContainer {
+    #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
     }
@@ -101,13 +106,13 @@ impl Container for MapContainer {
                 map.insert(key.clone(), value.value.clone().into());
             }
 
-            self.snapshot = Some(Snapshot::new(SnapshotValue::Map(map)));
+            self.snapshot = Some(Snapshot::new(LoroValue::Map(map)));
         }
 
         self.snapshot.as_ref().unwrap()
     }
 
-    fn checkout_version(&mut self, vv: &crate::version::VersionVector, log: &crate::LogStore) {
+    fn checkout_version(&mut self, _vv: &crate::version::VersionVector, _log: &crate::LogStore) {
         todo!()
     }
 }

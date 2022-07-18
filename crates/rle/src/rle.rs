@@ -209,6 +209,10 @@ impl<T, Conf> RleVec<T, Conf> {
         &self.vec
     }
 
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.vec.iter()
+    }
+
     pub fn vec_mut(&mut self) -> &mut Vec<T> {
         &mut self.vec
     }

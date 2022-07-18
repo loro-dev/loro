@@ -1,4 +1,4 @@
-use crate::{content, ContentType, InsertContent, ID};
+use crate::{ContentType, InsertContent, ID};
 use rle::{HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone)]
@@ -63,7 +63,7 @@ impl HasLength for TextContent {
 
 #[cfg(test)]
 mod test {
-    use crate::{container::ContainerID, content, id::ROOT_ID, ContentType, Op, OpContent, ID};
+    use crate::{container::ContainerID, id::ROOT_ID, ContentType, Op, OpContent, ID};
     use rle::RleVec;
 
     use super::TextContent;
@@ -97,8 +97,9 @@ mod test {
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0);
-        assert_eq!(merged.content().id(), ContentType::Text);
-        let text_content = content::downcast_ref::<TextContent>(&**merged.content()).unwrap();
+        assert_eq!(merged.insert_content().id(), ContentType::Text);
+        let text_content =
+            crate::op::content::downcast_ref::<TextContent>(&**merged.insert_content()).unwrap();
         assert_eq!(text_content.text, "ab");
     }
 
@@ -132,12 +133,12 @@ mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(
-                    |x| content::downcast_ref::<TextContent>(&**x.into_inner().content())
-                        .unwrap()
-                        .text
-                        .clone()
+                .map(|x| crate::op::content::downcast_ref::<TextContent>(
+                    &**x.into_inner().insert_content()
                 )
+                .unwrap()
+                .text
+                .clone())
                 .collect::<Vec<String>>(),
             vec!["34", "56"]
         )

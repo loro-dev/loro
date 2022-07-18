@@ -16,7 +16,6 @@ pub enum OpType {
     Restore,
 }
 
-#[derive(Debug, Clone)]
 /// Operation is a unit of change.
 ///
 /// It has 3 types:
@@ -25,12 +24,14 @@ pub enum OpType {
 /// - Restore
 ///
 /// A Op may have multiple atomic operations, since Op can be merged.
+#[derive(Debug, Clone)]
 pub struct Op {
     pub(crate) id: ID,
     pub(crate) content: OpContent,
 }
 
 impl Op {
+    #[inline]
     pub fn new(id: ID, content: OpContent) -> Self {
         Op { id, content }
     }
@@ -43,17 +44,17 @@ impl Op {
         }
     }
 
-    #[allow(clippy::borrowed_box)]
-    pub fn content(&self) -> &Box<dyn InsertContent> {
+    pub fn container(&self) -> &ContainerID {
         match &self.content {
-            OpContent::Insert { content, .. } => content,
+            OpContent::Insert { container, .. } => container,
             _ => unreachable!(),
         }
     }
 
-    pub fn container(&self) -> &ContainerID {
+    #[allow(clippy::borrowed_box)]
+    pub fn insert_content(&self) -> &Box<dyn InsertContent> {
         match &self.content {
-            OpContent::Insert { container, .. } => container,
+            OpContent::Insert { content, .. } => content,
             _ => unreachable!(),
         }
     }
@@ -61,27 +62,8 @@ impl Op {
 
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        match &self.content {
-            OpContent::Insert { container, content } => match other.content {
-                OpContent::Insert {
-                    container: ref other_container,
-                    content: ref other_content,
-                } => container == other_container && content.is_mergable_content(&**other_content),
-                _ => false,
-            },
-            OpContent::Delete { target } => match other.content {
-                OpContent::Delete {
-                    target: ref other_target,
-                } => target.is_mergable(other_target, cfg),
-                _ => false,
-            },
-            OpContent::Restore { target } => match other.content {
-                OpContent::Restore {
-                    target: ref other_target,
-                } => target.is_mergable(other_target, cfg),
-                _ => false,
-            },
-        }
+        self.id.is_connected_id(&other.id, self.len() as u32)
+            && self.content.is_mergable(&other.content, cfg)
     }
 
     fn merge(&mut self, other: &Self, cfg: &()) {

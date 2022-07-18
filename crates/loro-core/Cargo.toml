@@ -11,3 +11,4 @@ rle = {path = "../rle"}
 smallvec = "1.8.0"
 smartstring = "1.0.1"
 fxhash = "0.2.1"
+ring = "0.16.20"

@@ -1,12 +1,15 @@
 use fxhash::FxHashMap;
-use rle::RleVec;
+use ring::rand::SystemRandom;
+use rle::{HasLength, RleVec};
 use smallvec::SmallVec;
 use string_cache::{Atom, DefaultAtom, EmptyStaticAtomSet};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
-    container::{Container, ContainerID},
-    id::ClientID,
+    configure::Configure,
+    container::{Container, ContainerID, ContainerManager},
+    id::{ClientID, Counter},
+    id_span::IdSpan,
     Lamport, Op, Timestamp, ID,
 };
 const YEAR: u64 = 365 * 24 * 60 * 60;
@@ -26,39 +29,35 @@ impl Default for GcConfig {
     }
 }
 
-pub struct Configure {
-    pub change: ChangeMergeCfg,
-    pub gc: GcConfig,
-    get_time: fn() -> Timestamp,
-}
-
+/// Entry of the loro inner state.
 pub struct LogStore {
-    ops: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+    changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     cfg: Configure,
     latest_lamport: Lamport,
-    latest_timestamp: Lamport,
+    latest_timestamp: Timestamp,
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
 
-    containers: FxHashMap<ContainerID, Box<dyn Container>>,
+    /// CRDT container manager
+    container: ContainerManager,
 }
 
 impl LogStore {
-    pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
+    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Self {
+        let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Self {
             cfg,
-            ops: FxHashMap::default(),
+            this_client_id,
+            changes: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
-            containers: Default::default(),
+            container: Default::default(),
             frontier: Default::default(),
-            // TODO: or else random id
-            this_client_id: client_id.unwrap_or_else(|| 0),
         }
     }
 
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
-        self.ops
+        self.changes
             .get(&id.client_id)
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
@@ -67,26 +66,94 @@ impl LogStore {
         self.latest_lamport + 1
     }
 
-    pub fn append_local_change(&mut self, change: Change) {
-        self.ops
-            .entry(change.id.client_id)
-            .or_insert(RleVec::new())
-            .push(change);
-        todo!("set frontier timestamp and lamport");
-        todo!("frontier of the same client can be dropped, if only itself is included");
-    }
-
-    pub fn append_local_op(&mut self, op: Op) {
-        // TODO: we can check change mergeable before append
-        let change = Change {
-            id: op.id,
-            ops: vec![op].into(),
-            deps: self.frontier.clone(),
-            lamport: self.next_lamport(),
-            timestamp: (self.cfg.get_time)(),
+    pub fn append_local_ops(&mut self, ops: Vec<Op>) {
+        let lamport = self.next_lamport();
+        let timestamp = (self.cfg.get_time)();
+        let id = ID {
+            client_id: self.this_client_id,
+            counter: self.get_next_counter(self.this_client_id),
+        };
+        let mut change = Change {
+            id,
+            ops: ops.into(),
+            deps: std::mem::take(&mut self.frontier),
+            lamport,
+            timestamp,
             freezed: false,
         };
-        self.append_local_change(change);
+
+        change.deps.push(ID::new(
+            self.this_client_id,
+            id.counter + change.len() as Counter - 1,
+        ));
+        self.latest_lamport = lamport + change.len() as u32 - 1;
+        self.latest_timestamp = timestamp;
+        self.changes
+            .entry(self.this_client_id)
+            .or_insert_with(RleVec::new)
+            .push(change);
+    }
+
+    pub fn apply_remote_change(&mut self, mut change: Change) {
+        change.freezed = true;
+        if self.includes(change.last_id()) {
+            return;
+        }
+
+        for dep in &change.deps {
+            if !self.includes(*dep) {
+                unimplemented!("need impl pending changes");
+            }
+        }
+
+        self.frontier = self
+            .frontier
+            .iter()
+            .filter(|x| !change.deps.contains(x))
+            .copied()
+            .collect();
+        self.frontier.push(change.last_id());
+
+        if change.last_lamport() > self.latest_lamport {
+            self.latest_lamport = change.last_lamport();
+        }
+
+        if change.timestamp > self.latest_timestamp {
+            self.latest_timestamp = change.timestamp;
+        }
+
+        for op in change.ops.iter() {
+            self.apply_remote_op(op);
+        }
+
+        self.push_change(change);
+    }
+
+    #[inline]
+    fn push_change(&mut self, change: Change) {
+        self.changes
+            .entry(change.id.client_id)
+            .or_insert_with(RleVec::new)
+            .push(change);
+    }
+
+    /// this function assume op is not included in the log, and its deps are included.
+    fn apply_remote_op(&mut self, op: &Op) {
+        todo!()
+    }
+
+    pub fn includes(&self, id: ID) -> bool {
+        self.changes
+            .get(&id.client_id)
+            .map_or(0, |changes| changes.len())
+            > id.counter as usize
+    }
+
+    fn get_next_counter(&self, client_id: ClientID) -> Counter {
+        self.changes
+            .get(&client_id)
+            .map(|changes| changes.len())
+            .unwrap_or(0) as Counter
     }
 }
 
@@ -97,6 +164,7 @@ impl Default for LogStore {
                 change: Default::default(),
                 gc: Default::default(),
                 get_time: || 0,
+                rand: Box::new(SystemRandom::new()),
             },
             None,
         )
