@@ -2,6 +2,7 @@
 //!
 //!
 #![allow(dead_code, unused_imports, clippy::explicit_auto_deref)]
+#![feature(const_pin)]
 
 pub mod change;
 pub mod configure;

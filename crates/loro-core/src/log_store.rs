@@ -1,5 +1,6 @@
 mod iter;
-use std::{collections::BinaryHeap, pin::Pin, ptr::NonNull};
+use pin_project::pin_project;
+use std::{collections::BinaryHeap, marker::PhantomPinned, pin::Pin, ptr::NonNull};
 
 use fxhash::FxHashMap;
 use moveit::New;
@@ -37,6 +38,7 @@ impl Default for GcConfig {
 
 /// Entry of the loro inner state.
 /// This is a self-referential structure. So it need to be pinned.
+#[pin_project]
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     cfg: Configure,
@@ -47,6 +49,8 @@ pub struct LogStore {
 
     /// CRDT container manager
     pub(crate) container: ContainerManager,
+
+    _pin: PhantomPinned,
 }
 
 impl LogStore {
@@ -63,9 +67,12 @@ impl LogStore {
                 store: NonNull::dangling(),
             },
             frontier: Default::default(),
+            _pin: PhantomPinned,
         });
 
-        this.container.store = NonNull::new(this.as_mut().get_mut() as *mut _).unwrap();
+        let p = this.as_ref().get_ref();
+        let p = p as *const _ as *mut LogStore;
+        this.container.store = unsafe { NonNull::new_unchecked(p) };
         this
     }
 
