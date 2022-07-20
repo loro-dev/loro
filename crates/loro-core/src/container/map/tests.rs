@@ -31,6 +31,7 @@ fn basic() {
     assert_eq!(*container.snapshot().value(), LoroValue::Map(ans));
 }
 
+#[cfg(not(no_proptest))]
 mod map_proptest {
     use super::*;
 
