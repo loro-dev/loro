@@ -27,7 +27,7 @@ impl RawStore {
         unimplemented!()
     }
 
-    pub fn verify(&mut self, pub_key: &[u8; 32]) -> bool {
+    pub fn verify(&mut self, _pub_key: &[u8; 32]) -> bool {
         if !self.maced() {
             return true;
         }
@@ -37,7 +37,7 @@ impl RawStore {
         }
 
         self.calc_hash();
-        for (clientId, mac) in self.macs.as_ref().unwrap().iter() {
+        for (_clientId, _mac) in self.macs.as_ref().unwrap().iter() {
             todo!("pending");
         }
 
@@ -51,7 +51,7 @@ impl RawStore {
     }
 
     fn calc_hash(&mut self) {
-        for (client_id, changes) in &mut self.changes {
+        for (_client_id, changes) in &mut self.changes {
             let changes = changes.vec_mut();
             let mut start_index = 0;
             for i in (0..changes.len()).rev() {
@@ -80,7 +80,7 @@ impl RawStore {
         version_vector
     }
 
-    pub fn sign(&self, pub_key: ()) {
+    pub fn sign(&self, _pub_key: ()) {
         unimplemented!()
     }
 }

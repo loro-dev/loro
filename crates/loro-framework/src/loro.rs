@@ -1,5 +1,3 @@
-use std::pin::Pin;
-
 use loro_core::{id::ClientID, LoroCore};
 
 use crate::raw_store::RawStore;

@@ -45,14 +45,14 @@ impl HasLength for ChangeData {
 }
 
 impl Mergable for ChangeData {
-    fn is_mergable(&self, other: &Self, conf: &()) -> bool
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
         false
     }
 
-    fn merge(&mut self, other: &Self, conf: &())
+    fn merge(&mut self, _other: &Self, _conf: &())
     where
         Self: Sized,
     {
