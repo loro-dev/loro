@@ -21,7 +21,6 @@ use super::MapInsertContent;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
-    snapshot: Option<Snapshot>,
     log_store: NonNull<LogStore>,
 }
 
@@ -37,7 +36,6 @@ impl MapContainer {
         MapContainer {
             id,
             state: FxHashMap::default(),
-            snapshot: None,
             log_store: store,
         }
     }
@@ -69,7 +67,7 @@ impl MapContainer {
         self.state.insert(key, ValueSlot { value, order });
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn delete(&mut self, key: InternalString) {
         self.insert(key, InsertValue::Null);
     }
@@ -114,17 +112,13 @@ impl Container for MapContainer {
         }
     }
 
-    fn snapshot(&mut self) -> &crate::Snapshot {
-        if self.snapshot.is_none() {
-            let mut map = FxHashMap::default();
-            for (key, value) in self.state.iter() {
-                map.insert(key.clone(), value.value.clone().into());
-            }
-
-            self.snapshot = Some(Snapshot::new(LoroValue::Map(map)));
+    fn snapshot(&mut self) -> Snapshot {
+        let mut map = FxHashMap::default();
+        for (key, value) in self.state.iter() {
+            map.insert(key.clone(), value.value.clone().into());
         }
 
-        self.snapshot.as_ref().unwrap()
+        Snapshot::new(LoroValue::Map(map))
     }
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector, _log: &crate::LogStore) {

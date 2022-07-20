@@ -1,9 +1,14 @@
 #![cfg(test)]
 
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use fxhash::FxHashMap;
+use proptest::prelude::*;
+use proptest::proptest;
 
+use crate::value::proptest::gen_insert_value;
+use crate::InternalString;
 use crate::{
     configure::Configure,
     container::{Container, ContainerType},
@@ -23,7 +28,30 @@ fn basic() {
         "haha".into() => LoroValue::Integer(1)
     );
 
-    dbg!(container.snapshot().value());
-    dbg!(&ans);
     assert_eq!(*container.snapshot().value(), LoroValue::Map(ans));
+}
+
+mod map_proptest {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn insert(
+            key in prop::collection::vec("[a-z]", 0..100),
+            value in prop::collection::vec(gen_insert_value(), 0..100)
+        ) {
+            let mut loro = LoroCore::default();
+            let mut container = loro.get_map_container("map".into());
+            let mut map: HashMap<String, InsertValue> = HashMap::new();
+            for (k, v) in key.iter().zip(value.iter()) {
+                map.insert(k.clone(), v.clone());
+                container.insert(k.clone().into(), v.clone());
+                let snapshot = container.snapshot();
+                let snapshot = snapshot.value().to_map().unwrap();
+                for (key, value) in snapshot.iter() {
+                    assert_eq!(map.get(&key.to_string()).map(|x|x.clone().into()), Some(value.clone()));
+                }
+            }
+        }
+    }
 }

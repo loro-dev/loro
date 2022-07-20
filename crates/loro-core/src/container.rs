@@ -28,7 +28,7 @@ pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn container_type(&self) -> ContainerType;
     fn apply(&mut self, op: &OpProxy);
-    fn snapshot(&mut self) -> &Snapshot;
+    fn snapshot(&mut self) -> Snapshot;
     fn checkout_version(&mut self, vv: &VersionVector, log: &LogStore);
 }
 
