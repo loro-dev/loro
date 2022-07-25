@@ -14,8 +14,8 @@ use crate::{
     configure::Configure,
     container::{Container, ContainerID, ContainerManager},
     id::{ClientID, Counter},
-    id_span::IdSpan,
     op::OpProxy,
+    span::IdSpan,
     version::TotalOrderStamp,
     Lamport, Op, Timestamp, ID,
 };

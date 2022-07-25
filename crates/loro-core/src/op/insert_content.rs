@@ -32,6 +32,7 @@ pub trait InsertContent:
     HasLength + std::fmt::Debug + Any + MergeableContent + SliceableContent + CloneContent
 {
     fn id(&self) -> ContentType;
+    // TODO: provide an encoding method
 }
 
 impl<T: Sliceable + InsertContent> SliceableContent for T {
