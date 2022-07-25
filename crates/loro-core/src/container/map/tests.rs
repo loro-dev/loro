@@ -28,7 +28,7 @@ fn basic() {
         "haha".into() => LoroValue::Integer(1)
     );
 
-    assert_eq!(*container.snapshot().value(), LoroValue::Map(ans));
+    assert_eq!(*container.get_value(), LoroValue::Map(ans));
 }
 
 #[cfg(not(no_proptest))]
@@ -47,9 +47,8 @@ mod map_proptest {
             for (k, v) in key.iter().zip(value.iter()) {
                 map.insert(k.clone(), v.clone());
                 container.insert(k.clone().into(), v.clone());
-                let snapshot = container.snapshot();
-                let snapshot = snapshot.value().to_map().unwrap();
-                for (key, value) in snapshot.iter() {
+                let snapshot = container.get_value();
+                for (key, value) in snapshot.to_map().unwrap().iter() {
                     assert_eq!(map.get(&key.to_string()).map(|x|x.clone().into()), Some(value.clone()));
                 }
             }

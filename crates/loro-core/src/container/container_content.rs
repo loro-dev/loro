@@ -1,11 +1,12 @@
-use crate::{InsertContent, SmString, ID};
+use crate::{smstring::SmString, InsertContent, ID};
 use rle::{HasLength, Mergable, Sliceable};
+use serde::Serialize;
 use std::alloc::Layout;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Slot {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,

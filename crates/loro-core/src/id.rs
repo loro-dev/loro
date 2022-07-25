@@ -1,7 +1,9 @@
+use serde::Serialize;
+
 pub type ClientID = u64;
 pub type Counter = u32;
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy, PartialOrd, Ord, Serialize)]
 pub struct ID {
     pub client_id: u64,
     pub counter: u32,

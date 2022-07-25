@@ -14,6 +14,8 @@ fxhash = "0.2.1"
 ring = "0.16.20"
 moveit = "0.5.0"
 pin-project = "1.0.10"
+serde = {version = "1.0.140", features = ["derive"]}
+thiserror = "1.0.31"
 
 [dev-dependencies]
 proptest = "1.0.0"

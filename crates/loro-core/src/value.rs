@@ -1,9 +1,9 @@
 use fxhash::FxHashMap;
 
-use crate::{container::ContainerID, InternalString, SmString};
+use crate::{container::ContainerID, smstring::SmString, InternalString};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize)]
 pub enum LoroValue {
     Null,
     Bool(bool),

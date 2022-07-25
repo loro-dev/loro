@@ -5,10 +5,11 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::OpProxy, snapshot::Snapshot, version::VersionVector, InsertContent, InternalString,
-    LogStore, Op, SmString, ID,
+    op::OpProxy, version::VersionVector, InsertContent, InternalString, LogStore, LoroValue, Op,
+    SmString, ID,
 };
 use rle::{HasLength, Mergable, Sliceable};
+use serde::Serialize;
 use std::{
     alloc::Layout,
     any::{self, Any, TypeId},
@@ -26,10 +27,12 @@ pub use manager::*;
 
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
-    fn container_type(&self) -> ContainerType;
+    fn type_(&self) -> ContainerType;
     fn apply(&mut self, op: &OpProxy);
-    fn snapshot(&mut self) -> Snapshot;
-    fn checkout_version(&mut self, vv: &VersionVector, log: &LogStore);
+    fn checkout_version(&mut self, vv: &VersionVector);
+    fn get_value(&mut self) -> &LoroValue;
+    // TODO: need a custom serializer
+    // fn serialize(&self) -> Vec<u8>;
 }
 
 pub(crate) trait Cast<T> {
@@ -49,7 +52,7 @@ impl<T: Any> Cast<T> for dyn Container {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.
     Root {

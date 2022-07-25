@@ -1,6 +1,6 @@
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::{value::InsertValue, ContentType, InsertContent, InternalString};
+use crate::{id::ID, value::InsertValue, ContentType, InsertContent, InternalString};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapInsertContent {

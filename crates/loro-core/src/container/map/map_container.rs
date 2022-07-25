@@ -1,15 +1,16 @@
 use std::{pin::Pin, ptr::NonNull, rc::Weak};
 
 use fxhash::FxHashMap;
+use serde::Serialize;
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    id::ID,
+    id::{Counter, ID},
     op::{utils::downcast_ref, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
-    ClientID, InternalString, Lamport, LogStore, OpType, Snapshot,
+    ClientID, InternalString, Lamport, LogStore, OpType,
 };
 
 use super::MapInsertContent;
@@ -22,12 +23,14 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     log_store: NonNull<LogStore>,
+    value: Option<LoroValue>,
 }
 
 #[derive(Debug)]
 struct ValueSlot {
     value: InsertValue,
     order: TotalOrderStamp,
+    counter: Counter,
 }
 
 impl MapContainer {
@@ -37,6 +40,7 @@ impl MapContainer {
             id,
             state: FxHashMap::default(),
             log_store: store,
+            value: None,
         }
     }
 
@@ -53,8 +57,10 @@ impl MapContainer {
             lamport: store.next_lamport(),
         };
 
+        let id = store.next_id(client_id);
+        let counter = id.counter;
         store.append_local_ops(vec![Op {
-            id: store.next_id(client_id),
+            id,
             content: OpContent::Normal {
                 container: self_id,
                 content: Box::new(MapInsertContent {
@@ -64,7 +70,14 @@ impl MapContainer {
             },
         }]);
 
-        self.state.insert(key, ValueSlot { value, order });
+        self.state.insert(
+            key,
+            ValueSlot {
+                value,
+                order,
+                counter,
+            },
+        );
     }
 
     #[inline]
@@ -79,7 +92,7 @@ impl Container for MapContainer {
         &self.id
     }
 
-    fn container_type(&self) -> ContainerType {
+    fn type_(&self) -> ContainerType {
         ContainerType::Map
     }
 
@@ -104,6 +117,7 @@ impl Container for MapContainer {
                         ValueSlot {
                             value: v.value.clone(),
                             order,
+                            counter: op.id().counter,
                         },
                     );
                 }
@@ -112,16 +126,19 @@ impl Container for MapContainer {
         }
     }
 
-    fn snapshot(&mut self) -> Snapshot {
-        let mut map = FxHashMap::default();
-        for (key, value) in self.state.iter() {
-            map.insert(key.clone(), value.value.clone().into());
+    fn get_value(&mut self) -> &LoroValue {
+        if self.value.is_none() {
+            let mut map = FxHashMap::default();
+            for (key, value) in self.state.iter() {
+                map.insert(key.clone(), value.value.clone().into());
+            }
+            self.value = Some(LoroValue::Map(map));
         }
 
-        Snapshot::new(LoroValue::Map(map))
+        self.value.as_ref().unwrap()
     }
 
-    fn checkout_version(&mut self, _vv: &crate::version::VersionVector, _log: &crate::LogStore) {
+    fn checkout_version(&mut self, vv: &crate::version::VersionVector) {
         todo!()
     }
 }
