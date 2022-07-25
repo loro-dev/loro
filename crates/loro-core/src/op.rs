@@ -27,23 +27,28 @@ pub enum OpType {
 #[derive(Debug, Clone)]
 pub struct Op {
     pub(crate) id: ID,
+    pub(crate) container: ContainerID,
     pub(crate) content: OpContent,
 }
 
 impl Op {
     #[inline]
-    pub fn new(id: ID, content: OpContent) -> Self {
-        Op { id, content }
+    pub fn new(id: ID, content: OpContent, container: ContainerID) -> Self {
+        Op {
+            id,
+            content,
+            container,
+        }
     }
 
     #[inline]
     pub fn new_insert_op(id: ID, container: ContainerID, content: Box<dyn InsertContent>) -> Self {
-        Op::new(id, OpContent::Normal { container, content })
+        Op::new(id, OpContent::Normal { content }, container)
     }
 
     #[inline]
     pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<IdSpan>) -> Self {
-        Op::new(id, OpContent::Undo { container, target })
+        Op::new(id, OpContent::Undo { target }, container)
     }
 
     pub fn op_type(&self) -> OpType {
@@ -55,10 +60,7 @@ impl Op {
     }
 
     pub fn container(&self) -> &ContainerID {
-        match &self.content {
-            OpContent::Normal { container, .. } => container,
-            _ => unreachable!(),
-        }
+        &self.container
     }
 
     #[allow(clippy::borrowed_box)]
@@ -74,16 +76,15 @@ impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
         self.id.is_connected_id(&other.id, self.len() as u32)
             && self.content.is_mergable(&other.content, cfg)
+            && self.container == other.container
     }
 
     fn merge(&mut self, other: &Self, cfg: &()) {
         match &mut self.content {
-            OpContent::Normal { container, content } => match &other.content {
+            OpContent::Normal { content } => match &other.content {
                 OpContent::Normal {
-                    container: other_container,
                     content: other_content,
                 } => {
-                    assert_eq!(container, other_container);
                     content.merge_content(&**other_content);
                 }
                 _ => unreachable!(),
@@ -122,6 +123,7 @@ impl Sliceable for Op {
                 counter: (self.id.counter + from as u32),
             },
             content,
+            container: self.container.clone(),
         }
     }
 }

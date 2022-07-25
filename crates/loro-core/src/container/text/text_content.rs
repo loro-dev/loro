@@ -78,10 +78,6 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                container: ContainerID::Normal {
-                    id: ROOT_ID,
-                    container_type: ContainerType::Text,
-                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
@@ -89,20 +85,24 @@ mod test {
                     text: "a".to_owned(),
                 }),
             },
+            ContainerID::Normal {
+                id: ROOT_ID,
+                container_type: ContainerType::Text,
+            },
         ));
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                container: ContainerID::Normal {
-                    id: ROOT_ID,
-                    container_type: ContainerType::Text,
-                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
                     text: "b".to_owned(),
                 }),
+            },
+            ContainerID::Normal {
+                id: ROOT_ID,
+                container_type: ContainerType::Text,
             },
         ));
         assert_eq!(vec.merged_len(), 1);
@@ -119,10 +119,6 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                container: ContainerID::Normal {
-                    id: ROOT_ID,
-                    container_type: ContainerType::Text,
-                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
@@ -130,20 +126,24 @@ mod test {
                     text: "1234".to_owned(),
                 }),
             },
+            ContainerID::Normal {
+                id: ROOT_ID,
+                container_type: ContainerType::Text,
+            },
         ));
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                container: ContainerID::Normal {
-                    id: ROOT_ID,
-                    container_type: ContainerType::Text,
-                },
                 content: Box::new(TextContent {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
                     text: "5678".to_owned(),
                 }),
+            },
+            ContainerID::Normal {
+                id: ROOT_ID,
+                container_type: ContainerType::Text,
             },
         ));
         assert_eq!(vec.merged_len(), 2);

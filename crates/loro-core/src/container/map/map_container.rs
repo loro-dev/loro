@@ -61,8 +61,8 @@ impl MapContainer {
         let counter = id.counter;
         store.append_local_ops(vec![Op {
             id,
+            container: self_id,
             content: OpContent::Normal {
-                container: self_id,
                 content: Box::new(MapInsertContent {
                     key: key.clone(),
                     value: value.clone(),
@@ -97,9 +97,9 @@ impl Container for MapContainer {
     }
 
     fn apply(&mut self, op: &OpProxy) {
+        debug_assert_eq!(&op.op().container, self.id());
         match op.content() {
-            OpContent::Normal { container, content } => {
-                debug_assert!(*container == self.id);
+            OpContent::Normal { content } => {
                 let v: &MapInsertContent = downcast_ref(&**content).unwrap();
                 let order = TotalOrderStamp {
                     lamport: op.lamport(),

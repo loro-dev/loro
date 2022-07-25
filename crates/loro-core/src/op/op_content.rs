@@ -6,18 +6,9 @@ use super::{InsertContent, MergeableContent};
 
 #[derive(Debug)]
 pub enum OpContent {
-    Normal {
-        container: ContainerID,
-        content: Box<dyn InsertContent>,
-    },
-    Undo {
-        container: ContainerID,
-        target: RleVec<IdSpan>,
-    },
-    Redo {
-        container: ContainerID,
-        target: RleVec<IdSpan>,
-    },
+    Normal { content: Box<dyn InsertContent> },
+    Undo { target: RleVec<IdSpan> },
+    Redo { target: RleVec<IdSpan> },
 }
 
 impl OpContent {
@@ -43,16 +34,13 @@ impl HasLength for OpContent {
 impl Clone for OpContent {
     fn clone(&self) -> Self {
         match self {
-            OpContent::Normal { container, content } => OpContent::Normal {
-                container: container.clone(),
+            OpContent::Normal { content } => OpContent::Normal {
                 content: content.clone_content(),
             },
-            OpContent::Undo { target, container } => OpContent::Undo {
-                container: container.clone(),
+            OpContent::Undo { target } => OpContent::Undo {
                 target: target.clone(),
             },
-            OpContent::Redo { target, container } => OpContent::Redo {
-                container: container.clone(),
+            OpContent::Redo { target } => OpContent::Redo {
                 target: target.clone(),
             },
         }
@@ -62,16 +50,13 @@ impl Clone for OpContent {
 impl Sliceable for OpContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            OpContent::Normal { container, content } => OpContent::Normal {
-                container: container.clone(),
+            OpContent::Normal { content } => OpContent::Normal {
                 content: content.slice_content(from, to),
             },
-            OpContent::Undo { target, container } => OpContent::Undo {
-                container: container.clone(),
+            OpContent::Undo { target } => OpContent::Undo {
                 target: target.slice(from, to),
             },
-            OpContent::Redo { target, container } => OpContent::Redo {
-                container: container.clone(),
+            OpContent::Redo { target } => OpContent::Redo {
                 target: target.slice(from, to),
             },
         }
@@ -84,25 +69,22 @@ impl Mergable for OpContent {
         Self: Sized,
     {
         match &self {
-            OpContent::Normal { container, content } => match other {
+            OpContent::Normal { content } => match other {
                 OpContent::Normal {
-                    container: ref other_container,
                     content: ref other_content,
-                } => container == other_container && content.is_mergable_content(&**other_content),
+                } => content.is_mergable_content(&**other_content),
                 _ => false,
             },
-            OpContent::Undo { target, container } => match other {
+            OpContent::Undo { target } => match other {
                 OpContent::Undo {
                     target: ref other_target,
-                    container: other_container,
-                } => container == other_container && target.is_mergable(other_target, cfg),
+                } => target.is_mergable(other_target, cfg),
                 _ => false,
             },
-            OpContent::Redo { target, container } => match other {
+            OpContent::Redo { target } => match other {
                 OpContent::Redo {
                     target: ref other_target,
-                    container: ref other_container,
-                } => container == other_container && target.is_mergable(other_target, cfg),
+                } => target.is_mergable(other_target, cfg),
                 _ => false,
             },
         }
