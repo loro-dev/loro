@@ -1,4 +1,8 @@
-use crate::{container::ContainerID, id::ID, id_span::IdSpan};
+use crate::{
+    container::ContainerID,
+    id::ID,
+    span::{CounterSpan, IdSpan},
+};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
@@ -47,7 +51,7 @@ impl Op {
     }
 
     #[inline]
-    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<IdSpan>) -> Self {
+    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<CounterSpan>) -> Self {
         Op::new(id, OpContent::Undo { target }, container)
     }
 

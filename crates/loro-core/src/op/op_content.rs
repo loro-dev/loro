@@ -1,14 +1,19 @@
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 
-use crate::{container::ContainerID, id::ID, id_span::IdSpan, OpType};
+use crate::{
+    container::ContainerID,
+    id::ID,
+    span::{CounterSpan, IdSpan},
+    OpType,
+};
 
 use super::{InsertContent, MergeableContent};
 
 #[derive(Debug)]
 pub enum OpContent {
     Normal { content: Box<dyn InsertContent> },
-    Undo { target: RleVec<IdSpan> },
-    Redo { target: RleVec<IdSpan> },
+    Undo { target: RleVec<CounterSpan> },
+    Redo { target: RleVec<CounterSpan> },
 }
 
 impl OpContent {

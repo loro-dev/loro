@@ -6,16 +6,17 @@
 pub mod change;
 pub mod configure;
 pub mod container;
+pub mod dag;
 pub mod id;
 pub mod op;
 pub mod version;
 
 mod error;
-mod id_span;
 mod log_store;
 mod loro;
 mod smstring;
 mod snapshot;
+mod span;
 mod tests;
 mod value;
 

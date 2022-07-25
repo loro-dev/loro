@@ -1,16 +1,20 @@
-use crate::id::{ClientID, ID};
+use crate::id::{ClientID, Counter, ID};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct IdSpan {
-    pub client_id: ClientID,
-    pub from: usize,
-    pub to: usize,
+pub struct CounterSpan {
+    pub from: Counter,
+    pub to: Counter,
 }
 
-impl IdSpan {
+impl CounterSpan {
     #[inline]
-    pub fn min(&self) -> usize {
+    pub fn new(from: Counter, to: Counter) -> Self {
+        CounterSpan { from, to }
+    }
+
+    #[inline]
+    pub fn min(&self) -> Counter {
         if self.from < self.to {
             self.from
         } else {
@@ -19,7 +23,7 @@ impl IdSpan {
     }
 
     #[inline]
-    pub fn max(&self) -> usize {
+    pub fn max(&self) -> Counter {
         if self.from > self.to {
             self.from
         } else {
@@ -28,44 +32,90 @@ impl IdSpan {
     }
 }
 
-impl HasLength for IdSpan {
+impl HasLength for CounterSpan {
+    #[inline]
     fn len(&self) -> usize {
         if self.to > self.from {
-            self.to - self.from
+            (self.to - self.from) as usize
         } else {
-            self.from - self.to
+            (self.from - self.to) as usize
         }
     }
 }
 
-impl Sliceable for IdSpan {
+impl Sliceable for CounterSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(from <= to);
         let len = to - from;
         assert!(len <= self.len());
         if self.from < self.to {
-            IdSpan {
-                client_id: self.client_id,
-                from: self.from + from,
-                to: self.from + to,
+            CounterSpan {
+                from: self.from + from as Counter,
+                to: self.from + to as Counter,
             }
         } else {
-            IdSpan {
-                client_id: self.client_id,
-                from: self.from - from,
-                to: self.from - to,
+            CounterSpan {
+                from: self.from - from as Counter,
+                to: self.from - to as Counter,
             }
+        }
+    }
+}
+
+impl Mergable for CounterSpan {
+    #[inline]
+    fn is_mergable(&self, other: &Self, _: &()) -> bool {
+        self.to == other.from
+    }
+
+    #[inline]
+    fn merge(&mut self, other: &Self, _: &()) {
+        self.to = other.to;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IdSpan {
+    pub client_id: ClientID,
+    pub counter: CounterSpan,
+}
+
+impl IdSpan {
+    #[inline]
+    pub fn min(&self) -> Counter {
+        self.counter.min()
+    }
+
+    #[inline]
+    pub fn max(&self) -> Counter {
+        self.counter.max()
+    }
+}
+
+impl HasLength for IdSpan {
+    #[inline]
+    fn len(&self) -> usize {
+        self.counter.len()
+    }
+}
+
+impl Sliceable for IdSpan {
+    #[inline]
+    fn slice(&self, from: usize, to: usize) -> Self {
+        IdSpan {
+            client_id: self.client_id,
+            counter: self.counter.slice(from, to),
         }
     }
 }
 
 impl Mergable for IdSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        self.client_id == other.client_id && self.to == other.from
+        self.client_id == other.client_id && self.counter.is_mergable(&other.counter, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
-        self.to = other.to;
+        self.counter.merge(&other.counter, &())
     }
 }
 
@@ -82,8 +132,7 @@ mod test_id_span {
                 $(
                     id_spans.push(IdSpan {
                         client_id: $client_id,
-                        from: $from,
-                        to: $to,
+                        counter: CounterSpan::new($from, $to),
                     });
                 )*
                 id_spans
@@ -96,22 +145,19 @@ mod test_id_span {
         let mut id_span_vec = RleVec::new();
         id_span_vec.push(IdSpan {
             client_id: 0,
-            from: 0,
-            to: 2,
+            counter: CounterSpan::new(0, 2),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
         assert_eq!(id_span_vec.len(), 2);
         id_span_vec.push(IdSpan {
             client_id: 0,
-            from: 2,
-            to: 4,
+            counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
         assert_eq!(id_span_vec.len(), 4);
         id_span_vec.push(IdSpan {
             client_id: 2,
-            from: 2,
-            to: 4,
+            counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 2);
         assert_eq!(id_span_vec.len(), 6);
