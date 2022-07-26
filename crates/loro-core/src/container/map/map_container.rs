@@ -70,6 +70,15 @@ impl MapContainer {
             },
         }]);
 
+        if self.value.is_some() {
+            self.value
+                .as_mut()
+                .unwrap()
+                .as_map_mut()
+                .unwrap()
+                .insert(key.clone(), value.clone().into());
+        }
+
         self.state.insert(
             key,
             ValueSlot {
@@ -120,6 +129,15 @@ impl Container for MapContainer {
                             counter: op.id().counter,
                         },
                     );
+
+                    if self.value.is_some() {
+                        self.value
+                            .as_mut()
+                            .unwrap()
+                            .as_map_mut()
+                            .unwrap()
+                            .insert(v.key.clone(), v.value.clone().into());
+                    }
                 }
             }
             _ => unreachable!(),

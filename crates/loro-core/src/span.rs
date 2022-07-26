@@ -1,6 +1,8 @@
 use crate::id::{ClientID, Counter, ID};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
+/// [from, to)
+/// this is different from [std::ops::Range] because `from` may be greater than `to`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CounterSpan {
     pub from: Counter,
@@ -18,7 +20,7 @@ impl CounterSpan {
         if self.from < self.to {
             self.from
         } else {
-            self.to
+            self.to + 1
         }
     }
 
@@ -27,8 +29,26 @@ impl CounterSpan {
         if self.from > self.to {
             self.from
         } else {
-            self.to
+            self.to - 1
         }
+    }
+
+    #[inline]
+    pub fn intersect(&self, other: &Self) -> Option<Self> {
+        let min = self.min().max(other.min());
+        let max = self.max().min(other.max());
+        if min <= max {
+            Some(CounterSpan::new(min, max))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn does_intersect(&self, other: &Self) -> bool {
+        let min = self.min().max(other.min());
+        let max = self.max().min(other.max());
+        min <= max
     }
 }
 
@@ -89,6 +109,33 @@ impl IdSpan {
     #[inline]
     pub fn max(&self) -> Counter {
         self.counter.max()
+    }
+
+    #[inline]
+    pub fn does_intersect(&self, other: &Self) -> bool {
+        self.client_id == other.client_id && self.counter.does_intersect(&other.counter)
+    }
+
+    #[inline]
+    pub fn intersect(&self, other: &Self) -> Option<Self> {
+        if self.client_id != other.client_id {
+            None
+        } else {
+            Some(IdSpan {
+                client_id: self.client_id,
+                counter: self.counter.intersect(&other.counter)?,
+            })
+        }
+    }
+
+    #[inline]
+    pub fn start(&self) -> ID {
+        ID::new(self.client_id, self.counter.min())
+    }
+
+    #[inline]
+    pub fn end(&self) -> ID {
+        ID::new(self.client_id, self.counter.max())
     }
 }
 

@@ -1,4 +1,7 @@
-use std::ops::Range;
+use num::{cast, Integer, NumCast};
+use std::ops::{Range, Sub};
+
+use crate::{HasLength, Mergable, Rle, Slice, Sliceable};
 
 /// RleVec<T> is a vector that can be compressed using run-length encoding.
 ///
@@ -18,40 +21,6 @@ pub struct RleVec<T, Cfg = ()> {
     _len: usize,
     index: Vec<usize>,
     cfg: Cfg,
-}
-
-pub trait Mergable<Cfg = ()> {
-    fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool
-    where
-        Self: Sized,
-    {
-        false
-    }
-
-    fn merge(&mut self, _other: &Self, _conf: &Cfg)
-    where
-        Self: Sized,
-    {
-        unreachable!()
-    }
-}
-
-pub trait Sliceable {
-    fn slice(&self, from: usize, to: usize) -> Self;
-}
-
-impl<T: Sliceable> Slice<'_, T> {
-    pub fn into_inner(&self) -> T {
-        self.value.slice(self.start, self.end)
-    }
-}
-
-pub trait HasLength {
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    fn len(&self) -> usize;
 }
 
 pub struct SearchResult<'a, T> {
@@ -253,13 +222,6 @@ pub struct SliceIterator<'a, T> {
     end_offset: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Slice<'a, T> {
-    pub value: &'a T,
-    pub start: usize,
-    pub end: usize,
-}
-
 impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
     type Item = Slice<'a, T>;
 
@@ -313,6 +275,31 @@ impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVec<T> {
 impl<T> HasLength for RleVec<T> {
     fn len(&self) -> usize {
         self._len
+    }
+}
+
+impl<T: Integer + NumCast + Copy> Sliceable for Range<T> {
+    fn slice(&self, start: usize, end: usize) -> Self {
+        self.start + cast(start).unwrap()..self.start + cast(end).unwrap()
+    }
+}
+
+impl<T: PartialOrd<T> + Copy> Mergable for Range<T> {
+    fn is_mergable(&self, other: &Self, _: &()) -> bool {
+        other.start <= self.end && other.start >= self.start
+    }
+
+    fn merge(&mut self, other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        self.end = other.end;
+    }
+}
+
+impl<T: num::Integer + NumCast + Copy> HasLength for Range<T> {
+    fn len(&self) -> usize {
+        cast(self.end - self.start).unwrap()
     }
 }
 
