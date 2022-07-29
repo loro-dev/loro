@@ -18,15 +18,27 @@ pub trait DagNode {
     fn len(&self) -> usize;
     fn deps(&self) -> &Vec<ID>;
 
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    #[inline]
     fn dag_id_span(&self) -> IdSpan {
         let id = self.dag_id_start();
         IdSpan {
             client_id: id.client_id,
             counter: CounterSpan::new(id.counter, id.counter + self.len() as Counter),
+        }
+    }
+
+    /// inclusive end
+    #[inline]
+    fn dag_id_end(&self) -> ID {
+        let id = self.dag_id_start();
+        ID {
+            client_id: id.client_id,
+            counter: id.counter + self.len() as Counter - 1,
         }
     }
 }
@@ -39,83 +51,98 @@ pub(crate) trait Dag {
     fn frontier(&self) -> &[ID];
     fn roots(&self) -> Vec<&Self::Node>;
 
-    fn get_common_ancestor(&self, a: ID, b: ID) -> Option<ID> {
-        if a.client_id == b.client_id {
-            if a.counter <= b.counter {
-                Some(a)
+    //
+    // TODO: Maybe use Result return type
+    // TODO: benchmark
+    // TODO: visited
+    // how to test better?
+    // - converge through other nodes
+    //
+    /// only returns a single root.
+    /// but the least common ancestor may be more than one root.
+    /// But that is a rare case.
+    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> Option<ID> {
+        if a_id.client_id == b_id.client_id {
+            if a_id.counter <= b_id.counter {
+                Some(a_id)
             } else {
-                Some(b)
+                Some(b_id)
             }
         } else {
             #[derive(Debug, PartialEq, Eq)]
-            struct OrdId {
+            struct OrdId<'a> {
                 id: ID,
                 lamport: Lamport,
+                deps: &'a [ID],
             }
 
-            impl PartialOrd for OrdId {
+            impl<'a> PartialOrd for OrdId<'a> {
                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                     Some(self.lamport.cmp(&other.lamport))
                 }
             }
 
-            impl Ord for OrdId {
+            impl<'a> Ord for OrdId<'a> {
                 fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                     self.lamport.cmp(&other.lamport)
                 }
             }
 
-            let mut a_map: HashMap<ClientID, Range<Counter>, _> = FxHashMap::default();
-            let mut b_map: HashMap<ClientID, Range<Counter>, _> = FxHashMap::default();
-            let mut a_heap: BinaryHeap<OrdId> = BinaryHeap::new();
-            let mut b_heap: BinaryHeap<OrdId> = BinaryHeap::new();
+            let mut _a_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
+            let mut _b_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
+            let mut _a_heap: BinaryHeap<OrdId> = BinaryHeap::new();
+            let mut _b_heap: BinaryHeap<OrdId> = BinaryHeap::new();
             {
-                let a = self.get(a).unwrap();
-                let b = self.get(b).unwrap();
-                a_heap.push(OrdId {
-                    id: a.dag_id_start(),
-                    lamport: a.lamport_start() + a.len() as Lamport,
+                let a = self.get(a_id).unwrap();
+                let b = self.get(b_id).unwrap();
+                _a_heap.push(OrdId {
+                    id: a_id,
+                    lamport: a_id.counter + a.lamport_start() - a.dag_id_start().counter,
+                    deps: a.deps(),
                 });
-                b_heap.push(OrdId {
-                    id: b.dag_id_start(),
-                    lamport: b.lamport_start() + b.len() as Lamport,
+                _b_heap.push(OrdId {
+                    id: b_id,
+                    lamport: b_id.counter + b.lamport_start() - b.dag_id_start().counter,
+                    deps: b.deps(),
                 });
+                _a_vv.insert(a_id.client_id, a_id.counter + 1);
+                _b_vv.insert(b_id.client_id, b_id.counter + 1);
             }
 
-            while !a_heap.is_empty() || !b_heap.is_empty() {
-                let (a_heap, b_heap, a_map, b_map) =
-                    if a_heap.peek().map(|x| x.lamport).unwrap_or(0)
-                        < b_heap.peek().map(|x| x.lamport).unwrap_or(0)
-                    {
-                        // swap
-                        (&mut b_heap, &mut a_heap, &mut b_map, &mut a_map)
-                    } else {
-                        (&mut a_heap, &mut b_heap, &mut a_map, &mut b_map)
-                    };
+            while !_a_heap.is_empty() || !_b_heap.is_empty() {
+                let (a_heap, b_heap, a_vv, b_vv) = if _a_heap.is_empty()
+                    || (_a_heap.peek().map(|x| x.lamport).unwrap_or(0)
+                        < _b_heap.peek().map(|x| x.lamport).unwrap_or(0))
+                {
+                    // swap
+                    (&mut _b_heap, &mut _a_heap, &mut _b_vv, &mut _a_vv)
+                } else {
+                    (&mut _a_heap, &mut _b_heap, &mut _a_vv, &mut _b_vv)
+                };
 
                 while !a_heap.is_empty()
                     && a_heap.peek().map(|x| x.lamport).unwrap_or(0)
                         >= b_heap.peek().map(|x| x.lamport).unwrap_or(0)
                 {
-                    let id = a_heap.pop().unwrap().id;
-                    if let Some(range) = b_map.get(&id.client_id) {
-                        if range.contains(&id.counter) {
+                    let a = a_heap.pop().unwrap();
+                    let id = a.id;
+                    if let Some(counter_end) = b_vv.get(&id.client_id) {
+                        if id.counter < *counter_end {
                             return Some(id);
                         }
                     }
 
-                    let a = self.get(id).unwrap();
-                    for dep in a.deps() {
+                    for dep_id in a.deps {
+                        let dep = self.get(*dep_id).unwrap();
                         a_heap.push(OrdId {
-                            id: *dep,
-                            lamport: a.lamport_start() + a.len() as Lamport,
+                            id: *dep_id,
+                            lamport: dep_id.counter + dep.lamport_start()
+                                - dep.dag_id_start().counter,
+                            deps: dep.deps(),
                         });
-                    }
-                    if let Some(range) = a_map.get_mut(&id.client_id) {
-                        range.start = a.dag_id_start().counter;
-                    } else {
-                        let span = a.dag_id_span();
-                        a_map.insert(id.client_id, span.counter.from..span.counter.to);
+
+                        a_vv.entry(dep_id.client_id)
+                            .or_insert_with(|| dep_id.counter + 1);
                     }
                 }
             }
