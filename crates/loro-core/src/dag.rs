@@ -41,6 +41,11 @@ pub trait DagNode {
             counter: id.counter + self.len() as Counter - 1,
         }
     }
+
+    #[inline]
+    fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
+        self.lamport_start() + c - self.dag_id_start().counter
+    }
 }
 
 pub(crate) trait Dag {
@@ -97,12 +102,12 @@ pub(crate) trait Dag {
                 let b = self.get(b_id).unwrap();
                 _a_heap.push(OrdId {
                     id: a_id,
-                    lamport: a_id.counter + a.lamport_start() - a.dag_id_start().counter,
+                    lamport: a.get_lamport_from_counter(a_id.counter),
                     deps: a.deps(),
                 });
                 _b_heap.push(OrdId {
                     id: b_id,
-                    lamport: b_id.counter + b.lamport_start() - b.dag_id_start().counter,
+                    lamport: b.get_lamport_from_counter(b_id.counter),
                     deps: b.deps(),
                 });
                 _a_vv.insert(a_id.client_id, a_id.counter + 1);
@@ -110,14 +115,14 @@ pub(crate) trait Dag {
             }
 
             while !_a_heap.is_empty() || !_b_heap.is_empty() {
-                let (a_heap, b_heap, a_vv, b_vv) = if _a_heap.is_empty()
+                let (a_heap, b_heap, a_vv, b_vv, _swapped) = if _a_heap.is_empty()
                     || (_a_heap.peek().map(|x| x.lamport).unwrap_or(0)
                         < _b_heap.peek().map(|x| x.lamport).unwrap_or(0))
                 {
                     // swap
-                    (&mut _b_heap, &mut _a_heap, &mut _b_vv, &mut _a_vv)
+                    (&mut _b_heap, &mut _a_heap, &mut _b_vv, &mut _a_vv, true)
                 } else {
-                    (&mut _a_heap, &mut _b_heap, &mut _a_vv, &mut _b_vv)
+                    (&mut _a_heap, &mut _b_heap, &mut _a_vv, &mut _b_vv, false)
                 };
 
                 while !a_heap.is_empty()
@@ -132,17 +137,35 @@ pub(crate) trait Dag {
                         }
                     }
 
+                    // if swapped {
+                    //     println!("A");
+                    // } else {
+                    //     println!("B");
+                    // }
+                    // dbg!(&a);
+
+                    #[cfg(debug_assertions)]
+                    {
+                        if let Some(v) = a_vv.get(&a.id.client_id) {
+                            assert!(*v > a.id.counter)
+                        }
+                    }
+
                     for dep_id in a.deps {
                         let dep = self.get(*dep_id).unwrap();
                         a_heap.push(OrdId {
                             id: *dep_id,
-                            lamport: dep_id.counter + dep.lamport_start()
-                                - dep.dag_id_start().counter,
+                            lamport: dep.get_lamport_from_counter(dep_id.counter),
                             deps: dep.deps(),
                         });
 
-                        a_vv.entry(dep_id.client_id)
-                            .or_insert_with(|| dep_id.counter + 1);
+                        if let Some(v) = a_vv.get_mut(&dep_id.client_id) {
+                            if *v < dep_id.counter + 1 {
+                                *v = dep_id.counter + 1;
+                            }
+                        } else {
+                            a_vv.insert(dep_id.client_id, dep_id.counter + 1);
+                        }
                     }
                 }
             }
@@ -154,9 +177,21 @@ pub(crate) trait Dag {
 
 fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
     frontier.retain(|x| {
+        if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
+            return false;
+        }
+
         !new_node_deps
             .iter()
             .any(|y| y.client_id == x.client_id && y.counter >= x.counter)
     });
-    frontier.push(new_node_id);
+
+    // nodes from the same client with `counter < new_node_id.counter`
+    // are filtered out from frontier.
+    if frontier
+        .iter()
+        .all(|x| x.client_id != new_node_id.client_id)
+    {
+        frontier.push(new_node_id);
+    }
 }

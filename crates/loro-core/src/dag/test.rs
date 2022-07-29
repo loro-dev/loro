@@ -316,11 +316,11 @@ mod find_common_ancestors_proptest {
         }
 
         #[test]
-        fn test_3dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(3), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(3), 0..300)
+        fn test_4dags(
+            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300),
+            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300)
         ) {
-            test(3, before_merged_insertions, after_merged_insertions)?;
+            test(4, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
