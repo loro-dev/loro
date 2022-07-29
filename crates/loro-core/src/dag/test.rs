@@ -145,7 +145,11 @@ impl TestDag {
             pending.push((client_id, i));
             return true;
         }
-        update_frontier(&mut self.frontier, node.id, &node.deps);
+        update_frontier(
+            &mut self.frontier,
+            node.id.inc((node.len() - 1) as u32),
+            &node.deps,
+        );
         self.nodes
             .entry(client_id)
             .or_insert(vec![])
@@ -191,28 +195,109 @@ fn test_dag() {
     assert_eq!(b.next_lamport, 3);
     assert_eq!(b.frontier().len(), 2);
     assert_eq!(
-        b.get_common_ancestor(ID::new(0, 2), ID::new(1, 1)),
+        b.find_common_ancestor(ID::new(0, 2), ID::new(1, 1)),
         Some(ID::new(1, 0))
     );
 }
 
-#[cfg(not(no_proptest))]
+#[derive(Debug, Clone, Copy)]
+struct Interaction {
+    dag_idx: usize,
+    merge_with: Option<usize>,
+    len: usize,
+}
+
 mod find_common_ancestors {
+    use super::*;
+
+    #[test]
+    fn no_common_ancestors() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(1);
+        b.push(1);
+        a.merge(&b);
+        let actual = a.find_common_ancestor(ID::new(0, 0), ID::new(1, 0));
+        assert_eq!(actual, None);
+
+        // interactions between b and c
+        let mut c = TestDag::new(2);
+        c.merge(&b);
+        c.push(2);
+        b.merge(&c);
+        b.push(3);
+
+        // should no exist any common ancestor between a and b
+        let actual = a.find_common_ancestor(ID::new(0, 0), ID::new(1, 0));
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn dep_in_middle() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(4);
+        b.push(4);
+        b.push(5);
+        b.merge(&a);
+        b.frontier.retain(|x| x.client_id == 1);
+        let k = b.nodes.get_mut(&1).unwrap();
+        k[1].deps.push(ID::new(0, 2));
+        assert_eq!(
+            b.find_common_ancestor(ID::new(0, 3), ID::new(1, 8)),
+            Some(ID::new(0, 2))
+        );
+    }
+
+    /// ![](https://i.ibb.co/C5xLG53/image.png)
+    #[test]
+    fn large_lamport_with_longer_path() {
+        let mut a0 = TestDag::new(0);
+        let mut a1 = TestDag::new(1);
+        let mut a2 = TestDag::new(2);
+
+        a0.push(3);
+        a1.push(3);
+        a2.push(2);
+        a2.merge(&a0);
+        a2.push(1);
+        a1.merge(&a2);
+        a2.push(1);
+        a1.push(1);
+        a1.merge(&a2);
+        a1.push(1);
+        a1.nodes
+            .get_mut(&1)
+            .unwrap()
+            .last_mut()
+            .unwrap()
+            .deps
+            .push(ID::new(0, 1));
+        a0.push(1);
+        a1.merge(&a2);
+        a1.merge(&a0);
+        assert_eq!(
+            a1.find_common_ancestor(ID::new(0, 3), ID::new(1, 4)),
+            Some(ID::new(0, 2))
+        );
+    }
+}
+
+#[cfg(not(no_proptest))]
+mod find_common_ancestors_proptest {
     use proptest::prelude::*;
 
     use crate::{array_mut_ref, unsafe_array_mut_ref};
 
     use super::*;
 
-    #[derive(Debug, Clone, Copy)]
-    struct Interaction {
-        dag_idx: usize,
-        merge_with: Option<usize>,
-        len: usize,
-    }
-
     prop_compose! {
-        fn gen_interaction(num: usize)(dag_idx in 0..num, merge_with in 0..num, length in 1..10, should_merge in 0..2) -> Interaction {
+        fn gen_interaction(num: usize) (
+                dag_idx in 0..num,
+                merge_with in 0..num,
+                length in 1..10,
+                should_merge in 0..2
+            ) -> Interaction {
             Interaction {
                 dag_idx,
                 merge_with: if should_merge == 1 && merge_with != dag_idx { Some(merge_with) } else { None },
@@ -239,27 +324,11 @@ mod find_common_ancestors {
         }
 
         #[test]
-        fn test_4dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300)
-        ) {
-            test(4, before_merged_insertions, after_merged_insertions)?;
-        }
-
-        #[test]
         fn test_10dags(
             before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300),
             after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300)
         ) {
             test(10, before_merged_insertions, after_merged_insertions)?;
-        }
-
-        #[test]
-        fn test_100dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(100), 0..2000),
-            after_merged_insertions in prop::collection::vec(gen_interaction(100), 0..2000)
-        ) {
-            test(100, before_merged_insertions, after_merged_insertions)?;
         }
     }
 
@@ -317,10 +386,9 @@ mod find_common_ancestors {
         dag1.push(1);
         dag0.merge(dag1);
         // dbg!(dag0, dag1, expected);
-        let actual = dags[0].get_common_ancestor(
-            dags[0].nodes.get(&0).unwrap().last().unwrap().id,
-            dags[1].nodes.get(&1).unwrap().last().unwrap().id,
-        );
+        let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id;
+        let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id;
+        let actual = dags[0].find_common_ancestor(a, b);
         prop_assert_eq!(actual.unwrap(), expected);
         Ok(())
     }
