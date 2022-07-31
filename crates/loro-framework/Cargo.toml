@@ -11,3 +11,6 @@ loro-core = {path = "../loro-core"}
 ring = "0.16.20"
 rle = {path = "../rle"}
 sha2 = "0.10.2"
+
+[lib]
+doctest = false

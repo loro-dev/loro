@@ -20,3 +20,7 @@ thiserror = "1.0.31"
 [dev-dependencies]
 proptest = "1.0.0"
 proptest-derive = "0.3.0"
+
+# See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
+[lib]
+doctest = false

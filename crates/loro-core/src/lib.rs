@@ -17,6 +17,7 @@ mod loro;
 mod smstring;
 mod snapshot;
 mod span;
+#[cfg(test)]
 mod tests;
 mod value;
 
