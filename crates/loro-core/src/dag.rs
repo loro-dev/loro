@@ -4,6 +4,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
+#[cfg(test)]
 mod test;
 
 use crate::{
