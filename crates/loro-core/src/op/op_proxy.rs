@@ -2,14 +2,16 @@ use std::ops::Range;
 
 use rle::{HasLength, Sliceable};
 
-use crate::{container::ContainerID, Change, Lamport, Op, OpContent, OpType, Timestamp, ID};
+use crate::{
+    container::ContainerID, id::Counter, Change, Lamport, Op, OpContent, OpType, Timestamp, ID,
+};
 
 /// OpProxy represents a slice of an Op
 pub struct OpProxy<'a> {
     change: &'a Change,
     op: &'a Op,
     /// slice range of the op, op[slice_range]
-    slice_range: Range<u32>,
+    slice_range: Range<Counter>,
 }
 
 impl PartialEq for OpProxy<'_> {
@@ -43,20 +45,21 @@ impl Ord for OpProxy<'_> {
 }
 
 impl<'a> OpProxy<'a> {
-    pub fn new(change: &'a Change, op: &'a Op, range: Option<Range<u32>>) -> Self {
+    pub fn new(change: &'a Change, op: &'a Op, range: Option<Range<Counter>>) -> Self {
         OpProxy {
             change,
             op,
             slice_range: if let Some(range) = range {
                 range
             } else {
-                0..op.len() as u32
+                0..op.len() as Counter
             },
         }
     }
 
     pub fn lamport(&self) -> Lamport {
-        self.change.lamport + self.op.id.counter - self.change.id.counter + self.slice_range.start
+        self.change.lamport + self.op.id.counter as Lamport - self.change.id.counter as Lamport
+            + self.slice_range.start as Lamport
     }
 
     pub fn id(&self) -> ID {
@@ -74,7 +77,7 @@ impl<'a> OpProxy<'a> {
         self.op
     }
 
-    pub fn slice_range(&self) -> &Range<u32> {
+    pub fn slice_range(&self) -> &Range<Counter> {
         &self.slice_range
     }
 

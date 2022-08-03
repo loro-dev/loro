@@ -1,7 +1,7 @@
 //! # Loro
 //!
 //!
-#![allow(dead_code, unused_imports, clippy::explicit_auto_deref)]
+#![allow(dead_code, unused_imports)]
 
 pub mod change;
 pub mod configure;
