@@ -8,6 +8,7 @@ use fxhash::FxHashMap;
 use crate::{
     change::Lamport,
     id::{Counter, ID},
+    span::IdSpan,
     ClientID,
 };
 
@@ -55,6 +56,21 @@ impl VersionVector {
             self.0.insert(id.client_id, id.counter + 1);
             true
         }
+    }
+
+    pub fn get_missing_span(&self, target: &Self) -> Vec<IdSpan> {
+        let mut ans = vec![];
+        for (client_id, other_end) in target.iter() {
+            if let Some(my_end) = self.get(client_id) {
+                if my_end < other_end {
+                    ans.push(IdSpan::new(*client_id, *my_end, *other_end));
+                }
+            } else {
+                ans.push(IdSpan::new(*client_id, 0, *other_end));
+            }
+        }
+
+        ans
     }
 }
 
