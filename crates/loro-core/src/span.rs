@@ -1,12 +1,20 @@
+use std::fmt::Pointer;
+
 use crate::id::{ClientID, Counter, ID};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 /// [from, to)
 /// this is different from [std::ops::Range] because `from` may be greater than `to`
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CounterSpan {
     pub from: Counter,
     pub to: Counter,
+}
+
+impl std::fmt::Debug for CounterSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{}..{}", self.from, self.to).as_str())
+    }
 }
 
 impl CounterSpan {
@@ -116,6 +124,7 @@ impl Mergable for CounterSpan {
     }
 }
 
+/// Span is always a left-closed right-open interval [from, to)
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct IdSpan {
     pub client_id: ClientID,
@@ -136,8 +145,11 @@ impl std::fmt::Debug for IdSpan {
 
 impl IdSpan {
     #[inline]
-    pub fn new(client_id: ClientID, counter: CounterSpan) -> Self {
-        IdSpan { client_id, counter }
+    pub fn new(client_id: ClientID, from: Counter, to: Counter) -> Self {
+        IdSpan {
+            client_id,
+            counter: CounterSpan::new(from, to),
+        }
     }
 
     #[inline]
