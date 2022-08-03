@@ -11,6 +11,7 @@ use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, IdSpan},
+    version::VersionVector,
 };
 
 pub trait DagNode {
@@ -92,11 +93,16 @@ pub(crate) trait Dag {
         )
     }
 
+    /// TODO: we probably need cache to speedup this
+    #[inline]
+    fn get_vv(&self, id: ID) -> VersionVector {
+        get_version_vector(&|id| self.get(id).map(|x| x as &dyn DagNode), id)
+    }
+
     #[inline]
     fn find_path(&self, from: ID, to: ID) -> Option<Path> {
         let mut ans: Option<Path> = None;
 
-        #[inline]
         fn get_rev_path(target: ID, from: ID, to_from_map: &FxHashMap<ID, ID>) -> Vec<IdSpan> {
             let mut last_visited: Option<ID> = None;
             let mut a_rev_path = vec![];
@@ -156,6 +162,43 @@ pub(crate) trait Dag {
 
         ans
     }
+}
+
+fn get_version_vector<'a, Get>(get: &'a Get, id: ID) -> VersionVector
+where
+    Get: Fn(ID) -> Option<&'a dyn DagNode>,
+{
+    let mut vv = VersionVector::new();
+    let mut visited: FxHashSet<ID> = FxHashSet::default();
+    vv.insert(id.client_id, id.counter + 1);
+    let node = get(id).unwrap();
+
+    if node.deps().is_empty() {
+        return vv;
+    }
+
+    let mut stack = Vec::new();
+    for dep in node.deps() {
+        stack.push(dep);
+    }
+
+    while !stack.is_empty() {
+        let node_id = *stack.pop().unwrap();
+        let node = get(node_id).unwrap();
+        let node_id_start = node.dag_id_start();
+        if !visited.contains(&node_id_start) {
+            vv.try_update_end(node_id);
+            for dep in node.deps() {
+                if !visited.contains(dep) {
+                    stack.push(dep);
+                }
+            }
+
+            visited.insert(node_id_start);
+        }
+    }
+
+    vv
 }
 
 fn find_common_ancestor<'a, F, G>(get: &'a F, a_id: ID, b_id: ID, mut on_found: G) -> Option<ID>

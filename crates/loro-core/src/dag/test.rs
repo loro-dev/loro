@@ -216,6 +216,35 @@ struct Interaction {
     len: usize,
 }
 
+mod get_version_vector {
+    use super::*;
+
+    #[test]
+    fn vv() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(1);
+        b.push(1);
+        a.merge(&b);
+        a.push(1);
+        let actual = a.get_vv(ID::new(0, 0));
+        assert_eq!(actual, vec![ID::new(0, 0)].into());
+        let actual = a.get_vv(ID::new(0, 1));
+        assert_eq!(actual, vec![ID::new(0, 1), ID::new(1, 0)].into());
+
+        let mut c = TestDag::new(2);
+        c.merge(&a);
+        b.push(1);
+        c.merge(&b);
+        c.push(1);
+        let actual = c.get_vv(ID::new(2, 0));
+        assert_eq!(
+            actual,
+            vec![ID::new(0, 1), ID::new(1, 1), ID::new(2, 0)].into()
+        );
+    }
+}
+
 mod find_path {
     use super::*;
 
