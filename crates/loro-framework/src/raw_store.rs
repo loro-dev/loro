@@ -1,5 +1,8 @@
 use fxhash::FxHashMap;
-use loro_core::{id::ClientID, version::VersionVector};
+use loro_core::{
+    id::{ClientID, Counter},
+    version::VersionVector,
+};
 use rle::RleVec;
 
 use crate::raw_change::{ChangeData, ChangeHash};
@@ -72,9 +75,9 @@ impl RawStore {
     }
 
     pub fn version_vector(&self) -> VersionVector {
-        let mut version_vector = FxHashMap::default();
+        let mut version_vector = VersionVector::new();
         for (client_id, changes) in &self.changes {
-            version_vector.insert(*client_id, changes.len() as u32);
+            version_vector.insert(*client_id, changes.len() as Counter);
         }
 
         version_vector
