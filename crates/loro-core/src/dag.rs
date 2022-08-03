@@ -1,9 +1,9 @@
 use std::{
-    collections::{BinaryHeap, HashMap, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     ops::Range,
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 #[cfg(test)]
 mod test;
 
@@ -60,7 +60,6 @@ pub(crate) trait Dag {
     //
     // TODO: Maybe use Result return type
     // TODO: benchmark
-    // TODO: visited
     // how to test better?
     // - converge through other nodes
     //
@@ -98,6 +97,8 @@ pub(crate) trait Dag {
             let mut _b_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
             let mut _a_heap: BinaryHeap<OrdId> = BinaryHeap::new();
             let mut _b_heap: BinaryHeap<OrdId> = BinaryHeap::new();
+            let mut _a_visited: FxHashSet<ID> = FxHashSet::default();
+            let mut _b_visited: FxHashSet<ID> = FxHashSet::default();
             {
                 let a = self.get(a_id).unwrap();
                 let b = self.get(b_id).unwrap();
@@ -116,14 +117,31 @@ pub(crate) trait Dag {
             }
 
             while !_a_heap.is_empty() || !_b_heap.is_empty() {
-                let (a_heap, b_heap, a_vv, b_vv, _swapped) = if _a_heap.is_empty()
+                let (a_heap, b_heap, a_vv, b_vv, a_visited, b_visited, _swapped) = if _a_heap
+                    .is_empty()
                     || (_a_heap.peek().map(|x| x.lamport).unwrap_or(0)
                         < _b_heap.peek().map(|x| x.lamport).unwrap_or(0))
                 {
                     // swap
-                    (&mut _b_heap, &mut _a_heap, &mut _b_vv, &mut _a_vv, true)
+                    (
+                        &mut _b_heap,
+                        &mut _a_heap,
+                        &mut _b_vv,
+                        &mut _a_vv,
+                        &mut _b_visited,
+                        &mut _a_visited,
+                        true,
+                    )
                 } else {
-                    (&mut _a_heap, &mut _b_heap, &mut _a_vv, &mut _b_vv, false)
+                    (
+                        &mut _a_heap,
+                        &mut _b_heap,
+                        &mut _a_vv,
+                        &mut _b_vv,
+                        &mut _a_visited,
+                        &mut _b_visited,
+                        false,
+                    )
                 };
 
                 while !a_heap.is_empty()
@@ -153,13 +171,17 @@ pub(crate) trait Dag {
                     }
 
                     for dep_id in a.deps {
+                        if a_visited.contains(dep_id) {
+                            continue;
+                        }
+
                         let dep = self.get(*dep_id).unwrap();
                         a_heap.push(OrdId {
                             id: *dep_id,
                             lamport: dep.get_lamport_from_counter(dep_id.counter),
                             deps: dep.deps(),
                         });
-
+                        a_visited.insert(*dep_id);
                         if let Some(v) = a_vv.get_mut(&dep_id.client_id) {
                             if *v < dep_id.counter + 1 {
                                 *v = dep_id.counter + 1;
