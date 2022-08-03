@@ -275,8 +275,8 @@ mod find_path {
         assert_eq!(
             actual,
             Some(Path {
-                retreat: vec![IdSpan::new(0, CounterSpan::new(1, 0))],
-                forward: vec![IdSpan::new(1, CounterSpan::new(0, 1))],
+                retreat: vec![IdSpan::new(0, 1, 0)],
+                forward: vec![IdSpan::new(1, 0, 1)],
             })
         );
     }
@@ -295,8 +295,8 @@ mod find_path {
         assert_eq!(
             actual,
             Some(Path {
-                retreat: vec![IdSpan::new(0, CounterSpan::new(3, 2))],
-                forward: vec![IdSpan::new(1, CounterSpan::new(1, 2))],
+                retreat: vec![IdSpan::new(0, 3, 2)],
+                forward: vec![IdSpan::new(1, 1, 2)],
             })
         );
     }
