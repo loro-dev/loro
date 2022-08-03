@@ -62,6 +62,7 @@ impl Dag for TestDag {
             id.counter >= node.id.counter && id.counter < node.id.counter + node.len as Counter
         })
     }
+
     fn frontier(&self) -> &[ID] {
         &self.frontier
     }
@@ -89,11 +90,19 @@ impl TestDag {
         }
     }
 
+    fn get_last_node(&mut self) -> &mut TestNode {
+        self.nodes
+            .get_mut(&self.client_id)
+            .unwrap()
+            .last_mut()
+            .unwrap()
+    }
+
     fn push(&mut self, len: usize) {
         let client_id = self.client_id;
         let counter = self.version_vec.entry(client_id).or_insert(0);
         let id = ID::new(client_id, *counter);
-        *counter += len as u32;
+        *counter += len as Counter;
         let deps = std::mem::replace(&mut self.frontier, vec![id]);
         self.nodes
             .entry(client_id)
@@ -147,7 +156,7 @@ impl TestDag {
         }
         update_frontier(
             &mut self.frontier,
-            node.id.inc((node.len() - 1) as u32),
+            node.id.inc((node.len() - 1) as Counter),
             &node.deps,
         );
         self.nodes
@@ -155,7 +164,7 @@ impl TestDag {
             .or_insert(vec![])
             .push(node.clone());
         self.version_vec
-            .insert(client_id, node.id.counter + node.len as u32);
+            .insert(client_id, node.id.counter + node.len as Counter);
         self.next_lamport = self.next_lamport.max(node.lamport + node.len as u32);
         false
     }
@@ -205,6 +214,63 @@ struct Interaction {
     dag_idx: usize,
     merge_with: Option<usize>,
     len: usize,
+}
+
+mod find_path {
+    use super::*;
+
+    #[test]
+    fn no_path() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(1);
+        b.push(1);
+        a.merge(&b);
+        let actual = a.find_path(ID::new(0, 0), ID::new(1, 0));
+        assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn one_path() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        // 0 - 0
+        a.push(1);
+        b.merge(&a);
+        // 1 - 0
+        b.push(1);
+        // 0 - 1
+        a.push(1);
+        a.merge(&b);
+        let actual = a.find_path(ID::new(0, 1), ID::new(1, 0));
+        assert_eq!(
+            actual,
+            Some(Path {
+                retreat: vec![IdSpan::new(0, CounterSpan::new(1, 0))],
+                forward: vec![IdSpan::new(1, CounterSpan::new(0, 1))],
+            })
+        );
+    }
+
+    #[test]
+    fn middle() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(4);
+        b.push(1);
+        b.push(1);
+        let node = b.get_last_node();
+        node.deps.push(ID::new(0, 2));
+        b.merge(&a);
+        let actual = b.find_path(ID::new(0, 3), ID::new(1, 1));
+        assert_eq!(
+            actual,
+            Some(Path {
+                retreat: vec![IdSpan::new(0, CounterSpan::new(3, 2))],
+                forward: vec![IdSpan::new(1, CounterSpan::new(1, 2))],
+            })
+        );
+    }
 }
 
 mod find_common_ancestors {

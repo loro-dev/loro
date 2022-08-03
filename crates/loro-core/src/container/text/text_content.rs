@@ -1,4 +1,4 @@
-use crate::{ContentType, InsertContent, ID};
+use crate::{id::Counter, ContentType, InsertContent, ID};
 use rle::{HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone)]
@@ -12,9 +12,9 @@ pub struct TextContent {
 impl Mergable for TextContent {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
-            && self.id.counter + self.len() as u32 == other.id.counter
+            && self.id.counter + self.len() as Counter == other.id.counter
             && self.id.client_id == other.origin_left.client_id
-            && self.id.counter + self.len() as u32 - 1 == other.origin_left.counter
+            && self.id.counter + self.len() as Counter - 1 == other.origin_left.counter
             && self.origin_right == other.origin_right
     }
 
@@ -36,12 +36,12 @@ impl Sliceable for TextContent {
             TextContent {
                 origin_left: ID {
                     client_id: self.id.client_id,
-                    counter: self.id.counter + from as u32 - 1,
+                    counter: self.id.counter + from as Counter - 1,
                 },
                 origin_right: self.origin_right,
                 id: ID {
                     client_id: self.id.client_id,
-                    counter: self.id.counter + from as u32,
+                    counter: self.id.counter + from as Counter,
                 },
                 text: self.text[from..to].to_owned(),
             }

@@ -97,7 +97,7 @@ impl Mergable<ChangeMergeCfg> for Change {
         }
 
         if other.deps.is_empty()
-            || (other.deps.len() == 1 && self.id.is_connected_id(&other.deps[0], self.len() as u32))
+            || (other.deps.len() == 1 && self.id.is_connected_id(&other.deps[0], self.len()))
         {
             return false;
         }
@@ -111,7 +111,7 @@ impl Mergable<ChangeMergeCfg> for Change {
         }
 
         self.id.client_id == other.id.client_id
-            && self.id.counter + self.len() as u32 == other.id.counter
+            && self.id.counter + self.len() as Counter == other.id.counter
             && self.lamport + self.len() as Lamport == other.lamport
     }
 }

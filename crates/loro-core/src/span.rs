@@ -16,6 +16,28 @@ impl CounterSpan {
     }
 
     #[inline]
+    pub fn from_inclusive(from: Counter, to: Counter) -> Self {
+        if from <= to {
+            CounterSpan { from, to: to + 1 }
+        } else {
+            CounterSpan { from, to: to - 1 }
+        }
+    }
+
+    #[inline]
+    pub fn reverse(&mut self) {
+        if self.from == self.to {
+            return;
+        }
+
+        if self.from < self.to {
+            (self.from, self.to) = (self.to - 1, self.from - 1);
+        } else {
+            (self.from, self.to) = (self.to + 1, self.from + 1);
+        }
+    }
+
+    #[inline]
     pub fn min(&self) -> Counter {
         if self.from < self.to {
             self.from
@@ -94,13 +116,30 @@ impl Mergable for CounterSpan {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct IdSpan {
     pub client_id: ClientID,
     pub counter: CounterSpan,
 }
 
+impl std::fmt::Debug for IdSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            format!(
+                "IdSpan{{{:?}, {} ~ {}}}",
+                self.client_id, self.counter.from, self.counter.to
+            )
+            .as_str(),
+        )
+    }
+}
+
 impl IdSpan {
+    #[inline]
+    pub fn new(client_id: ClientID, counter: CounterSpan) -> Self {
+        IdSpan { client_id, counter }
+    }
+
     #[inline]
     pub fn min(&self) -> Counter {
         self.counter.min()
