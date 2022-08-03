@@ -49,7 +49,7 @@ impl DagNode for TestNode {
 struct TestDag {
     nodes: FxHashMap<ClientID, Vec<TestNode>>,
     frontier: Vec<ID>,
-    version_vec: FxHashMap<ClientID, Counter>,
+    version_vec: VersionVector,
     next_lamport: Lamport,
     client_id: ClientID,
 }
@@ -77,6 +77,10 @@ impl Dag for TestDag {
             .and_then(|x| if *x > id.counter { Some(()) } else { None })
             .is_some()
     }
+
+    fn vv(&self) -> VersionVector {
+        self.version_vec.clone()
+    }
 }
 
 impl TestDag {
@@ -84,7 +88,7 @@ impl TestDag {
         Self {
             nodes: FxHashMap::default(),
             frontier: Vec::new(),
-            version_vec: FxHashMap::default(),
+            version_vec: VersionVector::new(),
             next_lamport: 0,
             client_id,
         }
@@ -214,6 +218,41 @@ struct Interaction {
     dag_idx: usize,
     merge_with: Option<usize>,
     len: usize,
+}
+
+mod iter {
+    use super::*;
+
+    #[test]
+    fn test() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        // 0-0
+        a.push(1);
+        // 1-0
+        b.push(1);
+        a.merge(&b);
+        // 0-1
+        a.push(1);
+        b.merge(&a);
+        // 1-1
+        b.push(1);
+        a.merge(&b);
+        // 0-2
+        a.push(1);
+
+        let mut count = 0;
+        for (node, vv) in a.iter() {
+            count += 1;
+            if node.id == ID::new(0, 0) {
+                assert_eq!(vv, vec![ID::new(0, 0)].into());
+            } else if node.id == ID::new(0, 2) {
+                assert_eq!(vv, vec![ID::new(0, 2), ID::new(1, 1)].into());
+            }
+        }
+
+        assert_eq!(count, 5);
+    }
 }
 
 mod get_version_vector {

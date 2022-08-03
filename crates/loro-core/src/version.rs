@@ -4,7 +4,8 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxBuildHasher, FxHashMap};
+use im::hashmap::HashMap as ImHashMap;
 
 use crate::{
     change::Lamport,
@@ -13,12 +14,18 @@ use crate::{
     ClientID,
 };
 
+/// It's a immutable hash map with O(1) clone. Because
+/// - we want a cheap clone op on vv;
+/// - neighbor op's VersionVectors are very similar, most of the memory can be shared in
+/// immutable hashmap
+///
+/// see also [im].
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct VersionVector(FxHashMap<ClientID, Counter>);
+pub struct VersionVector(ImHashMap<ClientID, Counter>);
 
 impl Deref for VersionVector {
-    type Target = FxHashMap<ClientID, Counter>;
+    type Target = ImHashMap<ClientID, Counter>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -76,7 +83,7 @@ impl DerefMut for VersionVector {
 impl VersionVector {
     #[inline]
     pub fn new() -> Self {
-        Self(FxHashMap::default())
+        Self(ImHashMap::new())
     }
 
     #[inline]
@@ -89,7 +96,7 @@ impl VersionVector {
     #[inline]
     pub fn try_update_end(&mut self, id: ID) -> bool {
         if let Some(end) = self.0.get_mut(&id.client_id) {
-            if *end < id.counter {
+            if *end < id.counter + 1 {
                 *end = id.counter + 1;
                 true
             } else {
@@ -115,6 +122,27 @@ impl VersionVector {
 
         ans
     }
+
+    pub fn merge(&mut self, other: &Self) {
+        for (&client_id, &other_end) in other.iter() {
+            if let Some(my_end) = self.get_mut(&client_id) {
+                if *my_end < other_end {
+                    *my_end = other_end;
+                }
+            } else {
+                self.0.insert(client_id, other_end);
+            }
+        }
+    }
+
+    pub fn includes(&mut self, id: ID) -> bool {
+        if let Some(end) = self.get_mut(&id.client_id) {
+            if *end > id.counter {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl Default for VersionVector {
@@ -125,7 +153,11 @@ impl Default for VersionVector {
 
 impl From<FxHashMap<ClientID, Counter>> for VersionVector {
     fn from(map: FxHashMap<ClientID, Counter>) -> Self {
-        Self(map)
+        let mut im_map = ImHashMap::new();
+        for (client_id, counter) in map {
+            im_map.insert(client_id, counter);
+        }
+        Self(im_map)
     }
 }
 
@@ -169,5 +201,19 @@ mod tests {
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
         }
+    }
+
+    #[test]
+    fn im() {
+        let mut a = VersionVector::new();
+        a.set_end(ID::new(1, 1));
+        a.set_end(ID::new(2, 1));
+        let mut b = a.clone();
+        b.merge(&vec![ID::new(1, 2), ID::new(2, 2)].into());
+        assert!(a != b);
+        assert_eq!(a.get(&1), Some(&2));
+        assert_eq!(a.get(&2), Some(&2));
+        assert_eq!(b.get(&1), Some(&3));
+        assert_eq!(b.get(&2), Some(&3));
     }
 }

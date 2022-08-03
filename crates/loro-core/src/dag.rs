@@ -4,6 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
+mod iter;
 #[cfg(test)]
 mod test;
 
@@ -13,6 +14,8 @@ use crate::{
     span::{CounterSpan, IdSpan},
     version::VersionVector,
 };
+
+use self::iter::{iter_dag, DagIterator};
 
 pub trait DagNode {
     fn dag_id_start(&self) -> ID;
@@ -64,13 +67,21 @@ fn reverse_path(path: &mut Vec<IdSpan>) {
     }
 }
 
+/// We have following invariance in DAG
+/// - All deps' lamports are smaller than current node's lamport
 pub(crate) trait Dag {
     type Node: DagNode;
 
     fn get(&self, id: ID) -> Option<&Self::Node>;
-    fn contains(&self, id: ID) -> bool;
+
+    #[inline]
+    fn contains(&self, id: ID) -> bool {
+        self.vv().includes(id)
+    }
+
     fn frontier(&self) -> &[ID];
     fn roots(&self) -> Vec<&Self::Node>;
+    fn vv(&self) -> VersionVector;
 
     //
     // TODO: Maybe use Result return type
@@ -161,6 +172,13 @@ pub(crate) trait Dag {
         );
 
         ans
+    }
+
+    fn iter(&self) -> DagIterator<'_, Self::Node>
+    where
+        Self: Sized,
+    {
+        iter_dag(self)
     }
 }
 
