@@ -1,3 +1,9 @@
+//! [Change]s are merged ops.
+//!
+//! Every [Change] has deps on other [Change]s. All [Change]s in the document thus form a DAG.
+//! Note, `dep` may point to the middle of the other [Change].
+//!
+//! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
 use std::char::MAX;
 
 use crate::{

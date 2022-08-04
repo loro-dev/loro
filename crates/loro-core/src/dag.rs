@@ -1,3 +1,11 @@
+//! DAG (Directed Acyclic Graph) is a common data structure in distributed system.
+//!
+//! This mod contains the DAGs in our CRDT. It's not a general DAG, it has some specific properties that
+//! we used to optimize the speed:
+//! - Each node has lamport clock.
+//! - Each node has its ID (client_id, counter).
+//! - We use ID to refer to node rather than content addressing (hash)
+//!
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     ops::Range,
@@ -21,7 +29,7 @@ use self::{
     mermaid::dag_to_mermaid,
 };
 
-pub trait DagNode {
+pub(crate) trait DagNode {
     fn id_start(&self) -> ID;
     fn lamport_start(&self) -> Lamport;
     fn len(&self) -> usize;
@@ -71,6 +79,8 @@ fn reverse_path(path: &mut Vec<IdSpan>) {
     }
 }
 
+/// Dag (Directed Acyclic Graph).
+///
 /// We have following invariance in DAG
 /// - All deps' lamports are smaller than current node's lamport
 pub(crate) trait Dag {

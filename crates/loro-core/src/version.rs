@@ -14,7 +14,13 @@ use crate::{
     ClientID,
 };
 
-/// It's a immutable hash map with O(1) clone. Because
+/// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
+///
+/// It's a map from [ClientID] to [Counter]. Its a right-open interval.
+/// i.e. a [VersionVector] of `{A: 1, B: 2}` means that A has 1 atomic op and B has 2 atomic ops,
+/// thus ID of `{client: A, counter: 1}` is out of the range.
+///
+/// In implementation, it's a immutable hash map with O(1) clone. Because
 /// - we want a cheap clone op on vv;
 /// - neighbor op's VersionVectors are very similar, most of the memory can be shared in
 /// immutable hashmap

@@ -1,4 +1,5 @@
-//! # Loro
+//! loro-core is a CRDT framework.
+//!
 //!
 //!
 #![allow(dead_code, unused_imports)]
@@ -8,11 +9,11 @@ pub mod configure;
 pub mod container;
 pub mod dag;
 pub mod id;
+pub mod log_store;
 pub mod op;
 pub mod version;
 
 mod error;
-mod log_store;
 mod loro;
 mod smstring;
 mod snapshot;
@@ -32,5 +33,6 @@ pub use container::ContainerType;
 pub use log_store::LogStore;
 pub use loro::*;
 pub use value::LoroValue;
+pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
