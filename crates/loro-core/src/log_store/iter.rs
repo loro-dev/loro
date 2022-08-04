@@ -61,7 +61,7 @@ impl<'a> Iterator for OpIter<'a> {
                         self.heap.push(Reverse(OpProxy::new(
                             change,
                             op,
-                            Some(start..(op.len() as u32)),
+                            Some(start..(op.len() as Counter)),
                         )));
                     }
                 }

@@ -14,6 +14,19 @@ impl CounterSpan {
     }
 
     #[inline]
+    pub fn reverse(&mut self) {
+        if self.from == self.to {
+            return;
+        }
+
+        if self.from < self.to {
+            (self.from, self.to) = (self.to - 1, self.from - 1);
+        } else {
+            (self.from, self.to) = (self.to + 1, self.from + 1);
+        }
+    }
+
+    #[inline]
     pub fn min(&self) -> Counter {
         if self.from < self.to {
             self.from
@@ -81,6 +94,14 @@ pub struct IdSpan {
 }
 
 impl IdSpan {
+    #[inline]
+    pub fn new(client_id: ClientID, from: Counter, to: Counter) -> Self {
+        Self {
+            client_id,
+            counter: CounterSpan { from, to },
+        }
+    }
+
     #[inline]
     pub fn min(&self) -> Counter {
         self.counter.min()

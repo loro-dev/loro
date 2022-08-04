@@ -1,3 +1,6 @@
+//! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
+//!
+//!
 mod iter;
 use pin_project::pin_project;
 use std::{collections::BinaryHeap, marker::PhantomPinned, pin::Pin, ptr::NonNull};
@@ -38,6 +41,8 @@ impl Default for GcConfig {
 
 /// Entry of the loro inner state.
 /// This is a self-referential structure. So it need to be pinned.
+///
+/// `frontier`s are the Changes without children in the DAG (there is no dep pointing to them)
 #[pin_project]
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,

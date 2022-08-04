@@ -20,3 +20,68 @@ macro_rules! fx_map {
         }
     };
 }
+
+#[macro_export]
+macro_rules! unsafe_array_mut_ref {
+    ($arr:expr, [$($idx:expr),*]) => {
+        {
+            unsafe {
+                (
+                    $(
+                        {  &mut *(&mut $arr[$idx] as *mut _) }
+                    ),*,
+                )
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! array_mut_ref {
+    ($arr:expr, [$a0:expr, $a1:expr]) => {{
+        #[inline]
+        fn borrow_mut_ref<T>(arr: &mut [T], a0: usize, a1: usize) -> (&mut T, &mut T) {
+            debug_assert!(a0 != a1);
+            unsafe {
+                (
+                    &mut *(&mut arr[a0] as *mut _),
+                    &mut *(&mut arr[a1] as *mut _),
+                )
+            }
+        }
+
+        borrow_mut_ref($arr, $a0, $a1)
+    }};
+    ($arr:expr, [$a0:expr, $a1:expr, $a2:expr]) => {{
+        #[inline]
+        fn borrow_mut_ref<T>(
+            arr: &mut [T],
+            a0: usize,
+            a1: usize,
+            a2: usize,
+        ) -> (&mut T, &mut T, &mut T) {
+            debug_assert!(a0 != a1 && a1 != a2 && a0 != a2);
+            unsafe {
+                (
+                    &mut *(&mut arr[a0] as *mut _),
+                    &mut *(&mut arr[a1] as *mut _),
+                    &mut *(&mut arr[a2] as *mut _),
+                )
+            }
+        }
+
+        borrow_mut_ref($arr, $a0, $a1, $a2)
+    }};
+}
+
+#[test]
+fn test_macro() {
+    let mut arr = vec![100, 101, 102, 103];
+    let (a, b, c) = array_mut_ref!(&mut arr, [1, 2, 3]);
+    assert_eq!(*a, 101);
+    assert_eq!(*b, 102);
+    *a = 50;
+    *b = 51;
+    assert!(arr[1] == 50);
+    assert!(arr[2] == 51);
+}

@@ -1,6 +1,6 @@
 use crate::{
     container::ContainerID,
-    id::ID,
+    id::{Counter, ID},
     span::{CounterSpan, IdSpan},
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
@@ -78,7 +78,7 @@ impl Op {
 
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.id.is_connected_id(&other.id, self.len() as u32)
+        self.id.is_connected_id(&other.id, self.len())
             && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
     }
@@ -124,7 +124,7 @@ impl Sliceable for Op {
         Op {
             id: ID {
                 client_id: self.id.client_id,
-                counter: (self.id.counter + from as u32),
+                counter: (self.id.counter + from as Counter),
             },
             content,
             container: self.container.clone(),

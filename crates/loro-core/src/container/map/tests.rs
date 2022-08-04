@@ -48,7 +48,7 @@ mod map_proptest {
                 map.insert(k.clone(), v.clone());
                 container.insert(k.clone().into(), v.clone());
                 let snapshot = container.get_value();
-                for (key, value) in snapshot.to_map().unwrap().iter() {
+                for (key, value) in snapshot.as_map().unwrap().iter() {
                     assert_eq!(map.get(&key.to_string()).map(|x|x.clone().into()), Some(value.clone()));
                 }
             }

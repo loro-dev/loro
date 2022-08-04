@@ -96,7 +96,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_map(&self) -> Option<&FxHashMap<InternalString, LoroValue>> {
+    pub fn as_map(&self) -> Option<&FxHashMap<InternalString, LoroValue>> {
         match self {
             LoroValue::Map(m) => Some(m),
             _ => None,
@@ -104,7 +104,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_list(&self) -> Option<&Vec<LoroValue>> {
+    pub fn as_list(&self) -> Option<&Vec<LoroValue>> {
         match self {
             LoroValue::List(l) => Some(l),
             _ => None,
@@ -112,7 +112,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_string(&self) -> Option<&SmString> {
+    pub fn as_string(&self) -> Option<&SmString> {
         match self {
             LoroValue::String(s) => Some(s),
             _ => None,
@@ -120,7 +120,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_integer(&self) -> Option<i32> {
+    pub fn as_integer(&self) -> Option<i32> {
         match self {
             LoroValue::Integer(i) => Some(*i),
             _ => None,
@@ -128,7 +128,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_double(&self) -> Option<f64> {
+    pub fn as_double(&self) -> Option<f64> {
         match self {
             LoroValue::Double(d) => Some(*d),
             _ => None,
@@ -136,7 +136,7 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> Option<bool> {
         match self {
             LoroValue::Bool(b) => Some(*b),
             _ => None,
@@ -144,7 +144,63 @@ impl LoroValue {
     }
 
     #[inline]
-    pub fn to_container(&self) -> Option<&ContainerID> {
+    pub fn as_container(&self) -> Option<&ContainerID> {
+        match self {
+            LoroValue::Unresolved(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_map_mut(&mut self) -> Option<&mut FxHashMap<InternalString, LoroValue>> {
+        match self {
+            LoroValue::Map(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_list_mut(&mut self) -> Option<&mut Vec<LoroValue>> {
+        match self {
+            LoroValue::List(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_string_mut(&mut self) -> Option<&mut SmString> {
+        match self {
+            LoroValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_integer_mut(&mut self) -> Option<&mut i32> {
+        match self {
+            LoroValue::Integer(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_double_mut(&mut self) -> Option<&mut f64> {
+        match self {
+            LoroValue::Double(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_bool_mut(&mut self) -> Option<&mut bool> {
+        match self {
+            LoroValue::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_container_mut(&mut self) -> Option<&mut ContainerID> {
         match self {
             LoroValue::Unresolved(c) => Some(c),
             _ => None,
