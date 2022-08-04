@@ -31,7 +31,7 @@ impl TestNode {
 }
 
 impl DagNode for TestNode {
-    fn dag_id_start(&self) -> ID {
+    fn id_start(&self) -> ID {
         self.id
     }
     fn lamport_start(&self) -> Lamport {
@@ -242,7 +242,7 @@ mod iter {
         a.push(1);
 
         let mut count = 0;
-        for (node, vv) in a.iter() {
+        for (node, vv) in a.iter_with_vv() {
             count += 1;
             if node.id == ID::new(0, 0) {
                 assert_eq!(vv, vec![ID::new(0, 0)].into());
@@ -252,6 +252,47 @@ mod iter {
         }
 
         assert_eq!(count, 5);
+    }
+}
+
+mod mermaid {
+    use super::*;
+
+    #[test]
+    fn simple() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        // 0-0
+        a.push(1);
+        // 1-0
+        b.push(1);
+        a.merge(&b);
+        // 0-1
+        a.push(1);
+        b.merge(&a);
+        // 1-1
+        b.push(1);
+        a.merge(&b);
+        // 0-2
+        a.push(1);
+
+        println!("{}", a.mermaid());
+    }
+
+    #[test]
+    fn three() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        let mut c = TestDag::new(2);
+        a.push(10);
+        b.merge(&a);
+        b.push(3);
+        c.merge(&b);
+        c.push(4);
+        a.merge(&c);
+        a.push(2);
+        b.merge(&a);
+        println!("{}", b.mermaid());
     }
 }
 
