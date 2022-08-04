@@ -5,6 +5,7 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 mod iter;
+mod mermaid;
 #[cfg(test)]
 mod test;
 
@@ -15,10 +16,13 @@ use crate::{
     version::VersionVector,
 };
 
-use self::iter::{iter_dag, DagIterator};
+use self::{
+    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV},
+    mermaid::dag_to_mermaid,
+};
 
 pub trait DagNode {
-    fn dag_id_start(&self) -> ID;
+    fn id_start(&self) -> ID;
     fn lamport_start(&self) -> Lamport;
     fn len(&self) -> usize;
     fn deps(&self) -> &Vec<ID>;
@@ -29,8 +33,8 @@ pub trait DagNode {
     }
 
     #[inline]
-    fn dag_id_span(&self) -> IdSpan {
-        let id = self.dag_id_start();
+    fn id_span(&self) -> IdSpan {
+        let id = self.id_start();
         IdSpan {
             client_id: id.client_id,
             counter: CounterSpan::new(id.counter, id.counter + self.len() as Counter),
@@ -39,8 +43,8 @@ pub trait DagNode {
 
     /// inclusive end
     #[inline]
-    fn dag_id_end(&self) -> ID {
-        let id = self.dag_id_start();
+    fn id_end(&self) -> ID {
+        let id = self.id_start();
         ID {
             client_id: id.client_id,
             counter: id.counter + self.len() as Counter - 1,
@@ -49,7 +53,7 @@ pub trait DagNode {
 
     #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
-        self.lamport_start() + c as Lamport - self.dag_id_start().counter as Lamport
+        self.lamport_start() + c as Lamport - self.id_start().counter as Lamport
     }
 }
 
@@ -174,11 +178,25 @@ pub(crate) trait Dag {
         ans
     }
 
+    fn iter_with_vv(&self) -> DagIteratorVV<'_, Self::Node>
+    where
+        Self: Sized,
+    {
+        iter_dag_with_vv(self)
+    }
+
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized,
     {
         iter_dag(self)
+    }
+
+    fn mermaid(&self) -> String
+    where
+        Self: Sized,
+    {
+        dag_to_mermaid(self)
     }
 }
 
@@ -203,7 +221,7 @@ where
     while !stack.is_empty() {
         let node_id = *stack.pop().unwrap();
         let node = get(node_id).unwrap();
-        let node_id_start = node.dag_id_start();
+        let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {
             vv.try_update_end(node_id);
             for dep in node.deps() {
@@ -218,6 +236,10 @@ where
 
     vv
 }
+
+// fn mermaid<T>(dag: &impl Dag<Node = T>) -> String {
+//     dag
+// }
 
 fn find_common_ancestor<'a, F, G>(get: &'a F, a_id: ID, b_id: ID, mut on_found: G) -> Option<ID>
 where
@@ -346,8 +368,8 @@ where
                         deps: dep.deps(),
                     });
                     a_path.insert(*dep_id, a.id);
-                    if dep.dag_id_start() != *dep_id {
-                        a_path.insert(dep.dag_id_start(), *dep_id);
+                    if dep.id_start() != *dep_id {
+                        a_path.insert(dep.id_start(), *dep_id);
                     }
 
                     if let Some(v) = a_vv.get_mut(&dep_id.client_id) {
