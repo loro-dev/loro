@@ -192,6 +192,8 @@ pub(crate) trait Dag {
         iter_dag(self)
     }
 
+    /// You can visualize and generate img link at https://mermaid.live/
+    #[inline]
     fn mermaid(&self) -> String
     where
         Self: Sized,
