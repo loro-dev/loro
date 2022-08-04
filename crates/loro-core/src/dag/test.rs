@@ -4,6 +4,7 @@ use proptest::proptest;
 
 use super::*;
 use crate::{
+    array_mut_ref,
     change::Lamport,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, IdSpan},
@@ -220,6 +221,37 @@ struct Interaction {
     len: usize,
 }
 
+impl Interaction {
+    fn gen(rng: &mut impl rand::Rng, num: usize) -> Self {
+        if rng.gen_bool(0.5) {
+            let dag_idx = rng.gen_range(0..num);
+            let merge_with = (rng.gen_range(1..num - 1) + dag_idx) % num;
+            Self {
+                dag_idx,
+                merge_with: Some(merge_with),
+                len: rng.gen_range(1..10),
+            }
+        } else {
+            Self {
+                dag_idx: rng.gen_range(0..num),
+                merge_with: None,
+                len: rng.gen_range(1..10),
+            }
+        }
+    }
+
+    fn apply(&self, dags: &mut [TestDag]) {
+        if let Some(merge_with) = self.merge_with {
+            if merge_with != self.dag_idx {
+                let (from, to) = array_mut_ref!(dags, [self.dag_idx, merge_with]);
+                from.merge(to);
+            }
+        }
+
+        dags[self.dag_idx].push(self.len);
+    }
+}
+
 mod iter {
     use super::*;
 
@@ -256,6 +288,8 @@ mod iter {
 }
 
 mod mermaid {
+    use rle::Mergable;
+
     use super::*;
 
     #[test]
@@ -293,6 +327,21 @@ mod mermaid {
         a.push(2);
         b.merge(&a);
         println!("{}", b.mermaid());
+    }
+
+    #[test]
+    fn gen() {
+        let num = 5;
+        let mut rng = rand::thread_rng();
+        let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
+        for _ in 0..100 {
+            Interaction::gen(&mut rng, num as usize).apply(&mut dags);
+        }
+        for i in 1..num {
+            let (a, other) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(other);
+        }
+        println!("{}", dags[0].mermaid());
     }
 }
 
