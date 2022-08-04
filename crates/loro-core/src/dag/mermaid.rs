@@ -43,8 +43,12 @@ fn to_str(output: Output) -> String {
 
             is_first = false;
             s += format!(
-                "{}-{}(ctr: {}..{})",
-                id_span.client_id, id_span.counter.from, id_span.counter.from, id_span.counter.to
+                "{}-{}(\"c{}: [{}, {})\")",
+                id_span.client_id,
+                id_span.counter.from,
+                id_span.client_id,
+                id_span.counter.from,
+                id_span.counter.to
             )
             .as_str();
         }
