@@ -1,0 +1,70 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+      - release/**
+  pull_request:
+    branches:
+      - main
+      - release/**
+  schedule:
+    - cron:  '0 3 * * 4'
+
+jobs:
+  ## Run all default oriented feature sets across all platforms.
+  platform-matrix:
+    name: platform
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        #os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
+    steps:
+    - uses: actions/checkout@v1
+
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: cargo test --all --all-targets --all-features
+      run: cargo test --all --all-targets --all-features
+
+  ## Execute the clippy checks
+  cleanliness:
+    name: cleanliness
+    runs-on: ubuntu-latest
+    needs: platform-matrix
+    steps:
+    - uses: actions/checkout@v1
+
+    # not using the cargo cache here, since this differs significantly
+    - name: cargo-all cache
+      uses: actions/cache@v1
+      with:
+        path: ~/.cargo
+        key: ${{ runner.os }}-cargo-all-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-all-${{ hashFiles('**/Cargo.toml') }}
+          ${{ runner.os }}-cargo-all
+          ${{ runner.os }}-cargo
+
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        components: rustfmt, clippy
+        override: true
+    
+    # Clippy
+    - name: cargo clippy
+      run: cargo clippy --lib --examples --tests --bins --all-features -- -D warnings
+    # Rustfmt
+    - name: cargo fmt
+      run: cargo fmt -- --check
+    # Audit
+    - name: cargo audit
+      run: cargo install cargo-audit && cargo audit --deny warnings
