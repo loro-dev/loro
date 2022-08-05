@@ -278,31 +278,6 @@ impl<T> HasLength for RleVec<T> {
     }
 }
 
-impl<T: Integer + NumCast + Copy> Sliceable for Range<T> {
-    fn slice(&self, start: usize, end: usize) -> Self {
-        self.start + cast(start).unwrap()..self.start + cast(end).unwrap()
-    }
-}
-
-impl<T: PartialOrd<T> + Copy> Mergable for Range<T> {
-    fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        other.start <= self.end && other.start >= self.start
-    }
-
-    fn merge(&mut self, other: &Self, _conf: &())
-    where
-        Self: Sized,
-    {
-        self.end = other.end;
-    }
-}
-
-impl<T: num::Integer + NumCast + Copy> HasLength for Range<T> {
-    fn len(&self) -> usize {
-        cast(self.end - self.start).unwrap()
-    }
-}
-
 #[cfg(test)]
 mod test {
     mod prime_value {
