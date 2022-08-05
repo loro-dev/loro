@@ -1,3 +1,5 @@
+use num::{FromPrimitive, Integer, Num, NumCast};
+
 pub trait Mergable<Cfg = ()> {
     fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool
     where
