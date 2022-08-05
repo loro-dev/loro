@@ -2,7 +2,7 @@ use std::marker::{PhantomData, PhantomPinned};
 
 use crate::Rle;
 
-use super::{tree_trait::RleTreeTrait, BumpVec, RleTree};
+use super::{tree_trait::RleTreeTrait, BumpVec, RleTreeRaw};
 use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
 mod internal_impl;
