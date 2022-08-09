@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bumpalo = { version = "3.10.0", features = ["collections"] }
+bumpalo = { version = "3.10.0", features = ["collections", "boxed"] }
 num = "0.4.0"
 enum-as-inner = "0.5.1"
 owning_ref = "0.4.1"

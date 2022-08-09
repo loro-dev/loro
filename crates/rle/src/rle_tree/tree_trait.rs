@@ -1,19 +1,19 @@
+use std::fmt::Debug;
+
 use crate::Rle;
 
-use super::node::{InternalNode, Node};
+use super::node::{InternalNode, LeafNode, Node};
 
 pub trait RleTreeTrait<T: Rle>: Sized {
-    type Int: num::Integer;
-    type InternalCache;
+    const MAX_CHILDREN_NUM: usize;
+    const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
+    type Int: num::Integer + Copy;
+    type InternalCache: Default + Debug;
 
-    fn update_cache();
-    fn min_children() -> usize;
-
-    #[inline]
-    fn max_children() -> usize {
-        Self::min_children() * 2
-    }
-
-    fn before_insert_internal(node: InternalNode<'_, T, Self>);
-    fn find_insert_pos_internal(node: InternalNode<'_, T, Self>, index: Self::Int) -> usize;
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>);
+    fn find_insert_pos_internal(node: &mut InternalNode<'_, T, Self>, index: Self::Int) -> usize;
+    /// returns (index, offset)
+    /// if 0 < offset < children[index].len(), we need to split the node
+    fn find_insert_pos_leaf(node: &mut LeafNode<'_, T, Self>, index: Self::Int) -> (usize, usize);
 }
