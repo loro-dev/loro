@@ -1,3 +1,4 @@
+#![allow(unused)]
 //! Run length encoding library.
 //!
 //! There are many mergeable types. By merging them together we can get a more compact representation of the data.
