@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 bumpalo = { version = "3.10.0", features = ["collections"] }
 num = "0.4.0"
-enum-as-inner = { path = "../enum-as-inner-fork" }
+enum-as-inner = "0.5.1"
 owning_ref = "0.4.1"
