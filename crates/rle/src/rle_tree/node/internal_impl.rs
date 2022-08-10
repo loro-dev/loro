@@ -34,6 +34,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[cfg(test)]
     pub(crate) fn check(&self) {
+        assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
+        assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
         for child in self.children.iter() {
             match child {
                 Node::Internal(node) => node.check(),
@@ -69,7 +71,17 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Err(mut new) => {
                 A::update_cache_internal(self);
                 A::update_cache_internal(&mut new);
-                Err(new)
+                if self.parent.is_none() {
+                    let mut left = BumpBox::new_in(InternalNode::new(self.bump, None), self.bump);
+                    std::mem::swap(&mut *left, self);
+                    left.parent = Some(NonNull::new(self).unwrap());
+                    self.children.push(left.into());
+                    self.children.push(new.into());
+                    A::update_cache_internal(self);
+                    Ok(())
+                } else {
+                    Err(new)
+                }
             }
         }
     }
