@@ -29,6 +29,11 @@ impl<'a, T> FixedSizedVec<'a, T> {
     }
 
     #[inline]
+    pub(crate) fn inner(&mut self) -> &mut BumpVec<'a, T> {
+        &mut self.data
+    }
+
+    #[inline]
     pub(super) fn insert(&mut self, index: usize, value: T) {
         debug_assert!(self.data.len() < self.data.capacity());
         self.data.insert(index, value);

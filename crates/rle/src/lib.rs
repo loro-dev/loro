@@ -1,4 +1,3 @@
-#![allow(unused)]
 //! Run length encoding library.
 //!
 //! There are many mergeable types. By merging them together we can get a more compact representation of the data.
@@ -20,7 +19,8 @@
 //! - slice(from, to) returns a slice of atom elements from the index from to the index to.
 //!
 mod rle_trait;
-mod rle_tree;
+pub mod rle_tree;
 mod rle_vec;
 pub use crate::rle_trait::{HasLength, Mergable, Rle, Slice, Sliceable};
 pub use crate::rle_vec::{RleVec, SearchResult, SliceIterator};
+pub use rle_tree::RleTree;

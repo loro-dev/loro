@@ -1,8 +1,8 @@
 build:
   cargo build
 
-test:
-  cargo nextest run
+test *FLAGS:
+  cargo nextest run {{FLAGS}}
 
 # test without proptest
 test-fast:

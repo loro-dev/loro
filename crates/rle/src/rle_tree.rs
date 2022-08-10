@@ -3,7 +3,6 @@ use crate::{HasLength, Rle};
 pub(self) use bumpalo::boxed::Box as BumpBox;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
-use node::node_trait::NodeTrait;
 use owning_ref::OwningRefMut;
 use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
@@ -63,7 +62,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     pub fn insert(&mut self, index: A::Int, value: T) {
         match self.node {
             Node::Internal(ref mut node) => {
-                node.insert(index, value);
+                node.insert(index, value).unwrap();
             }
             _ => {
                 unreachable!()

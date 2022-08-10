@@ -11,7 +11,7 @@ pub enum Position {
     End,
 }
 
-pub trait RleTreeTrait<T: Rle>: Sized {
+pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug;
