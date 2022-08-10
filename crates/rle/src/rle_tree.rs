@@ -1,14 +1,12 @@
+use self::node::{InternalNode, Node};
+use crate::{HasLength, Rle};
 pub(self) use bumpalo::boxed::Box as BumpBox;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
+use bumpalo::Bump;
+use node::node_trait::NodeTrait;
 use owning_ref::OwningRefMut;
 use std::marker::{PhantomData, PhantomPinned};
-
-use crate::{HasLength, Rle};
-use bumpalo::Bump;
 use tree_trait::RleTreeTrait;
-
-use self::node::{InternalNode, Node};
-
 mod fixed_size_vec;
 mod iter;
 mod node;
@@ -83,7 +81,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     pub fn delete_range(&mut self, from: A::Int, to: A::Int) {
-        todo!()
+        self.node
+            .as_internal_mut()
+            .unwrap()
+            .delete(Some(from), Some(to));
     }
 
     pub fn iter_range(&self, from: A::Int, to: A::Int) {
@@ -92,7 +93,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
 
     #[cfg(test)]
     fn debug_check(&self) {
-        todo!()
+        self.node.as_internal().unwrap().check();
     }
 }
 

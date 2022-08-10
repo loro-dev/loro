@@ -1,6 +1,6 @@
-use crate::HasLength;
+use crate::{rle_tree::tree_trait::Position, HasLength};
 
-use super::*;
+use super::{node_trait::NodeTrait, *};
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     #[inline]
@@ -56,6 +56,27 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn check(&self) {}
+
+    fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {
+        let (index_from, relative_from, pos_from) = A::find_pos_leaf(self, from);
+        if pos_from == Position::Start {
+            (index_from, None)
+        } else {
+            (index_from + 1, Some(relative_from))
+        }
+    }
+
+    fn _delete_end(&mut self, to: A::Int) -> (usize, Option<usize>) {
+        let (index_to, relative_to, pos_to) = A::find_pos_leaf(self, to);
+        if pos_to == Position::End {
+            (index_to + 1, None)
+        } else {
+            (index_to, Some(relative_to))
+        }
+    }
+
     pub fn insert(&mut self, raw_index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
         match self._insert(raw_index, value) {
             Ok(_) => {
@@ -76,7 +97,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             return Ok(());
         }
 
-        let (mut index, mut offset) = A::find_insert_pos_leaf(self, raw_index);
+        let (mut index, mut offset, _pos) = A::find_pos_leaf(self, raw_index);
         let prev = if offset == 0 {
             Some(&mut self.children[index - 1])
         } else if offset == self.children[index].len() {
@@ -94,19 +115,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 return Ok(());
             }
 
-            if self.children.len() == A::MAX_CHILDREN_NUM {
-                let mut ans = self._split();
-                if index <= self.children.len() {
-                    self.children.insert(index, value);
-                } else {
-                    ans.children.insert(index - self.children.len(), value);
-                }
-
-                return Err(ans);
-            } else {
-                self.children.insert(index, value);
-                return Ok(());
-            }
+            return self._insert_with_split(index, value);
         }
 
         // need to split child
@@ -146,6 +155,84 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     #[inline]
     pub fn children(&self) -> &[T] {
         &self.children
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for LeafNode<'a, T, A> {
+    type Child = T;
+    /// Delete may cause the children num increase, because splitting may happen
+    ///
+    fn delete(
+        &mut self,
+        from: Option<A::Int>,
+        to: Option<A::Int>,
+    ) -> Result<(), BumpBox<'a, Self>> {
+        dbg!(&from, &to);
+        let (del_start, del_relative_from) = from.map_or((0, None), |x| self._delete_start(x));
+        let (del_end, del_relative_to) =
+            to.map_or((self.children.len(), None), |x| self._delete_end(x));
+        let mut handled = false;
+        let mut result = Ok(());
+        if let (Some(del_relative_from), Some(del_relative_to)) =
+            (del_relative_from, del_relative_to)
+        {
+            if del_start - 1 == del_end {
+                let end = &mut self.children[del_end];
+                let (left, right) = (
+                    end.slice(0, del_relative_from),
+                    end.slice(del_relative_to, end.len()),
+                );
+
+                dbg!(del_relative_from, del_relative_to);
+                dbg!(&left);
+                dbg!(&right);
+                *end = left;
+                result = self._insert_with_split(del_end + 1, right);
+                handled = true;
+            }
+        }
+
+        if !handled {
+            if let Some(del_relative_from) = del_relative_from {
+                self.children[del_start - 1] =
+                    self.children[del_start - 1].slice(0, del_relative_from);
+            }
+            if let Some(del_relative_to) = del_relative_to {
+                let end = &mut self.children[del_end];
+                *end = end.slice(del_relative_to, end.len());
+            }
+        }
+
+        if del_start < del_end {
+            for _ in self.children.drain(del_start..del_end) {}
+        }
+
+        A::update_cache_leaf(self);
+        result
+    }
+
+    fn to_node(node: BumpBox<'a, Self>) -> Node<'a, T, A> {
+        todo!()
+    }
+
+    fn _insert_with_split(
+        &mut self,
+        index: usize,
+        value: Self::Child,
+    ) -> Result<(), BumpBox<'a, Self>> {
+        if self.children.len() == A::MAX_CHILDREN_NUM {
+            let mut ans = self._split();
+            if index <= self.children.len() {
+                self.children.insert(index, value);
+            } else {
+                ans.children.insert(index - self.children.len(), value);
+            }
+
+            Err(ans)
+        } else {
+            self.children.insert(index, value);
+            Ok(())
+        }
     }
 }
 

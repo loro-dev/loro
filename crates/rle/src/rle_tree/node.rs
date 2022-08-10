@@ -13,6 +13,7 @@ use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
 mod internal_impl;
 mod leaf_impl;
+pub(crate) mod node_trait;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
