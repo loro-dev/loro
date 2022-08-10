@@ -124,7 +124,21 @@ fn delete() {
 }
 
 #[test]
-fn delete_that_need_merge() {}
+fn insert_50times() {
+    let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
+    let tree = t.get_mut();
+    for i in (0..100).step_by(2) {
+        assert_eq!(tree.len(), i / 2);
+        tree.insert(tree.len(), i..i + 1);
+    }
+    tree.debug_check();
+}
+
+#[test]
+fn delete_that_need_merge_to_sibling() {}
+
+#[test]
+fn delete_that_need_borrow_from_sibling() {}
 
 #[test]
 fn delete_that_causes_removing_a_level() {}

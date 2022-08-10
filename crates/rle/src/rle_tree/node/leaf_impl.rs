@@ -57,7 +57,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[cfg(test)]
-    pub(crate) fn check(&self) {}
+    pub(crate) fn check(&self) {
+        assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
+        assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
+    }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {
         let (index_from, relative_from, pos_from) = A::find_pos_leaf(self, from);
@@ -167,7 +170,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for LeafNode<'a, T, A> 
         from: Option<A::Int>,
         to: Option<A::Int>,
     ) -> Result<(), BumpBox<'a, Self>> {
-        dbg!(&from, &to);
         let (del_start, del_relative_from) = from.map_or((0, None), |x| self._delete_start(x));
         let (del_end, del_relative_to) =
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
@@ -183,9 +185,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for LeafNode<'a, T, A> 
                     end.slice(del_relative_to, end.len()),
                 );
 
-                dbg!(del_relative_from, del_relative_to);
-                dbg!(&left);
-                dbg!(&right);
                 *end = left;
                 result = self._insert_with_split(del_end + 1, right);
                 handled = true;
