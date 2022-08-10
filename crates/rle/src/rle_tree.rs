@@ -3,14 +3,17 @@ pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use owning_ref::OwningRefMut;
 use std::marker::{PhantomData, PhantomPinned};
 
-use crate::Rle;
+use crate::{HasLength, Rle};
 use bumpalo::Bump;
 use tree_trait::RleTreeTrait;
 
 use self::node::{InternalNode, Node};
 
 mod fixed_size_vec;
+mod iter;
 mod node;
+#[cfg(test)]
+mod test;
 mod tree_trait;
 
 #[derive(Debug)]
@@ -75,8 +78,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
         todo!()
     }
 
-    pub fn iter(&self) {
-        todo!()
+    pub fn iter(&self) -> iter::Iter<'_, 'a, T, A> {
+        iter::Iter::new(self.node.get_first_leaf())
     }
 
     pub fn delete_range(&mut self, from: A::Int, to: A::Int) {
@@ -93,43 +96,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 }
 
-/// compile test
-#[cfg(test)]
-#[test]
-fn test() {
-    use std::ops::Range;
-
-    struct Trait;
-    impl RleTreeTrait<Range<usize>> for Trait {
-        const MAX_CHILDREN_NUM: usize = 4;
-        type Int = usize;
-        type InternalCache = ();
-
-        fn find_insert_pos_internal(
-            _: &mut InternalNode<'_, Range<usize>, Self>,
-            _: Self::Int,
-        ) -> usize {
-            todo!()
-        }
-
-        const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
-
-        fn update_cache_leaf(node: &mut node::LeafNode<'_, Range<usize>, Self>) {
-            todo!()
-        }
-
-        fn update_cache_internal(node: &mut InternalNode<'_, Range<usize>, Self>) {
-            todo!()
-        }
-
-        fn find_insert_pos_leaf(
-            node: &mut node::LeafNode<'_, Range<usize>, Self>,
-            index: Self::Int,
-        ) -> (usize, usize) {
-            todo!()
-        }
+impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for RleTreeRaw<'a, T, A> {
+    fn len(&self) -> usize {
+        self.node.len()
     }
-    let mut t: RleTree<Range<usize>, Trait> = RleTree::new();
-    let tree = t.get_mut();
-    tree.insert(10, 0..5);
 }

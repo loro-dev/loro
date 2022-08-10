@@ -1,3 +1,5 @@
+use crate::HasLength;
+
 use super::*;
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
@@ -13,37 +15,58 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[inline]
-    fn _split(&mut self) -> Self {
-        let mut ans = Self::new(self.bump, self.parent);
-        for i in 0..A::MIN_CHILDREN_NUM {
-            ans.children.push(self.children.pop().unwrap());
+    fn _split(&mut self) -> BumpBox<'a, Self> {
+        let mut ans = BumpBox::new_in(Self::new(self.bump, self.parent), self.bump);
+        for child in self
+            .children
+            .drain(self.children.len() - A::MIN_CHILDREN_NUM..self.children.len())
+        {
+            ans.children.push(child);
         }
 
         ans
     }
 
-    pub fn insert(&mut self, index: A::Int, value: T) -> Result<(), Self> {
+    #[inline]
+    pub fn children(&self) -> &[Node<'a, T, A>] {
+        &self.children
+    }
+
+    pub fn insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
+        match self._insert(index, value) {
+            Ok(_) => {
+                A::update_cache_internal(self);
+                Ok(())
+            }
+            Err(mut new) => {
+                A::update_cache_internal(self);
+                A::update_cache_internal(&mut new);
+                Err(new)
+            }
+        }
+    }
+
+    fn _insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
         if self.children.len() == 0 {
             debug_assert!(self.parent.is_none());
             let ptr = NonNull::new(self as *mut _).unwrap();
             self.children.push(Node::new_leaf(self.bump, ptr));
-            return Ok(());
         }
 
-        let insert_pos = A::find_insert_pos_internal(self, index);
-        let child = &mut self.children[insert_pos];
+        let (mut child_index, mut child_new_insert_idx) = A::find_insert_pos_internal(self, index);
+        let child = &mut self.children[child_index];
         let new = match child {
             Node::Internal(child) => {
-                if let Err(new) = child.insert(index, value) {
-                    let new = Node::Internal(BumpBox::new_in(new, self.bump));
+                if let Err(new) = child.insert(child_new_insert_idx, value) {
+                    let new = Node::Internal(new);
                     Some(new)
                 } else {
                     None
                 }
             }
             Node::Leaf(child) => {
-                if let Err(new) = child.insert(index, value) {
-                    let new = Node::Leaf(BumpBox::new_in(new, self.bump));
+                if let Err(new) = child.insert(child_new_insert_idx, value) {
+                    let new = Node::Leaf(new);
                     Some(new)
                 } else {
                     None
@@ -54,21 +77,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         if let Some(new) = new {
             if self.children.len() == A::MAX_CHILDREN_NUM {
                 let mut ans = self._split();
-                if insert_pos <= self.children.len() {
-                    self.children.insert(insert_pos, new);
+                if child_index < self.children.len() {
+                    self.children.insert(child_index + 1, new);
                 } else {
-                    ans.children.insert(insert_pos - self.children.len(), new);
+                    ans.children
+                        .insert(child_index - self.children.len() + 1, new);
                 }
 
-                A::update_cache_internal(self);
-                A::update_cache_internal(&mut ans);
                 return Err(ans);
             }
 
-            self.children.insert(insert_pos, new);
-            A::update_cache_internal(self);
+            self.children.insert(child_index + 1, new);
         }
 
         Ok(())
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for InternalNode<'a, T, A> {
+    #[inline]
+    fn len(&self) -> usize {
+        A::len_internal(self)
     }
 }

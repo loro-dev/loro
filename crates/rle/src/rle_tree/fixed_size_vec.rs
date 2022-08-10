@@ -1,8 +1,11 @@
+use bumpalo::collections::vec::Drain;
+
 use super::Bump;
 use super::BumpVec;
 use std::marker::PhantomPinned;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::ops::RangeBounds;
 
 #[derive(Debug)]
 pub(super) struct FixedSizedVec<'a, T> {
@@ -34,6 +37,14 @@ impl<'a, T> FixedSizedVec<'a, T> {
     #[inline]
     pub(super) fn pop(&mut self) -> Option<T> {
         self.data.pop()
+    }
+
+    #[inline]
+    pub fn drain<R>(&mut self, range: R) -> Drain<T>
+    where
+        R: RangeBounds<usize>,
+    {
+        self.data.drain(range)
     }
 }
 

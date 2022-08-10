@@ -4,7 +4,7 @@ use std::{
     ptr::NonNull,
 };
 
-use crate::Rle;
+use crate::{HasLength, Rle};
 
 use super::{
     fixed_size_vec::FixedSizedVec, tree_trait::RleTreeTrait, BumpBox, BumpVec, RleTreeRaw,
@@ -24,8 +24,8 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    children: FixedSizedVec<'a, Node<'a, T, A>>,
-    cache: A::InternalCache,
+    pub(super) children: FixedSizedVec<'a, Node<'a, T, A>>,
+    pub cache: A::InternalCache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,
 }
@@ -34,9 +34,10 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: NonNull<InternalNode<'a, T, A>>,
-    children: FixedSizedVec<'a, T>,
+    pub(super) children: FixedSizedVec<'a, T>,
     prev: Option<NonNull<LeafNode<'a, T, A>>>,
     next: Option<NonNull<LeafNode<'a, T, A>>>,
+    pub cache: A::LeafCache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,
 }
@@ -48,5 +49,25 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
     fn new_leaf(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> Self {
         Self::Leaf(BumpBox::new_in(LeafNode::new(bump, parent), bump))
+    }
+
+    pub fn get_first_leaf(&self) -> Option<&LeafNode<'a, T, A>> {
+        match self {
+            Self::Internal(node) => node
+                .children
+                .get(0)
+                .and_then(|child| child.get_first_leaf()),
+            Self::Leaf(node) => Some(node),
+        }
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for Node<'a, T, A> {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Node::Internal(node) => node.len(),
+            Node::Leaf(node) => node.len(),
+        }
     }
 }
