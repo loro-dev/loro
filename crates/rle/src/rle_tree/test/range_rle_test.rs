@@ -115,7 +115,6 @@ fn delete() {
     let tree = t.get_mut();
     tree.insert(0, 0..10);
     tree.delete_range(4, 5);
-    dbg!(&tree);
     assert_eq!(tree.len(), 9);
 
     let ans = vec![0..4, 5..10];
