@@ -1,6 +1,6 @@
 use crate::{rle_tree::tree_trait::Position, HasLength};
 
-use super::{node_trait::NodeTrait, *};
+use super::*;
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     #[inline]
@@ -45,7 +45,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let mut ans = self._split();
-            ans.push_child(value);
+            ans.push_child(value).unwrap();
             A::update_cache_leaf(self);
             A::update_cache_leaf(&mut ans);
             return Err(ans);
@@ -58,7 +58,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
     #[cfg(test)]
     pub(crate) fn check(&self) {
-        assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
     }
 
@@ -161,11 +160,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for LeafNode<'a, T, A> {
-    type Child = T;
+impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     /// Delete may cause the children num increase, because splitting may happen
     ///
-    fn delete(
+    pub(crate) fn delete(
         &mut self,
         from: Option<A::Int>,
         to: Option<A::Int>,
@@ -210,15 +208,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for LeafNode<'a, T, A> 
         result
     }
 
-    fn to_node(node: BumpBox<'a, Self>) -> Node<'a, T, A> {
-        todo!()
-    }
-
-    fn _insert_with_split(
-        &mut self,
-        index: usize,
-        value: Self::Child,
-    ) -> Result<(), BumpBox<'a, Self>> {
+    fn _insert_with_split(&mut self, index: usize, value: T) -> Result<(), BumpBox<'a, Self>> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let mut ans = self._split();
             if index <= self.children.len() {

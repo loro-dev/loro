@@ -1,6 +1,8 @@
+use std::collections::BinaryHeap;
+
 use crate::{rle_tree::tree_trait::Position, HasLength};
 
-use super::{node_trait::NodeTrait, *};
+use super::*;
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     pub fn new(bump: &'a Bump, parent: Option<NonNull<Self>>) -> Self {
@@ -17,10 +19,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     #[inline]
     fn _split(&mut self) -> BumpBox<'a, Self> {
         let mut ans = BumpBox::new_in(Self::new(self.bump, self.parent), self.bump);
-        for child in self
+        let ans_ptr = NonNull::new(&mut *ans).unwrap();
+        for mut child in self
             .children
             .drain(self.children.len() - A::MIN_CHILDREN_NUM..self.children.len())
         {
+            child.set_parent(ans_ptr);
             ans.children.push(child);
         }
 
@@ -33,15 +37,133 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[cfg(test)]
-    pub(crate) fn check(&self) {
-        assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
-        assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
+    pub(crate) fn check_child_parent(&self) {
         for child in self.children.iter() {
+            child.get_self_index().unwrap();
             match child {
-                Node::Internal(node) => node.check(),
-                Node::Leaf(node) => node.check(),
+                Node::Internal(node) => {
+                    assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self));
+                    node.check_child_parent();
+                }
+                Node::Leaf(node) => {
+                    assert!(std::ptr::eq(node.parent.as_ptr(), self));
+                }
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn check(&self) {
+        if self.parent.is_some() {
+            assert!(
+                self.children.len() >= A::MIN_CHILDREN_NUM,
+                "children.len() = {}",
+                self.children.len()
+            );
+            assert!(
+                self.children.len() <= A::MAX_CHILDREN_NUM,
+                "children.len() = {}",
+                self.children.len()
+            );
+        }
+
+        for child in self.children.iter() {
+            match child {
+                Node::Internal(node) => {
+                    node.check();
+                    assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self));
+                }
+                Node::Leaf(node) => {
+                    node.check();
+                    assert!(std::ptr::eq(node.parent.as_ptr(), self));
+                }
+            }
+        }
+    }
+
+    // TODO: simplify this func?
+    fn _delete(
+        &mut self,
+        from: Option<A::Int>,
+        to: Option<A::Int>,
+        visited: &mut Vec<(usize, NonNull<Node<'a, T, A>>)>,
+        depth: usize,
+    ) -> Result<(), BumpBox<'a, Self>> {
+        let (del_start, to_del_from) = from.map_or((0, None), |x| self._delete_start(x));
+        let (del_end, to_del_to) = to.map_or((self.children.len(), None), |x| self._delete_end(x));
+        let mut result = Ok(());
+        {
+            // handle edge removing
+            let mut handled = false;
+            if let (Some(del_from), Some(del_to)) = (to_del_from, to_del_to) {
+                if del_start - 1 == del_end {
+                    visited.push((depth, NonNull::new(&mut self.children[del_end]).unwrap()));
+                    match &mut self.children[del_end] {
+                        Node::Internal(node) => {
+                            if let Err(new) =
+                                node._delete(Some(del_from), Some(del_to), visited, depth + 1)
+                            {
+                                result = self._insert_with_split(del_end + 1, Node::Internal(new));
+                            }
+                        }
+                        Node::Leaf(node) => {
+                            if let Err(new) = node.delete(Some(del_from), Some(del_to)) {
+                                result = self._insert_with_split(del_end + 1, Node::Leaf(new));
+                            }
+                        }
+                    }
+                    handled = true;
+                }
+            }
+
+            if !handled {
+                if let Some(del_from) = to_del_from {
+                    visited.push((
+                        depth,
+                        NonNull::new(&mut self.children[del_start - 1]).unwrap(),
+                    ));
+                    match &mut self.children[del_start - 1] {
+                        Node::Internal(node) => {
+                            if let Err(new) = node._delete(Some(del_from), None, visited, depth + 1)
+                            {
+                                result = self._insert_with_split(del_start, new.into());
+                            }
+                        }
+                        Node::Leaf(node) => {
+                            if let Err(new) = node.delete(Some(del_from), None) {
+                                result = self._insert_with_split(del_start, new.into())
+                            }
+                        }
+                    }
+                }
+                if let Some(del_to) = to_del_to {
+                    visited.push((depth, NonNull::new(&mut self.children[del_end]).unwrap()));
+                    match &mut self.children[del_end] {
+                        Node::Internal(node) => {
+                            if let Err(new) = node._delete(None, Some(del_to), visited, depth + 1) {
+                                result = self._insert_with_split(del_end + 1, new.into());
+                            }
+                        }
+                        Node::Leaf(node) => {
+                            if let Err(new) = node.delete(None, Some(del_to)) {
+                                result = self._insert_with_split(del_end + 1, new.into());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if del_start < del_end {
+            for _ in self.children.drain(del_start..del_end) {}
+        }
+
+        A::update_cache_internal(self);
+        if let Err(new) = &mut result {
+            A::update_cache_internal(new);
+        }
+
+        result
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<A::Int>) {
@@ -72,18 +194,30 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 A::update_cache_internal(self);
                 A::update_cache_internal(&mut new);
                 if self.parent.is_none() {
-                    let mut left = BumpBox::new_in(InternalNode::new(self.bump, None), self.bump);
-                    std::mem::swap(&mut *left, self);
-                    left.parent = Some(NonNull::new(self).unwrap());
-                    self.children.push(left.into());
-                    self.children.push(new.into());
-                    A::update_cache_internal(self);
+                    self._create_level(new);
                     Ok(())
                 } else {
                     Err(new)
                 }
             }
         }
+    }
+
+    /// root node function. assume self and new's caches are up-to-date
+    fn _create_level(&mut self, mut new: BumpBox<'a, InternalNode<'a, T, A>>) {
+        debug_assert!(self.parent.is_none());
+        let mut left = BumpBox::new_in(InternalNode::new(self.bump, None), self.bump);
+        std::mem::swap(&mut *left, self);
+        let left_ptr = (&mut *left).into();
+        for child in left.children.iter_mut() {
+            child.set_parent(left_ptr);
+        }
+
+        left.parent = Some(NonNull::new(self).unwrap());
+        new.parent = Some(NonNull::new(self).unwrap());
+        self.children.push(left.into());
+        self.children.push(new.into());
+        A::update_cache_internal(self);
     }
 
     fn _insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
@@ -131,102 +265,92 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for InternalNode<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> NodeTrait<'a, T, A> for InternalNode<'a, T, A> {
-    type Child = Node<'a, T, A>;
-    fn to_node(node: BumpBox<'a, Self>) -> Node<'a, T, A> {
-        Node::Internal(node)
+impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
+    /// this can only invoke from root
+    #[inline]
+    pub(crate) fn delete(&mut self, from: Option<A::Int>, to: Option<A::Int>) {
+        assert!(self.parent.is_none());
+        let mut visited = Vec::new();
+        match self._delete(from, to, &mut visited, 1) {
+            Ok(_) => {
+                A::update_cache_internal(self);
+            }
+            Err(mut new) => {
+                A::update_cache_internal(self);
+                A::update_cache_internal(&mut new);
+                self._create_level(new);
+            }
+        };
+
+        self._root_shrink_level_if_only_1_child();
+
+        // visit in depth order, top to down (depth 0..inf)
+        visited.sort();
+        let mut to_delete: Vec<NonNull<_>> = Vec::new();
+        for (_, mut node) in visited.into_iter() {
+            let node = unsafe { node.as_mut() };
+            debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
+            if node.children_num() >= A::MIN_CHILDREN_NUM {
+                continue;
+            }
+            if let Some((sibling, either)) = node.get_a_sibling() {
+                // if has sibling, borrow or merge to it
+                let sibling: &mut Node<'a, T, A> =
+                    unsafe { &mut *((sibling as *const _) as usize as *mut _) };
+                if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
+                    node.merge_to_sibling(sibling, either);
+                    to_delete.push(node.into());
+                } else {
+                    node.borrow_from_sibling(sibling, either);
+                }
+            } else {
+                unreachable!();
+            }
+        }
+
+        for node in to_delete.iter_mut() {
+            let node = unsafe { node.as_mut() };
+            node.remove();
+        }
+
+        self._root_shrink_level_if_only_1_child();
     }
 
-    // TODO: simplify this func?
-    fn delete(
-        &mut self,
-        from: Option<A::Int>,
-        to: Option<A::Int>,
-    ) -> Result<(), BumpBox<'a, Self>> {
-        let (del_start, to_del_from) = from.map_or((0, None), |x| self._delete_start(x));
-        let (del_end, to_del_to) = to.map_or((self.children.len(), None), |x| self._delete_end(x));
-        let mut result = Ok(());
-        {
-            // handle edge removing
-            let mut handled = false;
-            if let (Some(del_from), Some(del_to)) = (to_del_from, to_del_to) {
-                if del_start - 1 == del_end {
-                    match &mut self.children[del_end] {
-                        Node::Internal(node) => {
-                            if let Err(new) = node.delete(Some(del_from), Some(del_to)) {
-                                result = self._insert_with_split(del_end + 1, Node::Internal(new));
-                            }
-                        }
-                        Node::Leaf(node) => {
-                            if let Err(new) = node.delete(Some(del_from), Some(del_to)) {
-                                result = self._insert_with_split(del_end + 1, Node::Leaf(new));
-                            }
-                        }
-                    }
-                    handled = true;
-                }
+    fn _root_shrink_level_if_only_1_child(&mut self) {
+        while self.children.len() == 1 && self.children[0].as_internal().is_some() {
+            let mut child = self.children.pop().unwrap();
+            let child_ptr = child.as_internal_mut().unwrap();
+            std::mem::swap(&mut **child_ptr, self);
+            self.parent = None;
+            let ptr = self.into();
+            // TODO: extract reset parent?
+            for child in self.children.iter_mut() {
+                child.set_parent(ptr);
             }
-
-            if !handled {
-                if let Some(del_from) = to_del_from {
-                    match &mut self.children[del_start - 1] {
-                        Node::Internal(node) => {
-                            if let Err(new) = node.delete(Some(del_from), None) {
-                                result =
-                                    self._insert_with_split(del_start, NodeTrait::to_node(new));
-                            }
-                        }
-                        Node::Leaf(node) => {
-                            if let Err(new) = node.delete(Some(del_from), None) {
-                                result = self._insert_with_split(del_start, NodeTrait::to_node(new))
-                            }
-                        }
-                    }
-                }
-                if let Some(del_to) = to_del_to {
-                    match &mut self.children[del_end] {
-                        Node::Internal(node) => {
-                            if let Err(new) = node.delete(None, Some(del_to)) {
-                                result =
-                                    self._insert_with_split(del_end + 1, NodeTrait::to_node(new))
-                            }
-                        }
-                        Node::Leaf(node) => {
-                            if let Err(new) = node.delete(None, Some(del_to)) {
-                                result =
-                                    self._insert_with_split(del_end + 1, NodeTrait::to_node(new))
-                            }
-                        }
-                    }
-                }
-            }
+            child_ptr.parent = Some(NonNull::new(self).unwrap());
         }
-
-        if del_start < del_end {
-            for _ in self.children.drain(del_start..del_end) {}
-        }
-
-        A::update_cache_internal(self);
-        result
     }
 
     fn _insert_with_split(
         &mut self,
         child_index: usize,
-        new: Node<'a, T, A>,
+        mut new: Node<'a, T, A>,
     ) -> Result<(), BumpBox<'a, Self>> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let mut ans = self._split();
             if child_index < self.children.len() {
+                new.set_parent(self.into());
                 self.children.insert(child_index, new);
             } else {
+                new.set_parent((&mut *ans).into());
                 ans.children.insert(child_index - self.children.len(), new);
             }
 
-            return Err(ans);
+            Err(ans)
+        } else {
+            new.set_parent(self.into());
+            self.children.insert(child_index, new);
+            Ok(())
         }
-
-        self.children.insert(child_index, new);
-        Ok(())
     }
 }

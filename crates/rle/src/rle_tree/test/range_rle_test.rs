@@ -12,18 +12,18 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
     type LeafCache = usize;
 
     fn update_cache_leaf(node: &mut node::LeafNode<'_, Range<usize>, Self>) {
-        node.cache = (node.children.iter().map(HasLength::len).sum());
+        node.cache = node.children.iter().map(HasLength::len).sum();
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, Range<usize>, Self>) {
-        node.cache = (node
+        node.cache = node
             .children
             .iter()
             .map(|x| match x {
                 Node::Internal(x) => x.cache,
                 Node::Leaf(x) => x.cache,
             })
-            .sum());
+            .sum();
     }
 
     fn find_pos_internal(
@@ -130,15 +130,28 @@ fn insert_50times() {
     for i in (0..100).step_by(2) {
         assert_eq!(tree.len(), i / 2);
         tree.insert(tree.len(), i..i + 1);
+        tree.debug_check();
     }
-    tree.debug_check();
 }
 
 #[test]
-fn delete_that_need_merge_to_sibling() {}
+fn deletion_that_need_merge_to_sibling() {
+    let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
+    let tree = t.get_mut();
+    for i in (0..24).step_by(2) {
+        tree.insert(tree.len(), i..i + 1);
+    }
+
+    tree.delete_range(1, tree.len() - 1);
+    dbg!(&tree);
+    tree.debug_check();
+}
 
 #[test]
 fn delete_that_need_borrow_from_sibling() {}
 
 #[test]
 fn delete_that_causes_removing_a_level() {}
+
+#[test]
+fn delete_that_causes_increase_levels() {}
