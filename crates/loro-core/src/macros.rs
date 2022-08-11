@@ -77,7 +77,7 @@ macro_rules! array_mut_ref {
 #[test]
 fn test_macro() {
     let mut arr = vec![100, 101, 102, 103];
-    let (a, b, c) = array_mut_ref!(&mut arr, [1, 2, 3]);
+    let (a, b, _c) = array_mut_ref!(&mut arr, [1, 2, 3]);
     assert_eq!(*a, 101);
     assert_eq!(*b, 102);
     *a = 50;

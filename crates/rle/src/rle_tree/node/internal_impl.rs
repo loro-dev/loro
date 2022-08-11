@@ -1,5 +1,3 @@
-use std::collections::BinaryHeap;
-
 use crate::{rle_tree::tree_trait::Position, HasLength};
 
 use super::*;
@@ -37,13 +35,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[cfg(test)]
-    pub(crate) fn check_child_parent(&self) {
+    pub(crate) fn _check_child_parent(&self) {
         for child in self.children.iter() {
             child.get_self_index().unwrap();
             match child {
                 Node::Internal(node) => {
                     assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self));
-                    node.check_child_parent();
+                    node._check_child_parent();
                 }
                 Node::Leaf(node) => {
                     assert!(std::ptr::eq(node.parent.as_ptr(), self));

@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::Range};
 
-use num::{cast, FromPrimitive, Integer, Num, NumCast};
+use num::{cast, Integer, NumCast};
 
 pub trait Mergable<Cfg = ()> {
     fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool

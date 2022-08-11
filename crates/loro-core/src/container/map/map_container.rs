@@ -156,7 +156,7 @@ impl Container for MapContainer {
         self.value.as_ref().unwrap()
     }
 
-    fn checkout_version(&mut self, vv: &crate::version::VersionVector) {
+    fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {
         todo!()
     }
 }

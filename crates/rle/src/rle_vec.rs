@@ -1,7 +1,7 @@
-use num::{cast, Integer, NumCast};
-use std::ops::{Range, Sub};
 
-use crate::{HasLength, Mergable, Rle, Slice, Sliceable};
+use std::ops::{Range};
+
+use crate::{HasLength, Mergable, Slice, Sliceable};
 
 /// RleVec<T> is a vector that can be compressed using run-length encoding.
 ///

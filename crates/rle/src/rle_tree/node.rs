@@ -1,14 +1,11 @@
 use std::{
     marker::{PhantomData, PhantomPinned},
-    pin::Pin,
     ptr::NonNull,
 };
 
 use crate::{HasLength, Rle};
 
-use super::{
-    fixed_size_vec::FixedSizedVec, tree_trait::RleTreeTrait, BumpBox, BumpVec, RleTreeRaw,
-};
+use super::{fixed_size_vec::FixedSizedVec, tree_trait::RleTreeTrait, BumpBox};
 use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
 mod internal_impl;

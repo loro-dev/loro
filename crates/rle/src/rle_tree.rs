@@ -71,7 +71,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     /// return a cursor to the tree
-    pub fn get(&self, index: A::Int) {
+    pub fn get(&self, _index: A::Int) {
         todo!()
     }
 
@@ -86,7 +86,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
             .delete(Some(start), Some(end));
     }
 
-    pub fn iter_range(&self, from: A::Int, to: A::Int) {
+    pub fn iter_range(&self, _from: A::Int, _to: A::Int) {
         todo!()
     }
 

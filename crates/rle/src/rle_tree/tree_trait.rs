@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::Rle;
 
-use super::node::{InternalNode, LeafNode, Node};
+use super::node::{InternalNode, LeafNode};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Position {
