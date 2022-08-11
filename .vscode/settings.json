@@ -1,5 +1,8 @@
 {
   "cSpell.words": [
     "smstring"
-  ]
+  ],
+  "rust-analyzer.runnableEnv": {
+    "RUST_BACKTRACE": "full"
+  }
 }

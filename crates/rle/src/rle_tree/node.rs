@@ -94,15 +94,23 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
     pub(crate) fn get_self_index(&self) -> Option<usize> {
         self.parent().map(|parent| {
-            parent
+            let ans = parent
                 .children
                 .iter()
                 .position(|child| match (child, self) {
                     (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(&**a, &**b),
                     (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(&**a, &**b),
                     _ => false,
-                })
-                .unwrap()
+                });
+
+            #[cfg(debug_assertions)]
+            if ans.is_none() {
+                dbg!(parent);
+                dbg!(self);
+                unreachable!();
+            }
+
+            ans.unwrap()
         })
     }
 

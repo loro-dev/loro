@@ -79,11 +79,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
         iter::Iter::new(self.node.get_first_leaf())
     }
 
-    pub fn delete_range(&mut self, start: A::Int, end: A::Int) {
-        self.node
-            .as_internal_mut()
-            .unwrap()
-            .delete(Some(start), Some(end));
+    pub fn delete_range(&mut self, start: Option<A::Int>, end: Option<A::Int>) {
+        self.node.as_internal_mut().unwrap().delete(start, end);
     }
 
     pub fn iter_range(&self, _from: A::Int, _to: A::Int) {
