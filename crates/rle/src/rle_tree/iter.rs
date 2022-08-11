@@ -1,6 +1,6 @@
 use crate::Rle;
 
-use super::{node::LeafNode, tree_trait::RleTreeTrait, RleTreeRaw};
+use super::{node::LeafNode, tree_trait::RleTreeTrait};
 
 pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
     node: Option<&'some LeafNode<'bump, T, A>>,
