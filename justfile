@@ -2,7 +2,7 @@ build:
   cargo build
 
 test *FLAGS:
-  cargo nextest run {{FLAGS}}
+  RUST_BACKTRACE=full cargo nextest run {{FLAGS}}
 
 # test without proptest
 test-fast:

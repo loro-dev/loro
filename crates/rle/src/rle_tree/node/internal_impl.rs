@@ -92,14 +92,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         visited: &mut Vec<(usize, NonNull<Node<'a, T, A>>)>,
         depth: usize,
     ) -> Result<(), BumpBox<'a, Self>> {
-        let (direct_delete_start, to_del_from) = from.map_or((0, None), |x| self._delete_start(x));
-        let (direct_delete_end, to_del_to) =
+        let (direct_delete_start, to_del_start_offset) =
+            from.map_or((0, None), |x| self._delete_start(x));
+        let (direct_delete_end, to_del_end_offset) =
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
         let mut result = Ok(());
         {
             // handle edge removing
             let mut handled = false;
-            if let (Some(del_from), Some(del_to)) = (to_del_from, to_del_to) {
+            if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
                     visited.push((
                         depth,
@@ -126,7 +127,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
 
             if !handled {
-                if let Some(del_from) = to_del_from {
+                if let Some(del_from) = to_del_start_offset {
                     visited.push((
                         depth,
                         NonNull::new(&mut self.children[direct_delete_start - 1]).unwrap(),
@@ -145,7 +146,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                         }
                     }
                 }
-                if let Some(del_to) = to_del_to {
+                if let Some(del_to) = to_del_end_offset {
                     visited.push((
                         depth,
                         NonNull::new(&mut self.children[direct_delete_end]).unwrap(),
@@ -153,11 +154,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     match &mut self.children[direct_delete_end] {
                         Node::Internal(node) => {
                             if let Err(new) = node._delete(None, Some(del_to), visited, depth + 1) {
+                                debug_assert!(result.is_ok());
                                 result = self._insert_with_split(direct_delete_end + 1, new.into());
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(None, Some(del_to)) {
+                                debug_assert!(result.is_ok());
                                 result = self._insert_with_split(direct_delete_end + 1, new.into());
                             }
                         }
@@ -294,17 +297,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         };
 
-        self._root_shrink_level_if_only_1_child();
+        let removed = self._root_shrink_level_if_only_1_child();
 
         // visit in depth order, top to down (depth 0..inf)
         visited.sort();
         let mut to_delete: Vec<NonNull<_>> = Vec::new();
         for (_, mut node) in visited.into_iter() {
             let node = unsafe { node.as_mut() };
+            if let Some(node) = node.as_internal() {
+                let ptr = &**node as *const InternalNode<'a, T, A>;
+                if removed.contains(&ptr) {
+                    println!("SKIP");
+                    continue;
+                }
+            }
+
             debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
             if node.children_num() >= A::MIN_CHILDREN_NUM {
                 continue;
             }
+
             if let Some((sibling, either)) = node.get_a_sibling() {
                 // if has sibling, borrow or merge to it
                 let sibling: &mut Node<'a, T, A> =
@@ -316,6 +328,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     node.borrow_from_sibling(sibling, either);
                 }
             } else {
+                if node.parent().unwrap().is_root() {
+                    continue;
+                }
+
+                dbg!(self);
+                dbg!(node.parent());
+                dbg!(node);
                 unreachable!();
             }
         }
@@ -328,7 +347,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         self._root_shrink_level_if_only_1_child();
     }
 
-    fn _root_shrink_level_if_only_1_child(&mut self) {
+    fn _root_shrink_level_if_only_1_child(&mut self) -> Vec<*const InternalNode<'a, T, A>> {
+        let mut ans = Vec::new();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
             let mut child = self.children.pop().unwrap();
             let child_ptr = child.as_internal_mut().unwrap();
@@ -339,8 +359,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             for child in self.children.iter_mut() {
                 child.set_parent(ptr);
             }
-            child_ptr.parent = Some(NonNull::new(self).unwrap());
+
+            child_ptr.parent = None;
+            child_ptr.children.inner().clear();
+            ans.push(&**child_ptr as *const _);
         }
+
+        ans
+    }
+
+    #[inline]
+    fn is_root(&self) -> bool {
+        self.parent.is_none()
     }
 
     fn _insert_with_split(

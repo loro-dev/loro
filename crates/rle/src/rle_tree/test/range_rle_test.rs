@@ -1,3 +1,5 @@
+use ctor::ctor;
+
 use crate::rle_tree::tree_trait::Position;
 
 use super::super::*;
@@ -114,7 +116,7 @@ fn delete() {
     let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
     let tree = t.get_mut();
     tree.insert(0, 0..10);
-    tree.delete_range(4, 5);
+    tree.delete_range(Some(4), Some(5));
     assert_eq!(tree.len(), 9);
 
     let ans = vec![0..4, 5..10];
@@ -142,7 +144,7 @@ fn deletion_that_need_merge_to_sibling() {
         tree.insert(tree.len(), i..i + 1);
     }
 
-    tree.delete_range(1, tree.len() - 1);
+    tree.delete_range(Some(1), Some(tree.len() - 1));
     tree.debug_check();
 }
 
@@ -153,11 +155,11 @@ fn delete_that_need_borrow_from_sibling() {
     for i in (0..16).step_by(2) {
         tree.insert(tree.len(), i..i + 1);
     }
-    tree.delete_range(2, 3);
+    tree.delete_range(Some(2), Some(3));
     // Left [ 0..1, 2..3, 6..7 ]
     // Right [8..9, 10..11, 12..13, 14..15]
 
-    tree.delete_range(1, 2);
+    tree.delete_range(Some(1), Some(2));
     {
         // Left [ 0..1, 6..7 ]
         // Right [8..9, 10..11, 12..13, 14..15]
@@ -167,7 +169,7 @@ fn delete_that_need_borrow_from_sibling() {
         assert_eq!(right.as_leaf().unwrap().cache, 4);
     }
 
-    tree.delete_range(1, 2);
+    tree.delete_range(Some(1), Some(2));
     {
         // Left [ 0..1, 8..9, 10..11 ]
         // Right [12..13, 14..15]
@@ -186,7 +188,21 @@ fn delete_that_need_borrow_from_sibling() {
 }
 
 #[test]
-fn delete_that_causes_removing_a_level() {}
+fn delete_that_causes_removing_layers() {
+    let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
+    let tree = t.get_mut();
+    for i in (0..128).step_by(2) {
+        tree.insert(tree.len(), i..i + 1);
+    }
+    tree.debug_check();
+    tree.delete_range(Some(1), None);
+    dbg!(tree);
+}
+
+#[ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+}
 
 #[test]
 fn delete_that_causes_increase_levels() {}
