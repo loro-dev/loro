@@ -138,17 +138,52 @@ fn insert_50times() {
 fn deletion_that_need_merge_to_sibling() {
     let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
     let tree = t.get_mut();
-    for i in (0..24).step_by(2) {
+    for i in (0..18).step_by(2) {
         tree.insert(tree.len(), i..i + 1);
     }
 
     tree.delete_range(1, tree.len() - 1);
-    dbg!(&tree);
     tree.debug_check();
 }
 
 #[test]
-fn delete_that_need_borrow_from_sibling() {}
+fn delete_that_need_borrow_from_sibling() {
+    let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
+    let tree = t.get_mut();
+    for i in (0..16).step_by(2) {
+        tree.insert(tree.len(), i..i + 1);
+    }
+    tree.delete_range(2, 3);
+    // Left [ 0..1, 2..3, 6..7 ]
+    // Right [8..9, 10..11, 12..13, 14..15]
+
+    tree.delete_range(1, 2);
+    {
+        // Left [ 0..1, 6..7 ]
+        // Right [8..9, 10..11, 12..13, 14..15]
+        let left = &tree.node.as_internal().unwrap().children[0];
+        assert_eq!(left.as_leaf().unwrap().cache, 2);
+        let right = &tree.node.as_internal().unwrap().children[1];
+        assert_eq!(right.as_leaf().unwrap().cache, 4);
+    }
+
+    tree.delete_range(1, 2);
+    {
+        // Left [ 0..1, 8..9, 10..11 ]
+        // Right [12..13, 14..15]
+        let left = &tree.node.as_internal().unwrap().children[0];
+        assert_eq!(left.as_leaf().unwrap().cache, 3);
+        let right = &tree.node.as_internal().unwrap().children[1];
+        assert_eq!(right.as_leaf().unwrap().cache, 2);
+    }
+
+    let expected = [0..1, 8..9, 10..11, 12..13, 14..15];
+    for (actual, expected) in tree.iter().zip(expected.iter()) {
+        assert_eq!(actual, expected);
+    }
+
+    tree.debug_check();
+}
 
 #[test]
 fn delete_that_causes_removing_a_level() {}
