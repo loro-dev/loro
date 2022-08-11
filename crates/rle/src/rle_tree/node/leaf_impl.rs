@@ -57,8 +57,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[cfg(test)]
-    pub(crate) fn check(&self) {
+    pub(crate) fn check(&mut self) {
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
+
+        let cache = self.cache.clone();
+        A::update_cache_leaf(self);
+        assert_eq!(cache, self.cache);
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {
@@ -165,12 +169,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     ///
     pub(crate) fn delete(
         &mut self,
-        from: Option<A::Int>,
-        to: Option<A::Int>,
+        start: Option<A::Int>,
+        end: Option<A::Int>,
     ) -> Result<(), BumpBox<'a, Self>> {
-        let (del_start, del_relative_from) = from.map_or((0, None), |x| self._delete_start(x));
+        let (del_start, del_relative_from) = start.map_or((0, None), |x| self._delete_start(x));
         let (del_end, del_relative_to) =
-            to.map_or((self.children.len(), None), |x| self._delete_end(x));
+            end.map_or((self.children.len(), None), |x| self._delete_end(x));
         let mut handled = false;
         let mut result = Ok(());
         if let (Some(del_relative_from), Some(del_relative_to)) =

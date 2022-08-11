@@ -15,8 +15,8 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug;
-    type InternalCache: Default + Debug;
-    type LeafCache: Default + Debug;
+    type InternalCache: Default + Debug + Eq + Clone;
+    type LeafCache: Default + Debug + Eq + Clone;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>);

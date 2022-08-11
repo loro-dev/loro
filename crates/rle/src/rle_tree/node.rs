@@ -128,7 +128,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         }
     }
 
-    // FIXME: change parent
     pub(crate) fn merge_to_sibling(&mut self, sibling: &mut Node<'a, T, A>, either: Either) {
         if either == Either::Left {
             match sibling {
@@ -169,9 +168,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 }
             }
         }
+
+        self.update_cache();
+        sibling.update_cache();
     }
 
-    // FIXME: change parent
     pub(crate) fn borrow_from_sibling(&mut self, sibling: &mut Node<'a, T, A>, either: Either) {
         if either == Either::Left {
             match sibling {
@@ -220,12 +221,22 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 }
             }
         }
+
+        self.update_cache();
+        sibling.update_cache();
     }
 
     pub(crate) fn remove(&mut self) {
         let index = self.get_self_index().unwrap();
         let parent = self.parent_mut().unwrap();
         for _ in parent.children.drain(index..index + 1) {}
+    }
+
+    pub(crate) fn update_cache(&mut self) {
+        match self {
+            Node::Internal(node) => A::update_cache_internal(node),
+            Node::Leaf(node) => A::update_cache_leaf(node),
+        }
     }
 }
 
