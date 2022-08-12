@@ -1,3 +1,4 @@
+#![allow(unused)]
 mod encoding;
 mod loro;
 mod raw_change;

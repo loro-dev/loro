@@ -40,21 +40,21 @@ impl RawStore {
         }
 
         self.calc_hash();
-        for (_clientId, _mac) in self.macs.as_ref().unwrap().iter() {
+        for (_client_id, _mac) in self.macs.as_ref().unwrap().iter() {
             todo!("pending");
         }
 
         true
     }
 
-    pub fn get_final_hash(&self, clientId: ClientID) -> ChangeHash {
-        let changes = self.changes.get(&clientId).unwrap();
+    pub fn get_final_hash(&self, client_id: ClientID) -> ChangeHash {
+        let changes = self.changes.get(&client_id).unwrap();
         let last = changes.vec().last().unwrap();
         last.hash.unwrap()
     }
 
     fn calc_hash(&mut self) {
-        for (_client_id, changes) in &mut self.changes {
+        for (_client_id, changes) in &mut self.changes.iter_mut() {
             let changes = changes.vec_mut();
             let mut start_index = 0;
             for i in (0..changes.len()).rev() {
