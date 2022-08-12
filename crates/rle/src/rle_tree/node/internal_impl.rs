@@ -52,7 +52,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn check(&mut self) {
         if !self.is_root() {
             assert!(
@@ -81,9 +80,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         }
 
-        let cache = self.cache.clone();
-        A::update_cache_internal(self);
-        assert_eq!(cache, self.cache);
+        A::check_cache_internal(self);
     }
 
     // TODO: simplify this func?
@@ -172,7 +169,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         if direct_delete_start < direct_delete_end {
-            for _ in self.children.drain(direct_delete_start..direct_delete_end) {}
+            self.children.drain(direct_delete_start..direct_delete_end);
         }
 
         A::update_cache_internal(self);
@@ -303,13 +300,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         // visit in depth order, top to down (depth 0..inf)
         visited.sort();
-        let mut to_delete: Vec<NonNull<_>> = Vec::new();
         for (_, mut node) in visited.into_iter() {
             let node = unsafe { node.as_mut() };
             if let Some(node) = node.as_internal() {
                 let ptr = &**node as *const InternalNode<'a, T, A>;
                 if removed.contains(&ptr) {
-                    println!("SKIP");
                     continue;
                 }
             }
@@ -319,13 +314,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 continue;
             }
 
+            let mut to_delete: bool = false;
             if let Some((sibling, either)) = node.get_a_sibling() {
                 // if has sibling, borrow or merge to it
                 let sibling: &mut Node<'a, T, A> =
                     unsafe { &mut *((sibling as *const _) as usize as *mut _) };
                 if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
                     node.merge_to_sibling(sibling, either);
-                    to_delete.push(node.into());
+                    to_delete = true;
                 } else {
                     node.borrow_from_sibling(sibling, either);
                 }
@@ -339,11 +335,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 dbg!(node);
                 unreachable!();
             }
-        }
 
-        for node in to_delete.iter_mut() {
-            let node = unsafe { node.as_mut() };
-            node.remove();
+            if to_delete {
+                node.remove();
+            }
         }
 
         self._root_shrink_level_if_only_1_child();

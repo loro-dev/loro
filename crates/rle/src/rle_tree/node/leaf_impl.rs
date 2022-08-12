@@ -57,13 +57,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn check(&mut self) {
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
-
-        let cache = self.cache.clone();
-        A::update_cache_leaf(self);
-        assert_eq!(cache, self.cache);
+        A::check_cache_leaf(self);
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {

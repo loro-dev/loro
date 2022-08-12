@@ -5,11 +5,12 @@ use bumpalo::Bump;
 use ouroboros::self_referencing;
 use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
+
 mod iter;
-mod node;
+pub mod node;
 #[cfg(test)]
 mod test;
-mod tree_trait;
+pub mod tree_trait;
 
 #[derive(Debug)]
 pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
@@ -22,7 +23,7 @@ pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
     bump: Bump,
     #[borrows(bump)]
-    tree: &'this mut RleTreeRaw<'this, T, A>,
+    pub tree: &'this mut RleTreeRaw<'this, T, A>,
 }
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
@@ -71,8 +72,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
         todo!()
     }
 
-    #[cfg(test)]
-    fn debug_check(&mut self) {
+    pub fn debug_check(&mut self) {
         self.node.as_internal_mut().unwrap().check();
     }
 }

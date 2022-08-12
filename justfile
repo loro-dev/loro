@@ -20,3 +20,11 @@ deny:
 
 crev:
   cargo crev crate check
+
+bench-rle:
+  cd crates/rle
+  cargo build --release --examples
+  cd ../..
+  hyperfine --warmup=3 "./target/release/examples/string_tree_bench"
+
+
