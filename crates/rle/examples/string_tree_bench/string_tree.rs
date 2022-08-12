@@ -1,33 +1,40 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    borrow::{Borrow, BorrowMut},
+    cell::{Ref, RefCell, RefMut},
+    ops::{Deref, DerefMut, Range, RangeBounds},
+    rc::Rc,
+};
 
 use rle::{
     rle_tree::{
         node::{InternalNode, LeafNode, Node},
         tree_trait::{Position, RleTreeTrait},
     },
-    HasLength, Mergable, RleTree, Sliceable,
+    HasLength, Mergable, Sliceable,
 };
+use smartstring::SmartString;
+
+type SString = SmartString<smartstring::LazyCompact>;
 
 #[derive(Debug)]
-#[repr(transparent)]
-pub struct CustomString(String);
-impl Deref for CustomString {
-    type Target = String;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+pub struct CustomString {
+    str: Rc<RefCell<SString>>,
+    slice: Range<usize>,
 }
 
-impl DerefMut for CustomString {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl CustomString {
+    fn str(&self) -> Ref<'_, SString> {
+        RefCell::borrow(&self.str)
+    }
+
+    fn str_mut(&self) -> RefMut<'_, SString> {
+        RefCell::borrow_mut(&self.str)
     }
 }
 
 impl HasLength for CustomString {
     fn len(&self) -> usize {
-        self.0.len()
+        rle::HasLength::len(&self.slice)
     }
 }
 
@@ -36,20 +43,28 @@ impl Mergable for CustomString {
     where
         Self: Sized,
     {
-        self.len() + other.len() < 64
+        self.slice.start == 0
+            && self.slice.end == self.str().len()
+            && self.str().capacity() > other.len() + self.str().len()
+            && Rc::strong_count(&self.str) == 1
     }
 
     fn merge(&mut self, other: &Self, _conf: &())
     where
         Self: Sized,
     {
-        self.push_str(other.as_str())
+        self.str_mut().push_str(other.str().as_str());
+        let length = self.str().len();
+        self.borrow_mut().slice.end = length;
     }
 }
 
 impl Sliceable for CustomString {
     fn slice(&self, from: usize, to: usize) -> Self {
-        CustomString(self.0[from..to].to_owned())
+        CustomString {
+            str: self.str.clone(),
+            slice: self.slice.start + from..self.slice.start + to,
+        }
     }
 }
 
@@ -151,14 +166,11 @@ fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
     }
 }
 
-impl From<String> for CustomString {
-    fn from(origin: String) -> Self {
-        CustomString(origin)
-    }
-}
-
 impl From<&str> for CustomString {
     fn from(origin: &str) -> Self {
-        CustomString(origin.to_owned())
+        CustomString {
+            str: Rc::new(RefCell::new(SString::from(origin))),
+            slice: 0..origin.len(),
+        }
     }
 }
