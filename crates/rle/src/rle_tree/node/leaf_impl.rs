@@ -19,22 +19,25 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[inline]
-    fn _split(&mut self) -> &'a mut Self {
-        let mut ans = self.bump.alloc(Self::new(self.bump, self.parent));
+    fn _split(&mut self) -> &'a mut Node<'a, T, A> {
+        let mut ans = self
+            .bump
+            .alloc(Node::Leaf(Self::new(self.bump, self.parent)));
+        let mut inner = ans.as_leaf_mut().unwrap();
         for child in self
             .children
             .drain(self.children.len() - A::MIN_CHILDREN_NUM..self.children.len())
         {
-            ans.children.push(child);
+            inner.children.push(child);
         }
 
-        ans.next = self.next;
-        ans.prev = Some(NonNull::new(self).unwrap());
-        self.next = Some(NonNull::new(&mut *ans).unwrap());
+        inner.next = self.next;
+        inner.prev = Some(NonNull::new(self).unwrap());
+        self.next = Some(NonNull::new(&mut *inner).unwrap());
         ans
     }
 
-    pub fn push_child(&mut self, value: T) -> Result<(), &'a mut Self> {
+    pub fn push_child(&mut self, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
         if !self.children.is_empty() {
             let last = self.children.last_mut().unwrap();
             if last.is_mergable(&value, &()) {
@@ -46,9 +49,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let ans = self._split();
-            ans.push_child(value).unwrap();
+            let inner = ans.as_leaf_mut().unwrap();
+            inner.push_child(value).unwrap();
             A::update_cache_leaf(self);
-            A::update_cache_leaf(ans);
+            A::update_cache_leaf(inner);
             return Err(ans);
         }
 
@@ -80,7 +84,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         }
     }
 
-    pub fn insert(&mut self, raw_index: A::Int, value: T) -> Result<(), &'a mut Self> {
+    pub fn insert(&mut self, raw_index: A::Int, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
         match self._insert(raw_index, value) {
             Ok(_) => {
                 A::update_cache_leaf(self);
@@ -88,13 +92,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             }
             Err(new) => {
                 A::update_cache_leaf(self);
-                A::update_cache_leaf(new);
+                A::update_cache_leaf(new.as_leaf_mut().unwrap());
                 Err(new)
             }
         }
     }
 
-    fn _insert(&mut self, raw_index: A::Int, value: T) -> Result<(), &'a mut Self> {
+    fn _insert(&mut self, raw_index: A::Int, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
         if self.children.is_empty() {
             self.children.push(self.bump.alloc(value));
             return Ok(());
@@ -132,19 +136,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         self.children[index] = self.bump.alloc(a);
 
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
-            let ans = self._split();
+            let node = self._split();
+            let leaf = node.as_leaf_mut().unwrap();
             if index < self.children.len() {
                 self.children.insert(index + 1, self.bump.alloc(value));
                 self.children.insert(index + 2, self.bump.alloc(b));
-                ans.children.insert(0, self.children.pop().unwrap());
+                leaf.children.insert(0, self.children.pop().unwrap());
             } else {
-                ans.children
+                leaf.children
                     .insert(index - self.children.len() + 1, self.bump.alloc(value));
-                ans.children
+                leaf.children
                     .insert(index - self.children.len() + 2, self.bump.alloc(b));
             }
 
-            return Err(ans);
+            return Err(node);
         }
 
         self.children.insert(index + 1, self.bump.alloc(b));
@@ -175,7 +180,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         &mut self,
         start: Option<A::Int>,
         end: Option<A::Int>,
-    ) -> Result<(), &'a mut Self> {
+    ) -> Result<(), &'a mut Node<'a, T, A>> {
         let (del_start, del_relative_from) = start.map_or((0, None), |x| self._delete_start(x));
         let (del_end, del_relative_to) =
             end.map_or((self.children.len(), None), |x| self._delete_end(x));
@@ -215,19 +220,21 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
         A::update_cache_leaf(self);
         if let Err(new) = &mut result {
-            A::update_cache_leaf(new);
+            A::update_cache_leaf(new.as_leaf_mut().unwrap());
         }
 
         result
     }
 
-    fn _insert_with_split(&mut self, index: usize, value: T) -> Result<(), &'a mut Self> {
+    fn _insert_with_split(&mut self, index: usize, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let ans = self._split();
             if index <= self.children.len() {
                 self.children.insert(index, self.bump.alloc(value));
             } else {
-                ans.children
+                ans.as_leaf_mut()
+                    .unwrap()
+                    .children
                     .insert(index - self.children.len(), self.bump.alloc(value));
             }
 

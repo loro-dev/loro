@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    ops::{Deref, DerefMut},
-};
+use std::ops::{Deref, DerefMut};
 
 use rle::{
     rle_tree::{
@@ -74,7 +71,7 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
     }
 
     fn update_cache_internal(node: &mut rle::rle_tree::node::InternalNode<'_, CustomString, Self>) {
-        node.cache = node.children().iter().map(Node::len).sum();
+        node.cache = node.children().iter().map(|x| Node::len(x)).sum();
     }
 
     fn find_pos_internal(
@@ -86,13 +83,13 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
             last_cache = match child {
                 Node::Internal(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child));
+                        return (i, index, get_pos(index, *child));
                     }
                     x.cache
                 }
                 Node::Leaf(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child));
+                        return (i, index, get_pos(index, *child));
                     }
                     x.cache
                 }

@@ -14,14 +14,14 @@ pub(crate) mod node_trait;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
-    Internal(&'a mut InternalNode<'a, T, A>),
-    Leaf(&'a mut LeafNode<'a, T, A>),
+    Internal(InternalNode<'a, T, A>),
+    Leaf(LeafNode<'a, T, A>),
 }
 
 pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(super) children: BumpVec<'a, Node<'a, T, A>>,
+    pub(super) children: BumpVec<'a, &'a mut Node<'a, T, A>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,
@@ -47,12 +47,12 @@ pub(crate) enum Either {
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
     fn _new_internal(bump: &'a Bump, parent: Option<NonNull<InternalNode<'a, T, A>>>) -> Self {
-        Self::Internal(bump.alloc(InternalNode::new(bump, parent)))
+        Self::Internal(InternalNode::new(bump, parent))
     }
 
     #[inline]
-    fn new_leaf(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> Self {
-        Self::Leaf(bump.alloc(LeafNode::new(bump, parent)))
+    fn new_leaf(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> &'a mut Self {
+        bump.alloc(Self::Leaf(LeafNode::new(bump, parent)))
     }
 
     #[inline]
@@ -96,8 +96,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 .children
                 .iter()
                 .position(|child| match (child, self) {
-                    (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(&**a, &**b),
-                    (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(&**a, &**b),
+                    (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(&*a, &*b),
+                    (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(&*a, &*b),
                     _ => false,
                 });
 
@@ -136,8 +136,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             match sibling {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
-                    let ptr = NonNull::new(&mut **sibling).unwrap();
-                    for mut child in self_node.children.drain(..) {
+                    let ptr = NonNull::new(&mut *sibling).unwrap();
+                    for child in self_node.children.drain(..) {
                         child.set_parent(ptr);
                         sibling.children.push(child);
                     }
@@ -153,10 +153,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             match sibling {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
-                    let ptr = NonNull::new(&mut **sibling).unwrap();
+                    let ptr = NonNull::new(&mut *sibling).unwrap();
                     sibling.children.splice(
                         0..0,
-                        self_node.children.drain(0..).rev().map(|mut x| {
+                        self_node.children.drain(0..).rev().map(|x| {
                             x.set_parent(ptr);
                             x
                         }),
@@ -180,12 +180,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             match sibling {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
-                    let self_ptr = NonNull::new(&mut **self_node).unwrap();
-                    let sibling_drain =
-                        sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|mut x| {
-                            x.set_parent(self_ptr);
-                            x
-                        });
+                    let self_ptr = NonNull::new(&mut *self_node).unwrap();
+                    let sibling_drain = sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|x| {
+                        x.set_parent(self_ptr);
+                        x
+                    });
                     self_node.children.splice(0..0, sibling_drain);
                 }
                 Node::Leaf(sibling) => {
@@ -198,7 +197,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             match sibling {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
-                    let self_ptr = NonNull::new(&mut **self_node).unwrap();
+                    let self_ptr = NonNull::new(&mut *self_node).unwrap();
                     let end = self_node.children.len();
                     let sibling_len = sibling.children.len();
                     self_node.children.splice(
@@ -206,7 +205,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                         sibling
                             .children
                             .drain(0..sibling_len - A::MIN_CHILDREN_NUM)
-                            .map(|mut x| {
+                            .map(|x| {
                                 x.set_parent(self_ptr);
                                 x
                             }),
