@@ -3,12 +3,7 @@ use crate::{HasLength, Rle};
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 use ouroboros::self_referencing;
-use std::{
-    borrow::{Borrow, BorrowMut},
-    marker::{PhantomData, PhantomPinned},
-    pin::Pin,
-    ptr::NonNull,
-};
+use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
 mod iter;
 mod node;
@@ -27,15 +22,14 @@ pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
     bump: Bump,
     #[borrows(bump)]
-    #[not_covariant]
-    tree: RleTreeRaw<'this, T, A>,
+    tree: &'this mut RleTreeRaw<'this, T, A>,
 }
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
         RleTreeBuilder {
             bump: Bump::new(),
-            tree_builder: |bump| RleTreeRaw::new(bump),
+            tree_builder: |bump| bump.alloc(RleTreeRaw::new(bump)),
         }
         .build()
     }
