@@ -14,3 +14,4 @@ ouroboros = "0.15.2"
 [dev-dependencies]
 color-backtrace = { version = "0.5" }
 ctor = "0.1.23"
+proptest = "1.0.0"
