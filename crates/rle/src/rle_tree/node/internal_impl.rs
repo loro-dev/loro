@@ -9,7 +9,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         Self {
             bump,
             parent,
-            children: FixedSizedVec::with_capacity(A::MAX_CHILDREN_NUM, bump),
+            children: BumpVec::with_capacity_in(A::MAX_CHILDREN_NUM, bump),
             cache: Default::default(),
             _pin: PhantomPinned,
             _a: PhantomData,
@@ -363,7 +363,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
 
             child_ptr.parent = None;
-            child_ptr.children.inner().clear();
+            child_ptr.children.clear();
             ans.push(&**child_ptr as *const _);
         }
 

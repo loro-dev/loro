@@ -6,7 +6,6 @@ use bumpalo::Bump;
 use owning_ref::OwningRefMut;
 use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
-mod fixed_size_vec;
 mod iter;
 mod node;
 #[cfg(test)]
@@ -44,6 +43,12 @@ impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> RleTree<T, A> {
 
     pub fn get_mut(&mut self) -> &mut RleTreeRaw<'static, T, A> {
         self.tree.as_mut()
+    }
+}
+
+impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
