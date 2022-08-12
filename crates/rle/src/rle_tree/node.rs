@@ -46,8 +46,8 @@ pub(crate) enum Either {
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
-    fn new_internal(bump: &'a Bump) -> Self {
-        Self::Internal(BumpBox::new_in(InternalNode::new(bump, None), bump))
+    fn _new_internal(bump: &'a Bump, parent: Option<NonNull<InternalNode<'a, T, A>>>) -> Self {
+        Self::Internal(BumpBox::new_in(InternalNode::new(bump, parent), bump))
     }
 
     #[inline]

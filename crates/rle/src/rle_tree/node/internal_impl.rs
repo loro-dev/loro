@@ -54,7 +54,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[cfg(test)]
     pub(crate) fn check(&mut self) {
-        if self.parent.is_some() {
+        if self.is_root() {
             assert!(
                 self.children.len() >= A::MIN_CHILDREN_NUM,
                 "children.len() = {}",
@@ -210,7 +210,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Err(mut new) => {
                 A::update_cache_internal(self);
                 A::update_cache_internal(&mut new);
-                if self.parent.is_none() {
+                if self.is_root() {
                     self._create_level(new);
                     Ok(())
                 } else {
@@ -222,7 +222,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     /// root node function. assume self and new's caches are up-to-date
     fn _create_level(&mut self, mut new: BumpBox<'a, InternalNode<'a, T, A>>) {
-        debug_assert!(self.parent.is_none());
+        debug_assert!(self.is_root());
         let mut left = BumpBox::new_in(InternalNode::new(self.bump, None), self.bump);
         std::mem::swap(&mut *left, self);
         let left_ptr = (&mut *left).into();
@@ -238,8 +238,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     fn _insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
-        if self.children.len() == 0 {
-            debug_assert!(self.parent.is_none());
+        if self.children.is_empty() {
+            debug_assert!(self.is_root());
             let ptr = NonNull::new(self as *mut _).unwrap();
             self.children.push(Node::new_leaf(self.bump, ptr));
         }
@@ -286,7 +286,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     /// this can only invoke from root
     #[inline]
     pub(crate) fn delete(&mut self, start: Option<A::Int>, end: Option<A::Int>) {
-        assert!(self.parent.is_none());
+        debug_assert!(self.is_root());
         let mut visited = Vec::new();
         match self._delete(start, end, &mut visited, 1) {
             Ok(_) => {
