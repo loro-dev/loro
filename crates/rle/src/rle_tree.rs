@@ -14,13 +14,11 @@ mod tree_trait;
 
 #[derive(Debug)]
 pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
-    bump: &'a Bump,
     node: Node<'a, T, A>,
     _pin: PhantomPinned,
     _a: PhantomData<(A, T)>,
 }
 
-#[allow(unused)]
 type TreeRef<T, A> =
     OwningRefMut<Box<(Box<Bump>, RleTreeRaw<'static, T, A>)>, RleTreeRaw<'static, T, A>>;
 
@@ -56,7 +54,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     #[inline]
     fn new(bump: &'a Bump) -> Self {
         Self {
-            bump,
             node: Node::Internal(BumpBox::new_in(InternalNode::new(bump, None), bump)),
             _pin: PhantomPinned,
             _a: PhantomData,

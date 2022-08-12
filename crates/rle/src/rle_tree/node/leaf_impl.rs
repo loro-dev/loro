@@ -35,7 +35,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     pub fn push_child(&mut self, value: T) -> Result<(), BumpBox<'a, Self>> {
-        if self.children.len() > 0 {
+        if !self.children.is_empty() {
             let last = self.children.last_mut().unwrap();
             if last.is_mergable(&value, &()) {
                 last.merge(&value, &());
@@ -99,7 +99,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     fn _insert(&mut self, raw_index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
-        if self.children.len() == 0 {
+        if self.children.is_empty() {
             self.children.push(value);
             return Ok(());
         }
