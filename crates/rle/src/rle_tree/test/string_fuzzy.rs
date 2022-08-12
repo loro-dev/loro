@@ -233,7 +233,7 @@ impl Interaction {
     }
 }
 
-#[cfg(not(no_prop_test))]
+#[cfg(not(no_proptest))]
 mod string_prop_test {
     use super::*;
     use proptest::prelude::*;
@@ -269,6 +269,20 @@ mod string_prop_test {
             for interaction in interactions {
                 interaction.test_assert(&mut s, &mut tree);
                 tree.with_tree_mut(|tree|tree.debug_check());
+            }
+        }
+    }
+
+    #[cfg(slow_proptest)]
+    proptest! {
+        #[test]
+        fn test_tree_string_op_the_same_slow(
+            interactions in prop::collection::vec(gen_interaction(), 1..2000),
+        ) {
+            let mut s = String::new();
+            let mut tree = RleTree::default();
+            for interaction in interactions {
+                interaction.test_assert(&mut s, &mut tree);
             }
         }
     }
