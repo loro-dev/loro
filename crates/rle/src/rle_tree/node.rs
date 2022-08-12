@@ -18,7 +18,6 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
     Leaf(BumpBox<'a, LeafNode<'a, T, A>>),
 }
 
-#[derive(Debug)]
 pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: Option<NonNull<InternalNode<'a, T, A>>>,
@@ -28,7 +27,6 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     _a: PhantomData<A>,
 }
 
-#[derive(Debug)]
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: NonNull<InternalNode<'a, T, A>>,

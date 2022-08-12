@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Error, Formatter};
+
 use crate::{rle_tree::tree_trait::Position, HasLength};
 
 use super::*;
@@ -394,5 +396,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             self.children.insert(child_index, new);
             Ok(())
         }
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for InternalNode<'a, T, A> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        let mut debug_struct = f.debug_struct("InternalNode");
+        debug_struct.field("children", &self.children);
+        debug_struct.field("cache", &self.cache);
+        debug_struct.finish()
     }
 }

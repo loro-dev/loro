@@ -1,4 +1,5 @@
 use crate::{rle_tree::tree_trait::Position, HasLength};
+use std::fmt::{Debug, Error, Formatter};
 
 use super::*;
 
@@ -237,5 +238,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for LeafNode<'a, T, A> {
     #[inline]
     fn len(&self) -> usize {
         A::len_leaf(self)
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for LeafNode<'a, T, A> {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        let mut debug_struct = f.debug_struct("LeafNode");
+        debug_struct.field("children", &self.children);
+        debug_struct.field("cache", &self.cache);
+        debug_struct.finish()
     }
 }
