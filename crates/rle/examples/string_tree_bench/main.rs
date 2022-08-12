@@ -5,21 +5,24 @@ use string_tree::{CustomString, StringTreeTrait};
 
 pub fn main() {
     let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
-    for i in 0..(1e6 as usize) {
-        tree.with_tree_mut(|tree| {
-            if i % 3 == 0 && tree.len() > 0 {
+    let len = 1e6 as usize;
+    let mut seed = 2;
+
+    tree.with_tree_mut(|tree| {
+        for i in 0..(len) {
+            seed = (seed * 2) % 10000007;
+            if tree.len() > 100000 {
                 let start = i % tree.len();
-                let len = (i * i) % std::cmp::min(tree.len(), 10);
+                let len = seed % std::cmp::min(tree.len(), 1);
                 let end = std::cmp::min(start + len, tree.len());
                 tree.delete_range(Some(start), Some(end))
             } else if tree.len() == 0 {
-                tree.insert(0, "a".to_string().into());
+                tree.insert(0, "0".into());
             } else {
-                tree.insert(i % tree.len(), "a".to_string().into());
+                tree.insert(seed % tree.len(), "a".into());
             }
+        }
 
-            tree.debug_check();
-        });
-    }
-    println!("1M");
+        println!("{} op, with tree size of {}", len, tree.len());
+    });
 }
