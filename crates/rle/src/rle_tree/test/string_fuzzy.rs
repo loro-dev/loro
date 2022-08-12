@@ -178,3 +178,98 @@ fn basic_string_op() {
     let m = format!("{}", tree);
     assert_eq!(m, "hello test");
 }
+
+#[derive(enum_as_inner::EnumAsInner, Debug)]
+enum Interaction {
+    Insert { insert_at: usize, content: String },
+    Delete { from: usize, len: usize },
+}
+
+impl Interaction {
+    pub fn test_assert(&self, s: &mut String, tree: &mut RleTree<CustomString, StringTreeTrait>) {
+        self.apply_to_str(s);
+        self.apply_to_tree(tree);
+        assert_eq!(&tree.to_string(), s);
+    }
+
+    fn apply_to_str(&self, s: &mut String) {
+        match self {
+            Interaction::Insert { insert_at, content } => {
+                let insert_at = *insert_at % (s.len() + 1);
+                s.insert_str(insert_at, content.as_str())
+            }
+            Interaction::Delete { from, len } => {
+                let from = *from % s.len();
+                let mut to = from + (*len % s.len());
+                if to > s.len() {
+                    to = s.len();
+                }
+
+                s.drain(from..to);
+            }
+        }
+    }
+
+    fn apply_to_tree(&self, tree: &mut RleTree<CustomString, StringTreeTrait>) {
+        match self {
+            Interaction::Insert { insert_at, content } => {
+                tree.with_tree_mut(|tree| {
+                    let insert_at = *insert_at % (tree.len() + 1);
+                    tree.insert(insert_at, content.clone().into());
+                });
+            }
+            Interaction::Delete { from, len } => {
+                tree.with_tree_mut(|tree| {
+                    let from = *from % tree.len();
+                    let mut to = from + (*len % tree.len());
+                    if to > tree.len() {
+                        to = tree.len();
+                    }
+
+                    tree.delete_range(Some(from), Some(to));
+                });
+            }
+        }
+    }
+}
+
+#[cfg(not(no_prop_test))]
+mod string_prop_test {
+    use super::*;
+    use proptest::prelude::*;
+
+    prop_compose! {
+        fn gen_interaction()(
+                _type in 0..1,
+                from in 0..10000000,
+                len in 0..10,
+                content in "[a-z]*"
+            ) -> Interaction {
+            if _type == 0 {
+                Interaction::Insert {
+                    insert_at: from as usize,
+                    content
+                }
+            } else {
+                Interaction::Delete {
+                    from: from as usize,
+                    len: len as usize,
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_tree_string_op_the_same(
+            interactions in prop::collection::vec(gen_interaction(), 1..100),
+        ) {
+            let mut s = String::new();
+            let mut tree = RleTree::default();
+            for interaction in interactions {
+                interaction.test_assert(&mut s, &mut tree);
+                tree.with_tree_mut(|tree|tree.debug_check());
+            }
+        }
+    }
+}
