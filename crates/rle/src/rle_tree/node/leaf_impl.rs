@@ -209,6 +209,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         }
 
         A::update_cache_leaf(self);
+        if let Err(new) = &mut result {
+            A::update_cache_leaf(&mut *new);
+        }
+
         result
     }
 

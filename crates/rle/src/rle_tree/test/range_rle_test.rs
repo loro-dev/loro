@@ -5,6 +5,11 @@ use crate::rle_tree::tree_trait::Position;
 use super::super::*;
 use std::ops::Range;
 
+#[ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+}
+
 #[derive(Debug)]
 struct RangeTreeTrait;
 impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
@@ -196,13 +201,17 @@ fn delete_that_causes_removing_layers() {
     }
     tree.debug_check();
     tree.delete_range(Some(1), None);
-    dbg!(tree);
-}
-
-#[ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
 }
 
 #[test]
-fn delete_that_causes_increase_levels() {}
+fn delete_that_causes_increase_levels() {
+    let mut t: RleTree<Range<usize>, RangeTreeTrait> = RleTree::new();
+    let tree = t.get_mut();
+    tree.insert(0, 0..100);
+    for i in 0..50 {
+        tree.delete_range(Some(i), Some(i + 1));
+        tree.debug_check();
+    }
+
+    dbg!(tree);
+}
