@@ -1,6 +1,5 @@
 use self::node::{InternalNode, Node};
 use crate::{HasLength, Rle};
-pub(self) use bumpalo::boxed::Box as BumpBox;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 use owning_ref::OwningRefMut;
