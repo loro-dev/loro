@@ -146,11 +146,13 @@ fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
 
 impl Display for RleTree<CustomString, StringTreeTrait> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for s in self.get_ref().iter() {
-            f.write_str(s.0.as_str())?;
-        }
+        self.with_tree(|tree| {
+            for s in tree.iter() {
+                f.write_str(s.0.as_str())?;
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -168,10 +170,11 @@ impl From<&str> for CustomString {
 
 #[test]
 fn basic_string_op() {
-    let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::new();
-    let handler = tree.get_mut();
-    handler.insert(0, "test".into());
-    handler.insert(0, "hello ".into());
+    let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
+    tree.with_tree_mut(|tree| {
+        tree.insert(0, "test".into());
+        tree.insert(0, "hello ".into());
+    });
     let m = format!("{}", tree);
     assert_eq!(m, "hello test");
 }

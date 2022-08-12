@@ -2,8 +2,13 @@ use self::node::{InternalNode, Node};
 use crate::{HasLength, Rle};
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
-use owning_ref::OwningRefMut;
-use std::marker::{PhantomData, PhantomPinned};
+use ouroboros::self_referencing;
+use std::{
+    borrow::{Borrow, BorrowMut},
+    marker::{PhantomData, PhantomPinned},
+    pin::Pin,
+    ptr::NonNull,
+};
 use tree_trait::RleTreeTrait;
 mod iter;
 mod node;
@@ -18,34 +23,21 @@ pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
     _a: PhantomData<(A, T)>,
 }
 
-type TreeRef<T, A> =
-    OwningRefMut<Box<(Box<Bump>, RleTreeRaw<'static, T, A>)>, RleTreeRaw<'static, T, A>>;
-
+#[self_referencing]
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
-    tree: TreeRef<T, A>,
-}
-
-impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> RleTree<T, A> {
-    pub fn new() -> Self {
-        let bump = Box::new(Bump::new());
-        let tree = RleTreeRaw::new(unsafe { &*(&*bump as *const _) });
-        let m = OwningRefMut::new(Box::new((bump, tree)));
-        let tree = m.map_mut(|(_, tree)| tree);
-        Self { tree }
-    }
-
-    pub fn get_ref(&self) -> &RleTreeRaw<'static, T, A> {
-        self.tree.as_ref()
-    }
-
-    pub fn get_mut(&mut self) -> &mut RleTreeRaw<'static, T, A> {
-        self.tree.as_mut()
-    }
+    bump: Bump,
+    #[borrows(bump)]
+    #[not_covariant]
+    tree: RleTreeRaw<'this, T, A>,
 }
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
-        Self::new()
+        RleTreeBuilder {
+            bump: Bump::new(),
+            tree_builder: |bump| RleTreeRaw::new(bump),
+        }
+        .build()
     }
 }
 
