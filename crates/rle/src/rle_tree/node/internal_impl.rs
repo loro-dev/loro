@@ -54,7 +54,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[cfg(test)]
     pub(crate) fn check(&mut self) {
-        if self.is_root() {
+        if !self.is_root() {
             assert!(
                 self.children.len() >= A::MIN_CHILDREN_NUM,
                 "children.len() = {}",
