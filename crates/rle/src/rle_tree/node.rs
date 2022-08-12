@@ -5,7 +5,7 @@ use std::{
 
 use crate::{HasLength, Rle};
 
-use super::{tree_trait::RleTreeTrait, BumpBox, BumpVec};
+use super::{tree_trait::RleTreeTrait, BumpVec};
 use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
 mod internal_impl;

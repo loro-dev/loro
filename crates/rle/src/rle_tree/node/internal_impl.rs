@@ -18,7 +18,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[inline]
     fn _split(&mut self) -> &'a mut Self {
-        let mut ans = self.bump.alloc(Self::new(self.bump, self.parent));
+        let ans = self.bump.alloc(Self::new(self.bump, self.parent));
         let ans_ptr = NonNull::new(&mut *ans).unwrap();
         for mut child in self
             .children
@@ -207,9 +207,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 A::update_cache_internal(self);
                 Ok(())
             }
-            Err(mut new) => {
+            Err(new) => {
                 A::update_cache_internal(self);
-                A::update_cache_internal(&mut new);
+                A::update_cache_internal(new);
                 if self.is_root() {
                     self._create_level(new);
                     Ok(())
@@ -292,9 +292,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Ok(_) => {
                 A::update_cache_internal(self);
             }
-            Err(mut new) => {
+            Err(new) => {
                 A::update_cache_internal(self);
-                A::update_cache_internal(&mut new);
+                A::update_cache_internal(new);
                 self._create_level(new);
             }
         };
@@ -381,7 +381,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         mut new: Node<'a, T, A>,
     ) -> Result<(), &'a mut Self> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
-            let mut ans = self._split();
+            let ans = self._split();
             if child_index < self.children.len() {
                 new.set_parent(self.into());
                 self.children.insert(child_index, new);

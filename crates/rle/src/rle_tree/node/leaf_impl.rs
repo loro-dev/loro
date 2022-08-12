@@ -45,10 +45,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         }
 
         if self.children.len() == A::MAX_CHILDREN_NUM {
-            let mut ans = self._split();
+            let ans = self._split();
             ans.push_child(value).unwrap();
             A::update_cache_leaf(self);
-            A::update_cache_leaf(&mut ans);
+            A::update_cache_leaf(ans);
             return Err(ans);
         }
 
@@ -90,9 +90,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 A::update_cache_leaf(self);
                 Ok(())
             }
-            Err(mut new) => {
+            Err(new) => {
                 A::update_cache_leaf(self);
-                A::update_cache_leaf(&mut new);
+                A::update_cache_leaf(new);
                 Err(new)
             }
         }
@@ -136,7 +136,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         self.children[index] = self.bump.alloc(a);
 
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
-            let mut ans = self._split();
+            let ans = self._split();
             if index < self.children.len() {
                 self.children.insert(index + 1, self.bump.alloc(value));
                 self.children.insert(index + 2, self.bump.alloc(b));

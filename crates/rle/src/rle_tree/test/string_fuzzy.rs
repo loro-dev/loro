@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     fmt::Display,
     ops::{Deref, DerefMut},
 };
@@ -173,8 +172,6 @@ fn basic_string_op() {
     let handler = tree.get_mut();
     handler.insert(0, "test".into());
     handler.insert(0, "hello ".into());
-    println!("asdfasdfsda");
-    // let m = format!("{}", tree);
-    drop(tree);
-    println!("ni hao");
+    let m = format!("{}", tree);
+    assert_eq!(m, "hello test");
 }
