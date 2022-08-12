@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     marker::{PhantomData, PhantomPinned},
     ptr::NonNull,
 };
@@ -12,7 +13,7 @@ mod internal_impl;
 mod leaf_impl;
 pub(crate) mod node_trait;
 
-#[derive(Debug, EnumAsInner)]
+#[derive(EnumAsInner)]
 pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
     Internal(InternalNode<'a, T, A>),
     Leaf(LeafNode<'a, T, A>),
@@ -247,6 +248,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for Node<'a, T, A> {
         match self {
             Node::Internal(node) => node.len(),
             Node::Leaf(node) => node.len(),
+        }
+    }
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for Node<'a, T, A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Internal(arg0) => arg0.fmt(f),
+            Self::Leaf(arg0) => arg0.fmt(f),
         }
     }
 }
