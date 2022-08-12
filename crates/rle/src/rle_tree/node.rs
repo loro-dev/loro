@@ -14,8 +14,8 @@ pub(crate) mod node_trait;
 
 #[derive(Debug, EnumAsInner)]
 pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
-    Internal(BumpBox<'a, InternalNode<'a, T, A>>),
-    Leaf(BumpBox<'a, LeafNode<'a, T, A>>),
+    Internal(&'a mut InternalNode<'a, T, A>),
+    Leaf(&'a mut LeafNode<'a, T, A>),
 }
 
 pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
@@ -30,7 +30,7 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: NonNull<InternalNode<'a, T, A>>,
-    pub(super) children: BumpVec<'a, T>,
+    pub(super) children: BumpVec<'a, &'a mut T>,
     prev: Option<NonNull<LeafNode<'a, T, A>>>,
     next: Option<NonNull<LeafNode<'a, T, A>>>,
     pub cache: A::LeafCache,
@@ -47,12 +47,12 @@ pub(crate) enum Either {
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
     fn _new_internal(bump: &'a Bump, parent: Option<NonNull<InternalNode<'a, T, A>>>) -> Self {
-        Self::Internal(BumpBox::new_in(InternalNode::new(bump, parent), bump))
+        Self::Internal(bump.alloc(InternalNode::new(bump, parent)))
     }
 
     #[inline]
     fn new_leaf(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> Self {
-        Self::Leaf(BumpBox::new_in(LeafNode::new(bump, parent), bump))
+        Self::Leaf(bump.alloc(LeafNode::new(bump, parent)))
     }
 
     #[inline]

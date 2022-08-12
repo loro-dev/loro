@@ -17,8 +17,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[inline]
-    fn _split(&mut self) -> BumpBox<'a, Self> {
-        let mut ans = BumpBox::new_in(Self::new(self.bump, self.parent), self.bump);
+    fn _split(&mut self) -> &'a mut Self {
+        let mut ans = self.bump.alloc(Self::new(self.bump, self.parent));
         let ans_ptr = NonNull::new(&mut *ans).unwrap();
         for mut child in self
             .children
@@ -93,7 +93,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         to: Option<A::Int>,
         visited: &mut Vec<(usize, NonNull<Node<'a, T, A>>)>,
         depth: usize,
-    ) -> Result<(), BumpBox<'a, Self>> {
+    ) -> Result<(), &'a mut Self> {
         let (direct_delete_start, to_del_start_offset) =
             from.map_or((0, None), |x| self._delete_start(x));
         let (direct_delete_end, to_del_end_offset) =
@@ -201,7 +201,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
-    pub fn insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
+    pub fn insert(&mut self, index: A::Int, value: T) -> Result<(), &'a mut Self> {
         match self._insert(index, value) {
             Ok(_) => {
                 A::update_cache_internal(self);
@@ -221,9 +221,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     /// root node function. assume self and new's caches are up-to-date
-    fn _create_level(&mut self, mut new: BumpBox<'a, InternalNode<'a, T, A>>) {
+    fn _create_level(&mut self, mut new: &'a mut InternalNode<'a, T, A>) {
         debug_assert!(self.is_root());
-        let mut left = BumpBox::new_in(InternalNode::new(self.bump, None), self.bump);
+        let mut left = self.bump.alloc(InternalNode::new(self.bump, None));
         std::mem::swap(&mut *left, self);
         let left_ptr = (&mut *left).into();
         for child in left.children.iter_mut() {
@@ -237,7 +237,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         A::update_cache_internal(self);
     }
 
-    fn _insert(&mut self, index: A::Int, value: T) -> Result<(), BumpBox<'a, Self>> {
+    fn _insert(&mut self, index: A::Int, value: T) -> Result<(), &'a mut Self> {
         if self.children.is_empty() {
             debug_assert!(self.is_root());
             let ptr = NonNull::new(self as *mut _).unwrap();
@@ -379,7 +379,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         &mut self,
         child_index: usize,
         mut new: Node<'a, T, A>,
-    ) -> Result<(), BumpBox<'a, Self>> {
+    ) -> Result<(), &'a mut Self> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let mut ans = self._split();
             if child_index < self.children.len() {

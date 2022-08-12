@@ -1,6 +1,16 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    cell::Cell,
+    fmt::Display,
+    ops::{Deref, DerefMut},
+};
 
-use crate::{rle_tree::tree_trait::RleTreeTrait, HasLength, Mergable, Sliceable};
+use crate::{
+    rle_tree::{
+        node::{InternalNode, LeafNode, Node},
+        tree_trait::{Position, RleTreeTrait},
+    },
+    HasLength, Mergable, RleTree, Sliceable,
+};
 
 #[derive(Debug)]
 struct CustomString(String);
@@ -29,7 +39,7 @@ impl Mergable for CustomString {
     where
         Self: Sized,
     {
-        self.len() + other.len() < 16
+        self.len() + other.len() < 64
     }
 
     fn merge(&mut self, other: &Self, _conf: &())
@@ -60,34 +70,111 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
     type LeafCache = usize;
 
     fn update_cache_leaf(node: &mut crate::rle_tree::node::LeafNode<'_, CustomString, Self>) {
-        todo!()
+        node.cache = node.children.iter().map(|x| HasLength::len(&**x)).sum();
     }
 
     fn update_cache_internal(
         node: &mut crate::rle_tree::node::InternalNode<'_, CustomString, Self>,
     ) {
-        todo!()
+        node.cache = node.children.iter().map(Node::len).sum();
     }
 
     fn find_pos_internal(
-        node: &mut crate::rle_tree::node::InternalNode<'_, CustomString, Self>,
-        index: Self::Int,
-    ) -> (usize, Self::Int, crate::rle_tree::tree_trait::Position) {
-        todo!()
+        node: &mut InternalNode<'_, CustomString, Self>,
+        mut index: Self::Int,
+    ) -> (usize, Self::Int, Position) {
+        let mut last_cache = 0;
+        for (i, child) in node.children().iter().enumerate() {
+            last_cache = match child {
+                Node::Internal(x) => {
+                    if index <= x.cache {
+                        return (i, index, get_pos(index, child));
+                    }
+                    x.cache
+                }
+                Node::Leaf(x) => {
+                    if index <= x.cache {
+                        return (i, index, get_pos(index, child));
+                    }
+                    x.cache
+                }
+            };
+
+            index -= last_cache;
+        }
+
+        assert_eq!(index, 0);
+        (node.children.len() - 1, last_cache, Position::End)
     }
 
     fn find_pos_leaf(
-        node: &mut crate::rle_tree::node::LeafNode<'_, CustomString, Self>,
-        index: Self::Int,
-    ) -> (usize, usize, crate::rle_tree::tree_trait::Position) {
-        todo!()
+        node: &mut LeafNode<'_, CustomString, Self>,
+        mut index: Self::Int,
+    ) -> (usize, usize, Position) {
+        for (i, child) in node.children().iter().enumerate() {
+            if index < HasLength::len(&**child) {
+                return (i, index, get_pos(index, &**child));
+            }
+
+            index -= HasLength::len(&**child);
+        }
+
+        (
+            node.children().len() - 1,
+            HasLength::len(&**node.children.last().unwrap()),
+            Position::End,
+        )
     }
 
-    fn len_leaf(node: &crate::rle_tree::node::LeafNode<'_, CustomString, Self>) -> usize {
-        todo!()
+    fn len_leaf(node: &LeafNode<'_, CustomString, Self>) -> usize {
+        node.cache
     }
 
-    fn len_internal(node: &crate::rle_tree::node::InternalNode<'_, CustomString, Self>) -> usize {
-        todo!()
+    fn len_internal(node: &InternalNode<'_, CustomString, Self>) -> usize {
+        node.cache
     }
+}
+
+fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
+    if index == 0 {
+        Position::Start
+    } else if index == child.len() {
+        Position::End
+    } else {
+        Position::Middle
+    }
+}
+
+impl Display for RleTree<CustomString, StringTreeTrait> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for s in self.get_ref().iter() {
+            f.write_str(s.0.as_str())?;
+        }
+
+        Ok(())
+    }
+}
+
+impl From<String> for CustomString {
+    fn from(origin: String) -> Self {
+        CustomString(origin)
+    }
+}
+
+impl From<&str> for CustomString {
+    fn from(origin: &str) -> Self {
+        CustomString(origin.to_owned())
+    }
+}
+
+#[test]
+fn basic_string_op() {
+    let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::new();
+    let handler = tree.get_mut();
+    handler.insert(0, "test".into());
+    handler.insert(0, "hello ".into());
+    println!("asdfasdfsda");
+    // let m = format!("{}", tree);
+    drop(tree);
+    println!("ni hao");
 }

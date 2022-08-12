@@ -54,7 +54,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     #[inline]
     fn new(bump: &'a Bump) -> Self {
         Self {
-            node: Node::Internal(BumpBox::new_in(InternalNode::new(bump, None), bump)),
+            node: Node::Internal(bump.alloc(InternalNode::new(bump, None))),
             _pin: PhantomPinned,
             _a: PhantomData,
         }
@@ -62,14 +62,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
 
     #[inline]
     pub fn insert(&mut self, index: A::Int, value: T) {
-        match self.node {
-            Node::Internal(ref mut node) => {
-                node.insert(index, value).unwrap();
-            }
-            _ => {
-                unreachable!()
-            }
-        }
+        self.node
+            .as_internal_mut()
+            .unwrap()
+            .insert(index, value)
+            .unwrap();
     }
 
     /// return a cursor to the tree

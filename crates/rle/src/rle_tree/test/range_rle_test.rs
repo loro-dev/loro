@@ -19,7 +19,7 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
     type LeafCache = usize;
 
     fn update_cache_leaf(node: &mut node::LeafNode<'_, Range<usize>, Self>) {
-        node.cache = node.children.iter().map(HasLength::len).sum();
+        node.cache = node.children.iter().map(|x| HasLength::len(&**x)).sum();
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, Range<usize>, Self>) {
@@ -66,16 +66,16 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
         mut index: Self::Int,
     ) -> (usize, usize, Position) {
         for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::len(child) {
-                return (i, index, get_pos(index, child));
+            if index < HasLength::len(&**child) {
+                return (i, index, get_pos(index, &**child));
             }
 
-            index -= HasLength::len(child);
+            index -= HasLength::len(&**child);
         }
 
         (
             node.children().len() - 1,
-            HasLength::len(node.children.last().unwrap()),
+            HasLength::len(&**node.children.last().unwrap()),
             Position::End,
         )
     }
