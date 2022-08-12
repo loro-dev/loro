@@ -9,7 +9,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         Self {
             bump,
             parent,
-            children: FixedSizedVec::with_capacity(A::MAX_CHILDREN_NUM, bump),
+            children: BumpVec::with_capacity_in(A::MAX_CHILDREN_NUM, bump),
             prev: None,
             next: None,
             cache: Default::default(),
