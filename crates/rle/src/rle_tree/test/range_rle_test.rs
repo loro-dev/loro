@@ -37,25 +37,28 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
         node: &mut InternalNode<'_, Range<usize>, Self>,
         mut index: Self::Int,
     ) -> (usize, Self::Int, Position) {
+        let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
-            match child {
+            last_cache = match child {
                 Node::Internal(x) => {
                     if index <= x.cache {
                         return (i, index, get_pos(index, child));
                     }
-                    index -= x.cache;
+                    x.cache
                 }
                 Node::Leaf(x) => {
                     if index <= x.cache {
                         return (i, index, get_pos(index, child));
                     }
-                    index -= x.cache;
+                    x.cache
                 }
-            }
+            };
+
+            index -= last_cache;
         }
 
         assert_eq!(index, 0);
-        (node.children.len() - 1, index, Position::End)
+        (node.children.len() - 1, last_cache, Position::End)
     }
 
     fn find_pos_leaf(
