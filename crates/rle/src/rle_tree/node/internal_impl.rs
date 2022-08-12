@@ -401,6 +401,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for InternalNode<'a, T, A> {
         let mut debug_struct = f.debug_struct("InternalNode");
         debug_struct.field("children", &self.children);
         debug_struct.field("cache", &self.cache);
+        debug_struct.field("children_num", &self.children.len());
         debug_struct.finish()
     }
 }

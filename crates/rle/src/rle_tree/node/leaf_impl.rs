@@ -258,6 +258,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for LeafNode<'a, T, A> {
         let mut debug_struct = f.debug_struct("LeafNode");
         debug_struct.field("children", &self.children);
         debug_struct.field("cache", &self.cache);
+        debug_struct.field("children_num", &self.children.len());
         debug_struct.finish()
     }
 }
