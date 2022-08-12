@@ -40,7 +40,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     #[inline]
     fn new(bump: &'a Bump) -> Self {
         Self {
-            node: Node::Internal(bump.alloc(InternalNode::new(bump, None))),
+            node: Node::Internal(InternalNode::new(bump, None)),
             _pin: PhantomPinned,
             _a: PhantomData,
         }

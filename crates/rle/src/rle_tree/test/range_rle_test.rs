@@ -42,13 +42,13 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
             last_cache = match child {
                 Node::Internal(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child));
+                        return (i, index, get_pos(index, *child));
                     }
                     x.cache
                 }
                 Node::Leaf(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child));
+                        return (i, index, get_pos(index, *child));
                     }
                     x.cache
                 }
