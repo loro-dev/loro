@@ -132,6 +132,14 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
     fn len_internal(node: &InternalNode<'_, CustomString, Self>) -> usize {
         node.cache
     }
+
+    fn check_cache_internal(node: &InternalNode<'_, CustomString, Self>) {
+        assert_eq!(node.cache, node.children.iter().map(|x| x.len()).sum());
+    }
+
+    fn check_cache_leaf(node: &LeafNode<'_, CustomString, Self>) {
+        assert_eq!(node.cache, node.children.iter().map(|x| x.len()).sum());
+    }
 }
 
 fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
@@ -177,6 +185,35 @@ fn basic_string_op() {
     });
     let m = format!("{}", tree);
     assert_eq!(m, "hello test");
+}
+
+#[test]
+fn issue_0() {
+    let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
+    let insert_keys = "0123456789abcdefghijklmnopq";
+    tree.with_tree_mut(|tree| {
+        for i in 0..(1e6 as usize) {
+            let start = i % insert_keys.len();
+            if i % 3 == 0 && tree.len() > 0 {
+                let start = i % tree.len();
+                let len = (i * i) % std::cmp::min(tree.len(), 10);
+                let end = std::cmp::min(start + len, tree.len());
+                if start == end {
+                    continue;
+                }
+                tree.delete_range(Some(start), Some(end));
+            } else if tree.len() == 0 {
+                tree.insert(0, insert_keys[start..start + 1].to_string().into());
+            } else {
+                tree.insert(
+                    i % tree.len(),
+                    insert_keys[start..start + 1].to_string().into(),
+                );
+            }
+
+            tree.debug_check();
+        }
+    });
 }
 
 #[derive(enum_as_inner::EnumAsInner, Debug)]

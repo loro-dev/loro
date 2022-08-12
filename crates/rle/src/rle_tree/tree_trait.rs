@@ -42,4 +42,6 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> usize;
     fn len_internal(node: &InternalNode<'_, T, Self>) -> usize;
+    fn check_cache_leaf(_node: &LeafNode<'_, T, Self>) {}
+    fn check_cache_internal(_node: &InternalNode<'_, T, Self>) {}
 }
