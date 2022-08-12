@@ -289,64 +289,87 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         };
 
-        let removed = self._root_shrink_level_if_only_1_child();
+        let removed = self._root_shrink_levels_if_only_1_child();
 
+        // filter the same
+        let mut visited: HashSet<NonNull<_>> = HashSet::default();
+        let mut should_skip: HashSet<NonNull<_>> = HashSet::default();
+        let mut zipper: Vec<(usize, NonNull<Node<'a, T, A>>)> = zipper
+            .into_iter()
+            .filter(|(_, ptr)| {
+                if visited.contains(ptr) {
+                    false
+                } else {
+                    visited.insert(*ptr);
+                    true
+                }
+            })
+            .collect();
         // visit in depth order, top to down (depth 0..inf)
         zipper.sort();
-        let mut visited_set: HashSet<NonNull<_>> = HashSet::default();
-        for (_, mut node) in zipper.into_iter() {
-            if visited_set.contains(&node) {
-                continue;
-            }
-
-            visited_set.insert(node);
-            let node = unsafe { node.as_mut() };
-            if let Some(node) = node.as_internal() {
-                let ptr = node as *const InternalNode<'a, T, A>;
-                if removed.contains(&ptr) {
+        let mut any_delete: bool;
+        loop {
+            any_delete = false;
+            for (_, mut node_ptr) in zipper.iter() {
+                if should_skip.contains(&node_ptr) {
                     continue;
                 }
-            }
 
-            debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
-            if node.children_num() >= A::MIN_CHILDREN_NUM {
-                continue;
-            }
+                let node = unsafe { node_ptr.as_mut() };
+                if let Some(node) = node.as_internal() {
+                    let ptr = node as *const InternalNode<'a, T, A>;
+                    if removed.contains(&ptr) {
+                        should_skip.insert(node_ptr);
+                        continue;
+                    }
+                }
 
-            let mut to_delete: bool = false;
-            if let Some((sibling, either)) = node.get_a_sibling() {
-                // if has sibling, borrow or merge to it
-                let sibling: &mut Node<'a, T, A> =
-                    unsafe { &mut *((sibling as *const _) as usize as *mut _) };
-                if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
-                    node.merge_to_sibling(sibling, either);
-                    to_delete = true;
+                debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
+                if node.children_num() >= A::MIN_CHILDREN_NUM {
+                    continue;
+                }
+
+                let mut to_delete: bool = false;
+                if let Some((sibling, either)) = node.get_a_sibling() {
+                    // if has sibling, borrow or merge to it
+                    let sibling: &mut Node<'a, T, A> =
+                        unsafe { &mut *((sibling as *const _) as usize as *mut _) };
+                    if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
+                        node.merge_to_sibling(sibling, either);
+                        to_delete = true;
+                    } else {
+                        node.borrow_from_sibling(sibling, either);
+                    }
                 } else {
-                    node.borrow_from_sibling(sibling, either);
-                }
-            } else {
-                if node.parent().unwrap().is_root() {
-                    continue;
+                    if node.parent().unwrap().is_root() {
+                        continue;
+                    }
+
+                    dbg!(self);
+                    dbg!(node.parent());
+                    dbg!(node);
+                    unreachable!();
                 }
 
-                dbg!(self);
-                dbg!(node.parent());
-                dbg!(node);
-                unreachable!();
+                if to_delete {
+                    should_skip.insert(node_ptr);
+                    any_delete = true;
+                    node.remove();
+                }
             }
 
-            if to_delete {
-                node.remove();
+            if !any_delete {
+                break;
             }
         }
 
-        self._root_shrink_level_if_only_1_child();
+        self._root_shrink_levels_if_only_1_child();
     }
 
-    fn _root_shrink_level_if_only_1_child(&mut self) -> Vec<*const InternalNode<'a, T, A>> {
-        let mut ans = Vec::new();
+    fn _root_shrink_levels_if_only_1_child(&mut self) -> HashSet<*const InternalNode<'a, T, A>> {
+        let mut ans: HashSet<_> = Default::default();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
-            let mut child = self.children.pop().unwrap();
+            let child = self.children.pop().unwrap();
             let child_ptr = child.as_internal_mut().unwrap();
             std::mem::swap(&mut *child_ptr, self);
             self.parent = None;
@@ -358,7 +381,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
             child_ptr.parent = None;
             child_ptr.children.clear();
-            ans.push(&*child_ptr as *const _);
+            ans.insert(&*child_ptr as *const _);
         }
 
         ans
