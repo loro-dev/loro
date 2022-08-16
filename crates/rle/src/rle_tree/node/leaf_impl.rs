@@ -20,7 +20,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
     #[inline]
     fn _split(&mut self) -> &'a mut Node<'a, T, A> {
-        let mut ans = self
+        let ans = self
             .bump
             .alloc(Node::Leaf(Self::new(self.bump, self.parent)));
         let mut inner = ans.as_leaf_mut().unwrap();

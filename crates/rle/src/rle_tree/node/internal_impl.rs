@@ -21,7 +21,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[inline]
     fn _split(&mut self) -> &'a mut Node<'a, T, A> {
-        let mut ans = self
+        let ans = self
             .bump
             .alloc(Node::Internal(Self::new(self.bump, self.parent)));
         let inner_ptr = NonNull::new(&mut *ans.as_internal_mut().unwrap()).unwrap();
@@ -139,12 +139,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                         Node::Internal(node) => {
                             if let Err(new) = node._delete(Some(del_from), None, visited, depth + 1)
                             {
-                                result = self._insert_with_split(direct_delete_start, new.into());
+                                result = self._insert_with_split(direct_delete_start, new);
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(Some(del_from), None) {
-                                result = self._insert_with_split(direct_delete_start, new.into())
+                                result = self._insert_with_split(direct_delete_start, new)
                             }
                         }
                     }

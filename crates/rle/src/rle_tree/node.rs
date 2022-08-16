@@ -97,8 +97,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 .children
                 .iter()
                 .position(|child| match (child, self) {
-                    (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(&*a, &*b),
-                    (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(&*a, &*b),
+                    (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(a, b),
+                    (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(a, b),
                     _ => false,
                 });
 
@@ -117,9 +117,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         let index = self.get_self_index()?;
         let parent = self.parent()?;
         if index > 0 {
-            Some((&parent.children[index - 1], Either::Left))
+            Some((parent.children[index - 1], Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((&parent.children[index + 1], Either::Right))
+            Some((parent.children[index + 1], Either::Right))
         } else {
             None
         }
