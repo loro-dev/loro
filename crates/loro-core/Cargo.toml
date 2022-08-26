@@ -17,6 +17,7 @@ pin-project = "1.0.10"
 serde = {version = "1.0.140", features = ["derive"]}
 thiserror = "1.0.31"
 im = "15.1.0"
+enum-as-inner = "0.5.1"
 
 [dev-dependencies]
 proptest = "1.0.0"
