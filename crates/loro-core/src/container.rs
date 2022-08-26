@@ -20,6 +20,7 @@ use std::{
 mod container_content;
 mod manager;
 
+pub mod list;
 pub mod map;
 pub mod text;
 pub use container_content::*;

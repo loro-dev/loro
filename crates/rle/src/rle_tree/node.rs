@@ -28,6 +28,9 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     _a: PhantomData<A>,
 }
 
+// TODO: remove bump field
+// TODO: remove parent field?
+// TODO: only one child?
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     parent: NonNull<InternalNode<'a, T, A>>,
