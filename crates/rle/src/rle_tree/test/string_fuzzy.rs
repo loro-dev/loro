@@ -5,8 +5,7 @@ use std::{
 
 use crate::{
     rle_tree::{
-        node::{InternalNode, LeafNode, Node},
-        tree_trait::{CumulateTreeTrait, Position, RleTreeTrait},
+        tree_trait::{CumulateTreeTrait, Position},
     },
     HasLength, Mergable, RleTree, Sliceable,
 };

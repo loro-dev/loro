@@ -7,8 +7,7 @@
 //! - We use ID to refer to node rather than content addressing (hash)
 //!
 use std::{
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-    ops::Range,
+    collections::{BinaryHeap, HashMap},
 };
 
 use fxhash::{FxHashMap, FxHashSet};

@@ -1,9 +1,7 @@
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 
 use crate::{
-    container::ContainerID,
-    id::ID,
-    span::{CounterSpan, IdSpan},
+    span::{IdSpan},
     OpType,
 };
 

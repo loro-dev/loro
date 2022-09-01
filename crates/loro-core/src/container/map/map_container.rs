@@ -1,16 +1,15 @@
-use std::{pin::Pin, ptr::NonNull, rc::Weak};
+use std::{ptr::NonNull};
 
 use fxhash::FxHashMap;
-use serde::Serialize;
+
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    id::{Counter, ID},
+    id::{Counter},
     op::{utils::downcast_ref, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
-    version::TotalOrderStamp,
-    ClientID, InternalString, Lamport, LogStore, OpType,
+    version::TotalOrderStamp, InternalString, LogStore,
 };
 
 use super::MapInsertContent;

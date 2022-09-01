@@ -1,23 +1,22 @@
 #![cfg(test)]
 
 use std::collections::HashMap;
-use std::pin::Pin;
+
 
 use fxhash::FxHashMap;
 use proptest::prelude::*;
 use proptest::proptest;
 
 use crate::value::proptest::gen_insert_value;
-use crate::InternalString;
+
 use crate::{
-    configure::Configure,
-    container::{Container, ContainerType},
+    container::{Container},
     fx_map,
     value::InsertValue,
     LoroCore, LoroValue,
 };
 
-use super::*;
+
 
 #[test]
 fn basic() {

@@ -1,23 +1,20 @@
-use std::{pin::Pin, ptr::NonNull, rc::Weak};
+use std::{ptr::NonNull};
 
 use fxhash::FxHashMap;
 use rle::RleVec;
-use serde::Serialize;
+
 use smallvec::SmallVec;
 
 use crate::{
-    change::Change,
     container::{Container, ContainerID, ContainerType},
-    id::{Counter, ID},
-    op::{utils::downcast_ref, Op},
-    op::{OpContent, OpProxy},
+    id::{ID},
+    op::{OpProxy},
     span::IdSpan,
-    value::{InsertValue, LoroValue},
-    version::TotalOrderStamp,
-    ClientID, InternalString, Lamport, LogStore, OpType,
+    value::{LoroValue},
+    ClientID, LogStore,
 };
 
-use super::y_span::YSpan;
+
 
 #[derive(Clone, Debug)]
 struct DagNode {
@@ -33,11 +30,11 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub fn insert(&mut self, pos: usize, text: &str) -> ID {
+    pub fn insert(&mut self, _pos: usize, _text: &str) -> ID {
         todo!()
     }
 
-    pub fn delete(&mut self, pos: usize, len: usize) {}
+    pub fn delete(&mut self, _pos: usize, _len: usize) {}
 }
 
 impl Container for TextContainer {
@@ -49,11 +46,11 @@ impl Container for TextContainer {
         ContainerType::Text
     }
 
-    fn apply(&mut self, op: &OpProxy) {
+    fn apply(&mut self, _op: &OpProxy) {
         todo!()
     }
 
-    fn checkout_version(&mut self, vv: &crate::VersionVector) {
+    fn checkout_version(&mut self, _vv: &crate::VersionVector) {
         todo!()
     }
 

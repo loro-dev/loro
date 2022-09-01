@@ -1,10 +1,9 @@
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     ops::{Deref, DerefMut},
 };
 
-use fxhash::{FxBuildHasher, FxHashMap};
+use fxhash::{FxHashMap};
 use im::hashmap::HashMap as ImHashMap;
 
 use crate::{

@@ -1,4 +1,4 @@
-use crate::id::{ClientID, Counter, ID};
+use crate::id::{ClientID, Counter};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -222,10 +222,10 @@ pub enum InsertValue {
 #[cfg(test)]
 pub(crate) mod proptest {
     use proptest::prelude::*;
-    use proptest::{arbitrary::Arbitrary, prop_oneof};
+    use proptest::{prop_oneof};
 
-    use crate::container::ContainerID;
-    use crate::LoroValue;
+    
+    
 
     use super::InsertValue;
 

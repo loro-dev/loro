@@ -1,5 +1,5 @@
 use crate::{id::Counter, ContentType, InsertContent, ID};
-use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, RleTreeTrait, Sliceable};
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone)]
 pub(super) struct YSpan {
