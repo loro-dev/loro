@@ -152,8 +152,15 @@ fn get_pos(index: usize, len: usize) -> Position {
     }
 }
 
+pub trait GlobalIndex:
+    Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>
+{
+}
+
+impl<T: Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>> GlobalIndex for T {}
+
 pub trait HasGlobalIndex: HasLength {
-    type Int: Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>;
+    type Int: GlobalIndex;
     fn get_global_start(&self) -> Self::Int;
 
     #[inline]

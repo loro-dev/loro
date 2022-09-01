@@ -2,7 +2,7 @@
 //!
 //!
 //!
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 pub mod change;
 pub mod configure;

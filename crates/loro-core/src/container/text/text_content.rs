@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use crate::id::ID;
 
 #[derive(Debug, EnumAsInner)]
-pub(super) enum TextContent {
+pub(super) enum TextOpContent {
     Insert {
         id: ID,
         text: Range<usize>,

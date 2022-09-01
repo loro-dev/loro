@@ -24,6 +24,7 @@ pub struct RleTreeRaw<'a, T: Rle, A: RleTreeTrait<T>> {
 }
 
 #[self_referencing]
+#[derive(Debug)]
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
     bump: Bump,
     #[borrows(bump)]
