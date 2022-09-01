@@ -7,17 +7,18 @@ edition = "2021"
 
 [dependencies]
 string_cache = "0.8.3"
-rle = {path = "../rle"}
+rle = { path = "../rle" }
 smallvec = "1.8.0"
 smartstring = "1.0.1"
 fxhash = "0.2.1"
 ring = "0.16.20"
 moveit = "0.5.0"
 pin-project = "1.0.10"
-serde = {version = "1.0.140", features = ["derive"]}
+serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0.31"
 im = "15.1.0"
 enum-as-inner = "0.5.1"
+num = "0.4.0"
 
 [dev-dependencies]
 proptest = "1.0.0"

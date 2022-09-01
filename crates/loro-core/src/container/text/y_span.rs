@@ -1,13 +1,15 @@
 use crate::{id::Counter, ContentType, InsertContent, ID};
-use rle::{HasLength, Mergable, Sliceable};
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, RleTreeTrait, Sliceable};
 
 #[derive(Debug, Clone)]
-pub struct YSpan {
-    origin_left: ID,
-    origin_right: ID,
-    id: ID,
-    text: String,
+pub(super) struct YSpan {
+    pub origin_left: ID,
+    pub origin_right: ID,
+    pub id: ID,
+    pub text: String,
 }
+
+pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
 
 impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
@@ -160,3 +162,45 @@ mod test {
         )
     }
 }
+
+// impl RleTreeTrait<YSpan> for YSpanTreeTrait {
+//     const MAX_CHILDREN_NUM: usize;
+
+//     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
+
+//     type Int;
+
+//     type InternalCache;
+
+//     type LeafCache;
+
+//     fn update_cache_leaf(node: &mut rle::rle_tree::node::LeafNode<'_, YSpan, Self>) {
+//         todo!()
+//     }
+
+//     fn update_cache_internal(node: &mut rle::rle_tree::node::InternalNode<'_, YSpan, Self>) {
+//         todo!()
+//     }
+
+//     fn find_pos_internal(
+//         node: &rle::rle_tree::node::InternalNode<'_, YSpan, Self>,
+//         index: Self::Int,
+//     ) -> (usize, Self::Int, rle::rle_tree::tree_trait::Position) {
+//         todo!()
+//     }
+
+//     fn find_pos_leaf(
+//         node: &rle::rle_tree::node::LeafNode<'_, YSpan, Self>,
+//         index: Self::Int,
+//     ) -> (usize, usize, rle::rle_tree::tree_trait::Position) {
+//         todo!()
+//     }
+
+//     fn len_leaf(node: &rle::rle_tree::node::LeafNode<'_, YSpan, Self>) -> usize {
+//         todo!()
+//     }
+
+//     fn len_internal(node: &rle::rle_tree::node::InternalNode<'_, YSpan, Self>) -> usize {
+//         todo!()
+//     }
+// }

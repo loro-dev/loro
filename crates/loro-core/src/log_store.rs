@@ -39,10 +39,13 @@ impl Default for GcConfig {
     }
 }
 
-/// Entry of the loro inner state.
+/// LogStore stores the full history of Loro
+///
 /// This is a self-referential structure. So it need to be pinned.
 ///
 /// `frontier`s are the Changes without children in the DAG (there is no dep pointing to them)
+///
+/// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
 #[pin_project]
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
