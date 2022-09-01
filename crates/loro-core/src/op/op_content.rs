@@ -12,8 +12,8 @@ use super::{InsertContent, MergeableContent};
 #[derive(Debug)]
 pub enum OpContent {
     Normal { content: Box<dyn InsertContent> },
-    Undo { target: RleVec<CounterSpan> },
-    Redo { target: RleVec<CounterSpan> },
+    Undo { target: RleVec<IdSpan> },
+    Redo { target: RleVec<IdSpan> },
 }
 
 impl OpContent {

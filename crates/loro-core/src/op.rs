@@ -51,7 +51,7 @@ impl Op {
     }
 
     #[inline]
-    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<CounterSpan>) -> Self {
+    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVec<IdSpan>) -> Self {
         Op::new(id, OpContent::Undo { target }, container)
     }
 
