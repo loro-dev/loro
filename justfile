@@ -15,6 +15,9 @@ test-slow *FLAGS:
 check-unsafe:
   env RUSTFLAGS="-Funsafe-code --cap-lints=warn" cargo check
 
+fix:
+  cargo clippy --fix
+
 deny:
   cargo deny check
 

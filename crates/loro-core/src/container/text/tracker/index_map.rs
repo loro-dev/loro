@@ -2,15 +2,10 @@ use std::{fmt::Debug, ptr::NonNull};
 
 use enum_as_inner::EnumAsInner;
 
-use rle::{
-    rle_tree::{
-        node::LeafNode,
-    },
-    HasLength, Mergable, Sliceable,
-};
+use rle::{rle_tree::node::LeafNode, HasLength, Mergable, Sliceable};
 
 use crate::{
-    container::text::{YSpan, YSpanTreeTrait},
+    container::text::y_span::{YSpan, YSpanTreeTrait},
     span::IdSpan,
 };
 

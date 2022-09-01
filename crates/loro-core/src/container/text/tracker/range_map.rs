@@ -1,15 +1,9 @@
-use std::{fmt::Debug};
+use std::fmt::Debug;
 
-
-use num::{FromPrimitive};
 use rle::{
-    rle_tree::{
-        tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
-    },
+    rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
-
-
 
 #[derive(Debug)]
 struct WithGlobalIndex<Value, Index: GlobalIndex> {

@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
-use crate::{rle_tree::tree_trait::Position, HasLength};
+use crate::rle_tree::tree_trait::Position;
 
 use super::*;
 
