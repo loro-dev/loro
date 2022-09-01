@@ -1,6 +1,6 @@
 use ctor::ctor;
 
-use crate::rle_tree::tree_trait::Position;
+use crate::rle_tree::tree_trait::CumulateTreeTrait;
 
 use super::super::*;
 use std::ops::Range;
@@ -10,96 +10,7 @@ fn init_color_backtrace() {
     color_backtrace::install();
 }
 
-#[derive(Debug)]
-struct RangeTreeTrait;
-impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
-    const MAX_CHILDREN_NUM: usize = 4;
-    type Int = usize;
-    type InternalCache = usize;
-    type LeafCache = usize;
-
-    fn update_cache_leaf(node: &mut node::LeafNode<'_, Range<usize>, Self>) {
-        node.cache = node.children.iter().map(|x| HasLength::len(&**x)).sum();
-    }
-
-    fn update_cache_internal(node: &mut InternalNode<'_, Range<usize>, Self>) {
-        node.cache = node
-            .children
-            .iter()
-            .map(|x| match x {
-                Node::Internal(x) => x.cache,
-                Node::Leaf(x) => x.cache,
-            })
-            .sum();
-    }
-
-    fn find_pos_internal(
-        node: &InternalNode<'_, Range<usize>, Self>,
-        mut index: Self::Int,
-    ) -> (usize, Self::Int, Position) {
-        let mut last_cache = 0;
-        for (i, child) in node.children().iter().enumerate() {
-            last_cache = match child {
-                Node::Internal(x) => {
-                    if index <= x.cache {
-                        return (i, index, get_pos(index, *child));
-                    }
-                    x.cache
-                }
-                Node::Leaf(x) => {
-                    if index <= x.cache {
-                        return (i, index, get_pos(index, *child));
-                    }
-                    x.cache
-                }
-            };
-
-            index -= last_cache;
-        }
-
-        assert_eq!(index, 0);
-        (node.children.len() - 1, last_cache, Position::End)
-    }
-
-    fn find_pos_leaf(
-        node: &node::LeafNode<'_, Range<usize>, Self>,
-        mut index: Self::Int,
-    ) -> (usize, usize, Position) {
-        for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::len(&**child) {
-                return (i, index, get_pos(index, &**child));
-            }
-
-            index -= HasLength::len(&**child);
-        }
-
-        (
-            node.children().len() - 1,
-            HasLength::len(&**node.children.last().unwrap()),
-            Position::End,
-        )
-    }
-
-    const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
-
-    fn len_leaf(node: &node::LeafNode<'_, Range<usize>, Self>) -> usize {
-        node.cache
-    }
-
-    fn len_internal(node: &InternalNode<'_, Range<usize>, Self>) -> usize {
-        node.cache
-    }
-}
-
-fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
-    if index == 0 {
-        Position::Start
-    } else if index == child.len() {
-        Position::End
-    } else {
-        Position::Middle
-    }
-}
+type RangeTreeTrait = CumulateTreeTrait<Range<usize>, 4>;
 
 #[test]
 fn insert() {

@@ -6,7 +6,7 @@ use std::{
 use crate::{
     rle_tree::{
         node::{InternalNode, LeafNode, Node},
-        tree_trait::{Position, RleTreeTrait},
+        tree_trait::{CumulateTreeTrait, Position, RleTreeTrait},
     },
     HasLength, Mergable, RleTree, Sliceable,
 };
@@ -49,96 +49,11 @@ impl Mergable for CustomString {
     }
 }
 
+type StringTreeTrait = CumulateTreeTrait<CustomString, 4>;
+
 impl Sliceable for CustomString {
     fn slice(&self, from: usize, to: usize) -> Self {
         CustomString(self.0.slice(from, to))
-    }
-}
-
-#[derive(Debug)]
-struct StringTreeTrait;
-impl RleTreeTrait<CustomString> for StringTreeTrait {
-    const MAX_CHILDREN_NUM: usize = 4;
-
-    const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
-
-    type Int = usize;
-
-    type InternalCache = usize;
-
-    type LeafCache = usize;
-
-    fn update_cache_leaf(node: &mut crate::rle_tree::node::LeafNode<'_, CustomString, Self>) {
-        node.cache = node.children.iter().map(|x| HasLength::len(&**x)).sum();
-    }
-
-    fn update_cache_internal(
-        node: &mut crate::rle_tree::node::InternalNode<'_, CustomString, Self>,
-    ) {
-        node.cache = node.children.iter().map(|x| Node::len(x)).sum();
-    }
-
-    fn find_pos_internal(
-        node: &InternalNode<'_, CustomString, Self>,
-        mut index: Self::Int,
-    ) -> (usize, Self::Int, Position) {
-        let mut last_cache = 0;
-        for (i, child) in node.children().iter().enumerate() {
-            last_cache = match child {
-                Node::Internal(x) => {
-                    if index <= x.cache {
-                        return (i, index, get_pos(index, *child));
-                    }
-                    x.cache
-                }
-                Node::Leaf(x) => {
-                    if index <= x.cache {
-                        return (i, index, get_pos(index, *child));
-                    }
-                    x.cache
-                }
-            };
-
-            index -= last_cache;
-        }
-
-        assert_eq!(index, 0);
-        (node.children.len() - 1, last_cache, Position::End)
-    }
-
-    fn find_pos_leaf(
-        node: &LeafNode<'_, CustomString, Self>,
-        mut index: Self::Int,
-    ) -> (usize, usize, Position) {
-        for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::len(&**child) {
-                return (i, index, get_pos(index, &**child));
-            }
-
-            index -= HasLength::len(&**child);
-        }
-
-        (
-            node.children().len() - 1,
-            HasLength::len(&**node.children.last().unwrap()),
-            Position::End,
-        )
-    }
-
-    fn len_leaf(node: &LeafNode<'_, CustomString, Self>) -> usize {
-        node.cache
-    }
-
-    fn len_internal(node: &InternalNode<'_, CustomString, Self>) -> usize {
-        node.cache
-    }
-
-    fn check_cache_internal(node: &InternalNode<'_, CustomString, Self>) {
-        assert_eq!(node.cache, node.children.iter().map(|x| x.len()).sum());
-    }
-
-    fn check_cache_leaf(node: &LeafNode<'_, CustomString, Self>) {
-        assert_eq!(node.cache, node.children.iter().map(|x| x.len()).sum());
     }
 }
 
