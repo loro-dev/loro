@@ -245,12 +245,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for Node<'a, T, A> {
+impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
-    fn len(&self) -> usize {
+    pub fn len(&self) -> A::Int {
         match self {
-            Node::Internal(node) => node.len(),
-            Node::Leaf(node) => node.len(),
+            Node::Internal(node) => A::len_internal(node),
+            Node::Leaf(node) => A::len_leaf(node),
         }
     }
 }
