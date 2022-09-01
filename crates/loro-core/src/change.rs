@@ -4,7 +4,7 @@
 //! Note, `dep` may point to the middle of the other [Change].
 //!
 //! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
-use std::char::MAX;
+
 
 use crate::{
     id::{Counter, ID},

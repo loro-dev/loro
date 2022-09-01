@@ -1,16 +1,16 @@
 #![cfg(test)]
 
-use proptest::proptest;
+
 
 use super::*;
 use crate::{
     array_mut_ref,
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{CounterSpan, IdSpan},
+    span::{IdSpan},
 };
-use std::collections::HashSet;
-use std::iter::FromIterator;
+
+
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct TestNode {

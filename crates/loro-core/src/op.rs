@@ -1,7 +1,7 @@
 use crate::{
     container::ContainerID,
     id::{Counter, ID},
-    span::{CounterSpan, IdSpan},
+    span::{IdSpan},
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;

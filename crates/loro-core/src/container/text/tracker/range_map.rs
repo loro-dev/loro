@@ -1,21 +1,15 @@
-use std::{fmt::Debug, marker::PhantomData, ptr::NonNull};
+use std::{fmt::Debug};
 
-use enum_as_inner::EnumAsInner;
-use num::{traits::AsPrimitive, FromPrimitive, Integer};
+
+use num::{FromPrimitive};
 use rle::{
     rle_tree::{
-        node::LeafNode,
         tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
     },
-    HasLength, Mergable, Rle, RleTree, RleTreeTrait, Sliceable,
+    HasLength, Mergable, Rle, RleTree, Sliceable,
 };
 
-use crate::{
-    container::text::{YSpan, YSpanTreeTrait},
-    id::ID,
-    op::InsertContent,
-    span::IdSpan,
-};
+
 
 #[derive(Debug)]
 struct WithGlobalIndex<Value, Index: GlobalIndex> {

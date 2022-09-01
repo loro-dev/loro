@@ -26,7 +26,7 @@ pub(crate) mod macros;
 pub(crate) use change::{Change, Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
 pub(crate) use op::{ContentType, InsertContent, Op, OpContent, OpType};
-pub(crate) use smstring::SmString;
+
 pub(crate) type InternalString = DefaultAtom;
 
 pub use container::ContainerType;

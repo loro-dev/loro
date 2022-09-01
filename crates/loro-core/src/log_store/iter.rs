@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use crate::Op;
 
 use crate::id::Counter;
-use crate::version::TotalOrderStamp;
+
 
 use crate::op::OpProxy;
 

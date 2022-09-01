@@ -5,16 +5,13 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::OpProxy, version::VersionVector, InsertContent, InternalString, LogStore, LoroValue, Op,
-    SmString, ID,
+    op::OpProxy, version::VersionVector, InternalString, LoroValue, ID,
 };
-use rle::{HasLength, Mergable, Sliceable};
+
 use serde::Serialize;
 use std::{
-    alloc::Layout,
-    any::{self, Any, TypeId},
+    any::{Any},
     fmt::Debug,
-    pin::Pin,
 };
 
 mod container_content;

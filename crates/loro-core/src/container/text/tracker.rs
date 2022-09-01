@@ -1,9 +1,9 @@
 use crate::{op::Op, span::IdSpan, VersionVector};
 
 use self::index_map::IndexMap;
-use rle::rle_tree::tree_trait::GlobalIndex;
 
-use super::text_content::TextOpContent;
+
+
 
 mod index_map;
 mod range_map;
@@ -13,10 +13,10 @@ struct Tracker {
 }
 
 impl Tracker {
-    fn turn_on(&mut self, id: IdSpan) {}
-    fn turn_off(&mut self, id: IdSpan) {}
-    fn checkout(&mut self, vv: VersionVector) {}
-    fn apply(&mut self, content: &Op) {}
+    fn turn_on(&mut self, _id: IdSpan) {}
+    fn turn_off(&mut self, _id: IdSpan) {}
+    fn checkout(&mut self, _vv: VersionVector) {}
+    fn apply(&mut self, _content: &Op) {}
 }
 
 #[cfg(test)]

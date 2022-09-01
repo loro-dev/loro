@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ptr::NonNull};
 
-use crate::{Rle, RleTree, RleTreeTrait};
+use crate::{Rle, RleTreeTrait};
 
 use super::{node::LeafNode, RleTreeRaw};
 
