@@ -26,7 +26,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - We need the second arg so we can perform `find_pos_internal(child, new_search_index)`.
     /// - We need the third arg to determine whether the child is included or excluded
     fn find_pos_internal(
-        node: &mut InternalNode<'_, T, Self>,
+        node: &InternalNode<'_, T, Self>,
         index: Self::Int,
     ) -> (usize, Self::Int, Position);
 
@@ -35,10 +35,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// if `pos == Middle`, we need to split the node
     ///
     /// - We need the third arg to determine whether the child is included or excluded
-    fn find_pos_leaf(
-        node: &mut LeafNode<'_, T, Self>,
-        index: Self::Int,
-    ) -> (usize, usize, Position);
+    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> (usize, usize, Position);
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> usize;
     fn len_internal(node: &InternalNode<'_, T, Self>) -> usize;

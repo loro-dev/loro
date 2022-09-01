@@ -79,7 +79,7 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
     }
 
     fn find_pos_internal(
-        node: &mut InternalNode<'_, CustomString, Self>,
+        node: &InternalNode<'_, CustomString, Self>,
         mut index: Self::Int,
     ) -> (usize, Self::Int, Position) {
         let mut last_cache = 0;
@@ -107,7 +107,7 @@ impl RleTreeTrait<CustomString> for StringTreeTrait {
     }
 
     fn find_pos_leaf(
-        node: &mut LeafNode<'_, CustomString, Self>,
+        node: &LeafNode<'_, CustomString, Self>,
         mut index: Self::Int,
     ) -> (usize, usize, Position) {
         for (i, child) in node.children().iter().enumerate() {

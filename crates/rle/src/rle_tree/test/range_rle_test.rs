@@ -34,7 +34,7 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
     }
 
     fn find_pos_internal(
-        node: &mut InternalNode<'_, Range<usize>, Self>,
+        node: &InternalNode<'_, Range<usize>, Self>,
         mut index: Self::Int,
     ) -> (usize, Self::Int, Position) {
         let mut last_cache = 0;
@@ -62,7 +62,7 @@ impl RleTreeTrait<Range<usize>> for RangeTreeTrait {
     }
 
     fn find_pos_leaf(
-        node: &mut node::LeafNode<'_, Range<usize>, Self>,
+        node: &node::LeafNode<'_, Range<usize>, Self>,
         mut index: Self::Int,
     ) -> (usize, usize, Position) {
         for (i, child) in node.children().iter().enumerate() {
