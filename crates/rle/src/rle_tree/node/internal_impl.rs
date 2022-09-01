@@ -265,13 +265,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for InternalNode<'a, T, A> {
-    #[inline]
-    fn len(&self) -> usize {
-        A::len_internal(self)
-    }
-}
-
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     /// this can only invoke from root
     #[inline]

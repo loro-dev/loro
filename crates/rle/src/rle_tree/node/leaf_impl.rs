@@ -246,13 +246,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for LeafNode<'a, T, A> {
-    #[inline]
-    fn len(&self) -> usize {
-        A::len_leaf(self)
-    }
-}
-
 impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for LeafNode<'a, T, A> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         let mut debug_struct = f.debug_struct("LeafNode");

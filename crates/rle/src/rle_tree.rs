@@ -6,10 +6,7 @@ use crate::{HasLength, Rle};
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 use ouroboros::self_referencing;
-use std::{
-    marker::{PhantomData, PhantomPinned},
-    ptr::NonNull,
-};
+use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
 
 mod cursor;
@@ -102,8 +99,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> HasLength for RleTreeRaw<'a, T, A> {
-    fn len(&self) -> usize {
+impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
+    #[inline]
+    pub fn len(&self) -> A::Int {
         self.node.len()
     }
 }
