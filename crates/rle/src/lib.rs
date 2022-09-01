@@ -18,6 +18,8 @@
 //! - get(index) returns the atom element at the index.
 //! - slice(from, to) returns a slice of atom elements from the index from to the index to.
 //!
+//!
+#![allow(dead_code)]
 mod rle_trait;
 pub mod rle_tree;
 mod rle_vec;

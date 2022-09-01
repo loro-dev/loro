@@ -6,21 +6,20 @@ use pin_project::pin_project;
 use std::{marker::PhantomPinned, pin::Pin, ptr::NonNull};
 
 use fxhash::FxHashMap;
-use moveit::New;
 
 use rle::{HasLength, RleVec};
 use smallvec::SmallVec;
 
-
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{Container, ContainerManager},
+    container::manager::ContainerManager,
     id::{ClientID, Counter},
     op::OpProxy,
     Lamport, Op, Timestamp, ID,
 };
-const YEAR: u64 = 365 * 24 * 60 * 60;
+
+const _YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
 
 pub struct GcConfig {

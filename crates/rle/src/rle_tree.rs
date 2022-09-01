@@ -2,7 +2,7 @@ use self::{
     cursor::SafeCursor,
     node::{InternalNode, Node},
 };
-use crate::{HasLength, Rle};
+use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 use ouroboros::self_referencing;

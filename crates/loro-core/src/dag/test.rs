@@ -1,16 +1,12 @@
 #![cfg(test)]
 
-
-
 use super::*;
 use crate::{
     array_mut_ref,
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{IdSpan},
+    span::IdSpan,
 };
-
-
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct TestNode {
@@ -288,7 +284,6 @@ mod iter {
 }
 
 mod mermaid {
-    use rle::Mergable;
 
     use super::*;
 

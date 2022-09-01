@@ -4,24 +4,18 @@
 //!
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
-use crate::{
-    op::OpProxy, version::VersionVector, InternalString, LoroValue, ID,
-};
+use crate::{op::OpProxy, version::VersionVector, InternalString, LoroValue, ID};
 
 use serde::Serialize;
-use std::{
-    any::{Any},
-    fmt::Debug,
-};
+use std::{any::Any, fmt::Debug};
 
 mod container_content;
-mod manager;
+pub mod manager;
 
 pub mod list;
 pub mod map;
 pub mod text;
 pub use container_content::*;
-pub use manager::*;
 
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;

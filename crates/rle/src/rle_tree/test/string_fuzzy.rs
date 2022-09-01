@@ -3,12 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{
-    rle_tree::{
-        tree_trait::{CumulateTreeTrait, Position},
-    },
-    HasLength, Mergable, RleTree, Sliceable,
-};
+use crate::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, RleTree, Sliceable};
 
 #[derive(Debug)]
 struct CustomString(String);
@@ -53,16 +48,6 @@ type StringTreeTrait = CumulateTreeTrait<CustomString, 4>;
 impl Sliceable for CustomString {
     fn slice(&self, from: usize, to: usize) -> Self {
         CustomString(self.0.slice(from, to))
-    }
-}
-
-fn get_pos<T: HasLength>(index: usize, child: &T) -> Position {
-    if index == 0 {
-        Position::Start
-    } else if index == child.len() {
-        Position::End
-    } else {
-        Position::Middle
     }
 }
 

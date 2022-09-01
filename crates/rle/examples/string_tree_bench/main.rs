@@ -1,5 +1,4 @@
 mod string_tree;
-use rle::HasLength;
 use rle::RleTree;
 use string_tree::{CustomString, StringTreeTrait};
 

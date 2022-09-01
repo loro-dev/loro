@@ -1,11 +1,8 @@
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 
-use crate::{
-    span::{IdSpan},
-    OpType,
-};
+use crate::{span::IdSpan, OpType};
 
-use super::{InsertContent, MergeableContent};
+use super::InsertContent;
 
 #[derive(Debug)]
 pub enum OpContent {

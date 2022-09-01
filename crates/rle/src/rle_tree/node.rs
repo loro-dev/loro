@@ -4,7 +4,7 @@ use std::{
     ptr::NonNull,
 };
 
-use crate::{HasLength, Rle};
+use crate::Rle;
 
 use super::{tree_trait::RleTreeTrait, BumpVec};
 use bumpalo::Bump;
