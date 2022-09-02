@@ -1,10 +1,8 @@
-use self::{
-    cursor::SafeCursor,
-    node::{InternalNode, Node},
-};
+use self::node::{InternalNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
+pub use cursor::{SafeCursor, SafeCursorMut};
 use ouroboros::self_referencing;
 use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
@@ -61,6 +59,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     /// return a cursor to the tree
+    #[inline]
     pub fn get<'b>(&'b self, mut index: A::Int) -> SafeCursor<'a, 'b, T, A> {
         let mut node = &self.node;
         loop {
@@ -79,8 +78,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     #[inline]
-    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> SafeCursor<'a, 'b, T, A> {
-        self.get(index)
+    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
+        let cursor = self.get(index);
+        SafeCursorMut(cursor.0)
     }
 
     pub fn iter(&self) -> iter::Iter<'_, 'a, T, A> {
