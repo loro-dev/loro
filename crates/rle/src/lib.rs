@@ -20,6 +20,7 @@
 //!
 //!
 #![allow(dead_code)]
+pub mod range_map;
 mod rle_trait;
 pub mod rle_tree;
 mod rle_vec;
