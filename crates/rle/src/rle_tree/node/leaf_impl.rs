@@ -1,4 +1,4 @@
-use crate::rle_tree::tree_trait::Position;
+use crate::rle_tree::{cursor::SafeCursorMut, tree_trait::Position};
 use std::fmt::{Debug, Error, Formatter};
 
 use super::*;
@@ -35,6 +35,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         inner.prev = Some(NonNull::new(self).unwrap());
         self.next = Some(NonNull::new(&mut *inner).unwrap());
         ans
+    }
+
+    #[inline]
+    pub fn get_cursor<'b>(&'b self, pos: A::Int) -> SafeCursor<'a, 'b, T, A> {
+        let index = A::find_pos_leaf(self, pos).0;
+        SafeCursor::new(self.into(), index)
+    }
+
+    #[inline]
+    pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
+        let index = A::find_pos_leaf(self, pos).0;
+        SafeCursorMut::new(self.into(), index)
     }
 
     pub fn push_child(&mut self, value: T) -> Result<(), &'a mut Node<'a, T, A>> {

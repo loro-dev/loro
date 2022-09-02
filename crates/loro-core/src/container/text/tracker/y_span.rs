@@ -8,6 +8,29 @@ pub(super) struct Status {
     undo_times: usize,
 }
 
+impl Status {
+    #[inline]
+    pub fn is_activated(&self) -> bool {
+        !self.unapplied && self.delete_times == 0 && self.undo_times == 0
+    }
+
+    /// Return whether the activation changed
+    #[inline]
+    pub fn apply(&mut self, change: StatusChange) -> bool {
+        let activated = self.is_activated();
+        match change {
+            StatusChange::Apply => self.unapplied = false,
+            StatusChange::PreApply => self.unapplied = true,
+            StatusChange::Redo => self.undo_times -= 1,
+            StatusChange::Undo => self.undo_times += 1,
+            StatusChange::Delete => self.delete_times += 1,
+            StatusChange::UndoDelete => self.delete_times -= 1,
+        }
+
+        self.is_activated() != activated
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct YSpan {
     pub origin_left: ID,
@@ -15,6 +38,16 @@ pub(super) struct YSpan {
     pub id: ID,
     pub len: usize,
     pub status: Status,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum StatusChange {
+    Apply,
+    PreApply,
+    Redo,
+    Undo,
+    Delete,
+    UndoDelete,
 }
 
 pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
@@ -71,7 +104,11 @@ impl InsertContent for YSpan {
 
 impl HasLength for YSpan {
     fn len(&self) -> usize {
-        self.len
+        if self.status.is_activated() {
+            self.len
+        } else {
+            0
+        }
     }
 }
 
