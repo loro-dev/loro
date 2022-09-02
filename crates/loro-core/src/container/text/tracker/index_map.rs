@@ -2,14 +2,12 @@ use std::{fmt::Debug, ptr::NonNull};
 
 use enum_as_inner::EnumAsInner;
 
-use rle::{rle_tree::node::LeafNode, HasLength, Mergable, Sliceable};
+use rle::{range_map::RangeMap, rle_tree::node::LeafNode, HasLength, Mergable, Sliceable};
 
 use crate::{
     container::text::y_span::{YSpan, YSpanTreeTrait},
     span::IdSpan,
 };
-
-use super::range_map::RangeMap;
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum Marker {

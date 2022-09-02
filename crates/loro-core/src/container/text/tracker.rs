@@ -2,11 +2,7 @@ use crate::{op::Op, span::IdSpan, VersionVector};
 
 use self::index_map::IndexMap;
 
-
-
-
 mod index_map;
-mod range_map;
 
 struct Tracker {
     index: IndexMap,

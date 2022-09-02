@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use rle::{
+use crate::{
     rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -45,7 +45,7 @@ impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, I
     }
 }
 
-pub(super) struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + 'static> {
+pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + 'static> {
     tree:
         RleTree<WithGlobalIndex<Value, Index>, GlobalTreeTrait<WithGlobalIndex<Value, Index>, 10>>,
 }
