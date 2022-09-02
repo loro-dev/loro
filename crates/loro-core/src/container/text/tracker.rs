@@ -1,11 +1,13 @@
 use crate::{op::Op, span::IdSpan, VersionVector};
 
-use self::index_map::IndexMap;
+use self::cursor_map::CursorMap;
 
-mod index_map;
+mod content_map;
+mod cursor_map;
+mod y_span;
 
 struct Tracker {
-    index: IndexMap,
+    index: CursorMap,
 }
 
 impl Tracker {

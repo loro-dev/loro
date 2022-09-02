@@ -1,12 +1,20 @@
 use crate::{id::Counter, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct Status {
+    unapplied: bool,
+    delete_times: usize,
+    undo_times: usize,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct YSpan {
     pub origin_left: ID,
     pub origin_right: ID,
     pub id: ID,
-    pub text: String,
+    pub len: usize,
+    pub status: Status,
 }
 
 pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
@@ -18,10 +26,12 @@ impl Mergable for YSpan {
             && self.id.client_id == other.origin_left.client_id
             && self.id.counter + self.len() as Counter - 1 == other.origin_left.counter
             && self.origin_right == other.origin_right
+            && self.status == other.status
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
-        self.text.push_str(&other.text);
+        self.origin_right = other.origin_right;
+        self.len += other.len;
     }
 }
 
@@ -32,7 +42,8 @@ impl Sliceable for YSpan {
                 origin_left: self.origin_left,
                 origin_right: self.origin_right,
                 id: self.id,
-                text: self.text[..to].to_owned(),
+                len: to - from,
+                status: self.status.clone(),
             }
         } else {
             YSpan {
@@ -45,7 +56,8 @@ impl Sliceable for YSpan {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as Counter,
                 },
-                text: self.text[from..to].to_owned(),
+                len: to - from,
+                status: self.status.clone(),
             }
         }
     }
@@ -59,7 +71,7 @@ impl InsertContent for YSpan {
 
 impl HasLength for YSpan {
     fn len(&self) -> usize {
-        self.text.len()
+        self.len
     }
 }
 
@@ -84,7 +96,8 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: "a".to_owned(),
+                    len: 1,
+                    status: Default::default(),
                 }),
             },
             ContainerID::Normal {
@@ -99,7 +112,8 @@ mod test {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
-                    text: "b".to_owned(),
+                    len: 1,
+                    status: Default::default(),
                 }),
             },
             ContainerID::Normal {
@@ -112,7 +126,7 @@ mod test {
         assert_eq!(merged.insert_content().id(), ContentType::Text);
         let text_content =
             crate::op::utils::downcast_ref::<YSpan>(&**merged.insert_content()).unwrap();
-        assert_eq!(text_content.text, "ab");
+        assert_eq!(text_content.len, 2);
     }
 
     #[test]
@@ -125,7 +139,8 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: "1234".to_owned(),
+                    len: 4,
+                    status: Default::default(),
                 }),
             },
             ContainerID::Normal {
@@ -140,7 +155,8 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
-                    text: "5678".to_owned(),
+                    len: 4,
+                    status: Default::default(),
                 }),
             },
             ContainerID::Normal {
@@ -155,52 +171,9 @@ mod test {
                     &**x.into_inner().insert_content()
                 )
                 .unwrap()
-                .text
-                .clone())
-                .collect::<Vec<String>>(),
-            vec!["34", "56"]
+                .len)
+                .collect::<Vec<usize>>(),
+            vec![2, 2]
         )
     }
 }
-
-// impl RleTreeTrait<YSpan> for YSpanTreeTrait {
-//     const MAX_CHILDREN_NUM: usize;
-
-//     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
-
-//     type Int;
-
-//     type InternalCache;
-
-//     type LeafCache;
-
-//     fn update_cache_leaf(node: &mut rle::rle_tree::node::LeafNode<'_, YSpan, Self>) {
-//         todo!()
-//     }
-
-//     fn update_cache_internal(node: &mut rle::rle_tree::node::InternalNode<'_, YSpan, Self>) {
-//         todo!()
-//     }
-
-//     fn find_pos_internal(
-//         node: &rle::rle_tree::node::InternalNode<'_, YSpan, Self>,
-//         index: Self::Int,
-//     ) -> (usize, Self::Int, rle::rle_tree::tree_trait::Position) {
-//         todo!()
-//     }
-
-//     fn find_pos_leaf(
-//         node: &rle::rle_tree::node::LeafNode<'_, YSpan, Self>,
-//         index: Self::Int,
-//     ) -> (usize, usize, rle::rle_tree::tree_trait::Position) {
-//         todo!()
-//     }
-
-//     fn len_leaf(node: &rle::rle_tree::node::LeafNode<'_, YSpan, Self>) -> usize {
-//         todo!()
-//     }
-
-//     fn len_internal(node: &rle::rle_tree::node::InternalNode<'_, YSpan, Self>) -> usize {
-//         todo!()
-//     }
-// }

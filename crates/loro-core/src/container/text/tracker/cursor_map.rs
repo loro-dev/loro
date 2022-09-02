@@ -4,10 +4,9 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{range_map::RangeMap, rle_tree::node::LeafNode, HasLength, Mergable, Sliceable};
 
-use crate::{
-    container::text::y_span::{YSpan, YSpanTreeTrait},
-    span::IdSpan,
-};
+use crate::span::IdSpan;
+
+use super::y_span::{YSpan, YSpanTreeTrait};
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum Marker {
@@ -57,4 +56,4 @@ impl Mergable for Marker {
     }
 }
 
-pub(super) type IndexMap = RangeMap<u128, Marker>;
+pub(super) type CursorMap = RangeMap<u128, Marker>;
