@@ -94,7 +94,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         if result.pos == Position::Start {
             (result.child_index, None)
         } else {
-            (result.child_index + 1, Some(result.new_search_index))
+            (result.child_index + 1, Some(result.offset))
         }
     }
 
@@ -103,7 +103,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         if result.pos == Position::End {
             (result.child_index + 1, None)
         } else {
-            (result.child_index, Some(result.new_search_index))
+            (result.child_index, Some(result.offset))
         }
     }
 
@@ -145,7 +145,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
         let FindPosResult {
             child_index: mut index,
-            new_search_index: mut offset,
+            mut offset,
             ..
         } = A::find_pos_leaf(self, raw_index);
         let prev = {

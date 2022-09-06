@@ -200,7 +200,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         if from.pos == Position::Start {
             (from.child_index, None)
         } else {
-            (from.child_index + 1, Some(from.new_search_index))
+            (from.child_index + 1, Some(from.offset))
         }
     }
 
@@ -209,7 +209,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         if to.pos == Position::End {
             (to.child_index + 1, None)
         } else {
-            (to.child_index, Some(to.new_search_index))
+            (to.child_index, Some(to.offset))
         }
     }
 
@@ -277,7 +277,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         let FindPosResult {
             child_index,
-            new_search_index: relative_idx,
+            offset: relative_idx,
             ..
         } = A::find_pos_internal(self, index);
         let child = &mut self.children[child_index];
