@@ -81,7 +81,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
                 Node::Internal(internal_node) => {
                     let result = A::find_pos_internal(internal_node, index);
                     node = internal_node.children[result.child_index];
-                    index = result.new_search_index;
+                    index = result.offset;
                 }
                 Node::Leaf(leaf) => {
                     return SafeCursor::new(leaf.into(), A::find_pos_leaf(leaf, index).child_index);

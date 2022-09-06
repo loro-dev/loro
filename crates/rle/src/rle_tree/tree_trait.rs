@@ -15,7 +15,7 @@ pub enum Position {
 
 pub struct FindPosResult<I> {
     pub child_index: usize,
-    pub new_search_index: I,
+    pub offset: I,
     pub pos: Position,
 }
 
@@ -23,7 +23,7 @@ impl<I> FindPosResult<I> {
     pub(crate) fn new(child_index: usize, new_search_index: I, pos: Position) -> Self {
         FindPosResult {
             child_index,
-            new_search_index,
+            offset: new_search_index,
             pos,
         }
     }
