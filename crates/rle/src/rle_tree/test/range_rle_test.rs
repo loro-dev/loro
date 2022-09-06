@@ -1,14 +1,7 @@
-use ctor::ctor;
-
 use crate::rle_tree::tree_trait::CumulateTreeTrait;
 
 use super::super::*;
 use std::ops::Range;
-
-#[ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-}
 
 type RangeTreeTrait = CumulateTreeTrait<Range<usize>, 4>;
 

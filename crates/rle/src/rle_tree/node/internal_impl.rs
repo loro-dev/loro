@@ -90,13 +90,17 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     // TODO: simplify this func?
-    fn _delete(
+    fn _delete<F>(
         &mut self,
         from: Option<A::Int>,
         to: Option<A::Int>,
         visited: &mut Vec<(usize, NonNull<Node<'a, T, A>>)>,
         depth: usize,
-    ) -> Result<(), &'a mut Node<'a, T, A>> {
+        notify: &mut F,
+    ) -> Result<(), &'a mut Node<'a, T, A>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
         let (direct_delete_start, to_del_start_offset) =
             from.map_or((0, None), |x| self._delete_start(x));
         let (direct_delete_end, to_del_end_offset) =
@@ -113,14 +117,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     ));
                     match &mut self.children[direct_delete_end] {
                         Node::Internal(node) => {
-                            if let Err(new) =
-                                node._delete(Some(del_from), Some(del_to), visited, depth + 1)
-                            {
+                            if let Err(new) = node._delete(
+                                Some(del_from),
+                                Some(del_to),
+                                visited,
+                                depth + 1,
+                                notify,
+                            ) {
                                 result = self._insert_with_split(direct_delete_end + 1, new);
                             }
                         }
                         Node::Leaf(node) => {
-                            if let Err(new) = node.delete(Some(del_from), Some(del_to)) {
+                            if let Err(new) = node.delete(Some(del_from), Some(del_to), notify) {
                                 result = self._insert_with_split(direct_delete_end + 1, new);
                             }
                         }
@@ -137,13 +145,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     ));
                     match &mut self.children[direct_delete_start - 1] {
                         Node::Internal(node) => {
-                            if let Err(new) = node._delete(Some(del_from), None, visited, depth + 1)
+                            if let Err(new) =
+                                node._delete(Some(del_from), None, visited, depth + 1, notify)
                             {
                                 result = self._insert_with_split(direct_delete_start, new);
                             }
                         }
                         Node::Leaf(node) => {
-                            if let Err(new) = node.delete(Some(del_from), None) {
+                            if let Err(new) = node.delete(Some(del_from), None, notify) {
                                 result = self._insert_with_split(direct_delete_start, new)
                             }
                         }
@@ -156,13 +165,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     ));
                     match &mut self.children[direct_delete_end] {
                         Node::Internal(node) => {
-                            if let Err(new) = node._delete(None, Some(del_to), visited, depth + 1) {
+                            if let Err(new) =
+                                node._delete(None, Some(del_to), visited, depth + 1, notify)
+                            {
                                 debug_assert!(result.is_ok());
                                 result = self._insert_with_split(direct_delete_end + 1, new);
                             }
                         }
                         Node::Leaf(node) => {
-                            if let Err(new) = node.delete(None, Some(del_to)) {
+                            if let Err(new) = node.delete(None, Some(del_to), notify) {
                                 debug_assert!(result.is_ok());
                                 result = self._insert_with_split(direct_delete_end + 1, new);
                             }
@@ -202,8 +213,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
-    pub fn insert(&mut self, index: A::Int, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
-        match self._insert(index, value) {
+    pub fn insert<F>(
+        &mut self,
+        index: A::Int,
+        value: T,
+        notify: &mut F,
+    ) -> Result<(), &'a mut Node<'a, T, A>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        match self._insert(index, value, notify) {
             Ok(_) => {
                 A::update_cache_internal(self);
                 Ok(())
@@ -241,7 +260,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         A::update_cache_internal(self);
     }
 
-    fn _insert(&mut self, index: A::Int, value: T) -> Result<(), &'a mut Node<'a, T, A>> {
+    fn _insert<F>(
+        &mut self,
+        index: A::Int,
+        value: T,
+        notify: &mut F,
+    ) -> Result<(), &'a mut Node<'a, T, A>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
         if self.children.is_empty() {
             debug_assert!(self.is_root());
             let ptr = NonNull::new(self as *mut _).unwrap();
@@ -251,8 +278,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let (child_index, relative_idx, _) = A::find_pos_internal(self, index);
         let child = &mut self.children[child_index];
         let new = match child {
-            Node::Internal(child) => child.insert(relative_idx, value),
-            Node::Leaf(child) => child.insert(relative_idx, value),
+            Node::Internal(child) => child.insert(relative_idx, value, notify),
+            Node::Leaf(child) => child.insert(relative_idx, value, notify),
         };
 
         if let Err(new) = new {
@@ -268,10 +295,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     /// this can only invoke from root
     #[inline]
-    pub(crate) fn delete(&mut self, start: Option<A::Int>, end: Option<A::Int>) {
+    pub(crate) fn delete<F>(&mut self, start: Option<A::Int>, end: Option<A::Int>, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
         debug_assert!(self.is_root());
         let mut zipper = Vec::new();
-        match self._delete(start, end, &mut zipper, 1) {
+        match self._delete(start, end, &mut zipper, 1, notify) {
             Ok(_) => {
                 A::update_cache_internal(self);
             }

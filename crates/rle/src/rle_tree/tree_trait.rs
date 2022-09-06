@@ -13,6 +13,12 @@ pub enum Position {
     End,
 }
 
+pub struct FindPosResult<I> {
+    child_index: usize,
+    new_search_index: I,
+    pos: Position,
+}
+
 pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;

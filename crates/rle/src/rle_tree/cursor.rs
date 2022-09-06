@@ -5,8 +5,8 @@ use crate::{Rle, RleTreeTrait};
 use super::{node::LeafNode, RleTreeRaw};
 
 pub struct UnsafeCursor<'a, Tree, T: Rle, A: RleTreeTrait<T>> {
-    leaf: NonNull<LeafNode<'a, T, A>>,
-    index: usize,
+    pub(crate) leaf: NonNull<LeafNode<'a, T, A>>,
+    pub(crate) index: usize,
     _phantom: PhantomData<Tree>,
 }
 
