@@ -14,9 +14,19 @@ pub enum Position {
 }
 
 pub struct FindPosResult<I> {
-    child_index: usize,
-    new_search_index: I,
-    pos: Position,
+    pub child_index: usize,
+    pub new_search_index: I,
+    pub pos: Position,
+}
+
+impl<I> FindPosResult<I> {
+    pub(crate) fn new(child_index: usize, new_search_index: I, pos: Position) -> Self {
+        FindPosResult {
+            child_index,
+            new_search_index,
+            pos,
+        }
+    }
 }
 
 pub trait RleTreeTrait<T: Rle>: Sized + Debug {
@@ -36,14 +46,14 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
         index: Self::Int,
-    ) -> (usize, Self::Int, Position);
+    ) -> FindPosResult<Self::Int>;
 
     /// returns `(index, offset, pos)`
     ///
     /// if `pos == Middle`, we need to split the node
     ///
     /// - We need the third arg to determine whether the child is included or excluded
-    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> (usize, usize, Position);
+    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int;
     fn len_internal(node: &InternalNode<'_, T, Self>) -> Self::Int;
@@ -83,19 +93,19 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
         mut index: Self::Int,
-    ) -> (usize, Self::Int, Position) {
+    ) -> FindPosResult<usize> {
         let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
             last_cache = match child {
                 Node::Internal(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child.len()));
+                        return FindPosResult::new(i, index, get_pos(index, child.len()));
                     }
                     x.cache
                 }
                 Node::Leaf(x) => {
                     if index <= x.cache {
-                        return (i, index, get_pos(index, child.len()));
+                        return FindPosResult::new(i, index, get_pos(index, child.len()));
                     }
                     x.cache
                 }
@@ -108,22 +118,19 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
             dbg!(&node);
             assert_eq!(index, 0);
         }
-        (node.children().len() - 1, last_cache, Position::End)
+        FindPosResult::new(node.children().len() - 1, last_cache, Position::End)
     }
 
-    fn find_pos_leaf(
-        node: &LeafNode<'_, T, Self>,
-        mut index: Self::Int,
-    ) -> (usize, usize, Position) {
+    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, mut index: Self::Int) -> FindPosResult<usize> {
         for (i, child) in node.children().iter().enumerate() {
             if index < HasLength::len(&**child) {
-                return (i, index, get_pos(index, child.len()));
+                return FindPosResult::new(i, index, get_pos(index, child.len()));
             }
 
             index -= HasLength::len(&**child);
         }
 
-        (
+        FindPosResult::new(
             node.children().len() - 1,
             HasLength::len(&**node.children().last().unwrap()),
             Position::End,
@@ -226,19 +233,19 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
         index: Self::Int,
-    ) -> (usize, Self::Int, Position) {
+    ) -> FindPosResult<Self::Int> {
         for (i, child) in node.children().iter().enumerate() {
             let cache = get_cache(child);
             if index <= cache.end {
                 assert!(index >= cache.start);
-                return (i, index, get_pos_global(index, cache));
+                return FindPosResult::new(i, index, get_pos_global(index, cache));
             }
         }
 
         unreachable!();
     }
 
-    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> (usize, usize, Position) {
+    fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize> {
         for (i, child) in node.children().iter().enumerate() {
             let cache = Cache {
                 start: child.get_global_start(),
@@ -246,7 +253,11 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             };
             if index <= cache.end {
                 assert!(index >= cache.start);
-                return (i, (index - cache.start).as_(), get_pos_global(index, cache));
+                return FindPosResult::new(
+                    i,
+                    (index - cache.start).as_(),
+                    get_pos_global(index, cache),
+                );
             }
         }
 
