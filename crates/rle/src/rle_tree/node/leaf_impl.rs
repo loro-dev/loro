@@ -1,4 +1,7 @@
-use crate::rle_tree::{cursor::SafeCursorMut, tree_trait::Position};
+use crate::rle_tree::{
+    cursor::SafeCursorMut,
+    tree_trait::{FindPosResult, Position},
+};
 use std::fmt::{Debug, Error, Formatter};
 
 use super::*;
@@ -44,13 +47,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
     #[inline]
     pub fn get_cursor<'b>(&'b self, pos: A::Int) -> SafeCursor<'a, 'b, T, A> {
-        let index = A::find_pos_leaf(self, pos).0;
+        let index = A::find_pos_leaf(self, pos).child_index;
         SafeCursor::new(self.into(), index)
     }
 
     #[inline]
     pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
-        let index = A::find_pos_leaf(self, pos).0;
+        let index = A::find_pos_leaf(self, pos).child_index;
         SafeCursorMut::new(self.into(), index)
     }
 
@@ -87,20 +90,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {
-        let (index_from, relative_from, pos_from) = A::find_pos_leaf(self, from);
-        if pos_from == Position::Start {
-            (index_from, None)
+        let result = A::find_pos_leaf(self, from);
+        if result.pos == Position::Start {
+            (result.child_index, None)
         } else {
-            (index_from + 1, Some(relative_from))
+            (result.child_index + 1, Some(result.new_search_index))
         }
     }
 
     fn _delete_end(&mut self, to: A::Int) -> (usize, Option<usize>) {
-        let (index_to, relative_to, pos_to) = A::find_pos_leaf(self, to);
-        if pos_to == Position::End {
-            (index_to + 1, None)
+        let result = A::find_pos_leaf(self, to);
+        if result.pos == Position::End {
+            (result.child_index + 1, None)
         } else {
-            (index_to, Some(relative_to))
+            (result.child_index, Some(result.new_search_index))
         }
     }
 
@@ -140,7 +143,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             return Ok(());
         }
 
-        let (mut index, mut offset, _pos) = A::find_pos_leaf(self, raw_index);
+        let FindPosResult {
+            child_index: mut index,
+            new_search_index: mut offset,
+            ..
+        } = A::find_pos_leaf(self, raw_index);
         let prev = {
             if offset == 0 && index > 0 {
                 Some(&mut self.children[index - 1])

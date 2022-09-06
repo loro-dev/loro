@@ -79,13 +79,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
         loop {
             match node {
                 Node::Internal(internal_node) => {
-                    let (child_index, next, _) = A::find_pos_internal(internal_node, index);
-                    node = internal_node.children[child_index];
-                    index = next;
+                    let result = A::find_pos_internal(internal_node, index);
+                    node = internal_node.children[result.child_index];
+                    index = result.new_search_index;
                 }
                 Node::Leaf(leaf) => {
-                    let (child_index, _, _) = A::find_pos_leaf(leaf, index);
-                    return SafeCursor::new(leaf.into(), child_index);
+                    return SafeCursor::new(leaf.into(), A::find_pos_leaf(leaf, index).child_index);
                 }
             }
         }

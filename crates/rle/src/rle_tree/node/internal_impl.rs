@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
-use crate::rle_tree::tree_trait::Position;
+use crate::rle_tree::tree_trait::{FindPosResult, Position};
 
 use super::*;
 
@@ -196,20 +196,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<A::Int>) {
-        let (index_from, relative_from, pos_from) = A::find_pos_internal(self, from);
-        if pos_from == Position::Start {
-            (index_from, None)
+        let from = A::find_pos_internal(self, from);
+        if from.pos == Position::Start {
+            (from.child_index, None)
         } else {
-            (index_from + 1, Some(relative_from))
+            (from.child_index + 1, Some(from.new_search_index))
         }
     }
 
     fn _delete_end(&mut self, to: A::Int) -> (usize, Option<A::Int>) {
-        let (index_to, relative_to, pos_to) = A::find_pos_internal(self, to);
-        if pos_to == Position::End {
-            (index_to + 1, None)
+        let to = A::find_pos_internal(self, to);
+        if to.pos == Position::End {
+            (to.child_index + 1, None)
         } else {
-            (index_to, Some(relative_to))
+            (to.child_index, Some(to.new_search_index))
         }
     }
 
@@ -275,7 +275,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             self.children.push(Node::new_leaf(self.bump, ptr));
         }
 
-        let (child_index, relative_idx, _) = A::find_pos_internal(self, index);
+        let FindPosResult {
+            child_index,
+            new_search_index: relative_idx,
+            ..
+        } = A::find_pos_internal(self, index);
         let child = &mut self.children[child_index];
         let new = match child {
             Node::Internal(child) => child.insert(relative_idx, value, notify),
