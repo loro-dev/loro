@@ -96,19 +96,18 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     }
 
     #[inline]
-    pub fn get(&self, index: Index) -> &Value {
-        &self
-            .tree
-            .with_tree(|tree| tree.iter_range(index, None).next())
-            .unwrap()
-            .value
+    pub fn get(&self, index: Index) -> Option<&Value> {
+        self.tree.with_tree(|tree| {
+            let cursor = tree.get(index);
+            cursor.map(|x| &x.as_ref_().value)
+        })
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     struct V(usize);
     impl HasLength for V {
         fn len(&self) -> usize {
@@ -128,7 +127,13 @@ mod test {
     fn test_0() {
         let mut map: VRangeMap = Default::default();
         map.insert(10, V(10));
-        map.insert(12, V(2));
-        println!("{:#?}", map.get_range(10, 20));
+        map.insert(12, V(3));
+        println!("{:#?}", map.get_range(8, 20));
+        println!("{:#?}", map.get_range(8, 12));
+        println!("{:#?}", map.get_range(7, 8));
+        assert_eq!(map.get_range(7, 8), Vec::<&V>::new());
+        assert_eq!(map.get_range(8, 12), vec![&V(2)]);
+        println!("{:#?}", map.get(8));
+        println!("{:#?}", map.get(10));
     }
 }

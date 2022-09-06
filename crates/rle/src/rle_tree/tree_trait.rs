@@ -17,14 +17,25 @@ pub struct FindPosResult<I> {
     pub child_index: usize,
     pub offset: I,
     pub pos: Position,
+    pub found: bool,
 }
 
 impl<I> FindPosResult<I> {
-    pub(crate) fn new(child_index: usize, new_search_index: I, pos: Position) -> Self {
+    pub(crate) fn new(child_index: usize, offset: I, pos: Position) -> Self {
+        FindPosResult {
+            child_index,
+            offset,
+            pos,
+            found: true,
+        }
+    }
+
+    pub(crate) fn new_not_found(child_index: usize, new_search_index: I, pos: Position) -> Self {
         FindPosResult {
             child_index,
             offset: new_search_index,
             pos,
+            found: false,
         }
     }
 }
@@ -39,19 +50,16 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>);
 
-    /// returns `(child_index, new_search_index, pos)`
-    ///
-    /// - We need the second arg so we can perform `find_pos_internal(child, new_search_index)`.
-    /// - We need the third arg to determine whether the child is included or excluded
+    /// - `child_index` can only equal to children.len() when it's zero
+    /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
+    /// - We need the `pos` to determine whether the child is included or excluded
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
         index: Self::Int,
     ) -> FindPosResult<Self::Int>;
 
-    /// returns `(index, offset, pos)`
-    ///
-    /// if `pos == Middle`, we need to split the node
-    ///
+    /// - `child_index` can only equal to children.len() when it's zero
+    /// - if `pos == Middle`, we need to split the node
     /// - We need the third arg to determine whether the child is included or excluded
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
 
@@ -221,6 +229,10 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) {
+        if node.children.is_empty() {
+            return;
+        }
+
         node.cache.end = node
             .children()
             .iter()
@@ -237,12 +249,15 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
         for (i, child) in node.children().iter().enumerate() {
             let cache = get_cache(child);
             if index <= cache.end {
-                assert!(index >= cache.start);
+                if index < cache.start {
+                    return FindPosResult::new_not_found(i, index, Position::Start);
+                }
+
                 return FindPosResult::new(i, index, get_pos_global(index, cache));
             }
         }
 
-        unreachable!();
+        FindPosResult::new_not_found(node.children.len().saturating_sub(1), index, Position::End)
     }
 
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize> {
@@ -252,7 +267,10 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
                 end: child.get_global_end(),
             };
             if index <= cache.end {
-                assert!(index >= cache.start);
+                if index < cache.start {
+                    return FindPosResult::new_not_found(i, 0, Position::Start);
+                }
+
                 return FindPosResult::new(
                     i,
                     (index - cache.start).as_(),
@@ -261,7 +279,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             }
         }
 
-        unreachable!();
+        FindPosResult::new_not_found(node.children.len().saturating_sub(1), 0, Position::End)
     }
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int {

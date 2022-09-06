@@ -72,28 +72,64 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
             .unwrap();
     }
 
-    /// return a cursor to the tree
+    /// return a cursor at the given index
     #[inline]
-    pub fn get<'b>(&'b self, mut index: A::Int) -> SafeCursor<'a, 'b, T, A> {
+    pub fn get<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
         let mut node = &self.node;
         loop {
             match node {
                 Node::Internal(internal_node) => {
                     let result = A::find_pos_internal(internal_node, index);
+                    if !result.found {
+                        return None;
+                    }
+
                     node = internal_node.children[result.child_index];
                     index = result.offset;
                 }
                 Node::Leaf(leaf) => {
-                    return SafeCursor::new(leaf.into(), A::find_pos_leaf(leaf, index).child_index);
+                    let result = A::find_pos_leaf(leaf, index);
+                    if !result.found {
+                        return None;
+                    }
+
+                    return Some(SafeCursor::new(leaf.into(), result.child_index));
+                }
+            }
+        }
+    }
+
+    /// return the first valid cursor after the given index
+    #[inline]
+    pub fn get_cursor_after<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
+        let mut node = &self.node;
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if result.child_index >= internal_node.children.len() {
+                        return None;
+                    }
+
+                    node = internal_node.children[result.child_index];
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if result.child_index >= leaf.children.len() {
+                        return None;
+                    }
+
+                    return Some(SafeCursor::new(leaf.into(), result.child_index));
                 }
             }
         }
     }
 
     #[inline]
-    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
+    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> Option<SafeCursorMut<'a, 'b, T, A>> {
         let cursor = self.get(index);
-        SafeCursorMut(cursor.0)
+        cursor.map(|x| SafeCursorMut(x.0))
     }
 
     pub fn iter(&self) -> iter::Iter<'_, 'a, T, A> {
@@ -122,19 +158,21 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, 'a, T, A> {
-        let cursor_from = self.get(start);
-        if end.is_none() || end.unwrap() >= self.len() {
-            unsafe {
+        let cursor_from = self.get_cursor_after(start);
+        if cursor_from.is_none() {
+            return iter::Iter::new(None);
+        }
+
+        let cursor_from = cursor_from.unwrap();
+        unsafe {
+            if end.is_none() || end.unwrap() >= self.len() {
                 iter::Iter::new_with_end(
                     cursor_from.0.leaf.as_ref(),
                     cursor_from.0.index,
                     None,
                     None,
                 )
-            }
-        } else {
-            let cursor_to = self.get(end.unwrap());
-            unsafe {
+            } else if let Some(cursor_to) = self.get_cursor_after(end.unwrap()) {
                 let node = cursor_from.0.leaf.as_ref();
                 let end_node = cursor_to.0.leaf.as_ref();
                 let mut end_index = cursor_to.0.index;
@@ -147,6 +185,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
                     cursor_from.0.index,
                     Some(end_node),
                     Some(end_index),
+                )
+            } else {
+                iter::Iter::new_with_end(
+                    cursor_from.0.leaf.as_ref(),
+                    cursor_from.0.index,
+                    None,
+                    None,
                 )
             }
         }

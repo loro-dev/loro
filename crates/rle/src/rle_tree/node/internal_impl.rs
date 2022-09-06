@@ -101,6 +101,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        if self.children.is_empty() {
+            return Ok(());
+        }
+
         let (direct_delete_start, to_del_start_offset) =
             from.map_or((0, None), |x| self._delete_start(x));
         let (direct_delete_end, to_del_end_offset) =
