@@ -1,4 +1,4 @@
-use self::node::{InternalNode, Node};
+use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
@@ -8,8 +8,9 @@ use std::marker::{PhantomData, PhantomPinned};
 use tree_trait::RleTreeTrait;
 
 mod cursor;
-mod iter;
+pub mod iter;
 pub mod node;
+pub mod nonnull;
 #[cfg(test)]
 mod test;
 pub mod tree_trait;
@@ -54,7 +55,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
         self.node
             .as_internal_mut()
             .unwrap()
-            .insert(index, value)
+            .insert(index, value, &mut |_a, _b| {})
+            .unwrap();
+    }
+
+    /// `notify` would be invoke if a new element is inserted/moved to a new leaf node.
+    #[inline]
+    pub fn insert_notify<F>(&mut self, index: A::Int, value: T, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        self.node
+            .as_internal_mut()
+            .unwrap()
+            .insert(index, value, notify)
             .unwrap();
     }
 
@@ -88,11 +102,55 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     pub fn delete_range(&mut self, start: Option<A::Int>, end: Option<A::Int>) {
-        self.node.as_internal_mut().unwrap().delete(start, end);
+        self.node
+            .as_internal_mut()
+            .unwrap()
+            .delete(start, end, &mut |_, _| {});
     }
 
-    pub fn iter_range(&self, _from: A::Int, _to: A::Int) {
-        todo!()
+    pub fn delete_range_notify<F>(
+        &mut self,
+        start: Option<A::Int>,
+        end: Option<A::Int>,
+        notify: &mut F,
+    ) where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        self.node
+            .as_internal_mut()
+            .unwrap()
+            .delete(start, end, notify);
+    }
+
+    pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, 'a, T, A> {
+        let cursor_from = self.get(start);
+        if end.is_none() || end.unwrap() >= self.len() {
+            unsafe {
+                iter::Iter::new_with_end(
+                    cursor_from.0.leaf.as_ref(),
+                    cursor_from.0.index,
+                    None,
+                    None,
+                )
+            }
+        } else {
+            let cursor_to = self.get(end.unwrap());
+            unsafe {
+                let node = cursor_from.0.leaf.as_ref();
+                let end_node = cursor_to.0.leaf.as_ref();
+                let mut end_index = cursor_to.0.index;
+                if std::ptr::eq(node, end_node) && end_index == cursor_from.0.index {
+                    end_index += 1;
+                }
+
+                iter::Iter::new_with_end(
+                    cursor_from.0.leaf.as_ref(),
+                    cursor_from.0.index,
+                    Some(end_node),
+                    Some(end_index),
+                )
+            }
+        }
     }
 
     pub fn debug_check(&mut self) {
