@@ -30,15 +30,15 @@ impl Interaction {
 }
 
 fn test(tree: &mut RleTree<Range<usize>, RangeTreeTrait>, interactions: &[Interaction]) {
-    let mut range_map: RangeMap<usize, NonNull<LeafNode<Range<usize>, RangeTreeTrait>>> =
-        Default::default();
-    let mut func = |range: &Range<usize>, node: *mut LeafNode<'_, Range<usize>, RangeTreeTrait>| {
-        let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
-        range_map.set(range.start, ptr);
-    };
-    for interaction in interactions.iter() {
-        interaction.apply(tree, &mut func);
-    }
+    // let mut range_map: RangeMap<usize, NonNull<LeafNode<Range<usize>, RangeTreeTrait>>> =
+    //     Default::default();
+    // let mut func = |range: &Range<usize>, node: *mut LeafNode<'_, Range<usize>, RangeTreeTrait>| {
+    //     let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
+    //     range_map.set(range.start, ptr);
+    // };
+    // for interaction in interactions.iter() {
+    //     interaction.apply(tree, &mut func);
+    // }
 }
 
 prop_compose! {

@@ -104,6 +104,44 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     }
 }
 
+pub struct WithStartEnd<Index: GlobalIndex, T> {
+    start: Index,
+    end: Index,
+    value: T,
+}
+
+impl<Index: GlobalIndex, T: Clone> Sliceable for WithStartEnd<Index, T> {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self {
+            start: self.start + Index::from_usize(from).unwrap(),
+            end: Index::min(self.end, self.start + Index::from_usize(to).unwrap()),
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<Index: GlobalIndex, T> HasLength for WithStartEnd<Index, T> {
+    fn len(&self) -> usize {
+        Index::as_(self.end - self.start)
+    }
+}
+
+impl<Index: GlobalIndex, T: PartialEq + Eq> Mergable for WithStartEnd<Index, T> {
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        self.end == other.start && self.value == other.value
+    }
+
+    fn merge(&mut self, other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        self.end = other.end;
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
