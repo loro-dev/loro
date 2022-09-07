@@ -201,7 +201,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<A::Int>) {
         let from = A::find_pos_internal(self, from);
-        if from.pos == Position::Start {
+        if from.pos == Position::Start || from.pos == Position::Before {
             (from.child_index, None)
         } else {
             (from.child_index + 1, Some(from.offset))
@@ -210,7 +210,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     fn _delete_end(&mut self, to: A::Int) -> (usize, Option<A::Int>) {
         let to = A::find_pos_internal(self, to);
-        if to.pos == Position::End {
+        if to.pos == Position::End || to.pos == Position::After {
             (to.child_index + 1, None)
         } else {
             (to.child_index, Some(to.offset))

@@ -61,7 +61,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> Default for RangeMap<In
 
 impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> {
     #[inline]
-    pub fn insert(&mut self, start: Index, value: Value) {
+    pub fn set(&mut self, start: Index, value: Value) {
         self.tree.with_tree_mut(|tree| {
             tree.delete_range(
                 Some(start),
@@ -108,16 +108,28 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
 mod test {
     use super::*;
     #[derive(Debug, PartialEq, Eq)]
-    struct V(usize);
+    struct V {
+        from: usize,
+        to: usize,
+    }
+
+    impl V {
+        fn new(from: usize, to: usize) -> Self {
+            Self { from, to }
+        }
+    }
     impl HasLength for V {
         fn len(&self) -> usize {
-            self.0
+            self.to - self.from
         }
     }
     impl Mergable for V {}
     impl Sliceable for V {
         fn slice(&self, from: usize, to: usize) -> Self {
-            V(to - from)
+            V {
+                from: self.from + from,
+                to: self.from + to,
+            }
         }
     }
 
@@ -126,14 +138,25 @@ mod test {
     #[test]
     fn test_0() {
         let mut map: VRangeMap = Default::default();
-        map.insert(10, V(10));
-        map.insert(12, V(3));
-        println!("{:#?}", map.get_range(8, 20));
-        println!("{:#?}", map.get_range(8, 12));
-        println!("{:#?}", map.get_range(7, 8));
+        map.set(10, V::new(10, 20));
+        map.set(12, V::new(12, 15));
+        // 10-12, 12-15, 15-20
         assert_eq!(map.get_range(7, 8), Vec::<&V>::new());
-        assert_eq!(map.get_range(8, 12), vec![&V(2)]);
-        println!("{:#?}", map.get(8));
-        println!("{:#?}", map.get(10));
+        assert_eq!(map.get_range(8, 12), vec![&V::new(10, 12)]);
+        assert_eq!(
+            map.get_range(14, 16),
+            vec![&V::new(12, 15), &V::new(15, 20)]
+        );
+
+        // 10-11, 11-12, 12-15, 15-20
+        map.set(11, V::new(11, 12));
+        assert_eq!(
+            map.get_range(9, 15),
+            vec![&V::new(10, 11), &V::new(11, 12), &V::new(12, 15)]
+        );
+
+        // 5-20
+        map.set(5, V::new(5, 20));
+        assert_eq!(map.get_range(9, 15), vec![&V::new(5, 20)]);
     }
 }

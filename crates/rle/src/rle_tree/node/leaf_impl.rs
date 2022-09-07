@@ -22,7 +22,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[inline]
-    fn _split<F>(&mut self, mut notify: &mut F) -> &'a mut Node<'a, T, A>
+    fn _split<F>(&mut self, notify: &mut F) -> &'a mut Node<'a, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -47,14 +47,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
     #[inline]
     pub fn get_cursor<'b>(&'b self, pos: A::Int) -> SafeCursor<'a, 'b, T, A> {
-        let index = A::find_pos_leaf(self, pos).child_index;
-        SafeCursor::new(self.into(), index)
+        let result = A::find_pos_leaf(self, pos);
+        SafeCursor::new(self.into(), result.child_index, result.pos)
     }
 
     #[inline]
     pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
-        let index = A::find_pos_leaf(self, pos).child_index;
-        SafeCursorMut::new(self.into(), index)
+        let result = A::find_pos_leaf(self, pos);
+        SafeCursorMut::new(self.into(), result.child_index, result.pos)
     }
 
     pub fn push_child<F>(&mut self, value: T, notify: &mut F) -> Result<(), &'a mut Node<'a, T, A>>
@@ -91,19 +91,21 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {
         let result = A::find_pos_leaf(self, from);
-        if result.pos == Position::Start {
-            (result.child_index, None)
-        } else {
-            (result.child_index + 1, Some(result.offset))
+        match result.pos {
+            Position::Start | Position::Before => (result.child_index, None),
+            Position::Middle | Position::End | Position::After => {
+                (result.child_index + 1, Some(result.offset))
+            }
         }
     }
 
     fn _delete_end(&mut self, to: A::Int) -> (usize, Option<usize>) {
         let result = A::find_pos_leaf(self, to);
-        if result.pos == Position::End {
-            (result.child_index + 1, None)
-        } else {
-            (result.child_index, Some(result.offset))
+        match result.pos {
+            Position::After | Position::End => (result.child_index + 1, None),
+            Position::Start | Position::Middle | Position::Before => {
+                (result.child_index, Some(result.offset))
+            }
         }
     }
 

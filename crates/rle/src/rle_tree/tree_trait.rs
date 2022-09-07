@@ -6,11 +6,17 @@ use crate::{HasLength, Rle};
 
 use super::node::{InternalNode, LeafNode, Node};
 
-#[derive(Debug, PartialEq, Eq)]
+/// The position relative to a certain node.
+///
+/// - The target may be inside a node, in which case it's at the start/middle/end of a node.
+/// - Or it is before/after a node.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Position {
     Start,
     Middle,
     End,
+    Before,
+    After,
 }
 
 pub struct FindPosResult<I> {
@@ -53,6 +59,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - `child_index` can only equal to children.len() when it's zero
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
     /// - We need the `pos` to determine whether the child is included or excluded
+    /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
         index: Self::Int,
@@ -61,6 +68,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - `child_index` can only equal to children.len() when it's zero
     /// - if `pos == Middle`, we need to split the node
     /// - We need the third arg to determine whether the child is included or excluded
+    /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int;
@@ -250,14 +258,18 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             let cache = get_cache(child);
             if index <= cache.end {
                 if index < cache.start {
-                    return FindPosResult::new_not_found(i, index, Position::Start);
+                    return FindPosResult::new_not_found(i, index, Position::Before);
                 }
 
                 return FindPosResult::new(i, index, get_pos_global(index, cache));
             }
         }
 
-        FindPosResult::new_not_found(node.children.len().saturating_sub(1), index, Position::End)
+        FindPosResult::new_not_found(
+            node.children.len().saturating_sub(1),
+            index,
+            Position::After,
+        )
     }
 
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize> {
@@ -268,7 +280,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             };
             if index <= cache.end {
                 if index < cache.start {
-                    return FindPosResult::new_not_found(i, 0, Position::Start);
+                    return FindPosResult::new_not_found(i, 0, Position::Before);
                 }
 
                 return FindPosResult::new(
@@ -279,7 +291,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             }
         }
 
-        FindPosResult::new_not_found(node.children.len().saturating_sub(1), 0, Position::End)
+        FindPosResult::new_not_found(node.children.len().saturating_sub(1), 0, Position::After)
     }
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int {
