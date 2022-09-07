@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use crate::{HasLength, Mergable, Sliceable};
 
 impl<T> Mergable for NonNull<T> {
-    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
@@ -19,7 +19,7 @@ impl<T> Mergable for NonNull<T> {
 }
 
 impl<T> Sliceable for NonNull<T> {
-    fn slice(&self, from: usize, to: usize) -> Self {
+    fn slice(&self, _from: usize, _to: usize) -> Self {
         *self
     }
 }

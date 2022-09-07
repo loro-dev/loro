@@ -1,7 +1,6 @@
 use crate::Rle;
 
 use super::{
-    cursor::UnsafeCursor,
     node::LeafNode,
     tree_trait::{Position, RleTreeTrait},
     SafeCursor,
