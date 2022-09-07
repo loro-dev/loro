@@ -10,7 +10,6 @@ use tree_trait::RleTreeTrait;
 mod cursor;
 pub mod iter;
 pub mod node;
-pub mod nonnull;
 #[cfg(test)]
 mod test;
 pub mod tree_trait;
