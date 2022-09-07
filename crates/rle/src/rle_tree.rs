@@ -93,7 +93,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(leaf.into(), result.child_index));
+                    return Some(SafeCursor::new(leaf.into(), result.child_index, result.pos));
                 }
             }
         }
@@ -101,7 +101,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
 
     /// return the first valid cursor after the given index
     #[inline]
-    pub fn get_cursor_after<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
+    fn get_cursor_ge<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
         let mut node = &self.node;
         loop {
             match node {
@@ -120,7 +120,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(leaf.into(), result.child_index));
+                    return Some(SafeCursor::new(leaf.into(), result.child_index, result.pos));
                 }
             }
         }
@@ -158,42 +158,23 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, 'a, T, A> {
-        let cursor_from = self.get_cursor_after(start);
+        let cursor_from = self.get_cursor_ge(start);
         if cursor_from.is_none() {
             return iter::Iter::new(None);
         }
 
         let cursor_from = cursor_from.unwrap();
-        unsafe {
-            if end.is_none() || end.unwrap() >= self.len() {
-                iter::Iter::new_with_end(
-                    cursor_from.0.leaf.as_ref(),
-                    cursor_from.0.index,
-                    None,
-                    None,
-                )
-            } else if let Some(cursor_to) = self.get_cursor_after(end.unwrap()) {
-                let node = cursor_from.0.leaf.as_ref();
-                let end_node = cursor_to.0.leaf.as_ref();
-                let mut end_index = cursor_to.0.index;
-                if std::ptr::eq(node, end_node) && end_index == cursor_from.0.index {
-                    end_index += 1;
-                }
-
-                iter::Iter::new_with_end(
-                    cursor_from.0.leaf.as_ref(),
-                    cursor_from.0.index,
-                    Some(end_node),
-                    Some(end_index),
-                )
+        if let Some(ans) = {
+            if let Some(end) = end {
+                let cursor_to = self.get_cursor_ge(end);
+                iter::Iter::from_cursor(cursor_from, cursor_to)
             } else {
-                iter::Iter::new_with_end(
-                    cursor_from.0.leaf.as_ref(),
-                    cursor_from.0.index,
-                    None,
-                    None,
-                )
+                None
             }
+        } {
+            ans
+        } else {
+            iter::Iter::from_cursor(cursor_from, None).unwrap()
         }
     }
 

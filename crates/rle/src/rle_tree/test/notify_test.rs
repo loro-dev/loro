@@ -34,7 +34,7 @@ fn test(tree: &mut RleTree<Range<usize>, RangeTreeTrait>, interactions: &[Intera
         Default::default();
     let mut func = |range: &Range<usize>, node: *mut LeafNode<'_, Range<usize>, RangeTreeTrait>| {
         let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
-        range_map.insert(range.start, ptr);
+        range_map.set(range.start, ptr);
     };
     for interaction in interactions.iter() {
         interaction.apply(tree, &mut func);

@@ -1,6 +1,11 @@
 use crate::Rle;
 
-use super::{node::LeafNode, tree_trait::RleTreeTrait};
+use super::{
+    cursor::UnsafeCursor,
+    node::LeafNode,
+    tree_trait::{Position, RleTreeTrait},
+    SafeCursor,
+};
 
 pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
     node: Option<&'some LeafNode<'bump, T, A>>,
@@ -10,6 +15,7 @@ pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
 }
 
 impl<'some, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'some, 'bump, T, A> {
+    #[inline]
     pub fn new(node: Option<&'some LeafNode<'bump, T, A>>) -> Self {
         Self {
             node,
@@ -19,18 +25,30 @@ impl<'some, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'some, 'bump, T, A> {
         }
     }
 
-    pub fn new_with_end(
-        node: &'some LeafNode<'bump, T, A>,
-        index: usize,
-        end_node: Option<&'some LeafNode<'bump, T, A>>,
-        end_index: Option<usize>,
-    ) -> Self {
-        Self {
-            node: Some(node),
-            child_index: index,
-            end_node,
-            end_index,
+    #[inline]
+    pub fn from_cursor(
+        mut start: SafeCursor<'bump, 'some, T, A>,
+        mut end: Option<SafeCursor<'bump, 'some, T, A>>,
+    ) -> Option<Self> {
+        if start.0.pos == Position::After {
+            start = start.next()?
         }
+
+        if let Some(end_inner) = end {
+            if end_inner.0.pos == Position::Middle
+                || end_inner.0.pos == Position::End
+                || end_inner.0.pos == Position::After
+            {
+                end = end_inner.next();
+            }
+        }
+
+        Some(Self {
+            node: Some(start.leaf()),
+            child_index: start.0.index,
+            end_node: end.map(|end| end.leaf()),
+            end_index: end.map(|end| end.index()),
+        })
     }
 }
 

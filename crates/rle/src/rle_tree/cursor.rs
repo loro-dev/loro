@@ -2,28 +2,53 @@ use std::{marker::PhantomData, ptr::NonNull};
 
 use crate::{Rle, RleTreeTrait};
 
-use super::{node::LeafNode, RleTreeRaw};
+use super::{node::LeafNode, tree_trait::Position};
 
 pub struct UnsafeCursor<'a, Tree, T: Rle, A: RleTreeTrait<T>> {
     pub(crate) leaf: NonNull<LeafNode<'a, T, A>>,
     pub(crate) index: usize,
+    pub(crate) pos: Position,
     _phantom: PhantomData<Tree>,
 }
 
-pub struct SafeCursor<'a, 'b, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'a, &'b RleTreeRaw<'a, T, A>, T, A>,
+impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'a, Tree, T, A> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            leaf: self.leaf,
+            index: self.index,
+            pos: self.pos,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'a, Tree, T, A> {}
+
+#[repr(transparent)]
+pub struct SafeCursor<'bump, 'tree, T: Rle, A: RleTreeTrait<T>>(
+    pub(crate) UnsafeCursor<'bump, &'tree usize, T, A>,
 );
 
 pub struct SafeCursorMut<'a, 'b, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'a, &'b RleTreeRaw<'a, T, A>, T, A>,
+    pub(crate) UnsafeCursor<'a, &'b usize, T, A>,
 );
+
+impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'a, 'b, T, A> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'a, 'b, T, A> {}
 
 impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'a, Tree, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize) -> Self {
+    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
         Self {
             leaf,
             index,
+            pos,
             _phantom: PhantomData,
         }
     }
@@ -51,6 +76,25 @@ impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'a, Tree, T, A> {
             }
         }
     }
+
+    pub unsafe fn next(&self) -> Option<Self> {
+        let leaf = self.leaf.as_ref();
+        if leaf.children.len() > self.index + 1 {
+            return Some(Self::new(self.leaf, self.index + 1, self.pos));
+        }
+
+        leaf.next.map(|next| Self::new(next, 0, self.pos))
+    }
+
+    pub unsafe fn prev(&self) -> Option<Self> {
+        let leaf = self.leaf.as_ref();
+        if self.index > 0 {
+            return Some(Self::new(self.leaf, self.index - 1, self.pos));
+        }
+
+        leaf.prev
+            .map(|prev| Self::new(prev, prev.as_ref().children.len() - 1, self.pos))
+    }
 }
 
 impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'a, 'b, T, A> {
@@ -60,17 +104,37 @@ impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'a, 'b, T, A> {
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursor<'a, 'b, T, A> {
+impl<'bump, 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'bump, 'tree, T, A> {
     #[inline]
-    pub fn as_ref_(&self) -> &'a T {
+    pub fn as_ref_(&self) -> &'bump T {
         unsafe { self.0.as_ref() }
+    }
+
+    #[inline]
+    pub fn next(&self) -> Option<Self> {
+        unsafe { self.0.next().map(|x| Self(x)) }
+    }
+
+    #[inline]
+    pub fn prev(&self) -> Option<Self> {
+        unsafe { self.0.prev().map(|x| Self(x)) }
+    }
+
+    #[inline]
+    pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+        unsafe { self.0.leaf.as_ref() }
+    }
+
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.0.index
     }
 }
 
 impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursor<'a, 'b, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize) -> Self {
-        Self(UnsafeCursor::new(leaf, index))
+    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
+        Self(UnsafeCursor::new(leaf, index, pos))
     }
 }
 
@@ -90,8 +154,8 @@ impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
 
 impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize) -> Self {
-        Self(UnsafeCursor::new(leaf, index))
+    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
+        Self(UnsafeCursor::new(leaf, index, pos))
     }
 }
 
