@@ -80,7 +80,7 @@ fn test(interactions: &[Interaction]) {
         tree.with_tree(|tree| {
             for v in tree.iter() {
                 //println!("tree: {:#?}", &v);
-                let out = range_map.get(v.value);
+                let out = range_map.get(v.as_ref().value);
                 // if out.is_none() {
                 // range_map.tree.with_tree(|range_tree| {
                 //println!("range_tree: {:#?}", range_tree);
@@ -89,15 +89,15 @@ fn test(interactions: &[Interaction]) {
 
                 let out = out.unwrap();
                 //println!("vs \nindexMap: {:#?}", &out);
-                assert_eq!(v.value, out.start);
+                assert_eq!(v.as_ref().value, out.start);
             }
         });
 
         range_map.tree.with_tree(|range_tree| {
             for x in range_tree.iter() {
                 unsafe {
-                    let leaf = x.value.value.as_ref();
-                    let value = leaf.children.iter().find(|v| v.value == x.index);
+                    let leaf = x.as_ref().value.value.as_ref();
+                    let value = leaf.children.iter().find(|v| v.value == x.as_ref().index);
                     if value.is_some() {
                         assert!(!leaf.is_deleted());
                     }
