@@ -29,19 +29,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         let ans = self
             .bump
             .alloc(Node::Leaf(Self::new(self.bump, self.parent)));
-        let mut inner = ans.as_leaf_mut().unwrap();
-        let ans_ptr = inner as _;
+        let mut ans_inner = ans.as_leaf_mut().unwrap();
+        let ans_ptr = ans_inner as _;
         for child in self
             .children
             .drain(self.children.len() - A::MIN_CHILDREN_NUM..self.children.len())
         {
             notify(child, ans_ptr);
-            inner.children.push(child);
+            ans_inner.children.push(child);
         }
 
-        inner.next = self.next;
-        inner.prev = Some(NonNull::new(self).unwrap());
-        self.next = Some(NonNull::new(&mut *inner).unwrap());
+        ans_inner.next = self.next;
+        ans_inner.prev = Some(NonNull::new(self).unwrap());
+        self.next = Some(NonNull::new(&mut *ans_inner).unwrap());
         ans
     }
 
@@ -61,10 +61,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        let self_ptr = self as *mut _;
         if !self.children.is_empty() {
             let last = self.children.last_mut().unwrap();
             if last.is_mergable(&value, &()) {
                 last.merge(&value, &());
+                notify(last, self_ptr);
                 A::update_cache_leaf(self);
                 return Ok(());
             }
@@ -80,6 +82,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         }
 
         self.children.push(self.bump.alloc(value));
+        notify(self.children[self.children.len() - 1], self_ptr);
         A::update_cache_leaf(self);
         Ok(())
     }
@@ -107,6 +110,34 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 (result.child_index, Some(result.offset))
             }
         }
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        unsafe {
+            let mut node = self.parent.as_ref();
+            if !node
+                .children
+                .iter()
+                .any(|x| std::ptr::eq(x.as_leaf().unwrap(), self))
+            {
+                return true;
+            }
+
+            while let Some(parent) = node.parent {
+                let parent = parent.as_ref();
+                if !parent
+                    .children()
+                    .iter()
+                    .any(|x| std::ptr::eq(x.as_internal().unwrap(), node))
+                {
+                    return true;
+                }
+
+                node = parent;
+            }
+        }
+
+        false
     }
 
     pub fn insert<F>(
@@ -141,22 +172,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         if self.children.is_empty() {
+            notify(&value, self);
             self.children.push(self.bump.alloc(value));
             return Ok(());
         }
 
         let FindPosResult {
-            child_index: mut index,
+            mut child_index,
             mut offset,
+            mut pos,
             ..
         } = A::find_pos_leaf(self, raw_index);
+        let self_ptr = self as *mut _;
         let prev = {
-            if offset == 0 && index > 0 {
-                Some(&mut self.children[index - 1])
-            } else if offset == self.children[index].len() {
-                index += 1;
+            if (pos == Position::Start || pos == Position::Before) && child_index > 0 {
+                Some(&mut self.children[child_index - 1])
+            } else if pos == Position::After || pos == Position::End {
+                child_index += 1;
                 offset = 0;
-                Some(&mut self.children[index - 1])
+                pos = Position::Start;
+                Some(&mut self.children[child_index - 1])
             } else {
                 None
             }
@@ -166,39 +201,54 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             // clean cut, should no split
             if prev.is_mergable(&value, &()) {
                 prev.merge(&value, &());
+                notify(prev, self_ptr);
                 return Ok(());
             }
         }
 
-        let clean_cut = offset == 0 || offset == self.children[index].len();
+        let clean_cut = pos != Position::Middle;
         if clean_cut {
-            return self._insert_with_split(index, value, notify);
+            return self._insert_with_split(child_index, value, notify);
         }
 
         // need to split child
-        let a = self.children[index].slice(0, offset);
-        let b = self.children[index].slice(offset, self.children[index].len());
-        self.children[index] = self.bump.alloc(a);
+        let a = self.children[child_index].slice(0, offset);
+        let b = self.children[child_index].slice(offset, self.children[child_index].len());
+        self.children[child_index] = self.bump.alloc(a);
 
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
-            let node = self._split(notify);
-            let leaf = node.as_leaf_mut().unwrap();
-            if index < self.children.len() {
-                self.children.insert(index + 1, self.bump.alloc(value));
-                self.children.insert(index + 2, self.bump.alloc(b));
-                leaf.children.insert(0, self.children.pop().unwrap());
+            let next_node = self._split(notify);
+            let next_leaf = next_node.as_leaf_mut().unwrap();
+            if child_index < self.children.len() {
+                notify(&value, self_ptr);
+                notify(&b, self_ptr);
+                self.children
+                    .insert(child_index + 1, self.bump.alloc(value));
+                self.children.insert(child_index + 2, self.bump.alloc(b));
+
+                let last_child = self.children.pop().unwrap();
+                notify(last_child, next_leaf);
+                next_leaf.children.insert(0, last_child);
             } else {
-                leaf.children
-                    .insert(index - self.children.len() + 1, self.bump.alloc(value));
-                leaf.children
-                    .insert(index - self.children.len() + 2, self.bump.alloc(b));
+                notify(&value, next_leaf);
+                next_leaf.children.insert(
+                    child_index - self.children.len() + 1,
+                    self.bump.alloc(value),
+                );
+                notify(&b, next_leaf);
+                next_leaf
+                    .children
+                    .insert(child_index - self.children.len() + 2, self.bump.alloc(b));
             }
 
-            return Err(node);
+            return Err(next_node);
         }
 
-        self.children.insert(index + 1, self.bump.alloc(b));
-        self.children.insert(index + 1, self.bump.alloc(value));
+        notify(&b, self);
+        notify(&value, self);
+        self.children.insert(child_index + 1, self.bump.alloc(b));
+        self.children
+            .insert(child_index + 1, self.bump.alloc(value));
         Ok(())
     }
 
@@ -258,8 +308,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                     .alloc(self.children[del_start - 1].slice(0, del_relative_from));
             }
             if let Some(del_relative_to) = del_relative_to {
+                let self_ptr = self as *mut _;
                 let end = &mut self.children[del_end];
                 *end = self.bump.alloc(end.slice(del_relative_to, end.len()));
+                notify(end, self_ptr);
             }
         }
 
@@ -287,16 +339,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let ans = self._split(notify);
             if index <= self.children.len() {
+                notify(&value, self);
                 self.children.insert(index, self.bump.alloc(value));
             } else {
-                ans.as_leaf_mut()
-                    .unwrap()
-                    .children
+                let leaf = ans.as_leaf_mut().unwrap();
+                notify(&value, leaf);
+                leaf.children
                     .insert(index - self.children.len(), self.bump.alloc(value));
             }
 
             Err(ans)
         } else {
+            notify(&value, self);
             self.children.insert(index, self.bump.alloc(value));
             Ok(())
         }

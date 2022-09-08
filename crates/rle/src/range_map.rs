@@ -6,9 +6,9 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct WithGlobalIndex<Value, Index: GlobalIndex> {
-    value: Value,
-    index: Index,
+pub(crate) struct WithGlobalIndex<Value, Index: GlobalIndex> {
+    pub(crate) value: Value,
+    pub(crate) index: Index,
 }
 
 impl<Value: Rle, Index: GlobalIndex> HasLength for WithGlobalIndex<Value, Index> {
@@ -47,7 +47,7 @@ impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, I
 
 #[repr(transparent)]
 pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + 'static> {
-    tree:
+    pub(crate) tree:
         RleTree<WithGlobalIndex<Value, Index>, GlobalTreeTrait<WithGlobalIndex<Value, Index>, 10>>,
 }
 
@@ -104,10 +104,18 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     }
 }
 
+#[derive(Debug)]
 pub struct WithStartEnd<Index: GlobalIndex, T> {
-    start: Index,
-    end: Index,
-    value: T,
+    pub start: Index,
+    pub end: Index,
+    pub value: T,
+}
+
+impl<Index: GlobalIndex, T: Clone> WithStartEnd<Index, T> {
+    #[inline]
+    pub fn new(start: Index, end: Index, value: T) -> Self {
+        Self { start, end, value }
+    }
 }
 
 impl<Index: GlobalIndex, T: Clone> Sliceable for WithStartEnd<Index, T> {

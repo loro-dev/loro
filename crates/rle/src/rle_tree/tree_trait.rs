@@ -69,6 +69,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - if `pos == Middle`, we need to split the node
     /// - We need the third arg to determine whether the child is included or excluded
     /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
+    /// - If target index is after last child, then `child_index`  = children.len().wrapping_sub(1), `offset` = children.last().unwrap().len()
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int;
@@ -227,6 +228,11 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
     type LeafCache = Cache<T::Int>;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {
+        if node.children.is_empty() {
+            node.cache.end = node.cache.start;
+            return;
+        }
+
         node.cache.end = node
             .children()
             .iter()
@@ -291,7 +297,11 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             }
         }
 
-        FindPosResult::new_not_found(node.children.len().saturating_sub(1), 0, Position::After)
+        FindPosResult::new_not_found(
+            node.children.len().saturating_sub(1),
+            node.children().last().unwrap().len(),
+            Position::After,
+        )
     }
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int {
