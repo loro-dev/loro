@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 use crate::Rle;
 
 use super::{
@@ -13,9 +15,9 @@ pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
     end_index: Option<usize>,
 }
 
-impl<'some, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'some, 'bump, T, A> {
+impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
     #[inline]
-    pub fn new(node: Option<&'some LeafNode<'bump, T, A>>) -> Self {
+    pub fn new(node: Option<&'tree LeafNode<'bump, T, A>>) -> Self {
         Self {
             node,
             child_index: 0,
@@ -26,8 +28,8 @@ impl<'some, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'some, 'bump, T, A> {
 
     #[inline]
     pub fn from_cursor(
-        mut start: SafeCursor<'bump, 'some, T, A>,
-        mut end: Option<SafeCursor<'bump, 'some, T, A>>,
+        mut start: SafeCursor<'tree, 'bump, T, A>,
+        mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
     ) -> Option<Self> {
         if start.0.pos == Position::After {
             start = start.next()?
@@ -51,8 +53,8 @@ impl<'some, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'some, 'bump, T, A> {
     }
 }
 
-impl<'a, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'a, 'bump, T, A> {
-    type Item = &'a T;
+impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'rf, 'bump, T, A> {
+    type Item = SafeCursor<'rf, 'bump, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let (Some(end_node), Some(node), Some(end_index)) =
@@ -65,9 +67,13 @@ impl<'a, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'a, 'bump, T, A> {
 
         while let Some(node) = self.node {
             match node.children.get(self.child_index) {
-                Some(node) => {
+                Some(_) => {
                     self.child_index += 1;
-                    return Some(*node);
+                    return Some(SafeCursor::new(
+                        node.into(),
+                        self.child_index - 1,
+                        Position::Start,
+                    ));
                 }
                 None => match node.next() {
                     Some(next) => {

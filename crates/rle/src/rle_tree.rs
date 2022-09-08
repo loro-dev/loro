@@ -39,9 +39,9 @@ impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     }
 }
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
+impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
     #[inline]
-    fn new(bump: &'a Bump) -> Self {
+    fn new(bump: &'bump Bump) -> Self {
         Self {
             node: Node::Internal(InternalNode::new(bump, None)),
             _pin: PhantomPinned,
@@ -73,7 +73,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
 
     /// return a cursor at the given index
     #[inline]
-    pub fn get<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
+    pub fn get<'tree>(&'tree self, mut index: A::Int) -> Option<SafeCursor<'tree, 'bump, T, A>> {
         let mut node = &self.node;
         loop {
             match node {
@@ -100,7 +100,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
 
     /// return the first valid cursor after the given index
     #[inline]
-    fn get_cursor_ge<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'a, 'b, T, A>> {
+    fn get_cursor_ge<'b>(&'b self, mut index: A::Int) -> Option<SafeCursor<'b, 'bump, T, A>> {
         let mut node = &self.node;
         loop {
             match node {
@@ -126,12 +126,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
     }
 
     #[inline]
-    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> Option<SafeCursorMut<'a, 'b, T, A>> {
+    pub fn get_mut<'b>(&'b mut self, index: A::Int) -> Option<SafeCursorMut<'b, 'bump, T, A>> {
         let cursor = self.get(index);
         cursor.map(|x| SafeCursorMut(x.0))
     }
 
-    pub fn iter(&self) -> iter::Iter<'_, 'a, T, A> {
+    pub fn iter(&self) -> iter::Iter<'_, 'bump, T, A> {
         iter::Iter::new(self.node.get_first_leaf())
     }
 
@@ -156,7 +156,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'a, T, A> {
             .delete(start, end, notify);
     }
 
-    pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, 'a, T, A> {
+    pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, 'bump, T, A> {
         let cursor_from = self.get_cursor_ge(start);
         if cursor_from.is_none() {
             return iter::Iter::new(None);

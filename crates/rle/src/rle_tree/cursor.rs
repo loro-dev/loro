@@ -4,14 +4,14 @@ use crate::{Rle, RleTreeTrait};
 
 use super::{node::LeafNode, tree_trait::Position};
 
-pub struct UnsafeCursor<'a, Tree, T: Rle, A: RleTreeTrait<T>> {
-    pub(crate) leaf: NonNull<LeafNode<'a, T, A>>,
+pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
+    pub(crate) leaf: NonNull<LeafNode<'bump, T, A>>,
     pub(crate) index: usize,
     pub(crate) pos: Position,
-    _phantom: PhantomData<Tree>,
+    _phantom: PhantomData<&'tree usize>,
 }
 
-impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'a, Tree, T, A> {
+impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bump, T, A> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -23,28 +23,28 @@ impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'a, Tree, T, A
     }
 }
 
-impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'a, Tree, T, A> {}
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, 'bump, T, A> {}
 
 #[repr(transparent)]
-pub struct SafeCursor<'bump, 'tree, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'bump, &'tree usize, T, A>,
+pub struct SafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
+    pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
 
-pub struct SafeCursorMut<'a, 'b, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'a, &'b usize, T, A>,
+pub struct SafeCursorMut<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>>(
+    pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree, 'bump, T, A> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'a, 'b, T, A> {}
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, 'bump, T, A> {}
 
-impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'a, Tree, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
+    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
         Self {
             leaf,
             index,
@@ -54,12 +54,12 @@ impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'a, Tree, T, A> {
     }
 
     #[inline]
-    pub unsafe fn as_ref(&self) -> &'a T {
+    pub unsafe fn as_ref(&self) -> &'tree T {
         self.leaf.as_ref().children[self.index]
     }
 
     #[inline]
-    unsafe fn as_mut(&mut self) -> &'a mut T {
+    unsafe fn as_mut(&mut self) -> &'tree mut T {
         self.leaf.as_mut().children[self.index]
     }
 
@@ -97,16 +97,16 @@ impl<'a, Tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'a, Tree, T, A> {
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    fn as_ref(&self) -> &T {
+    fn as_ref(&self) -> &'tree T {
         unsafe { self.0.as_ref() }
     }
 }
 
-impl<'bump, 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'bump, 'tree, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    pub fn as_ref_(&self) -> &'bump T {
+    pub fn as_tree_ref(&self) -> &'tree T {
         unsafe { self.0.as_ref() }
     }
 
@@ -131,49 +131,53 @@ impl<'bump, 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'bump, 'tree, T, A> {
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursor<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
+    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
         Self(UnsafeCursor::new(leaf, index, pos))
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T>
+    for SafeCursorMut<'tree, 'bump, T, A>
+{
     #[inline]
     fn as_ref(&self) -> &T {
         unsafe { self.0.as_ref() }
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
-    pub fn as_ref_(&self) -> &'a T {
+    pub fn as_ref_(&self) -> &'tree T {
         unsafe { self.0.as_ref() }
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'a, T, A>>, index: usize, pos: Position) -> Self {
+    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
         Self(UnsafeCursor::new(leaf, index, pos))
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> AsMut<T> for SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
+    for SafeCursorMut<'tree, 'bump, T, A>
+{
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         unsafe { self.0.as_mut() }
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
-    fn as_mut_(&mut self) -> &'a mut T {
+    fn as_mut_(&mut self) -> &'tree mut T {
         unsafe { self.0.as_mut() }
     }
 }
 
-impl<'a, 'b, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'a, 'b, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
     pub fn update_cache_recursively(&mut self) {
         let leaf = unsafe { self.0.leaf.as_mut() };

@@ -55,7 +55,7 @@ impl Display for RleTree<CustomString, StringTreeTrait> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         self.with_tree(|tree| {
             for s in tree.iter() {
-                f.write_str(s.0.as_str())?;
+                f.write_str(s.as_ref().0.as_str())?;
             }
 
             Ok(())

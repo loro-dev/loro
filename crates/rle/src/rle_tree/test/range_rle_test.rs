@@ -19,7 +19,7 @@ fn insert() {
         let ans = vec![0..1, 4..5, 200..208, 5..6, 101..108, 6..10];
 
         for (actual, expected) in tree.iter().zip(ans.iter()) {
-            assert_eq!(actual, expected);
+            assert_eq!(actual.as_ref(), expected);
         }
     })
 }
@@ -34,7 +34,7 @@ fn delete() {
 
         let ans = vec![0..4, 5..10];
         for (actual, expected) in tree.iter().zip(ans.iter()) {
-            assert_eq!(actual, expected);
+            assert_eq!(actual.as_ref(), expected);
         }
     })
 }
@@ -97,7 +97,7 @@ fn delete_that_need_borrow_from_sibling() {
 
         let expected = [0..1, 8..9, 10..11, 12..13, 14..15];
         for (actual, expected) in tree.iter().zip(expected.iter()) {
-            assert_eq!(actual, expected);
+            assert_eq!(actual.as_ref(), expected);
         }
 
         tree.debug_check();

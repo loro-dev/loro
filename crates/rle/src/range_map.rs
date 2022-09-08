@@ -89,7 +89,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
         let mut ans = Vec::new();
         self.tree.with_tree(|tree| {
             for value in tree.iter_range(start, Some(end)) {
-                ans.push(&value.value)
+                ans.push(&value.as_tree_ref().value)
             }
         });
         ans
@@ -99,7 +99,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     pub fn get(&self, index: Index) -> Option<&Value> {
         self.tree.with_tree(|tree| {
             let cursor = tree.get(index);
-            cursor.map(|x| &x.as_ref_().value)
+            cursor.map(|x| &x.as_tree_ref().value)
         })
     }
 }

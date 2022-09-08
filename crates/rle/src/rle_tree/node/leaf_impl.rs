@@ -6,9 +6,9 @@ use std::fmt::{Debug, Error, Formatter};
 
 use super::*;
 
-impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
+impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     #[inline]
-    pub fn new(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> Self {
+    pub fn new(bump: &'bump Bump, parent: NonNull<InternalNode<'bump, T, A>>) -> Self {
         Self {
             bump,
             parent,
@@ -22,7 +22,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[inline]
-    fn _split<F>(&mut self, notify: &mut F) -> &'a mut Node<'a, T, A>
+    fn _split<F>(&mut self, notify: &mut F) -> &'bump mut Node<'bump, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -46,18 +46,22 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[inline]
-    pub fn get_cursor<'b>(&'b self, pos: A::Int) -> SafeCursor<'a, 'b, T, A> {
+    pub fn get_cursor<'tree>(&'tree self, pos: A::Int) -> SafeCursor<'tree, 'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         SafeCursor::new(self.into(), result.child_index, result.pos)
     }
 
     #[inline]
-    pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'a, 'b, T, A> {
+    pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'b, 'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         SafeCursorMut::new(self.into(), result.child_index, result.pos)
     }
 
-    pub fn push_child<F>(&mut self, value: T, notify: &mut F) -> Result<(), &'a mut Node<'a, T, A>>
+    pub fn push_child<F>(
+        &mut self,
+        value: T,
+        notify: &mut F,
+    ) -> Result<(), &'bump mut Node<'bump, T, A>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -145,7 +149,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         raw_index: A::Int,
         value: T,
         notify: &mut F,
-    ) -> Result<(), &'a mut Node<'a, T, A>>
+    ) -> Result<(), &'bump mut Node<'bump, T, A>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -167,7 +171,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         raw_index: A::Int,
         value: T,
         notify: &mut F,
-    ) -> Result<(), &'a mut Node<'a, T, A>>
+    ) -> Result<(), &'bump mut Node<'bump, T, A>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -263,7 +267,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     }
 
     #[inline]
-    pub fn children(&self) -> &[&'a mut T] {
+    pub fn children(&self) -> &[&'bump mut T] {
         &self.children
     }
 }
