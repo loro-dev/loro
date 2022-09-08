@@ -320,7 +320,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         };
 
-        let removed = self._root_shrink_levels_if_only_1_child();
+        let removed = self._root_shrink_levels_if_one_child();
 
         // filter the same
         let mut visited: HashSet<NonNull<_>> = HashSet::default();
@@ -366,10 +366,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     let sibling: &mut Node<'a, T, A> =
                         unsafe { &mut *((sibling as *const _) as usize as *mut _) };
                     if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
-                        node.merge_to_sibling(sibling, either);
+                        node.merge_to_sibling(sibling, either, notify);
                         to_delete = true;
                     } else {
-                        node.borrow_from_sibling(sibling, either);
+                        node.borrow_from_sibling(sibling, either, notify);
                     }
                 } else {
                     if node.parent().unwrap().is_root() {
@@ -394,10 +394,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         }
 
-        self._root_shrink_levels_if_only_1_child();
+        self._root_shrink_levels_if_one_child();
     }
 
-    fn _root_shrink_levels_if_only_1_child(&mut self) -> HashSet<*const InternalNode<'a, T, A>> {
+    fn _root_shrink_levels_if_one_child(&mut self) -> HashSet<*const InternalNode<'a, T, A>> {
         let mut ans: HashSet<_> = Default::default();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
             let child = self.children.pop().unwrap();

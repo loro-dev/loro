@@ -67,7 +67,7 @@ impl<'a, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'a, 'bump, T, A> {
             match node.children.get(self.child_index) {
                 Some(node) => {
                     self.child_index += 1;
-                    return Some(node);
+                    return Some(*node);
                 }
                 None => match node.next() {
                     Some(next) => {

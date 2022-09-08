@@ -135,7 +135,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         }
     }
 
-    pub(crate) fn merge_to_sibling(&mut self, sibling: &mut Node<'a, T, A>, either: Either) {
+    pub(crate) fn merge_to_sibling<F>(
+        &mut self,
+        sibling: &mut Node<'a, T, A>,
+        either: Either,
+        notify: &mut F,
+    ) where
+        F: FnMut(&T, *mut LeafNode<'a, T, A>),
+    {
         if either == Either::Left {
             match sibling {
                 Node::Internal(sibling) => {
@@ -149,6 +156,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 Node::Leaf(sibling) => {
                     let self_node = self.as_leaf_mut().unwrap();
                     for child in self_node.children.drain(..) {
+                        notify(child, sibling);
                         sibling.children.push(child);
                     }
                 }
@@ -160,7 +168,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let ptr = NonNull::new(&mut *sibling).unwrap();
                     sibling.children.splice(
                         0..0,
-                        self_node.children.drain(0..).rev().map(|x| {
+                        self_node.children.drain(0..).map(|x| {
                             x.set_parent(ptr);
                             x
                         }),
@@ -168,9 +176,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 }
                 Node::Leaf(sibling) => {
                     let self_node = self.as_leaf_mut().unwrap();
-                    sibling
-                        .children
-                        .splice(0..0, self_node.children.drain(0..).rev());
+                    let sibling_ptr = sibling as *mut _;
+                    sibling.children.splice(
+                        0..0,
+                        self_node.children.drain(0..).map(|x| {
+                            notify(x, sibling_ptr);
+                            x
+                        }),
+                    );
                 }
             }
         }
@@ -179,7 +192,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         sibling.update_cache();
     }
 
-    pub(crate) fn borrow_from_sibling(&mut self, sibling: &mut Node<'a, T, A>, either: Either) {
+    pub(crate) fn borrow_from_sibling<F>(
+        &mut self,
+        sibling: &mut Node<'a, T, A>,
+        either: Either,
+        notify: &mut F,
+    ) where
+        F: FnMut(&T, *mut LeafNode<'a, T, A>),
+    {
         if either == Either::Left {
             match sibling {
                 Node::Internal(sibling) => {
@@ -193,7 +213,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 }
                 Node::Leaf(sibling) => {
                     let self_node = self.as_leaf_mut().unwrap();
-                    let sibling_drain = sibling.children.drain(A::MIN_CHILDREN_NUM..);
+                    let self_ptr = self_node as *mut _;
+                    let sibling_drain = sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|x| {
+                        notify(x, self_ptr);
+                        x
+                    });
                     self_node.children.splice(0..0, sibling_drain);
                 }
             }
@@ -219,9 +243,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let self_node = self.as_leaf_mut().unwrap();
                     let end = self_node.children.len();
                     let sibling_len = sibling.children.len();
+                    let self_ptr = self_node as *mut _;
                     self_node.children.splice(
                         end..end,
-                        sibling.children.drain(0..sibling_len - A::MIN_CHILDREN_NUM),
+                        sibling
+                            .children
+                            .drain(0..sibling_len - A::MIN_CHILDREN_NUM)
+                            .map(|x| {
+                                notify(x, self_ptr);
+                                x
+                            }),
                     );
                 }
             }
