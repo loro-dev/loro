@@ -30,13 +30,14 @@ pub struct SafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
     pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
 
-pub struct SafeCursorMut<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>>(
+#[repr(transparent)]
+pub struct SafeCursorMut<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
     pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree, 'bump, T, A> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0)
     }
 }
 
@@ -151,6 +152,16 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     #[inline]
     pub fn as_ref_(&self) -> &'tree T {
         unsafe { self.0.as_ref() }
+    }
+
+    #[inline]
+    pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+        unsafe { self.0.leaf.as_ref() }
+    }
+
+    #[inline]
+    pub fn child_index(&self) -> usize {
+        self.0.index
     }
 }
 

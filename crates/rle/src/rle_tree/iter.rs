@@ -1,5 +1,3 @@
-use std::ptr::NonNull;
-
 use crate::Rle;
 
 use super::{
@@ -8,7 +6,7 @@ use super::{
     SafeCursor,
 };
 
-pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
+pub struct Iter<'some, 'bump: 'some, T: Rle, A: RleTreeTrait<T>> {
     node: Option<&'some LeafNode<'bump, T, A>>,
     child_index: usize,
     end_node: Option<&'some LeafNode<'bump, T, A>>,

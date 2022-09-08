@@ -64,8 +64,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         match self {
             Self::Internal(node) => node
                 .children
-                .get(0)
+                .first()
                 .and_then(|child| child.get_first_leaf()),
+            Self::Leaf(node) => Some(node),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_last_leaf(&self) -> Option<&LeafNode<'a, T, A>> {
+        match self {
+            Self::Internal(node) => node.children.last().and_then(|child| child.get_last_leaf()),
             Self::Leaf(node) => Some(node),
         }
     }

@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use rle::{rle_tree::SafeCursorMut, Rle, RleTree, RleTreeTrait};
+use rle::{rle_tree::SafeCursorMut, RleTree};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
@@ -22,8 +22,8 @@ impl DerefMut for ContentMap {
     }
 }
 
-pub(super) fn change_status(
-    cursor: &mut SafeCursorMut<'_, '_, YSpan, YSpanTreeTrait>,
+pub(super) fn change_status<'a, 'b: 'a>(
+    cursor: &mut SafeCursorMut<'a, 'b, YSpan, YSpanTreeTrait>,
     change: StatusChange,
 ) {
     let value = cursor.as_mut();
