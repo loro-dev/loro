@@ -90,6 +90,9 @@ fn test(interactions: &[Interaction]) {
                 let out = out.unwrap();
                 //println!("vs \nindexMap: {:#?}", &out);
                 assert_eq!(v.as_ref().value, out.start);
+                let leaf = v.0.leaf.as_ptr() as usize;
+                let out_ptr = out.value.as_ptr() as usize;
+                assert_eq!(out_ptr, leaf);
             }
         });
 
@@ -111,8 +114,8 @@ fn test(interactions: &[Interaction]) {
 
 prop_compose! {
     fn gen_interaction()(
-            _type in 0..1,
-            from in 0..10000,
+            _type in 0..2,
+            from in 0..100,
             len in 1..10,
         ) -> Interaction {
         if _type == 0 {
@@ -157,59 +160,12 @@ fn issue_2() {
 }
 
 #[test]
-fn issue_3() {
+fn issue_4() {
     test(&[
-        Insert { from: 0, len: 7 },
-        Insert { from: 0, len: 4 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 4, len: 2 },
-        Insert { from: 0, len: 3 },
-        Insert { from: 120, len: 1 },
-        Insert { from: 1785, len: 1 },
-        Insert { from: 6137, len: 1 },
-        Insert { from: 2970, len: 5 },
-        Insert { from: 2424, len: 5 },
-        Insert { from: 2246, len: 4 },
-        Insert { from: 104, len: 1 },
-        Insert { from: 447, len: 1 },
-        Insert { from: 5394, len: 3 },
-        Insert { from: 113, len: 6 },
-        Insert { from: 6563, len: 7 },
-        Insert { from: 8964, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-        Insert { from: 0, len: 1 },
-    ]);
+        Insert { from: 0, len: 5 },
+        Insert { from: 12, len: 2 },
+        Insert { from: 5, len: 1 },
+    ])
 }
 
 #[cfg(not(no_proptest))]

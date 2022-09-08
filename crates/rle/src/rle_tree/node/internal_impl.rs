@@ -109,9 +109,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             from.map_or((0, None), |x| self._delete_start(x));
         let (direct_delete_end, to_del_end_offset) =
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
-        let mut result = Ok(());
+        let deleted_len = direct_delete_end as isize - direct_delete_start as isize;
+        let mut insertions = vec![];
         {
-            // handle edge removing
+            // handle removing at the end point
             let mut handled = false;
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
@@ -128,12 +129,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                                 depth + 1,
                                 notify,
                             ) {
-                                result = self._insert_with_split(direct_delete_end + 1, new);
+                                insertions.push((direct_delete_end + 1, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(Some(del_from), Some(del_to), notify) {
-                                result = self._insert_with_split(direct_delete_end + 1, new);
+                                insertions.push((direct_delete_end + 1, new));
                             }
                         }
                     }
@@ -152,12 +153,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(Some(del_from), None, visited, depth + 1, notify)
                             {
-                                result = self._insert_with_split(direct_delete_start, new);
+                                insertions.push((direct_delete_start, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(Some(del_from), None, notify) {
-                                result = self._insert_with_split(direct_delete_start, new)
+                                insertions.push((direct_delete_start, new));
                             }
                         }
                     }
@@ -172,14 +173,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(None, Some(del_to), visited, depth + 1, notify)
                             {
-                                debug_assert!(result.is_ok());
-                                result = self._insert_with_split(direct_delete_end + 1, new);
+                                insertions.push((direct_delete_end + 1, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(None, Some(del_to), notify) {
-                                debug_assert!(result.is_ok());
-                                result = self._insert_with_split(direct_delete_end + 1, new);
+                                insertions.push((direct_delete_end + 1, new));
                             }
                         }
                     }
@@ -187,8 +186,22 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         }
 
-        if direct_delete_start < direct_delete_end {
+        if deleted_len > 0 {
+            self.connect_leaf(direct_delete_start, direct_delete_end - 1);
             self.children.drain(direct_delete_start..direct_delete_end);
+        }
+
+        insertions.sort_by_key(|x| -(x.0 as isize));
+        let mut result = Ok(());
+        for mut insertion in insertions {
+            if insertion.0 >= direct_delete_end && deleted_len > 0 {
+                insertion.0 -= deleted_len as usize;
+            }
+
+            if let Err(data) = self._insert_with_split(insertion.0, insertion.1) {
+                assert!(result.is_ok());
+                result = Err(data);
+            }
         }
 
         A::update_cache_internal(self);
@@ -197,6 +210,24 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         result
+    }
+
+    /// connect [prev leaf of left] with [next leaf of right]
+    fn connect_leaf(&mut self, left_index: usize, right_index: usize) {
+        let prev = self.children[left_index]
+            .get_first_leaf()
+            .and_then(|x| x.prev);
+        let next = self.children[right_index]
+            .get_last_leaf()
+            .and_then(|x| x.next);
+        if let Some(mut prev) = prev {
+            let prev = unsafe { prev.as_mut() };
+            prev.next = next;
+        }
+        if let Some(mut next) = next {
+            let next = unsafe { next.as_mut() };
+            next.prev = prev;
+        }
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<A::Int>) {

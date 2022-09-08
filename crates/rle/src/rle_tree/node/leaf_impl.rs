@@ -41,6 +41,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
         ans_inner.next = self.next;
         ans_inner.prev = Some(NonNull::new(self).unwrap());
+        if let Some(mut next) = self.next {
+            unsafe { next.as_mut().prev = Some(NonNull::new_unchecked(ans_inner)) };
+        }
         self.next = Some(NonNull::new(&mut *ans_inner).unwrap());
         ans
     }
@@ -94,6 +97,14 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     pub(crate) fn check(&mut self) {
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
         A::check_cache_leaf(self);
+        if let Some(next) = self.next {
+            let self_ptr = unsafe { next.as_ref().prev.unwrap().as_ptr() };
+            assert!(std::ptr::eq(self, self_ptr));
+        }
+        if let Some(prev) = self.prev {
+            let self_ptr = unsafe { prev.as_ref().next.unwrap().as_ptr() };
+            assert!(std::ptr::eq(self, self_ptr));
+        }
     }
 
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<usize>) {

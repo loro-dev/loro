@@ -125,7 +125,9 @@ impl Interaction {
     pub fn test_assert(&self, s: &mut String, tree: &mut RleTree<CustomString, StringTreeTrait>) {
         self.apply_to_str(s);
         self.apply_to_tree(tree);
+        // println!("{:#?}", tree);
         assert_eq!(&tree.to_string(), s);
+        // println!("{}", s);
     }
 
     fn apply_to_str(&self, s: &mut String) {
@@ -135,8 +137,12 @@ impl Interaction {
                 s.insert_str(insert_at, content.as_str())
             }
             Interaction::Delete { from, len } => {
+                if s.is_empty() {
+                    return;
+                }
+
                 let from = *from % s.len();
-                let mut to = from + (*len % s.len());
+                let mut to = from + *len;
                 if to > s.len() {
                     to = s.len();
                 }
@@ -156,8 +162,12 @@ impl Interaction {
             }
             Interaction::Delete { from, len } => {
                 tree.with_tree_mut(|tree| {
+                    if tree.len() == 0 {
+                        return;
+                    }
+
                     let from = *from % tree.len();
-                    let mut to = from + (*len % tree.len());
+                    let mut to = from + *len;
                     if to > tree.len() {
                         to = tree.len();
                     }
@@ -169,6 +179,78 @@ impl Interaction {
     }
 }
 
+fn run_test(interactions: Vec<Interaction>) {
+    let mut s = String::new();
+    let mut tree = RleTree::default();
+    for interaction in interactions {
+        interaction.test_assert(&mut s, &mut tree);
+        tree.with_tree_mut(|tree| {
+            tree.debug_check();
+        });
+    }
+}
+
+use Interaction::*;
+
+#[test]
+fn issue_delete() {
+    run_test(vec![
+        Insert {
+            insert_at: 0,
+            content: "0000000000000".into(),
+        },
+        Delete { from: 7, len: 1 },
+        Insert {
+            insert_at: 0,
+            content: "11111111111111111".into(),
+        },
+        Delete { from: 0, len: 1 },
+        Insert {
+            insert_at: 1,
+            content: "2222222".into(),
+        },
+        Delete { from: 0, len: 3 },
+        Delete { from: 0, len: 1 },
+        Insert {
+            insert_at: 0,
+            content: "333333333".into(),
+        },
+        Insert {
+            insert_at: 8,
+            content: "44".into(),
+        },
+        Insert {
+            insert_at: 0,
+            content: "55555555555555555555555555555555".into(),
+        },
+        Delete { from: 0, len: 1 },
+        Delete { from: 2, len: 4 },
+        Delete { from: 3, len: 9 },
+        Insert {
+            insert_at: 0,
+            content: "6".into(),
+        },
+        Delete { from: 5, len: 6 },
+        Delete { from: 4, len: 6 },
+        Insert {
+            insert_at: 9,
+            content: "7".into(),
+        },
+        Insert {
+            insert_at: 8,
+            content: "88".into(),
+        },
+        Insert {
+            insert_at: 0,
+            content: "9".into(),
+        },
+        // 96555555388373333334432222111111111111111000000000000
+        Delete { from: 6, len: 6 },
+        // Expected: 96555573333334432222111111111111111000000000000
+        //      Out: 965573333334432222111111111111111000000000000
+    ])
+}
+
 #[cfg(not(no_proptest))]
 mod string_prop_test {
     use super::*;
@@ -176,10 +258,10 @@ mod string_prop_test {
 
     prop_compose! {
         fn gen_interaction()(
-                _type in 0..1,
+                _type in 0..2,
                 from in 0..10000000,
-                len in 0..10,
-                content in "[a-z]*"
+                len in 1..10,
+                content in "[a-z]+"
             ) -> Interaction {
             if _type == 0 {
                 Interaction::Insert {
@@ -200,12 +282,7 @@ mod string_prop_test {
         fn test_tree_string_op_the_same(
             interactions in prop::collection::vec(gen_interaction(), 1..100),
         ) {
-            let mut s = String::new();
-            let mut tree = RleTree::default();
-            for interaction in interactions {
-                interaction.test_assert(&mut s, &mut tree);
-                tree.with_tree_mut(|tree|tree.debug_check());
-            }
+            run_test(interactions);
         }
     }
 
