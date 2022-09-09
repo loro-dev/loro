@@ -267,6 +267,14 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
                     return FindPosResult::new_not_found(i, index, Position::Before);
                 }
 
+                // prefer Start than End
+                if index == cache.end
+                    && i + 1 < node.children.len()
+                    && index == get_cache(node.children[i + 1]).start
+                {
+                    return FindPosResult::new(i + 1, index, Position::Start);
+                }
+
                 return FindPosResult::new(i, index, get_pos_global(index, cache));
             }
         }
@@ -284,9 +292,18 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
                 start: child.get_global_start(),
                 end: child.get_global_end(),
             };
+
             if index <= cache.end {
                 if index < cache.start {
                     return FindPosResult::new_not_found(i, 0, Position::Before);
+                }
+
+                // prefer Start than End
+                if index == cache.end
+                    && i + 1 < node.children.len()
+                    && index == node.children[i + 1].get_global_start()
+                {
+                    return FindPosResult::new(i + 1, 0, Position::Start);
                 }
 
                 return FindPosResult::new(
