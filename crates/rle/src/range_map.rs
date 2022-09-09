@@ -21,7 +21,7 @@ impl<Value: Rle, Index: GlobalIndex> Sliceable for WithGlobalIndex<Value, Index>
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
             value: self.value.slice(from, to),
-            index: self.index,
+            index: self.index + Index::from_usize(from).unwrap(),
         }
     }
 }
@@ -118,12 +118,12 @@ impl<Index: GlobalIndex, T: Clone> WithStartEnd<Index, T> {
     }
 }
 
-impl<Index: GlobalIndex, T: Clone> Sliceable for WithStartEnd<Index, T> {
+impl<Index: GlobalIndex, T: Sliceable> Sliceable for WithStartEnd<Index, T> {
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
             start: self.start + Index::from_usize(from).unwrap(),
             end: Index::min(self.end, self.start + Index::from_usize(to).unwrap()),
-            value: self.value.clone(),
+            value: self.value.slice(from, to),
         }
     }
 }

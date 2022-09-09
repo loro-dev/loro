@@ -170,25 +170,12 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
         Self(UnsafeCursor::new(leaf, index, pos))
     }
-}
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
-    for SafeCursorMut<'tree, 'bump, T, A>
-{
-    #[inline]
-    fn as_mut(&mut self) -> &mut T {
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
     fn as_mut_(&mut self) -> &'tree mut T {
         unsafe { self.0.as_mut() }
     }
-}
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
     pub fn update_cache_recursively(&mut self) {
         let leaf = unsafe { self.0.leaf.as_mut() };
@@ -201,5 +188,14 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
                 None => return,
             }
         }
+    }
+}
+
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
+    for SafeCursorMut<'tree, 'bump, T, A>
+{
+    #[inline]
+    fn as_mut(&mut self) -> &mut T {
+        unsafe { self.0.as_mut() }
     }
 }
