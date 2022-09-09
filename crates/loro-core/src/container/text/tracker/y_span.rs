@@ -1,4 +1,6 @@
-use crate::{id::Counter, ContentType, InsertContent, ID};
+use crate::{
+    container::text::text_content::TextPointer, id::Counter, ContentType, InsertContent, ID,
+};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -36,7 +38,7 @@ pub(super) struct YSpan {
     pub origin_left: ID,
     pub origin_right: ID,
     pub id: ID,
-    pub len: usize,
+    pub text: TextPointer,
     pub status: Status,
 }
 
@@ -52,6 +54,20 @@ pub(super) enum StatusChange {
 
 pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
 
+impl YSpan {
+    #[inline]
+    pub fn last_id(&self) -> ID {
+        self.id
+            .inc(std::iter::ExactSizeIterator::len(&self.text) as i32 - 1)
+    }
+
+    #[inline]
+    pub fn can_be_origin(&self) -> bool {
+        debug_assert!(rle::HasLength::len(&self.text) > 0);
+        self.status.is_activated()
+    }
+}
+
 impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
@@ -60,11 +76,12 @@ impl Mergable for YSpan {
             && self.id.counter + self.len() as Counter - 1 == other.origin_left.counter
             && self.origin_right == other.origin_right
             && self.status == other.status
+            && self.text.is_mergable(&other.text, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
         self.origin_right = other.origin_right;
-        self.len += other.len;
+        self.text.merge(&other.text, &());
     }
 }
 
@@ -75,7 +92,7 @@ impl Sliceable for YSpan {
                 origin_left: self.origin_left,
                 origin_right: self.origin_right,
                 id: self.id,
-                len: to - from,
+                text: self.text.slice(from, to),
                 status: self.status.clone(),
             }
         } else {
@@ -89,7 +106,7 @@ impl Sliceable for YSpan {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as Counter,
                 },
-                len: to - from,
+                text: self.text.slice(from, to),
                 status: self.status.clone(),
             }
         }
@@ -103,9 +120,10 @@ impl InsertContent for YSpan {
 }
 
 impl HasLength for YSpan {
+    #[inline]
     fn len(&self) -> usize {
         if self.status.is_activated() {
-            self.len
+            rle::HasLength::len(&self.text)
         } else {
             0
         }
@@ -119,7 +137,7 @@ mod test {
         id::ROOT_ID,
         ContentType, Op, OpContent, ID,
     };
-    use rle::RleVec;
+    use rle::{HasLength, RleVec};
 
     use super::YSpan;
 
@@ -133,7 +151,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    len: 1,
+                    text: 0..1,
                     status: Default::default(),
                 }),
             },
@@ -149,7 +167,7 @@ mod test {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
-                    len: 1,
+                    text: 1..2,
                     status: Default::default(),
                 }),
             },
@@ -163,7 +181,7 @@ mod test {
         assert_eq!(merged.insert_content().id(), ContentType::Text);
         let text_content =
             crate::op::utils::downcast_ref::<YSpan>(&**merged.insert_content()).unwrap();
-        assert_eq!(text_content.len, 2);
+        assert_eq!(text_content.len(), 2);
     }
 
     #[test]
@@ -176,7 +194,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    len: 4,
+                    text: 2..6,
                     status: Default::default(),
                 }),
             },
@@ -192,7 +210,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
-                    len: 4,
+                    text: 3..7,
                     status: Default::default(),
                 }),
             },
@@ -204,11 +222,11 @@ mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(|x| crate::op::utils::downcast_ref::<YSpan>(
-                    &**x.into_inner().insert_content()
-                )
-                .unwrap()
-                .len)
+                .map(|x| rle::HasLength::len(
+                    &crate::op::utils::downcast_ref::<YSpan>(&**x.into_inner().insert_content())
+                        .unwrap()
+                        .text
+                ))
                 .collect::<Vec<usize>>(),
             vec![2, 2]
         )

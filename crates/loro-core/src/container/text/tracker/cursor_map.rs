@@ -8,6 +8,7 @@ use crate::span::IdSpan;
 
 use super::y_span::{YSpan, YSpanTreeTrait};
 
+#[non_exhaustive]
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum Marker {
     Insert {
@@ -15,6 +16,7 @@ pub(super) enum Marker {
         len: usize,
     },
     Delete(IdSpan),
+    // TODO: REDO, UNDO
 }
 
 impl Sliceable for Marker {
@@ -31,7 +33,10 @@ impl Sliceable for Marker {
 
 impl HasLength for Marker {
     fn len(&self) -> usize {
-        todo!()
+        match self {
+            Marker::Insert { ptr, len } => *len,
+            Marker::Delete(span) => span.len(),
+        }
     }
 }
 

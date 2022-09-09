@@ -70,6 +70,7 @@ impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'rf, 'bump, T, A>
                     return Some(SafeCursor::new(
                         node.into(),
                         self.child_index - 1,
+                        0,
                         Position::Start,
                     ));
                 }

@@ -2,9 +2,10 @@ use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
-pub use cursor::{SafeCursor, SafeCursorMut};
+pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
 use ouroboros::self_referencing;
 use std::marker::{PhantomData, PhantomPinned};
+pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
 mod cursor;
@@ -92,7 +93,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(leaf.into(), result.child_index, result.pos));
+                    return Some(SafeCursor::new(
+                        leaf.into(),
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                    ));
                 }
             }
         }
@@ -119,7 +125,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(leaf.into(), result.child_index, result.pos));
+                    return Some(SafeCursor::new(
+                        leaf.into(),
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                    ));
                 }
             }
         }
