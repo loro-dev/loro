@@ -100,7 +100,7 @@ fn test(interactions: &[Interaction]) {
         };
         interaction.apply(&mut tree, &mut rng, &mut func);
         _dbg!(&tree);
-        range_map.tree.with_tree(|range_tree| {
+        range_map.tree.with_tree(|_range_tree| {
             _println!("range_tree: {:#?}", range_tree);
         });
 
