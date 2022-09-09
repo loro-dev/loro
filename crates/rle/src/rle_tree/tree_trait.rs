@@ -12,10 +12,11 @@ use super::node::{InternalNode, LeafNode, Node};
 /// - Or it is before/after a node.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Position {
+    Before,
     Start,
     Middle,
+    // can after and end be merged together?
     End,
-    Before,
     After,
 }
 

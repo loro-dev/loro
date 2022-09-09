@@ -4,13 +4,13 @@ build:
 test *FLAGS:
   RUST_BACKTRACE=full cargo nextest run {{FLAGS}}
 
-# test without proptest
-test-fast *FLAGS:
-  RUSTFLAGS='--cfg no_proptest' cargo nextest run {{FLAGS}}
+# test with proptest
+test-prop *FLAGS:
+  RUST_BACKTRACE=full RUSTFLAGS='--cfg proptest' cargo nextest run {{FLAGS}}
 
 # test with slower proptest
-test-slow *FLAGS:
-  RUSTFLAGS='--cfg slow_proptest' cargo nextest run {{FLAGS}}
+test-slowprop *FLAGS:
+  RUST_BACKTRACE=full RUSTFLAGS='--cfg slow_proptest' cargo nextest run {{FLAGS}}
 
 check-unsafe:
   env RUSTFLAGS="-Funsafe-code --cap-lints=warn" cargo check

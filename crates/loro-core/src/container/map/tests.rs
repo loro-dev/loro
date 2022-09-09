@@ -2,21 +2,13 @@
 
 use std::collections::HashMap;
 
-
 use fxhash::FxHashMap;
 use proptest::prelude::*;
 use proptest::proptest;
 
 use crate::value::proptest::gen_insert_value;
 
-use crate::{
-    container::{Container},
-    fx_map,
-    value::InsertValue,
-    LoroCore, LoroValue,
-};
-
-
+use crate::{container::Container, fx_map, value::InsertValue, LoroCore, LoroValue};
 
 #[test]
 fn basic() {

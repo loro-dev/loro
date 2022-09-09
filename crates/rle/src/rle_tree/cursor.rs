@@ -5,9 +5,10 @@ use crate::{Rle, RleTreeTrait};
 use super::{node::LeafNode, tree_trait::Position};
 
 pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    pub(crate) leaf: NonNull<LeafNode<'bump, T, A>>,
-    pub(crate) index: usize,
-    pub(crate) pos: Position,
+    pub leaf: NonNull<LeafNode<'bump, T, A>>,
+    pub index: usize,
+    pub offset: usize,
+    pub pos: Position,
     _phantom: PhantomData<&'tree usize>,
 }
 
@@ -18,6 +19,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bu
             leaf: self.leaf,
             index: self.index,
             pos: self.pos,
+            offset: self.offset,
             _phantom: Default::default(),
         }
     }
@@ -45,11 +47,17 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree,
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
+    pub(crate) fn new(
+        leaf: NonNull<LeafNode<'bump, T, A>>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+    ) -> Self {
         Self {
             leaf,
             index,
             pos,
+            offset,
             _phantom: PhantomData,
         }
     }
@@ -81,20 +89,20 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
     pub unsafe fn next(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if leaf.children.len() > self.index + 1 {
-            return Some(Self::new(self.leaf, self.index + 1, self.pos));
+            return Some(Self::new(self.leaf, self.index + 1, 0, Position::Start));
         }
 
-        leaf.next.map(|next| Self::new(next, 0, self.pos))
+        leaf.next.map(|next| Self::new(next, 0, 0, Position::Start))
     }
 
     pub unsafe fn prev(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if self.index > 0 {
-            return Some(Self::new(self.leaf, self.index - 1, self.pos));
+            return Some(Self::new(self.leaf, self.index - 1, 0, Position::Start));
         }
 
         leaf.prev
-            .map(|prev| Self::new(prev, prev.as_ref().children.len() - 1, self.pos))
+            .map(|prev| Self::new(prev, prev.as_ref().children.len() - 1, 0, Position::Start))
     }
 }
 
@@ -130,12 +138,30 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
     pub fn index(&self) -> usize {
         self.0.index
     }
-}
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
-        Self(UnsafeCursor::new(leaf, index, pos))
+    pub fn pos(&self) -> Position {
+        self.0.pos
+    }
+
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.0.offset
+    }
+
+    #[inline]
+    pub(crate) fn new(
+        leaf: NonNull<LeafNode<'bump, T, A>>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+    ) -> Self {
+        Self(UnsafeCursor::new(leaf, index, offset, pos))
+    }
+
+    #[inline]
+    pub fn unwrap(self) -> UnsafeCursor<'tree, 'bump, T, A> {
+        self.0
     }
 }
 
@@ -167,12 +193,17 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(leaf: NonNull<LeafNode<'bump, T, A>>, index: usize, pos: Position) -> Self {
-        Self(UnsafeCursor::new(leaf, index, pos))
+    pub(crate) fn new(
+        leaf: NonNull<LeafNode<'bump, T, A>>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+    ) -> Self {
+        Self(UnsafeCursor::new(leaf, index, offset, pos))
     }
 
     #[inline]
-    fn as_mut_(&mut self) -> &'tree mut T {
+    fn as_tree_mut(&mut self) -> &'tree mut T {
         unsafe { self.0.as_mut() }
     }
 
@@ -188,6 +219,36 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
                 None => return,
             }
         }
+    }
+
+    #[inline]
+    pub fn unwrap(self) -> UnsafeCursor<'tree, 'bump, T, A> {
+        self.0
+    }
+
+    #[inline]
+    pub fn next(&self) -> Option<Self> {
+        unsafe { self.0.next().map(|x| Self(x)) }
+    }
+
+    #[inline]
+    pub fn prev(&self) -> Option<Self> {
+        unsafe { self.0.prev().map(|x| Self(x)) }
+    }
+
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.0.index
+    }
+
+    #[inline]
+    pub fn pos(&self) -> Position {
+        self.0.pos
+    }
+
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.0.offset
     }
 }
 

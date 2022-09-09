@@ -4,11 +4,13 @@ use enum_as_inner::EnumAsInner;
 
 use crate::id::ID;
 
+pub(super) type TextPointer = Range<usize>;
+
 #[derive(Debug, EnumAsInner)]
 pub(super) enum TextOpContent {
     Insert {
         id: ID,
-        text: Range<usize>,
+        text: TextPointer,
         pos: usize,
     },
     Delete {
