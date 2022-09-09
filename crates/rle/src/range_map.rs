@@ -65,7 +65,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
         self.tree.with_tree_mut(|tree| {
             tree.delete_range(
                 Some(start),
-                Some(start + Index::from_usize(value.len()).unwrap()),
+                Some(start + Index::from_usize(std::cmp::max(value.len(), 1)).unwrap()),
             );
             tree.insert(
                 start,
