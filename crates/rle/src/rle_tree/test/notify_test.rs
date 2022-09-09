@@ -118,8 +118,10 @@ fn test(interactions: &[Interaction]) {
                 let range_map_out = range_map_output.unwrap();
                 let range = range_map_out.start..range_map_out.end;
                 assert!(
-                    range.contains(&id)
-                        && range.contains(&(origin_value.value + origin_value.len() as u64 - 1)),
+                    (origin_value.len() == 0 && origin_value.value == range.start)
+                        || (range.contains(&id)
+                            && range
+                                .contains(&(origin_value.value + origin_value.len() as u64 - 1))),
                     "origin={:#?}, range={:#?}",
                     origin_value,
                     range
@@ -146,7 +148,7 @@ prop_compose! {
     fn gen_interaction()(
             _type in 0..2,
             from in 0..1000,
-            len in 1..10,
+            len in 0..10,
         ) -> Interaction {
         if _type == 0 {
             Interaction::Insert {
@@ -204,25 +206,9 @@ fn issue_4() {
 #[test]
 fn issue_5() {
     test(&[
-        Insert { from: 0, len: 4 },
-        Insert { from: 0, len: 5 },
-        Delete { from: 3, len: 1 },
-        Delete { from: 5, len: 3 },
-        Insert { from: 3, len: 6 },
-        Insert { from: 3, len: 8 },
-        Delete { from: 13, len: 6 },
-        Insert { from: 3, len: 1 },
-        Insert { from: 1, len: 2 },
-        Delete { from: 0, len: 2 },
-        Delete { from: 0, len: 1 },
-        Insert { from: 8, len: 3 },
-        Delete { from: 11, len: 2 },
-        Insert { from: 2, len: 1 },
-        Delete { from: 8, len: 2 },
-        Insert { from: 11, len: 1 },
-        Delete { from: 11, len: 2 },
-        Insert { from: 9, len: 1 },
-        Delete { from: 1, len: 3 },
+        Insert { from: 0, len: 0 },
+        Delete { from: 0, len: 0 },
+        Delete { from: 0, len: 0 },
     ])
 }
 

@@ -295,6 +295,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        if self.children.is_empty() {
+            return Ok(());
+        }
+
         let (del_start, del_relative_from) = start.map_or((0, None), |x| self._delete_start(x));
         let (del_end, del_relative_to) =
             end.map_or((self.children.len(), None), |x| self._delete_end(x));
