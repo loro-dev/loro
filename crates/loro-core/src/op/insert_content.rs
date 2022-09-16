@@ -1,6 +1,5 @@
 use std::any::{Any, TypeId};
 
-
 use rle::{HasLength, Mergable, Sliceable};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -69,6 +68,7 @@ pub mod utils {
         let t = TypeId::of::<T>();
         let concrete = content.type_id();
         if t == concrete {
+            // SAFETY: we know that the type is correct
             Some(unsafe { &*(content as *const dyn InsertContent as *const T) })
         } else {
             None

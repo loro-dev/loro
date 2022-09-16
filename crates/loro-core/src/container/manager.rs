@@ -1,4 +1,4 @@
-use std::{pin::Pin, ptr::NonNull};
+use std::ptr::NonNull;
 
 use fxhash::FxHashMap;
 
@@ -16,14 +16,9 @@ pub(crate) struct ContainerManager {
 
 impl ContainerManager {
     #[inline]
-    pub fn create(
-        &mut self,
-        id: ContainerID,
-        container_type: ContainerType,
-        store: NonNull<LogStore>,
-    ) -> Box<dyn Container> {
+    pub fn create(&mut self, id: ContainerID, container_type: ContainerType) -> Box<dyn Container> {
         match container_type {
-            ContainerType::Map => Box::new(MapContainer::new(id, store)),
+            ContainerType::Map => Box::new(MapContainer::new(id)),
             _ => unimplemented!(),
         }
     }
@@ -45,7 +40,7 @@ impl ContainerManager {
 
     pub fn get_or_create(&mut self, id: &ContainerID) -> &mut dyn Container {
         if !self.containers.contains_key(id) {
-            let container = self.create(id.clone(), id.container_type(), self.store);
+            let container = self.create(id.clone(), id.container_type());
             self.insert(id.clone(), container);
         }
 

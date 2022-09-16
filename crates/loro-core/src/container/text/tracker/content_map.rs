@@ -35,6 +35,8 @@ impl ContentMap {
         self.with_tree(|tree| {
             if let Some(cursor) = tree.get(pos) {
                 let cursor: SafeCursor<'_, 'static, YSpan, YSpanTreeTrait> =
+                    // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
+                    // because Bumpalo's lifetime is static due to the self-referential structure limitation; Maybe there is a better way?
                     unsafe { std::mem::transmute(cursor) };
                 let (mut prev, mut next) = match cursor.pos() {
                     Position::Start => {

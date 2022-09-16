@@ -12,6 +12,9 @@ test-prop *FLAGS:
 test-slowprop *FLAGS:
   RUST_BACKTRACE=full RUSTFLAGS='--cfg slow_proptest' cargo nextest run {{FLAGS}}
 
+check:
+  cargo clippy
+
 check-unsafe:
   env RUSTFLAGS="-Funsafe-code --cap-lints=warn" cargo check
 

@@ -3,7 +3,12 @@
 //!
 mod iter;
 use pin_project::pin_project;
-use std::{marker::PhantomPinned, pin::Pin, ptr::NonNull};
+use std::{
+    marker::PhantomPinned,
+    pin::Pin,
+    ptr::NonNull,
+    sync::{Arc, RwLock},
+};
 
 use fxhash::FxHashMap;
 
@@ -51,11 +56,16 @@ pub struct LogStore {
     latest_timestamp: Timestamp,
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
+    accessor: Option<Arc<LogAccessor>>,
 
     /// CRDT container manager
     pub(crate) container: ContainerManager,
 
     _pin: PhantomPinned,
+}
+
+pub struct LogAccessor {
+    store: RwLock<NonNull<LogStore>>,
 }
 
 impl LogStore {
@@ -71,14 +81,31 @@ impl LogStore {
                 containers: Default::default(),
                 store: NonNull::dangling(),
             },
+            accessor: None,
             frontier: Default::default(),
             _pin: PhantomPinned,
         });
 
         let p = this.as_ref().get_ref();
         let p = p as *const _ as *mut LogStore;
+        // SAFETY: we just created this
         this.container.store = unsafe { NonNull::new_unchecked(p) };
         this
+    }
+
+    pub fn get_accessor(&mut self) -> Arc<LogAccessor> {
+        if let Some(accessor) = self.accessor.as_ref() {
+            return accessor.clone();
+        }
+
+        let p = self as *const _ as *mut LogStore;
+        // SAFETY: this is self, which is non-null fore sure
+        let p = unsafe { NonNull::new_unchecked(p) };
+        let accessor = Arc::new(LogAccessor {
+            store: RwLock::new(p),
+        });
+        self.accessor = Some(accessor.clone());
+        accessor
     }
 
     #[inline]
@@ -208,5 +235,25 @@ impl LogStore {
     #[inline]
     pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
         iter::OpIter::new(&self.changes)
+    }
+}
+
+impl LogAccessor {
+    pub fn with_ref<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&LogStore) -> R,
+    {
+        let store = self.store.read().unwrap();
+        // SAFETY: //FIXME: this is not guaranteed to be correct
+        f(unsafe { store.as_ref() })
+    }
+
+    pub fn with_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut LogStore) -> R,
+    {
+        let mut store = self.store.write().unwrap();
+        // SAFETY: //FIXME: this is not guaranteed to be correct
+        f(unsafe { store.as_mut() })
     }
 }
