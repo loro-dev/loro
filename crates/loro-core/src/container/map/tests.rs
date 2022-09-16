@@ -13,8 +13,9 @@ use crate::{container::Container, fx_map, value::InsertValue, LoroCore, LoroValu
 #[test]
 fn basic() {
     let mut loro = LoroCore::default();
-    let mut container = loro.get_map_container("map".into()).unwrap();
-    container.insert("haha".into(), InsertValue::Int32(1));
+    let accessor = loro.store.get_accessor();
+    let container = loro.get_map_container("map".into()).unwrap();
+    container.insert("haha".into(), InsertValue::Int32(1), &accessor);
     let ans = fx_map!(
         "haha".into() => LoroValue::Integer(1)
     );
@@ -33,11 +34,12 @@ mod map_proptest {
             value in prop::collection::vec(gen_insert_value(), 0..100)
         ) {
             let mut loro = LoroCore::default();
+            let accessor = loro.store.get_accessor();
             let container = loro.get_map_container("map".into()).unwrap();
             let mut map: HashMap<String, InsertValue> = HashMap::new();
             for (k, v) in key.iter().zip(value.iter()) {
                 map.insert(k.clone(), v.clone());
-                container.insert(k.clone().into(), v.clone());
+                container.insert(k.clone().into(), v.clone(), &accessor);
                 let snapshot = container.get_value();
                 for (key, value) in snapshot.as_map().unwrap().iter() {
                     assert_eq!(map.get(&key.to_string()).map(|x|x.clone().into()), Some(value.clone()));

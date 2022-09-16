@@ -1,10 +1,11 @@
-use std::ptr::NonNull;
+use std::sync::Arc;
 
 use fxhash::FxHashMap;
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
+    log_store::LogAccessor,
     op::{utils::downcast_ref, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
@@ -21,7 +22,6 @@ use super::MapInsertContent;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
-    log_store: NonNull<LogStore>,
     value: Option<LoroValue>,
 }
 
@@ -34,63 +34,59 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub fn new(id: ContainerID, store: NonNull<LogStore>) -> Self {
+    pub fn new(id: ContainerID) -> Self {
         MapContainer {
             id,
             state: FxHashMap::default(),
-            log_store: store,
             value: None,
         }
     }
 
-    fn log_store(&mut self) -> &mut LogStore {
-        unsafe { self.log_store.as_mut() }
-    }
-
-    pub fn insert(&mut self, key: InternalString, value: InsertValue) {
+    pub fn insert(&mut self, key: InternalString, value: InsertValue, store: &Arc<LogAccessor>) {
         let self_id = self.id.clone();
-        let store = self.log_store();
-        let client_id = store.this_client_id;
-        let order = TotalOrderStamp {
-            client_id,
-            lamport: store.next_lamport(),
-        };
+        store.with_mut(|store| {
+            let client_id = store.this_client_id;
+            let order = TotalOrderStamp {
+                client_id,
+                lamport: store.next_lamport(),
+            };
 
-        let id = store.next_id(client_id);
-        let counter = id.counter;
-        store.append_local_ops(vec![Op {
-            id,
-            container: self_id,
-            content: OpContent::Normal {
-                content: Box::new(MapInsertContent {
-                    key: key.clone(),
-                    value: value.clone(),
-                }),
-            },
-        }]);
+            let id = store.next_id(client_id);
+            let counter = id.counter;
+            store.append_local_ops(vec![Op {
+                id,
+                container: self_id,
+                content: OpContent::Normal {
+                    content: Box::new(MapInsertContent {
+                        key: key.clone(),
+                        value: value.clone(),
+                    }),
+                },
+            }]);
 
-        if self.value.is_some() {
-            self.value
-                .as_mut()
-                .unwrap()
-                .as_map_mut()
-                .unwrap()
-                .insert(key.clone(), value.clone().into());
-        }
+            if self.value.is_some() {
+                self.value
+                    .as_mut()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(key.clone(), value.clone().into());
+            }
 
-        self.state.insert(
-            key,
-            ValueSlot {
-                value,
-                order,
-                counter,
-            },
-        );
+            self.state.insert(
+                key,
+                ValueSlot {
+                    value,
+                    order,
+                    counter,
+                },
+            );
+        });
     }
 
     #[inline]
-    pub fn delete(&mut self, key: InternalString) {
-        self.insert(key, InsertValue::Null);
+    pub fn delete(&mut self, key: InternalString, store: &Arc<LogAccessor>) {
+        self.insert(key, InsertValue::Null, store);
     }
 }
 

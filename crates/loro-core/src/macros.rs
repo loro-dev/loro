@@ -25,6 +25,7 @@ macro_rules! fx_map {
 macro_rules! unsafe_array_mut_ref {
     ($arr:expr, [$($idx:expr),*]) => {
         {
+            // SAFETY: this is safe only when the indices are valid and there are not multiple mutable references to the same element
             unsafe {
                 (
                     $(
@@ -41,7 +42,8 @@ macro_rules! array_mut_ref {
     ($arr:expr, [$a0:expr, $a1:expr]) => {{
         #[inline]
         fn borrow_mut_ref<T>(arr: &mut [T], a0: usize, a1: usize) -> (&mut T, &mut T) {
-            debug_assert!(a0 != a1);
+            assert!(a0 != a1);
+            // SAFETY: this is safe because we know a0 != a1
             unsafe {
                 (
                     &mut *(&mut arr[a0] as *mut _),
@@ -60,7 +62,8 @@ macro_rules! array_mut_ref {
             a1: usize,
             a2: usize,
         ) -> (&mut T, &mut T, &mut T) {
-            debug_assert!(a0 != a1 && a1 != a2 && a0 != a2);
+            assert!(a0 != a1 && a1 != a2 && a0 != a2);
+            // SAFETY: this is safe because we know there are not multiple mutable references to the same element
             unsafe {
                 (
                     &mut *(&mut arr[a0] as *mut _),

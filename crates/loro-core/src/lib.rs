@@ -2,6 +2,9 @@
 //!
 //!
 //!
+//!
+#![allow(dead_code)]
+#![deny(clippy::undocumented_unsafe_blocks)]
 
 pub mod change;
 pub mod configure;
