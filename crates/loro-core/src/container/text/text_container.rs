@@ -1,4 +1,4 @@
-use std::{ptr::NonNull};
+use std::ptr::NonNull;
 
 use fxhash::FxHashMap;
 use rle::RleVec;
@@ -7,14 +7,12 @@ use smallvec::SmallVec;
 
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    id::{ID},
-    op::{OpProxy},
+    id::ID,
+    op::OpProxy,
     span::IdSpan,
-    value::{LoroValue},
+    value::LoroValue,
     ClientID, LogStore,
 };
-
-
 
 #[derive(Clone, Debug)]
 struct DagNode {
@@ -56,5 +54,13 @@ impl Container for TextContainer {
 
     fn get_value(&mut self) -> &LoroValue {
         todo!()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

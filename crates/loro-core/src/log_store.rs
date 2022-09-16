@@ -177,7 +177,7 @@ impl LogStore {
     #[inline]
     fn apply_remote_op(self: &mut Pin<&mut Self>, change: &Change, op: &Op) {
         let container = self.container.get_or_create(op.container());
-        container.get_mut().apply(&OpProxy::new(change, op, None));
+        container.apply(&OpProxy::new(change, op, None));
     }
 
     #[inline]
