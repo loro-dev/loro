@@ -28,14 +28,14 @@ impl LoroCore {
         &mut self,
         name: InternalString,
         container: ContainerType,
-    ) -> Pin<&mut dyn Container> {
+    ) -> &mut dyn Container {
         self.store
             .container
             .get_or_create(&ContainerID::new_root(name, container))
     }
 
-    pub fn get_map_container(&mut self, name: InternalString) -> Pin<&mut MapContainer> {
+    pub fn get_map_container(&mut self, name: InternalString) -> Option<&mut MapContainer> {
         let a = self.get_container(name, ContainerType::Map);
-        unsafe { a.map_unchecked_mut(|a| a.cast_mut()) }
+        a.cast_mut()
     }
 }

@@ -2,7 +2,6 @@
 //!
 //!
 //!
-#![allow(dead_code)]
 
 pub mod change;
 pub mod configure;

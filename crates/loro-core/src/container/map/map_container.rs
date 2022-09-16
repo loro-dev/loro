@@ -1,15 +1,15 @@
-use std::{ptr::NonNull};
+use std::ptr::NonNull;
 
 use fxhash::FxHashMap;
 
-
 use crate::{
     container::{Container, ContainerID, ContainerType},
-    id::{Counter},
+    id::Counter,
     op::{utils::downcast_ref, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
-    version::TotalOrderStamp, InternalString, LogStore,
+    version::TotalOrderStamp,
+    InternalString, LogStore,
 };
 
 use super::MapInsertContent;
@@ -157,5 +157,13 @@ impl Container for MapContainer {
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {
         todo!()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

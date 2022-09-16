@@ -25,22 +25,28 @@ pub trait Container: Debug + Any + Unpin {
     fn get_value(&mut self) -> &LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 pub(crate) trait Cast<T> {
-    fn cast(&self) -> &T;
-    fn cast_mut(&mut self) -> &mut T;
+    fn cast(&self) -> Option<&T>;
+    fn cast_mut(&mut self) -> Option<&mut T>;
 }
 
 impl<T: Any> Cast<T> for dyn Container {
-    fn cast(&self) -> &T {
-        let t = self as *const dyn Container as *const T;
-        unsafe { &*t }
+    fn cast(&self) -> Option<&T> {
+        match self.as_any().downcast_ref::<T>() {
+            Some(t) => Some(t),
+            None => None,
+        }
     }
 
-    fn cast_mut(&mut self) -> &mut T {
-        let t = self as *mut dyn Container as *mut T;
-        unsafe { &mut *t }
+    fn cast_mut(&mut self) -> Option<&mut T> {
+        match self.as_any_mut().downcast_mut::<T>() {
+            Some(t) => Some(t),
+            None => None,
+        }
     }
 }
 

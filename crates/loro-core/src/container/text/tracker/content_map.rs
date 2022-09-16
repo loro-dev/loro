@@ -1,6 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use moveit::new::of;
 use rle::{
     rle_tree::{Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, RleTree,
