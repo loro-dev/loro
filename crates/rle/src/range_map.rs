@@ -152,6 +152,8 @@ impl<Index: GlobalIndex, T: PartialEq + Eq> Mergable for WithStartEnd<Index, T> 
 
 #[cfg(test)]
 mod test {
+    use std::ops::Range;
+
     use super::*;
     #[derive(Debug, PartialEq, Eq)]
     struct V {
@@ -205,4 +207,6 @@ mod test {
         map.set(5, V::new(5, 20));
         assert_eq!(map.get_range(9, 15), vec![&V::new(5, 20)]);
     }
+
+    static_assertions::assert_not_impl_any!(RangeMap<usize, Range<usize>>: Sync, Send);
 }

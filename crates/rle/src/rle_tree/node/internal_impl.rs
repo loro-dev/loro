@@ -220,13 +220,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let next = self.children[right_index]
             .get_last_leaf()
             .and_then(|x| x.next);
-        if let Some(mut prev) = prev {
-            let prev = unsafe { prev.as_mut() };
-            prev.next = next;
-        }
-        if let Some(mut next) = next {
-            let next = unsafe { next.as_mut() };
-            next.prev = prev;
+        // SAFETY: rle_tree is single threaded
+        unsafe {
+            if let Some(mut prev) = prev {
+                let prev = prev.as_mut();
+                prev.next = next;
+            }
+            if let Some(mut next) = next {
+                let next = next.as_mut();
+                next.prev = prev;
+            }
         }
     }
 
@@ -372,12 +375,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut any_delete: bool;
         loop {
             any_delete = false;
-            for (_, mut node_ptr) in zipper.iter() {
+            for (_, mut node_ptr) in zipper.iter_mut() {
                 if should_skip.contains(&node_ptr) {
                     continue;
                 }
 
-                let node = unsafe { node_ptr.as_mut() };
+                // SAFETY: node_ptr points to a valid descendant of self
+                let node: &mut Node<'a, T, A> = unsafe { node_ptr.as_mut() };
                 if let Some(node) = node.as_internal() {
                     let ptr = node as *const InternalNode<'a, T, A>;
                     if removed.contains(&ptr) {
@@ -395,6 +399,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 if let Some((sibling, either)) = node.get_a_sibling() {
                     // if has sibling, borrow or merge to it
                     let sibling: &mut Node<'a, T, A> =
+                        // SAFETY: node's sibling points to a valid descendant of self
                         unsafe { &mut *((sibling as *const _) as usize as *mut _) };
                     if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
                         node.merge_to_sibling(sibling, either, notify);

@@ -91,6 +91,7 @@ fn test(interactions: &[Interaction]) {
     let mut range_map: RangeMap<u64, ValueIndex<'_>> = Default::default();
     for interaction in interactions.iter() {
         let mut func = |value: &Value, node: *mut LeafNode<'_, Value, ValueTreeTrait>| {
+            // SAFETY: this is safe because node must be valid
             let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
             range_map.set(
                 value.value,
@@ -126,6 +127,7 @@ fn test(interactions: &[Interaction]) {
                     origin_value,
                     range
                 );
+                // SAFETY: this is a test
                 assert!(!unsafe { origin_cursor.0.leaf.as_ref().is_deleted() });
                 let origin_leaf_ptr = origin_cursor.0.leaf.as_ptr() as usize;
                 let range_map_ptr = range_map_out.value.as_ptr() as usize;

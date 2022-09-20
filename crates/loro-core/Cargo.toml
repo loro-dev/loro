@@ -24,6 +24,7 @@ num = "0.4.0"
 proptest = "1.0.0"
 proptest-derive = "0.3.0"
 rand = "0.8.5"
+static_assertions = "1.1.0"
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
