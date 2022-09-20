@@ -20,6 +20,7 @@
 //!
 //!
 #![allow(dead_code)]
+#![deny(clippy::undocumented_unsafe_blocks)]
 pub mod range_map;
 mod rle_trait;
 pub mod rle_tree;

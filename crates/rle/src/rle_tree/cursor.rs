@@ -62,6 +62,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
         }
     }
 
+    /// # Safety
+    ///
+    /// we need to make sure that the cursor is still valid
     #[inline]
     pub unsafe fn as_ref(&self) -> &'tree T {
         self.leaf.as_ref().children[self.index]
@@ -86,6 +89,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
         }
     }
 
+    /// # Safety
+    ///
+    /// we need to make sure that the cursor is still valid
     pub unsafe fn next(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if leaf.children.len() > self.index + 1 {
@@ -95,6 +101,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
         leaf.next.map(|next| Self::new(next, 0, 0, Position::Start))
     }
 
+    /// # Safety
+    ///
+    /// we need to make sure that the cursor is still valid
     pub unsafe fn prev(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if self.index > 0 {
@@ -109,6 +118,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'tree, 'bump, T, A> {
     #[inline]
     fn as_ref(&self) -> &'tree T {
+        // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.as_ref() }
     }
 }
@@ -116,21 +126,25 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'t
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     #[inline]
     pub fn as_tree_ref(&self) -> &'tree T {
+        // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.as_ref() }
     }
 
     #[inline]
     pub fn next(&self) -> Option<Self> {
+        // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.next().map(|x| Self(x)) }
     }
 
     #[inline]
     pub fn prev(&self) -> Option<Self> {
+        // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.prev().map(|x| Self(x)) }
     }
 
     #[inline]
     pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+        // SAFETY: SafeCursor has shared reference lifetime to the tree
         unsafe { self.0.leaf.as_ref() }
     }
 
@@ -170,6 +184,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T>
 {
     #[inline]
     fn as_ref(&self) -> &T {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.as_ref() }
     }
 }
@@ -177,11 +192,13 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T>
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
     pub fn as_ref_(&self) -> &'tree T {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.as_ref() }
     }
 
     #[inline]
     pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.leaf.as_ref() }
     }
 
@@ -204,19 +221,23 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
 
     #[inline]
     fn as_tree_mut(&mut self) -> &'tree mut T {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.as_mut() }
     }
 
     #[inline]
     pub fn update_cache_recursively(&mut self) {
-        let leaf = unsafe { self.0.leaf.as_mut() };
-        A::update_cache_leaf(leaf);
-        let mut node = unsafe { leaf.parent.as_mut() };
-        loop {
-            A::update_cache_internal(node);
-            match node.parent {
-                Some(mut parent) => node = unsafe { parent.as_mut() },
-                None => return,
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
+        unsafe {
+            let leaf = self.0.leaf.as_mut();
+            A::update_cache_leaf(leaf);
+            let mut node = leaf.parent.as_mut();
+            loop {
+                A::update_cache_internal(node);
+                match node.parent {
+                    Some(mut parent) => node = parent.as_mut(),
+                    None => return,
+                }
             }
         }
     }
@@ -228,11 +249,15 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
 
     #[inline]
     pub fn next(&self) -> Option<Self> {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
+        // get a reference to the element
         unsafe { self.0.next().map(|x| Self(x)) }
     }
 
     #[inline]
     pub fn prev(&self) -> Option<Self> {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
+        // get a reference to the element
         unsafe { self.0.prev().map(|x| Self(x)) }
     }
 
@@ -257,6 +282,8 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
 {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
+        // get a exclusive reference to the element
         unsafe { self.0.as_mut() }
     }
 }

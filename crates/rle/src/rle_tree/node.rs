@@ -88,17 +88,23 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
     #[inline]
     pub(crate) fn parent_mut(&mut self) -> Option<&mut InternalNode<'a, T, A>> {
-        match self {
-            Node::Internal(node) => unsafe { node.parent.map(|mut x| x.as_mut()) },
-            Node::Leaf(node) => Some(unsafe { node.parent.as_mut() }),
+        // SAFETY: all tree data is pinned and can only be operating on single thread
+        unsafe {
+            match self {
+                Node::Internal(node) => node.parent.map(|mut x| x.as_mut()),
+                Node::Leaf(node) => Some(node.parent.as_mut()),
+            }
         }
     }
 
     #[inline]
     pub(crate) fn parent(&self) -> Option<&InternalNode<'a, T, A>> {
-        match self {
-            Node::Internal(node) => node.parent.map(|x| unsafe { x.as_ref() }),
-            Node::Leaf(node) => Some(unsafe { node.parent.as_ref() }),
+        // SAFETY: all tree data is pinned and can only be operating on single thread
+        unsafe {
+            match self {
+                Node::Internal(node) => node.parent.map(|x| x.as_ref()),
+                Node::Leaf(node) => Some(node.parent.as_ref()),
+            }
         }
     }
 
