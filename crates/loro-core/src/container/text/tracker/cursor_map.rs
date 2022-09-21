@@ -8,6 +8,7 @@ use crate::span::IdSpan;
 
 use super::y_span::{YSpan, YSpanTreeTrait};
 
+// marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum Marker {

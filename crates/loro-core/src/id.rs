@@ -27,6 +27,17 @@ impl ID {
         self.client_id == u64::MAX
     }
 
+    pub fn unknown(counter: Counter) -> Self {
+        ID {
+            client_id: 0,
+            counter,
+        }
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.client_id == 0
+    }
+
     #[inline]
     pub(crate) fn is_connected_id(&self, other: &Self, self_len: usize) -> bool {
         self.client_id == other.client_id && self.counter + self_len as Counter == other.counter
