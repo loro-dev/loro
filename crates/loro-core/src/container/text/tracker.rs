@@ -47,7 +47,7 @@ impl Tracker {
                     origin_right: ID::null(),
                     id: min,
                     status: Status::new(),
-                    text: new_unknown_text(len),
+                    len,
                 },
                 &mut |yspan, leaf| {
                     id_to_cursor.set(
@@ -82,7 +82,7 @@ impl Tracker {
                 if let Some(text_content) = downcast_ref::<TextOpContent>(&**content) {
                     match text_content {
                         TextOpContent::Insert { id, text, pos } => {
-                            let yspan = self.content.new_yspan_at_pos(*id, *pos, text.clone());
+                            let yspan = self.content.new_yspan_at_pos(*id, *pos, text.len());
                         }
                         TextOpContent::Delete { id, pos, len } => todo!(),
                     }

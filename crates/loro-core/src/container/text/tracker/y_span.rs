@@ -47,7 +47,7 @@ pub(super) struct YSpan {
     pub origin_left: ID,
     pub origin_right: ID,
     pub id: ID,
-    pub text: TextPointer,
+    pub len: usize,
     pub status: Status,
 }
 
@@ -66,12 +66,12 @@ pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
 impl YSpan {
     #[inline]
     pub fn last_id(&self) -> ID {
-        self.id.inc(rle::HasLength::len(&self.text) as i32 - 1)
+        self.id.inc(self.len as i32 - 1)
     }
 
     #[inline]
     pub fn can_be_origin(&self) -> bool {
-        debug_assert!(rle::HasLength::len(&self.text) > 0);
+        debug_assert!(self.len > 0);
         self.status.is_activated()
     }
 }
@@ -84,12 +84,11 @@ impl Mergable for YSpan {
             && self.id.counter + self.len() as Counter - 1 == other.origin_left.counter
             && self.origin_right == other.origin_right
             && self.status == other.status
-            && self.text.is_mergable(&other.text, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
         self.origin_right = other.origin_right;
-        self.text.merge(&other.text, &());
+        self.len += other.len;
     }
 }
 
@@ -100,7 +99,7 @@ impl Sliceable for YSpan {
                 origin_left: self.origin_left,
                 origin_right: self.origin_right,
                 id: self.id,
-                text: self.text.slice(from, to),
+                len: to - from,
                 status: self.status.clone(),
             }
         } else {
@@ -114,7 +113,7 @@ impl Sliceable for YSpan {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as Counter,
                 },
-                text: self.text.slice(from, to),
+                len: to - from,
                 status: self.status.clone(),
             }
         }
@@ -131,7 +130,7 @@ impl HasLength for YSpan {
     #[inline]
     fn len(&self) -> usize {
         if self.status.is_activated() {
-            rle::HasLength::len(&self.text)
+            self.len
         } else {
             0
         }
@@ -141,7 +140,7 @@ impl HasLength for YSpan {
 #[cfg(test)]
 mod test {
     use crate::{
-        container::{text::text_content::TextPointer, ContainerID, ContainerType},
+        container::{ContainerID, ContainerType},
         id::ROOT_ID,
         ContentType, Op, OpContent, ID,
     };
@@ -159,7 +158,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: TextPointer::Slice(0..1),
+                    len: 1,
                     status: Default::default(),
                 }),
             },
@@ -175,7 +174,7 @@ mod test {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
-                    text: TextPointer::Slice(1..2),
+                    len: 1,
                     status: Default::default(),
                 }),
             },
@@ -202,7 +201,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: TextPointer::Slice(2..6),
+                    len: 4,
                     status: Default::default(),
                 }),
             },
@@ -218,7 +217,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
-                    text: TextPointer::Slice(3..7),
+                    len: 4,
                     status: Default::default(),
                 }),
             },
@@ -230,11 +229,11 @@ mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(|x| rle::HasLength::len(
-                    &crate::op::utils::downcast_ref::<YSpan>(&**x.into_inner().insert_content())
-                        .unwrap()
-                        .text
-                ))
+                .map(|x| crate::op::utils::downcast_ref::<YSpan>(
+                    &**x.into_inner().insert_content()
+                )
+                .unwrap()
+                .len)
                 .collect::<Vec<usize>>(),
             vec![2, 2]
         )
