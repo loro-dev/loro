@@ -12,6 +12,15 @@ pub(super) struct Status {
 
 impl Status {
     #[inline]
+    pub fn new() -> Self {
+        Status {
+            unapplied: false,
+            delete_times: 0,
+            undo_times: 0,
+        }
+    }
+
+    #[inline]
     pub fn is_activated(&self) -> bool {
         !self.unapplied && self.delete_times == 0 && self.undo_times == 0
     }
@@ -57,8 +66,7 @@ pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
 impl YSpan {
     #[inline]
     pub fn last_id(&self) -> ID {
-        self.id
-            .inc(std::iter::ExactSizeIterator::len(&self.text) as i32 - 1)
+        self.id.inc(rle::HasLength::len(&self.text) as i32 - 1)
     }
 
     #[inline]
@@ -133,7 +141,7 @@ impl HasLength for YSpan {
 #[cfg(test)]
 mod test {
     use crate::{
-        container::{ContainerID, ContainerType},
+        container::{text::text_content::TextPointer, ContainerID, ContainerType},
         id::ROOT_ID,
         ContentType, Op, OpContent, ID,
     };
@@ -151,7 +159,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: 0..1,
+                    text: TextPointer::Slice(0..1),
                     status: Default::default(),
                 }),
             },
@@ -167,7 +175,7 @@ mod test {
                     origin_left: ID::new(0, 1),
                     origin_right: ID::null(),
                     id: ID::new(0, 2),
-                    text: 1..2,
+                    text: TextPointer::Slice(1..2),
                     status: Default::default(),
                 }),
             },
@@ -194,7 +202,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::null(),
                     id: ID::new(0, 1),
-                    text: 2..6,
+                    text: TextPointer::Slice(2..6),
                     status: Default::default(),
                 }),
             },
@@ -210,7 +218,7 @@ mod test {
                     origin_left: ID::new(0, 0),
                     origin_right: ID::new(0, 1),
                     id: ID::new(0, 5),
-                    text: 3..7,
+                    text: TextPointer::Slice(3..7),
                     status: Default::default(),
                 }),
             },
