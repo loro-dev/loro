@@ -20,13 +20,13 @@ struct CursorWithId<'tree> {
 
 impl ContentMap {
     #[inline]
-    pub fn new_yspan_at_pos(&mut self, id: ID, pos: usize, text: TextPointer) -> YSpan {
+    pub fn new_yspan_at_pos(&mut self, id: ID, pos: usize, len: usize) -> YSpan {
         let (left, right) = self.get_sibling_at(pos);
         YSpan {
             origin_left: left.map(|x| x.id).unwrap_or_else(ID::null),
             origin_right: right.map(|x| x.id).unwrap_or_else(ID::null),
             id,
-            text,
+            len,
             status: Default::default(),
         }
     }
