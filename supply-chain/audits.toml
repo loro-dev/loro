@@ -1,0 +1,18 @@
+
+# cargo-vet audits file
+
+[[audits.ctor]]
+who = "Zixuan Chen <remch183@outlook.com>"
+criteria = "safe-to-run"
+version = "0.1.23"
+
+[[audits.fxhash]]
+who = "Zixuan Chen <remch183@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.2.1"
+
+[[audits.num]]
+who = "Zixuan Chen <remch183@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.4.0"
+
