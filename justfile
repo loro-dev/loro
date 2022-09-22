@@ -24,8 +24,8 @@ fix:
 deny:
   cargo deny check
 
-crev:
-  cargo crev crate check
+vet:
+  cargo vet
 
 bench-rle:
   cd crates/rle
