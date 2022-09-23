@@ -1,6 +1,6 @@
-mod notify_test;
+mod notify_prop_test;
 mod range_rle_test;
-mod string_fuzzy;
+mod string_prop_test;
 use ctor::ctor;
 
 #[ctor]
