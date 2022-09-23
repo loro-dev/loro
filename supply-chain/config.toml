@@ -68,10 +68,6 @@ criteria = "safe-to-deploy"
 version = "1.0.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.color-backtrace]]
-version = "0.5.1"
-criteria = "safe-to-run"
-
 [[exemptions.cpufeatures]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
@@ -190,10 +186,6 @@ criteria = "safe-to-run"
 
 [[exemptions.once_cell]]
 version = "1.15.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.ouroboros]]
-version = "0.15.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.ouroboros_macro]]
