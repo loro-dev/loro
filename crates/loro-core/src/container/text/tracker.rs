@@ -1,6 +1,9 @@
 use std::ptr::NonNull;
 
-use rle::{rle_tree::node::LeafNode, HasLength};
+use rle::{
+    rle_tree::{iter::Iter, node::LeafNode},
+    HasLength,
+};
 
 use crate::{
     id::{Counter, ID},
@@ -15,12 +18,18 @@ use self::{
     y_span::{Status, YSpan},
 };
 
-use super::text_content::{new_unknown_text, TextOpContent};
+use super::text_content::TextOpContent;
 
 mod content_map;
 mod cursor_map;
 mod y_span;
 
+/// A tracker for a single text, we can use it to calculate the effect of an operation on a text.
+///
+/// # Note
+///
+/// - [YSpan] never gets removed in both [ContentMap] and [CursorMap]
+///     - The deleted contents are marked with deleted, but still lives on the [ContentMap] with length of 0
 struct Tracker {
     content: ContentMap,
     id_to_cursor: CursorMap,
@@ -76,13 +85,22 @@ impl Tracker {
     fn turn_off(&mut self, _id: IdSpan) {}
     fn checkout(&mut self, _vv: VersionVector) {}
 
+    /// apply an operation directly to the current tracker
     fn apply(&mut self, op: &Op) {
         match &op.content {
             crate::op::OpContent::Normal { content } => {
                 if let Some(text_content) = downcast_ref::<TextOpContent>(&**content) {
                     match text_content {
                         TextOpContent::Insert { id, text, pos } => {
-                            let yspan = self.content.new_yspan_at_pos(*id, *pos, text.len());
+                            self.content.insert_yspan_at_pos(
+                                *id,
+                                *pos,
+                                text.len(),
+                                &mut |v, leaf| {
+
+                                    //TODO notify
+                                },
+                            );
                         }
                         TextOpContent::Delete { id, pos, len } => todo!(),
                     }

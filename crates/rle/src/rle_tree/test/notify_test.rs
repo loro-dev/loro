@@ -15,8 +15,15 @@ type ValueTreeTrait = CumulateTreeTrait<Value, 4>;
 
 #[derive(enum_as_inner::EnumAsInner, Debug)]
 enum Interaction {
-    Insert { from: usize, len: usize },
-    Delete { from: usize, len: usize },
+    Insert {
+        from: usize,
+        len: usize,
+        use_cursor: bool,
+    },
+    Delete {
+        from: usize,
+        len: usize,
+    },
 }
 
 macro_rules! _println {
@@ -38,7 +45,11 @@ impl Interaction {
         R: rand::Rng,
     {
         match self {
-            Interaction::Insert { from, len } => tree.with_tree_mut(|tree| {
+            Interaction::Insert {
+                from,
+                len,
+                use_cursor,
+            } => tree.with_tree_mut(|tree| {
                 let mut from = *from;
                 let len = *len;
                 if tree.len() == 0 {
@@ -52,7 +63,15 @@ impl Interaction {
                     value: rng.next_u64(),
                 };
                 _println!("Insert {{from: {}, len: {}}},", from, len);
-                tree.insert_notify(from, value, notify);
+                if *use_cursor {
+                    if let Some(mut cursor) = tree.get_mut(from) {
+                        cursor.insert_notify(value, notify)
+                    } else {
+                        tree.insert_notify(from, value, notify);
+                    }
+                } else {
+                    tree.insert_notify(from, value, notify);
+                }
             }),
             Interaction::Delete { from, len } => tree.with_tree_mut(|tree| {
                 let mut from = *from;
@@ -151,11 +170,13 @@ prop_compose! {
             _type in 0..2,
             from in 0..1000,
             len in 0..10,
+            use_cursor: bool,
         ) -> Interaction {
         if _type == 0 {
             Interaction::Insert {
                 from: from as usize,
                 len: len as usize,
+                use_cursor
             }
         } else {
             Interaction::Delete {
@@ -171,25 +192,53 @@ use Interaction::*;
 #[test]
 fn issue_0() {
     test(&[
-        Interaction::Insert { from: 0, len: 1 },
-        Interaction::Insert { from: 0, len: 2 },
+        Interaction::Insert {
+            from: 0,
+            len: 1,
+            use_cursor: false,
+        },
+        Interaction::Insert {
+            from: 0,
+            len: 2,
+            use_cursor: false,
+        },
     ]);
 }
 
 #[test]
 fn issue_1() {
     test(&[
-        Interaction::Insert { from: 0, len: 3 },
-        Interaction::Insert { from: 1, len: 1 },
+        Interaction::Insert {
+            from: 0,
+            len: 3,
+            use_cursor: false,
+        },
+        Interaction::Insert {
+            from: 1,
+            len: 1,
+            use_cursor: false,
+        },
     ]);
 }
 
 #[test]
 fn issue_2() {
     test(&[
-        Insert { from: 0, len: 5 },
-        Insert { from: 0, len: 6 },
-        Insert { from: 4, len: 3 },
+        Insert {
+            from: 0,
+            len: 5,
+            use_cursor: false,
+        },
+        Insert {
+            from: 0,
+            len: 6,
+            use_cursor: false,
+        },
+        Insert {
+            from: 4,
+            len: 3,
+            use_cursor: false,
+        },
     ])
 }
 
@@ -197,18 +246,34 @@ fn issue_2() {
 fn issue_4() {
     test(&[
         // 0-5
-        Insert { from: 0, len: 5 },
+        Insert {
+            from: 0,
+            len: 5,
+            use_cursor: false,
+        },
         // 0-2, 2-4, 2-5
-        Insert { from: 2, len: 2 },
+        Insert {
+            from: 2,
+            len: 2,
+            use_cursor: true,
+        },
         // 0-2, 2-4, 2-3, 5-6, 3-5
-        Insert { from: 5, len: 1 },
+        Insert {
+            from: 5,
+            len: 1,
+            use_cursor: true,
+        },
     ])
 }
 
 #[test]
 fn issue_5() {
     test(&[
-        Insert { from: 0, len: 0 },
+        Insert {
+            from: 0,
+            len: 0,
+            use_cursor: false,
+        },
         Delete { from: 0, len: 0 },
         Delete { from: 0, len: 0 },
     ])
@@ -222,7 +287,7 @@ mod notify_proptest {
     proptest! {
         #[test]
         fn test_notify(
-            interactions in prop::collection::vec(gen_interaction(), 1..100),
+            interactions in prop::collection::vec(gen_interaction(), 1..1000),
         ) {
             test(&interactions);
         }

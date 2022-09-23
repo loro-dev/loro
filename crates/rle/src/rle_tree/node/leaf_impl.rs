@@ -168,7 +168,52 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
-        match self._insert(raw_index, value, notify) {
+        let result = {
+            if self.children.is_empty() {
+                notify(&value, self);
+                self.children.push(self.bump.alloc(value));
+                Ok(())
+            } else {
+                let FindPosResult {
+                    child_index,
+                    offset,
+                    pos,
+                    ..
+                } = A::find_pos_leaf(self, raw_index);
+                self._insert_at_pos(pos, child_index, offset, value, notify)
+            }
+        };
+        self.with_cache_updated(result)
+    }
+
+    pub(crate) fn insert_at_pos<F>(
+        &mut self,
+        pos: Position,
+        child_index: usize,
+        offset: usize,
+        value: T,
+        notify: &mut F,
+    ) -> Result<(), &'bump mut Node<'bump, T, A>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        let result = {
+            if self.children.is_empty() {
+                notify(&value, self);
+                self.children.push(self.bump.alloc(value));
+                Ok(())
+            } else {
+                self._insert_at_pos(pos, child_index, offset, value, notify)
+            }
+        };
+        self.with_cache_updated(result)
+    }
+
+    fn with_cache_updated(
+        &mut self,
+        result: Result<(), &'bump mut Node<'bump, T, A>>,
+    ) -> Result<(), &'bump mut Node<'bump, T, A>> {
+        match result {
             Ok(_) => {
                 A::update_cache_leaf(self);
                 Ok(())
@@ -181,27 +226,17 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
     }
 
-    fn _insert<F>(
+    fn _insert_at_pos<F>(
         &mut self,
-        raw_index: A::Int,
+        mut pos: Position,
+        mut child_index: usize,
+        mut offset: usize,
         value: T,
         notify: &mut F,
     ) -> Result<(), &'bump mut Node<'bump, T, A>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
-        if self.children.is_empty() {
-            notify(&value, self);
-            self.children.push(self.bump.alloc(value));
-            return Ok(());
-        }
-
-        let FindPosResult {
-            mut child_index,
-            mut offset,
-            mut pos,
-            ..
-        } = A::find_pos_leaf(self, raw_index);
         let self_ptr = self as *mut _;
         let prev = {
             if (pos == Position::Start || pos == Position::Before) && child_index > 0 {
@@ -215,7 +250,6 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 None
             }
         };
-
         if let Some(prev) = prev {
             // clean cut, should no split
             if prev.is_mergable(&value, &()) {
@@ -224,17 +258,14 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 return Ok(());
             }
         }
-
         let clean_cut = pos != Position::Middle;
         if clean_cut {
             return self._insert_with_split(child_index, value, notify);
         }
-
         // need to split child
         let a = self.children[child_index].slice(0, offset);
         let b = self.children[child_index].slice(offset, self.children[child_index].len());
         self.children[child_index] = self.bump.alloc(a);
-
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
             let next_node = self._split(notify);
             let next_leaf = next_node.as_leaf_mut().unwrap();
@@ -262,7 +293,6 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
             return Err(next_node);
         }
-
         notify(&b, self);
         notify(&value, self);
         self.children.insert(child_index + 1, self.bump.alloc(b));
@@ -379,6 +409,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             self.children.insert(index, self.bump.alloc(value));
             Ok(())
         }
+    }
+
+    pub(crate) fn get_index_in_parent(&self) -> Option<usize> {
+        let parent = self.parent;
+        // SAFETY: we know parent must be valid
+        let parent = unsafe { parent.as_ref() };
+        parent
+            .children
+            .iter()
+            .position(|child| std::ptr::eq(child.as_leaf().unwrap(), self))
     }
 }
 

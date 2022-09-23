@@ -332,6 +332,30 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         Ok(())
     }
+
+    pub(crate) fn insert_at_pos(
+        &mut self,
+        index: usize,
+        value: &'a mut Node<'a, T, A>,
+    ) -> Result<(), &'a mut Node<'a, T, A>> {
+        let result = self._insert_with_split(index, value);
+        match result {
+            Ok(_) => {
+                A::update_cache_internal(self);
+                Ok(())
+            }
+            Err(new) => {
+                A::update_cache_internal(self);
+                A::update_cache_internal(new.as_internal_mut().unwrap());
+                if self.is_root() {
+                    self._create_level(new);
+                    Ok(())
+                } else {
+                    Err(new)
+                }
+            }
+        }
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
@@ -483,6 +507,16 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             self.children.insert(child_index, new);
             Ok(())
         }
+    }
+
+    pub(crate) fn get_index_in_parent(&self) -> Option<usize> {
+        let parent = self.parent.unwrap();
+        // SAFETY: we know parent must be valid
+        let parent = unsafe { parent.as_ref() };
+        parent
+            .children
+            .iter()
+            .position(|child| std::ptr::eq(child.as_internal().unwrap(), self))
     }
 }
 

@@ -1,14 +1,17 @@
 use std::ops::{Deref, DerefMut};
 
 use rle::{
-    rle_tree::{Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, RleTree,
 };
 
-use crate::{container::text::text_content::TextPointer, id::ID};
+use crate::id::ID;
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
+/// It stores all the [YSpan] data, including the deleted/undo ones
+///
+/// Its internal state, acquired by traveling from begin to end, represents the **current** state of the tree
 #[repr(transparent)]
 #[derive(Debug, Default)]
 pub(super) struct ContentMap(RleTree<YSpan, YSpanTreeTrait>);
@@ -20,17 +23,23 @@ struct CursorWithId<'tree> {
 
 impl ContentMap {
     #[inline]
-    pub fn new_yspan_at_pos(&mut self, id: ID, pos: usize, len: usize) -> YSpan {
+    pub(super) fn insert_yspan_at_pos<F>(&mut self, id: ID, pos: usize, len: usize, notify: &mut F)
+    where
+        F: FnMut(&YSpan, *const LeafNode<'_, YSpan, YSpanTreeTrait>),
+    {
         let (left, right) = self.get_sibling_at(pos);
-        YSpan {
-            origin_left: left.map(|x| x.id).unwrap_or_else(ID::null),
-            origin_right: right.map(|x| x.id).unwrap_or_else(ID::null),
+        let yspan = YSpan {
+            origin_left: left.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
+            origin_right: right.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
             id,
             len,
             status: Default::default(),
-        }
+        };
+
+        // TODO: insert between left & right
     }
 
+    /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`
     fn get_sibling_at(&self, pos: usize) -> (Option<CursorWithId<'_>>, Option<CursorWithId<'_>>) {
         self.with_tree(|tree| {
             if let Some(cursor) = tree.get(pos) {

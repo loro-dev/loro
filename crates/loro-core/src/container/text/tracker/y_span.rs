@@ -1,6 +1,4 @@
-use crate::{
-    container::text::text_content::TextPointer, id::Counter, ContentType, InsertContent, ID,
-};
+use crate::{id::Counter, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
