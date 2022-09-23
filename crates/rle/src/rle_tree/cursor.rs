@@ -92,6 +92,27 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
+    pub unsafe fn insert_notify<F>(&mut self, value: T, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        let leaf = self.leaf.as_mut();
+        let result = leaf.insert_at_pos(self.pos, self.index, self.offset, value, notify);
+        let mut node = leaf.parent.as_mut();
+        if let Err(new) = result {
+            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
+            while let Err(new) = result {
+                let old_node_index = node.get_index_in_parent().unwrap();
+                // result is err, so we're sure parent is valid
+                node = node.parent.unwrap().as_mut();
+                result = node.insert_at_pos(old_node_index + 1, new);
+            }
+        }
+    }
+
+    /// # Safety
+    ///
+    /// we need to make sure that the cursor is still valid
     pub unsafe fn next(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if leaf.children.len() > self.index + 1 {
@@ -274,6 +295,14 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     #[inline]
     pub fn offset(&self) -> usize {
         self.0.offset
+    }
+
+    pub fn insert_notify<F>(&mut self, value: T, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        // SAFETY: we know the cursor is a valid pointer
+        unsafe { self.0.insert_notify(value, notify) }
     }
 }
 

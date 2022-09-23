@@ -113,7 +113,7 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
         mut index: Self::Int,
     ) -> FindPosResult<usize> {
         if node.children.is_empty() {
-            return FindPosResult::new(0, 0, Position::Before);
+            return FindPosResult::new_not_found(0, 0, Position::Before);
         }
 
         let mut last_cache = 0;
@@ -145,7 +145,7 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
 
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, mut index: Self::Int) -> FindPosResult<usize> {
         if node.children.is_empty() {
-            return FindPosResult::new(0, 0, Position::Before);
+            return FindPosResult::new_not_found(0, 0, Position::Before);
         }
 
         for (i, child) in node.children().iter().enumerate() {
