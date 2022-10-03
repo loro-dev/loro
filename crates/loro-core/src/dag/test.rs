@@ -65,7 +65,7 @@ impl Dag for TestDag {
     }
 
     fn roots(&self) -> Vec<&Self::Node> {
-        self.nodes.iter().map(|(_, v)| &v[0]).collect()
+        self.nodes.values().map(|v| &v[0]).collect()
     }
 
     fn contains(&self, id: ID) -> bool {
@@ -107,7 +107,7 @@ impl TestDag {
         let deps = std::mem::replace(&mut self.frontier, vec![id]);
         self.nodes
             .entry(client_id)
-            .or_insert(vec![])
+            .or_default()
             .push(TestNode::new(id, self.next_lamport, deps, len));
         self.next_lamport += len as u32;
     }
@@ -162,7 +162,7 @@ impl TestDag {
         );
         self.nodes
             .entry(client_id)
-            .or_insert(vec![])
+            .or_default()
             .push(node.clone());
         self.version_vec
             .insert(client_id, node.id.counter + node.len as Counter);

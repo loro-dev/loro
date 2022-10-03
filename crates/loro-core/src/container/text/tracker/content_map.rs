@@ -1,5 +1,5 @@
 use crdt_list::crdt::ListCrdt;
-use crdt_list::yata::Yata;
+
 use std::ops::{Deref, DerefMut};
 
 use rle::{
@@ -25,12 +25,12 @@ struct CursorWithId<'tree> {
 
 impl ContentMap {
     #[inline]
-    pub(super) fn insert_yspan_at_pos<F>(&mut self, id: ID, pos: usize, len: usize, notify: &mut F)
+    pub(super) fn insert_yspan_at_pos<F>(&mut self, id: ID, pos: usize, len: usize, _notify: &mut F)
     where
         F: FnMut(&YSpan, *const LeafNode<'_, YSpan, YSpanTreeTrait>),
     {
         let (left, right) = self.get_sibling_at(pos);
-        let yspan = YSpan {
+        let _yspan = YSpan {
             origin_left: left.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
             origin_right: right.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
             id,

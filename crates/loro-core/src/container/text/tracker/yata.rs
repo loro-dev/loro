@@ -4,7 +4,6 @@ use rle::rle_tree::{iter::IterMut, SafeCursorMut, RleTreeRaw};
 use crate::id::ID;
 
 use super::{
-    content_map::ContentMap,
     y_span::{YSpan, YSpanTreeTrait},
     Tracker, cursor_map::make_notify,
 };
@@ -13,11 +12,11 @@ use super::{
 struct OpSpanSet {}
 
 impl OpSet<YSpan, ID> for OpSpanSet {
-    fn insert(&mut self, value: &YSpan) {
+    fn insert(&mut self, _value: &YSpan) {
         todo!()
     }
 
-    fn contain(&self, id: ID) -> bool {
+    fn contain(&self, _id: ID) -> bool {
         todo!()
     }
 
@@ -75,27 +74,27 @@ impl ListCrdt for YataImpl {
         })
     }
 
-    fn id(op: &Self::OpUnit) -> Self::OpId {
+    fn id(_op: &Self::OpUnit) -> Self::OpId {
         todo!()
     }
 
-    fn cmp_id(op_a: &Self::OpUnit, op_b: &Self::OpUnit) -> std::cmp::Ordering {
+    fn cmp_id(_op_a: &Self::OpUnit, _op_b: &Self::OpUnit) -> std::cmp::Ordering {
         todo!()
     }
 
-    fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
+    fn contains(_op: &Self::OpUnit, _id: Self::OpId) -> bool {
         todo!()
     }
 
-    fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
+    fn integrate(_container: &mut Self::Container, _op: Self::OpUnit) {
         todo!()
     }
 
-    fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
+    fn can_integrate(_container: &Self::Container, _op: &Self::OpUnit) -> bool {
         todo!()
     }
 
-    fn len(container: &Self::Container) -> usize {
+    fn len(_container: &Self::Container) -> usize {
         todo!()
     }
 }

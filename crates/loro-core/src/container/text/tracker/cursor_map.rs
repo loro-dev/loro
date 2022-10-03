@@ -27,7 +27,7 @@ pub(super) enum Marker {
 impl Marker {
     pub fn as_cursor(&self, id: ID) -> Option<SafeCursor<'_, 'static, YSpan, YSpanTreeTrait>> {
         match self {
-            Marker::Insert { ptr, len } => {
+            Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
                 let node = unsafe { ptr.as_ref() };
                 debug_assert!(!node.is_deleted());
@@ -44,7 +44,7 @@ impl Marker {
         id: ID,
     ) -> Option<SafeCursorMut<'_, 'static, YSpan, YSpanTreeTrait>> {
         match self {
-            Marker::Insert { ptr, len } => {
+            Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
                 let node = unsafe { ptr.as_ref() };
                 debug_assert!(!node.is_deleted());
@@ -72,7 +72,7 @@ impl Sliceable for Marker {
 impl HasLength for Marker {
     fn len(&self) -> usize {
         match self {
-            Marker::Insert { ptr, len } => *len,
+            Marker::Insert { ptr: _, len } => *len,
             Marker::Delete(span) => span.len(),
         }
     }
