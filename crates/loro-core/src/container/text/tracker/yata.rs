@@ -6,7 +6,7 @@ use crate::id::ID;
 use super::{
     content_map::ContentMap,
     y_span::{YSpan, YSpanTreeTrait},
-    Tracker,
+    Tracker, cursor_map::make_notify,
 };
 
 #[derive(Default, Debug)]
@@ -69,7 +69,10 @@ impl ListCrdt for YataImpl {
     }
 
     fn insert_at(container: &mut Self::Container, op: Self::OpUnit, pos: usize) {
-        todo!()
+        let mut notify = make_notify(&mut container.id_to_cursor);
+        container.content.with_tree_mut(|tree| {
+            tree.insert_notify(pos, op,  &mut notify);
+        })
     }
 
     fn id(op: &Self::OpUnit) -> Self::OpId {

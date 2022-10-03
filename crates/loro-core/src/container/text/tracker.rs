@@ -1,6 +1,4 @@
-use std::ptr::NonNull;
-
-use rle::{rle_tree::node::LeafNode, HasLength};
+use rle::HasLength;
 
 use crate::{
     id::{Counter, ID},
@@ -11,7 +9,7 @@ use crate::{
 
 use self::{
     content_map::ContentMap,
-    cursor_map::CursorMap,
+    cursor_map::{make_notify, CursorMap},
     y_span::{Status, YSpan},
 };
 
@@ -58,20 +56,7 @@ impl Tracker {
                     status: Status::new(),
                     len,
                 },
-                &mut |yspan, leaf| {
-                    id_to_cursor.set(
-                        yspan.id.into(),
-                        cursor_map::Marker::Insert {
-                            // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
-                            ptr: unsafe {
-                                NonNull::new_unchecked(
-                                    leaf as usize as *mut LeafNode<'static, _, _>,
-                                )
-                            },
-                            len: yspan.len(),
-                        },
-                    )
-                },
+                &mut make_notify(&mut id_to_cursor),
             );
         });
 
