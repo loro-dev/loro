@@ -325,9 +325,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         };
 
         if let Err(new) = new {
-            if let Err(value) = self._insert_with_split(child_index + 1, new) {
-                return Err(value);
-            }
+            self._insert_with_split(child_index + 1, new)?
         }
 
         Ok(())

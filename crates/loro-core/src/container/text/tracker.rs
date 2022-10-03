@@ -81,13 +81,13 @@ impl Tracker {
                                 *id,
                                 *pos,
                                 text.len(),
-                                &mut |v, leaf| {
+                                &mut |_v, _leaf| {
 
                                     //TODO notify
                                 },
                             );
                         }
-                        TextOpContent::Delete { id, pos, len } => todo!(),
+                        TextOpContent::Delete { id: _, pos: _, len: _ } => todo!(),
                     }
                 }
             }
@@ -103,7 +103,7 @@ mod test {
 
     #[test]
     fn test_turn_off() {
-        let mut tracker = Tracker::new();
+        let _tracker = Tracker::new();
         // tracker.turn_off(IdSpan::new(1, 1, 2));
     }
 }

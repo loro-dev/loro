@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::RwLock};
+use std::{pin::Pin};
 
 use crate::{
     configure::Configure,

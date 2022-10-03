@@ -10,7 +10,7 @@ use crate::{
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
-    InternalString, LogStore,
+    InternalString,
 };
 
 use super::MapInsertContent;
