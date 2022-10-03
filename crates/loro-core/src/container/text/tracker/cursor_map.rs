@@ -107,3 +107,20 @@ impl Mergable for Marker {
 }
 
 pub(super) type CursorMap = RangeMap<u128, Marker>;
+
+pub(super) fn make_notify(
+    map: &mut CursorMap,
+) -> impl for<'a> FnMut(&YSpan, *mut LeafNode<'a, YSpan, YSpanTreeTrait>) + '_ {
+    |span, leaf| {
+        map.set(
+            span.id.into(),
+            Marker::Insert {
+                // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
+                ptr: unsafe {
+                    NonNull::new_unchecked(leaf as usize as *mut LeafNode<'static, _, _>)
+                },
+                len: span.len(),
+            },
+        )
+    }
+}
