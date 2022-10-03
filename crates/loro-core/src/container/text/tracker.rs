@@ -1,9 +1,6 @@
 use std::ptr::NonNull;
 
-use rle::{
-    rle_tree::{iter::Iter, node::LeafNode},
-    HasLength,
-};
+use rle::{rle_tree::node::LeafNode, HasLength};
 
 use crate::{
     id::{Counter, ID},
@@ -23,6 +20,7 @@ use super::text_content::TextOpContent;
 mod content_map;
 mod cursor_map;
 mod y_span;
+mod yata;
 
 /// A tracker for a single text, we can use it to calculate the effect of an operation on a text.
 ///
@@ -30,6 +28,8 @@ mod y_span;
 ///
 /// - [YSpan] never gets removed in both [ContentMap] and [CursorMap]
 ///     - The deleted contents are marked with deleted, but still lives on the [ContentMap] with length of 0
+///
+#[derive(Debug)]
 struct Tracker {
     content: ContentMap,
     id_to_cursor: CursorMap,

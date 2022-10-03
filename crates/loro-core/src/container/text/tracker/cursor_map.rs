@@ -2,9 +2,13 @@ use std::{fmt::Debug, ptr::NonNull};
 
 use enum_as_inner::EnumAsInner;
 
-use rle::{range_map::RangeMap, rle_tree::node::LeafNode, HasLength, Mergable, Sliceable};
+use rle::{
+    range_map::RangeMap,
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut},
+    HasLength, Mergable, Sliceable,
+};
 
-use crate::span::IdSpan;
+use crate::{id::ID, span::IdSpan};
 
 use super::y_span::{YSpan, YSpanTreeTrait};
 
@@ -18,6 +22,39 @@ pub(super) enum Marker {
     },
     Delete(IdSpan),
     // TODO: REDO, UNDO
+}
+
+impl Marker {
+    pub fn as_cursor(&self, id: ID) -> Option<SafeCursor<'_, 'static, YSpan, YSpanTreeTrait>> {
+        match self {
+            Marker::Insert { ptr, len } => {
+                // SAFETY: tree data is always valid
+                let node = unsafe { ptr.as_ref() };
+                debug_assert!(!node.is_deleted());
+                let position = node.children().iter().position(|x| x.contain_id(id))?;
+                // SAFETY: we just checked it is valid
+                Some(unsafe { SafeCursor::new(*ptr, position, 0, rle::rle_tree::Position::Start) })
+            }
+            Marker::Delete(_) => None,
+        }
+    }
+
+    pub fn as_cursor_mut(
+        &mut self,
+        id: ID,
+    ) -> Option<SafeCursorMut<'_, 'static, YSpan, YSpanTreeTrait>> {
+        match self {
+            Marker::Insert { ptr, len } => {
+                // SAFETY: tree data is always valid
+                let node = unsafe { ptr.as_ref() };
+                debug_assert!(!node.is_deleted());
+                let position = node.children().iter().position(|x| x.contain_id(id))?;
+                // SAFETY: we just checked it is valid
+                Some(unsafe { SafeCursorMut::new(*ptr, position, 0, Position::Start) })
+            }
+            Marker::Delete(_) => None,
+        }
+    }
 }
 
 impl Sliceable for Marker {

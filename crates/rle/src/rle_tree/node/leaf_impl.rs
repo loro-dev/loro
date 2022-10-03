@@ -52,13 +52,17 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     #[inline]
     pub fn get_cursor<'tree>(&'tree self, pos: A::Int) -> SafeCursor<'tree, 'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
-        SafeCursor::new(self.into(), result.child_index, result.offset, result.pos)
+        assert!(result.found);
+        // SAFETY: result.found is true
+        unsafe { SafeCursor::new(self.into(), result.child_index, result.offset, result.pos) }
     }
 
     #[inline]
     pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'b, 'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
-        SafeCursorMut::new(self.into(), result.child_index, result.offset, result.pos)
+        assert!(result.found);
+        // SAFETY: result.found is true
+        unsafe { SafeCursorMut::new(self.into(), result.child_index, result.offset, result.pos) }
     }
 
     pub fn push_child<F>(
@@ -305,6 +309,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     pub fn next(&self) -> Option<&Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.next.map(|p| p.as_ref()) }
+    }
+
+    #[inline]
+    pub fn next_mut(&mut self) -> Option<&mut Self> {
+        // SAFETY: internal variant ensure prev and next are valid reference
+        unsafe { self.next.map(|mut p| p.as_mut()) }
     }
 
     #[inline]

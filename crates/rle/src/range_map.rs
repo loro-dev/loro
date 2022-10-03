@@ -46,6 +46,7 @@ impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, I
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + 'static> {
     pub(crate) tree:
         RleTree<WithGlobalIndex<Value, Index>, GlobalTreeTrait<WithGlobalIndex<Value, Index>, 10>>,

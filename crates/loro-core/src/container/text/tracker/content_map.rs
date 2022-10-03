@@ -1,3 +1,5 @@
+use crdt_list::crdt::ListCrdt;
+use crdt_list::yata::Yata;
 use std::ops::{Deref, DerefMut};
 
 use rle::{
@@ -36,7 +38,7 @@ impl ContentMap {
             status: Default::default(),
         };
 
-        // TODO: insert between left & right
+        // TODO: integrate yjs
     }
 
     /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`
