@@ -72,6 +72,13 @@ impl YSpan {
         debug_assert!(self.len > 0);
         self.status.is_activated()
     }
+
+    #[inline]
+    pub fn contain_id(&self, id: ID) -> bool {
+        self.id.client_id == id.client_id
+            && self.id.counter <= id.counter
+            && self.last_id().counter > id.counter
+    }
 }
 
 impl Mergable for YSpan {

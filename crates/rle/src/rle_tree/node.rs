@@ -71,6 +71,17 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     }
 
     #[inline]
+    pub(crate) fn get_first_leaf_mut(&mut self) -> Option<&mut LeafNode<'a, T, A>> {
+        match self {
+            Self::Internal(node) => node
+                .children
+                .first_mut()
+                .and_then(|child| child.get_first_leaf_mut()),
+            Self::Leaf(node) => Some(node),
+        }
+    }
+
+    #[inline]
     pub(crate) fn get_last_leaf(&self) -> Option<&LeafNode<'a, T, A>> {
         match self {
             Self::Internal(node) => node.children.last().and_then(|child| child.get_last_leaf()),

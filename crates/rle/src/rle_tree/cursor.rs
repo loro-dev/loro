@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ptr::NonNull};
+use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::{Rle, RleTreeTrait};
 
@@ -184,8 +184,11 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
         self.0.offset
     }
 
+    /// # Safety
+    ///
+    /// Users should make sure aht leaf is pointing to a valid LeafNode with 'bump lifetime, and index is inbound
     #[inline]
-    pub(crate) fn new(
+    pub unsafe fn new(
         leaf: NonNull<LeafNode<'bump, T, A>>,
         index: usize,
         offset: usize,
@@ -224,6 +227,12 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 
     #[inline]
+    pub fn leaf_mut(&mut self) -> &'tree mut LeafNode<'bump, T, A> {
+        // SAFETY: SafeCursorMut is a exclusive reference to the tree
+        unsafe { self.0.leaf.as_mut() }
+    }
+
+    #[inline]
     pub fn child_index(&self) -> usize {
         self.0.index
     }
@@ -231,7 +240,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
     #[inline]
-    pub(crate) fn new(
+    pub unsafe fn new(
         leaf: NonNull<LeafNode<'bump, T, A>>,
         index: usize,
         offset: usize,
@@ -314,5 +323,21 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
         // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
         // get a exclusive reference to the element
         unsafe { self.0.as_mut() }
+    }
+}
+
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursor<'tree, 'bump, T, A> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursorMut<'tree, 'bump, T, A> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }

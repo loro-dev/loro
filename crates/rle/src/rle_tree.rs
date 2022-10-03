@@ -3,6 +3,7 @@ use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
+use num::FromPrimitive;
 use ouroboros::self_referencing;
 use std::marker::{PhantomData, PhantomPinned};
 pub use tree_trait::Position;
@@ -93,12 +94,10 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(
-                        leaf.into(),
-                        result.child_index,
-                        result.offset,
-                        result.pos,
-                    ));
+                    // SAFETY: result is valid
+                    return Some(unsafe {
+                        SafeCursor::new(leaf.into(), result.child_index, result.offset, result.pos)
+                    });
                 }
             }
         }
@@ -125,12 +124,10 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
                         return None;
                     }
 
-                    return Some(SafeCursor::new(
-                        leaf.into(),
-                        result.child_index,
-                        result.offset,
-                        result.pos,
-                    ));
+                    // SAFETY: result is valid
+                    return Some(unsafe {
+                        SafeCursor::new(leaf.into(), result.child_index, result.offset, result.pos)
+                    });
                 }
             }
         }
@@ -142,8 +139,42 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
         cursor.map(|x| SafeCursorMut(x.0))
     }
 
+    #[inline]
     pub fn iter(&self) -> iter::Iter<'_, 'bump, T, A> {
         iter::Iter::new(self.node.get_first_leaf())
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> iter::IterMut<'_, 'bump, T, A> {
+        iter::IterMut::new(self.node.get_first_leaf_mut())
+    }
+
+    #[inline]
+    pub fn empty(&self) -> bool {
+        self.len() == A::Int::from_usize(0).unwrap()
+    }
+
+    pub fn iter_mut_in<'tree>(
+        &'tree mut self,
+        start: Option<SafeCursor<'tree, 'bump, T, A>>,
+        end: Option<SafeCursor<'tree, 'bump, T, A>>,
+    ) -> iter::IterMut<'tree, 'bump, T, A> {
+        if self.empty() || (start.is_none() && end.is_none()) {
+            self.iter_mut()
+        } else {
+            // SAFETY: this is safe because we know there are at least one element in the tree
+            let start = start.unwrap_or_else(|| unsafe {
+                SafeCursor::new(
+                    self.node.get_first_leaf().unwrap().into(),
+                    0,
+                    0,
+                    Position::Start,
+                )
+            });
+
+            let start: SafeCursorMut<'tree, 'bump, T, A> = SafeCursorMut(start.0);
+            iter::IterMut::from_cursor(start, end).unwrap_or_else(|| self.iter_mut())
+        }
     }
 
     pub fn delete_range(&mut self, start: Option<A::Int>, end: Option<A::Int>) {
