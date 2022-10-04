@@ -33,7 +33,15 @@ impl Marker {
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
                 // SAFETY: we just checked it is valid
-                Some(unsafe { SafeCursor::new(*ptr, position, 0, rle::rle_tree::Position::Start) })
+                Some(unsafe {
+                    SafeCursor::new(
+                        *ptr,
+                        position,
+                        0,
+                        rle::rle_tree::Position::Start,
+                        self.len(),
+                    )
+                })
             }
             Marker::Delete(_) => None,
         }
@@ -50,7 +58,7 @@ impl Marker {
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
                 // SAFETY: we just checked it is valid
-                Some(unsafe { SafeCursorMut::new(*ptr, position, 0, Position::Start) })
+                Some(unsafe { SafeCursorMut::new(*ptr, position, 0, Position::Start, self.len()) })
             }
             Marker::Delete(_) => None,
         }

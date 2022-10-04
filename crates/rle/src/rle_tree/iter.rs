@@ -37,7 +37,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
         mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
     ) -> Option<Self> {
         if start.0.pos == Position::After {
-            start = start.next()?
+            start = start.next_elem_start()?
         }
 
         if let Some(end_inner) = end {
@@ -45,7 +45,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
                 || end_inner.0.pos == Position::End
                 || end_inner.0.pos == Position::After
             {
-                end = end_inner.next();
+                end = end_inner.next_elem_start();
             }
         }
 
@@ -75,7 +75,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
         mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
     ) -> Option<Self> {
         if start.0.pos == Position::After {
-            start = start.next()?
+            start = start.next_elem_start()?
         }
 
         if let Some(end_inner) = end {
@@ -83,7 +83,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
                 || end_inner.0.pos == Position::End
                 || end_inner.0.pos == Position::After
             {
-                end = end_inner.next();
+                end = end_inner.next_elem_start();
             }
         }
 
@@ -114,7 +114,13 @@ impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'rf, 'bump, T, A>
                     self.child_index += 1;
                     // SAFETY: we just checked that the child exists
                     return Some(unsafe {
-                        SafeCursor::new(node.into(), self.child_index - 1, 0, Position::Start)
+                        SafeCursor::new(
+                            node.into(),
+                            self.child_index - 1,
+                            0,
+                            Position::Start,
+                            node.children[self.child_index - 1].len(),
+                        )
                     });
                 }
                 None => match node.next() {
@@ -158,12 +164,13 @@ impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'rf, 'bump, T,
             let node_ptr = node as *const _;
             match node.children.get(self.child_index) {
                 Some(_) => {
+                    let len = node.children()[self.child_index - 1].len();
                     self.child_index += 1;
                     let leaf = node.into();
                     self.node = Some(node);
                     // SAFETY: we just checked that the child exists
                     return Some(unsafe {
-                        SafeCursorMut::new(leaf, self.child_index - 1, 0, Position::Start)
+                        SafeCursorMut::new(leaf, self.child_index - 1, 0, Position::Start, len)
                     });
                 }
                 None => match node.next_mut() {
