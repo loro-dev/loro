@@ -42,8 +42,8 @@ impl Status {
 
 #[derive(Debug, Clone)]
 pub(super) struct YSpan {
-    pub origin_left: ID,
-    pub origin_right: ID,
+    pub origin_left: Option<ID>,
+    pub origin_right: Option<ID>,
     pub id: ID,
     pub len: usize,
     pub status: Status,
@@ -85,8 +85,7 @@ impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
             && self.id.counter + self.len() as Counter == other.id.counter
-            && self.id.client_id == other.origin_left.client_id
-            && self.id.counter + self.len() as Counter - 1 == other.origin_left.counter
+            && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
             && self.origin_right == other.origin_right
             && self.status == other.status
     }
@@ -109,10 +108,10 @@ impl Sliceable for YSpan {
             }
         } else {
             YSpan {
-                origin_left: ID {
+                origin_left: Some(ID {
                     client_id: self.id.client_id,
                     counter: self.id.counter + from as Counter - 1,
-                },
+                }),
                 origin_right: self.origin_right,
                 id: ID {
                     client_id: self.id.client_id,
@@ -160,8 +159,8 @@ mod test {
             ID::new(0, 1),
             OpContent::Normal {
                 content: Box::new(YSpan {
-                    origin_left: ID::new(0, 0),
-                    origin_right: ID::null(),
+                    origin_left: Some(ID::new(0, 0)),
+                    origin_right: None,
                     id: ID::new(0, 1),
                     len: 1,
                     status: Default::default(),
@@ -176,8 +175,8 @@ mod test {
             ID::new(0, 2),
             OpContent::Normal {
                 content: Box::new(YSpan {
-                    origin_left: ID::new(0, 1),
-                    origin_right: ID::null(),
+                    origin_left: Some(ID::new(0, 1)),
+                    origin_right: None,
                     id: ID::new(0, 2),
                     len: 1,
                     status: Default::default(),
@@ -203,8 +202,8 @@ mod test {
             ID::new(0, 1),
             OpContent::Normal {
                 content: Box::new(YSpan {
-                    origin_left: ID::new(0, 0),
-                    origin_right: ID::null(),
+                    origin_left: Some(ID::new(0, 0)),
+                    origin_right: None,
                     id: ID::new(0, 1),
                     len: 4,
                     status: Default::default(),
@@ -219,8 +218,8 @@ mod test {
             ID::new(0, 2),
             OpContent::Normal {
                 content: Box::new(YSpan {
-                    origin_left: ID::new(0, 0),
-                    origin_right: ID::new(0, 1),
+                    origin_left: Some(ID::new(0, 0)),
+                    origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
                     len: 4,
                     status: Default::default(),

@@ -239,6 +239,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
 }
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
+    /// # Safety
+    ///
+    /// User must be sure that there is not exclusive reference to the tree and leaf pointer is valid
     #[inline]
     pub unsafe fn new(
         leaf: NonNull<LeafNode<'bump, T, A>>,
