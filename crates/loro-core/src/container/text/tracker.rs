@@ -50,8 +50,8 @@ impl Tracker {
             tree.insert_notify(
                 0,
                 YSpan {
-                    origin_left: ID::null(),
-                    origin_right: ID::null(),
+                    origin_left: None,
+                    origin_right: None,
                     id: min,
                     status: Status::new(),
                     len,
@@ -87,7 +87,11 @@ impl Tracker {
                                 },
                             );
                         }
-                        TextOpContent::Delete { id: _, pos: _, len: _ } => todo!(),
+                        TextOpContent::Delete {
+                            id: _,
+                            pos: _,
+                            len: _,
+                        } => todo!(),
                     }
                 }
             }

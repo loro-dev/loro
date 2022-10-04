@@ -252,7 +252,7 @@ fn issue_delete() {
 }
 
 #[cfg(not(no_proptest))]
-mod string_prop_test {
+mod string_prop_test_0 {
     use super::*;
     use proptest::prelude::*;
 

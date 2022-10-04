@@ -31,8 +31,8 @@ impl ContentMap {
     {
         let (left, right) = self.get_sibling_at(pos);
         let _yspan = YSpan {
-            origin_left: left.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
-            origin_right: right.as_ref().map(|x| x.id).unwrap_or_else(ID::null),
+            origin_left: left.as_ref().map(|x| x.id),
+            origin_right: right.as_ref().map(|x| x.id),
             id,
             len,
             status: Default::default(),

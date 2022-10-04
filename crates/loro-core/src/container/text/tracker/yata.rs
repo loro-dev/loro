@@ -1,7 +1,7 @@
-use crdt_list::crdt::{ListCrdt, OpSet};
+use crdt_list::{crdt::{ListCrdt, OpSet}, yata::Yata};
 use rle::rle_tree::{iter::IterMut, SafeCursorMut, RleTreeRaw};
 
-use crate::id::ID;
+use crate::id::{ID, Counter};
 
 use super::{
     y_span::{YSpan, YSpanTreeTrait},
@@ -74,27 +74,42 @@ impl ListCrdt for YataImpl {
         })
     }
 
-    fn id(_op: &Self::OpUnit) -> Self::OpId {
-        todo!()
+    fn id(op: &Self::OpUnit) -> Self::OpId {
+        op.id
     }
 
-    fn cmp_id(_op_a: &Self::OpUnit, _op_b: &Self::OpUnit) -> std::cmp::Ordering {
-        todo!()
+    fn cmp_id(op_a: &Self::OpUnit, op_b: &Self::OpUnit) -> std::cmp::Ordering {
+        op_a.id.cmp(&op_b.id)
     }
 
-    fn contains(_op: &Self::OpUnit, _id: Self::OpId) -> bool {
-        todo!()
+    fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
+        op.id.contains(op.len as Counter, id)
     }
 
-    fn integrate(_container: &mut Self::Container, _op: Self::OpUnit) {
-        todo!()
+    fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
+        crdt_list::yata::integrate::<Self>(container, op)
     }
 
     fn can_integrate(_container: &Self::Container, _op: &Self::OpUnit) -> bool {
         todo!()
     }
 
-    fn len(_container: &Self::Container) -> usize {
+    fn len(container: &Self::Container) -> usize {
+        container.content.with_tree(|tree|tree.len())
+    }
+}
+
+
+impl Yata for YataImpl {
+    fn left_origin(op: &Self::OpUnit) -> Option<Self::OpId> {
+        op.origin_left
+    }
+
+    fn right_origin(op: &Self::OpUnit) -> Option<Self::OpId> {
+        op.origin_right
+    }
+
+    fn insert_after(anchor: &mut Self::Cursor<'_>, op: Self::OpUnit) {
         todo!()
     }
 }
