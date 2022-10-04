@@ -96,7 +96,13 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
 
                     // SAFETY: result is valid
                     return Some(unsafe {
-                        SafeCursor::new(leaf.into(), result.child_index, result.offset, result.pos)
+                        SafeCursor::new(
+                            leaf.into(),
+                            result.child_index,
+                            result.offset,
+                            result.pos,
+                            0,
+                        )
                     });
                 }
             }
@@ -126,7 +132,13 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
 
                     // SAFETY: result is valid
                     return Some(unsafe {
-                        SafeCursor::new(leaf.into(), result.child_index, result.offset, result.pos)
+                        SafeCursor::new(
+                            leaf.into(),
+                            result.child_index,
+                            result.offset,
+                            result.pos,
+                            0,
+                        )
                     });
                 }
             }
@@ -169,6 +181,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> RleTreeRaw<'bump, T, A> {
                     0,
                     0,
                     Position::Start,
+                    0,
                 )
             });
 

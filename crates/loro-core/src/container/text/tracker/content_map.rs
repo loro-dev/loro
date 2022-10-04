@@ -105,7 +105,7 @@ impl ContentMap {
                 };
 
                 if prev.is_none() {
-                    let mut prev_cursor = cursor.prev();
+                    let mut prev_cursor = cursor.prev_elem_end();
                     while let Some(prev_inner) = prev_cursor {
                         if prev_inner.as_ref().status.is_activated() {
                             let cursor = prev_inner;
@@ -119,12 +119,12 @@ impl ContentMap {
                             });
                             break;
                         }
-                        prev_cursor = prev_inner.prev();
+                        prev_cursor = prev_inner.prev_elem_end();
                     }
                 }
 
                 if next.is_none() {
-                    let mut next_cursor = cursor.next();
+                    let mut next_cursor = cursor.next_elem_start();
                     while let Some(next_inner) = next_cursor {
                         if next_inner.as_ref().status.is_activated() {
                             let mut cursor = next_inner.unwrap();
@@ -136,7 +136,7 @@ impl ContentMap {
                             });
                             break;
                         }
-                        next_cursor = next_inner.next();
+                        next_cursor = next_inner.next_elem_start();
                     }
                 }
 

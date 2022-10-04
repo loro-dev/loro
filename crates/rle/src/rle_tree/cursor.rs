@@ -9,6 +9,7 @@ pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
     pub index: usize,
     pub offset: usize,
     pub pos: Position,
+    pub len: usize,
     _phantom: PhantomData<&'tree usize>,
 }
 
@@ -20,6 +21,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bu
             index: self.index,
             pos: self.pos,
             offset: self.offset,
+            len: self.len,
             _phantom: Default::default(),
         }
     }
@@ -52,12 +54,14 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
         index: usize,
         offset: usize,
         pos: Position,
+        len: usize,
     ) -> Self {
         Self {
             leaf,
             index,
             pos,
             offset,
+            len,
             _phantom: PhantomData,
         }
     }
@@ -107,32 +111,93 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
                 node = node.parent.unwrap().as_mut();
                 result = node.insert_at_pos(old_node_index + 1, new);
             }
+        } else {
+            A::update_cache_internal(node);
+        }
+
+        while node.parent.is_some() {
+            node = node.parent.unwrap().as_mut();
+            A::update_cache_internal(node);
         }
     }
 
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
-    pub unsafe fn next(&self) -> Option<Self> {
+    pub unsafe fn next_elem_start(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if leaf.children.len() > self.index + 1 {
-            return Some(Self::new(self.leaf, self.index + 1, 0, Position::Start));
+            return Some(Self::new(self.leaf, self.index + 1, 0, Position::Start, 0));
         }
 
-        leaf.next.map(|next| Self::new(next, 0, 0, Position::Start))
+        leaf.next
+            .map(|next| Self::new(next, 0, 0, Position::Start, 0))
     }
 
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
-    pub unsafe fn prev(&self) -> Option<Self> {
+    pub unsafe fn prev_elem_end(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if self.index > 0 {
-            return Some(Self::new(self.leaf, self.index - 1, 0, Position::Start));
+            return Some(Self::new(self.leaf, self.index - 1, 0, Position::Start, 0));
         }
 
-        leaf.prev
-            .map(|prev| Self::new(prev, prev.as_ref().children.len() - 1, 0, Position::Start))
+        leaf.prev.map(|prev| {
+            Self::new(
+                prev,
+                prev.as_ref().children.len() - 1,
+                0,
+                Position::Start,
+                0,
+            )
+        })
+    }
+
+    /// move cursor forward
+    ///
+    /// # Safety
+    ///
+    /// self should still be valid pointer
+    unsafe fn shift(mut self, mut shift: usize) -> Option<Self> {
+        if shift == 0 {
+            return Some(self);
+        }
+
+        let mut leaf = self.leaf.as_ref();
+        println!("s");
+        while shift > 0 {
+            let diff = leaf.children[self.index].len() - self.offset;
+            leaf.check();
+            match shift.cmp(&diff) {
+                std::cmp::Ordering::Less => {
+                    self.offset += shift;
+                    self.pos = Position::Middle;
+                    return Some(self);
+                }
+                std::cmp::Ordering::Equal => {
+                    self.offset = leaf.children[self.index].len();
+                    self.pos = Position::End;
+                    return Some(self);
+                }
+                std::cmp::Ordering::Greater => {
+                    shift -= diff;
+                    if self.index == leaf.children.len() - 1 {
+                        leaf = leaf.next()?;
+                        self.leaf = leaf.into();
+                        self.index = 0;
+                        self.offset = 0;
+                        self.pos = Position::Start;
+                    } else {
+                        self.index += 1;
+                        self.offset = 0;
+                        self.pos = Position::Start;
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -152,15 +217,15 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
     }
 
     #[inline]
-    pub fn next(&self) -> Option<Self> {
+    pub fn next_elem_start(&self) -> Option<Self> {
         // SAFETY: SafeCursor is a shared reference to the tree
-        unsafe { self.0.next().map(|x| Self(x)) }
+        unsafe { self.0.next_elem_start().map(|x| Self(x)) }
     }
 
     #[inline]
-    pub fn prev(&self) -> Option<Self> {
+    pub fn prev_elem_end(&self) -> Option<Self> {
         // SAFETY: SafeCursor is a shared reference to the tree
-        unsafe { self.0.prev().map(|x| Self(x)) }
+        unsafe { self.0.prev_elem_end().map(|x| Self(x)) }
     }
 
     #[inline]
@@ -193,8 +258,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
         index: usize,
         offset: usize,
         pos: Position,
+        len: usize,
     ) -> Self {
-        Self(UnsafeCursor::new(leaf, index, offset, pos))
+        Self(UnsafeCursor::new(leaf, index, offset, pos, len))
     }
 
     #[inline]
@@ -248,8 +314,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
         index: usize,
         offset: usize,
         pos: Position,
+        len: usize,
     ) -> Self {
-        Self(UnsafeCursor::new(leaf, index, offset, pos))
+        Self(UnsafeCursor::new(leaf, index, offset, pos, len))
     }
 
     #[inline]
@@ -281,17 +348,17 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 
     #[inline]
-    pub fn next(&self) -> Option<Self> {
+    pub fn next_elem_start(&self) -> Option<Self> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
         // get a reference to the element
-        unsafe { self.0.next().map(|x| Self(x)) }
+        unsafe { self.0.next_elem_start().map(|x| Self(x)) }
     }
 
     #[inline]
-    pub fn prev(&self) -> Option<Self> {
+    pub fn prev_elem_end(&self) -> Option<Self> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
         // get a reference to the element
-        unsafe { self.0.prev().map(|x| Self(x)) }
+        unsafe { self.0.prev_elem_end().map(|x| Self(x)) }
     }
 
     #[inline]
@@ -309,12 +376,27 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
         self.0.offset
     }
 
-    pub fn insert_notify<F>(&mut self, value: T, notify: &mut F)
+    /// self should be moved here, because after mutating self should be invalidate
+    pub fn insert_before_notify<F>(mut self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         // SAFETY: we know the cursor is a valid pointer
         unsafe { self.0.insert_notify(value, notify) }
+    }
+
+    /// self should be moved here, because after mutating self should be invalidate
+    pub fn insert_after_notify<F>(self, value: T, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        // SAFETY: we know the cursor is a valid pointer
+        unsafe {
+            self.0
+                .shift(self.0.len)
+                .unwrap()
+                .insert_notify(value, notify)
+        }
     }
 }
 

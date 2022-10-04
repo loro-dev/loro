@@ -157,7 +157,17 @@ impl Interaction {
             Interaction::Insert { insert_at, content } => {
                 tree.with_tree_mut(|tree| {
                     let insert_at = *insert_at % (tree.len() + 1);
-                    tree.insert(insert_at, content.clone().into());
+                    if insert_at % 3 == 0 && insert_at > 10 {
+                        let mut cursor = tree.get_mut(insert_at - 5).unwrap();
+                        cursor.0.len = 5;
+                        cursor.insert_after_notify(content.clone().into(), &mut |_a, _| {});
+                    } else {
+                        tree.node
+                            .as_internal_mut()
+                            .unwrap()
+                            .insert(insert_at, content.clone().into(), &mut |_a, _b| {})
+                            .unwrap();
+                    }
                 });
             }
             Interaction::Delete { from, len } => {
@@ -191,6 +201,48 @@ fn run_test(interactions: Vec<Interaction>) {
 }
 
 use Interaction::*;
+
+#[test]
+fn issue_insert_after() {
+    run_test(vec![
+        Insert {
+            insert_at: 0,
+            content: "aaaaaaaa".to_string(),
+        },
+        Insert {
+            insert_at: 4040,
+            content: "aaaaaaaaaaa".to_string(),
+        },
+        Insert {
+            insert_at: 3209832,
+            content: "b".to_string(),
+        },
+    ])
+}
+
+#[test]
+fn issue_delete_0() {
+    run_test(vec![
+        Insert {
+            insert_at: 0,
+            content: "0000".into(),
+        },
+        Insert {
+            insert_at: 2,
+            content: "3333".into(),
+        },
+        // 00333300
+        Insert {
+            insert_at: 4,
+            content: "222".into(),
+        },
+        // insert: 0033[222]3300
+        // 00332223300
+        Delete { from: 1, len: 5 },
+        // delete: 0[03322]23300
+        // 023300
+    ]);
+}
 
 #[test]
 fn issue_delete() {
@@ -252,7 +304,7 @@ fn issue_delete() {
 }
 
 #[cfg(not(no_proptest))]
-mod string_prop_test_0 {
+mod string_proptest {
     use super::*;
     use proptest::prelude::*;
 

@@ -54,7 +54,15 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
         // SAFETY: result.found is true
-        unsafe { SafeCursor::new(self.into(), result.child_index, result.offset, result.pos) }
+        unsafe {
+            SafeCursor::new(
+                self.into(),
+                result.child_index,
+                result.offset,
+                result.pos,
+                0,
+            )
+        }
     }
 
     #[inline]
@@ -62,7 +70,15 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
         // SAFETY: result.found is true
-        unsafe { SafeCursorMut::new(self.into(), result.child_index, result.offset, result.pos) }
+        unsafe {
+            SafeCursorMut::new(
+                self.into(),
+                result.child_index,
+                result.offset,
+                result.pos,
+                0,
+            )
+        }
     }
 
     pub fn push_child<F>(
@@ -99,17 +115,22 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         Ok(())
     }
 
-    pub(crate) fn check(&mut self) {
+    pub(crate) fn check(&self) {
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
+        assert!(!self.is_deleted());
         A::check_cache_leaf(self);
         if let Some(next) = self.next {
             // SAFETY: this is only for testing, and next must be a valid pointer
             let self_ptr = unsafe { next.as_ref().prev.unwrap().as_ptr() };
+            // SAFETY: this is only for testing, and next must be a valid pointer
+            assert!(unsafe { !next.as_ref().is_deleted() });
             assert!(std::ptr::eq(self, self_ptr));
         }
         if let Some(prev) = self.prev {
             // SAFETY: this is only for testing, and prev must be a valid pointer
             let self_ptr = unsafe { prev.as_ref().next.unwrap().as_ptr() };
+            // SAFETY: this is only for testing, and next must be a valid pointer
+            assert!(unsafe { !prev.as_ref().is_deleted() });
             assert!(std::ptr::eq(self, self_ptr));
         }
     }
@@ -321,6 +342,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     pub fn prev(&self) -> Option<&Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.prev.map(|p| p.as_ref()) }
+    }
+
+    #[inline]
+    pub fn prev_mut(&mut self) -> Option<&mut Self> {
+        // SAFETY: internal variant ensure prev and next are valid reference
+        unsafe { self.prev.map(|mut p| p.as_mut()) }
     }
 
     #[inline]
