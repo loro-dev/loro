@@ -1,0 +1,27 @@
+[package]
+name = "loro-core-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+crdt-list = "0.1.2"
+libfuzzer-sys = "0.4"
+
+[dependencies.loro-core]
+path = ".."
+features = ["fuzzing"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "yata"
+path = "fuzz_targets/yata.rs"
+test = false
+doc = false

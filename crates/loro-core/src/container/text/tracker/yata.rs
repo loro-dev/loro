@@ -9,7 +9,7 @@ use super::{
 };
 
 #[derive(Default, Debug)]
-struct OpSpanSet {
+pub struct OpSpanSet {
     map: RangeMap<u128, WithStartEnd<u128, bool>>
 }
 
@@ -27,7 +27,7 @@ impl OpSet<YSpan, ID> for OpSpanSet {
     }
 }
 
-struct YataImpl;
+pub struct YataImpl;
 
 impl ListCrdt for YataImpl {
     type OpUnit = YSpan;
@@ -89,8 +89,9 @@ impl ListCrdt for YataImpl {
     }
 
     fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
+        container.vv.set_end(op.id.inc(op.len as i32));
         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-        unsafe {crdt_list::yata::integrate::<Self>(container, op)}
+        unsafe {crdt_list::yata::integrate::<Self>(container, op)};
     }
 
     fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
@@ -160,5 +161,79 @@ mod test {
         assert!(!set.contain(ID::new(1, 9)));
         assert!(!set.contain(ID::new(1, 20)));
         assert!(!set.contain(ID::new(1, 21)));
+    }
+}
+
+
+#[cfg(feature="fuzzing")]
+pub mod fuzz {
+    use crdt_list::{test::{TestFramework, Action}, crdt, yata::Yata};
+
+    use crate::{container::text::tracker::Tracker, id::{ClientID, ID}};
+
+    use super::YataImpl;
+
+    impl TestFramework for YataImpl {
+        fn is_content_eq(a: &Self::Container, b: &Self::Container) -> bool {
+            let aa = a.content.with_tree(|a| {
+                let mut ans = Vec::new();
+                for iter in a.iter() {
+                    ans.push((iter.id, iter.len));
+                }
+                ans
+            });
+            let bb = b.content.with_tree(|b| {
+                let mut ans = Vec::new();
+                for iter in b.iter() {
+                    ans.push((iter.id, iter.len));
+                }
+                ans
+            });
+
+            if aa != bb {
+                dbg!(a);
+                dbg!(b);
+            }
+
+            assert_eq!(aa, bb);
+            aa == bb
+        }
+
+        fn new_container(client_id: usize) -> Self::Container {
+            let mut tracker = Tracker::new();
+            #[cfg(feature = "fuzzing")]
+            {
+                tracker.client_id = client_id as ClientID;
+            }
+
+            tracker
+        }
+
+        fn new_op(_: &mut impl rand::Rng, container: &mut Self::Container, pos: usize) -> Self::OpUnit {
+            container.content.get_yspan_at_pos(
+                ID::new(container.client_id, *container.vv.get(&container.client_id).unwrap_or(&0)),
+                pos % container.content.with_tree(|tree|tree.len()),
+                pos % 10 + 1
+            )
+        }
+    }
+
+    #[test]
+    fn issue_0() {
+        use Action::*;
+        crdt_list::test::test_with_actions::<YataImpl>(5, &[
+            NewOp {
+                client_id: 16573246628723425271,
+                pos: 16565899579919523301,
+            },
+            NewOp {
+                client_id: 16504256534250120677,
+                pos: 16565899579919523301,
+            },
+            NewOp {
+                client_id: 16565899579910645221,
+                pos: 182786533,
+            },
+        ])
     }
 }

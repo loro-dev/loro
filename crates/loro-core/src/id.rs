@@ -2,11 +2,31 @@ use serde::Serialize;
 
 pub type ClientID = u64;
 pub type Counter = i32;
+const UNKNOWN: ClientID = 404;
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy, PartialOrd, Ord, Serialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy, Serialize)]
 pub struct ID {
-    pub client_id: u64,
+    pub client_id: ClientID,
     pub counter: Counter,
+}
+
+impl PartialOrd for ID {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.client_id.partial_cmp(&other.client_id) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        self.counter.partial_cmp(&other.counter)
+    }
+}
+
+impl Ord for ID {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.client_id.cmp(&other.client_id) {
+            core::cmp::Ordering::Equal => self.counter.cmp(&other.counter),
+            ord => ord,
+        }
+    }
 }
 
 pub const ROOT_ID: ID = ID {
@@ -33,14 +53,14 @@ impl ID {
     #[inline]
     pub fn unknown(counter: Counter) -> Self {
         ID {
-            client_id: 0,
+            client_id: UNKNOWN,
             counter,
         }
     }
 
     #[inline]
     pub fn is_unknown(&self) -> bool {
-        self.client_id == 0
+        self.client_id == UNKNOWN
     }
 
     #[inline]

@@ -3,31 +3,34 @@ use crate::Rle;
 use super::{
     node::LeafNode,
     tree_trait::{Position, RleTreeTrait},
-    SafeCursor, SafeCursorMut,
+    SafeCursor, SafeCursorMut, UnsafeCursor,
 };
 
+/// cursor's and `end_cursor`'s length means nothing in this context
 pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    node: Option<&'some LeafNode<'bump, T, A>>,
-    child_index: usize,
-    end_node: Option<&'some LeafNode<'bump, T, A>>,
-    end_index: Option<usize>,
+    cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
+    end_cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
 }
 
 pub struct IterMut<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    node: Option<&'some mut LeafNode<'bump, T, A>>,
-    child_index: usize,
-    end_node: Option<&'some LeafNode<'bump, T, A>>,
-    end_index: Option<usize>,
+    cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
+    end_cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
 }
 
-impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
     #[inline]
     pub fn new(node: Option<&'tree mut LeafNode<'bump, T, A>>) -> Self {
+        if node.is_none() {
+            return Self {
+                cursor: None,
+                end_cursor: None,
+            };
+        }
+
+        let node = node.unwrap();
         Self {
-            node,
-            child_index: 0,
-            end_node: None,
-            end_index: None,
+            cursor: Some(UnsafeCursor::new(node.into(), 0, 0, Position::Start, 0)),
+            end_cursor: None,
         }
     }
 
@@ -41,31 +44,38 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
         }
 
         if let Some(end_inner) = end {
-            if end_inner.0.pos == Position::Middle
-                || end_inner.0.pos == Position::End
-                || end_inner.0.pos == Position::After
-            {
+            if end_inner.0.pos == Position::End || end_inner.0.pos == Position::After {
                 end = end_inner.next_elem_start();
             }
         }
 
         Some(Self {
-            node: Some(start.leaf_mut()),
-            child_index: start.0.index,
-            end_node: end.map(|end| end.leaf()),
-            end_index: end.map(|end| end.index()),
+            cursor: Some(UnsafeCursor::new(
+                start.0.leaf,
+                start.0.index,
+                start.0.offset,
+                start.0.pos,
+                0,
+            )),
+            end_cursor: end.map(|x| UnsafeCursor::new(x.0.leaf, x.0.index, x.0.offset, x.0.pos, 0)),
         })
     }
 }
 
-impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
     #[inline]
     pub fn new(node: Option<&'tree LeafNode<'bump, T, A>>) -> Self {
+        if node.is_none() {
+            return Self {
+                cursor: None,
+                end_cursor: None,
+            };
+        }
+
+        let node = node.unwrap();
         Self {
-            node,
-            child_index: 0,
-            end_node: None,
-            end_index: None,
+            cursor: Some(UnsafeCursor::new(node.into(), 0, 0, Position::Start, 0)),
+            end_cursor: None,
         }
     }
 
@@ -79,62 +89,81 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
         }
 
         if let Some(end_inner) = end {
-            if end_inner.0.pos == Position::Middle
-                || end_inner.0.pos == Position::End
-                || end_inner.0.pos == Position::After
-            {
+            if end_inner.0.pos == Position::End || end_inner.0.pos == Position::After {
                 end = end_inner.next_elem_start();
             }
         }
 
         Some(Self {
-            node: Some(start.leaf()),
-            child_index: start.0.index,
-            end_node: end.map(|end| end.leaf()),
-            end_index: end.map(|end| end.index()),
+            cursor: Some(start.0),
+            end_cursor: end.map(|x| x.0),
         })
     }
 }
 
-impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'rf, 'bump, T, A> {
-    type Item = SafeCursor<'rf, 'bump, T, A>;
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, 'bump, T, A> {
+    type Item = SafeCursor<'tree, 'bump, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let (Some(end_node), Some(node), Some(end_index)) =
-            (self.end_node, self.node, self.end_index)
-        {
-            if std::ptr::eq(end_node, node) && self.child_index == end_index {
+        self.cursor?;
+        if self.end_cursor.is_some() {
+            let start = self.cursor.as_mut().unwrap();
+            let end = self.end_cursor.as_mut().unwrap();
+            if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset {
                 return None;
             }
         }
 
-        while let Some(node) = self.node {
-            match node.children.get(self.child_index) {
+        while let Some(ref mut cursor) = self.cursor {
+            // SAFETY: we are sure that the cursor is valid
+            let node = unsafe { cursor.leaf.as_ref() };
+            match node.children.get(cursor.index) {
                 Some(_) => {
-                    self.child_index += 1;
+                    if let Some(end) = self.end_cursor {
+                        if cursor.leaf == end.leaf && end.index == cursor.index {
+                            if cursor.offset == end.offset {
+                                return None;
+                            } else {
+                                // SAFETY: we just checked that the child exists
+                                let ans = Some(unsafe {
+                                    SafeCursor::new(
+                                        node.into(),
+                                        cursor.index,
+                                        cursor.offset,
+                                        Position::from_offset(
+                                            cursor.offset as isize,
+                                            node.children[cursor.index].len(),
+                                        ),
+                                        end.offset - cursor.offset,
+                                    )
+                                });
+                                self.cursor = None;
+                                return ans;
+                            }
+                        }
+                    }
+
+                    let child_len = node.children[cursor.index].len();
                     // SAFETY: we just checked that the child exists
-                    return Some(unsafe {
+                    let ans = Some(unsafe {
                         SafeCursor::new(
                             node.into(),
-                            self.child_index - 1,
-                            0,
-                            Position::Start,
-                            node.children[self.child_index - 1].len(),
+                            cursor.index,
+                            cursor.offset,
+                            Position::from_offset(cursor.offset as isize, child_len),
+                            child_len - cursor.offset,
                         )
                     });
+
+                    cursor.index += 1;
+                    cursor.offset = 0;
+                    return ans;
                 }
                 None => match node.next() {
                     Some(next) => {
-                        if let Some(end_node) = self.end_node {
-                            // if node == end_node, should not go to next node
-                            // in this case end_index == node.children.len()
-                            if std::ptr::eq(end_node, node) {
-                                return None;
-                            }
-                        }
-
-                        self.node = Some(next);
-                        self.child_index = 0;
+                        cursor.leaf = next.into();
+                        cursor.index = 0;
+                        cursor.offset = 0;
                         continue;
                     }
                     None => return None,
@@ -146,45 +175,70 @@ impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'rf, 'bump, T, A>
     }
 }
 
-impl<'rf, 'bump, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'rf, 'bump, T, A> {
-    type Item = SafeCursorMut<'rf, 'bump, T, A>;
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, 'bump, T, A> {
+    type Item = SafeCursorMut<'tree, 'bump, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let (Some(end_node), Some(node), Some(end_index)) = (
-            self.end_node,
-            self.node.as_mut().map(|x| *x as *const LeafNode<_, _>),
-            self.end_index,
-        ) {
-            if std::ptr::eq(end_node, node as *const _) && self.child_index == end_index {
+        self.cursor?;
+        if self.end_cursor.is_some() {
+            let start = self.cursor.as_mut().unwrap();
+            let end = self.end_cursor.as_mut().unwrap();
+            if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset {
                 return None;
             }
         }
 
-        while let Some(node) = std::mem::take(&mut self.node) {
-            let node_ptr = node as *const _;
-            match node.children.get(self.child_index) {
+        while let Some(ref mut cursor) = self.cursor {
+            // SAFETY: we are sure that the cursor is valid
+            let node = unsafe { cursor.leaf.as_ref() };
+            match node.children.get(cursor.index) {
                 Some(_) => {
-                    let len = node.children()[self.child_index - 1].len();
-                    self.child_index += 1;
-                    let leaf = node.into();
-                    self.node = Some(node);
-                    // SAFETY: we just checked that the child exists
-                    return Some(unsafe {
-                        SafeCursorMut::new(leaf, self.child_index - 1, 0, Position::Start, len)
-                    });
-                }
-                None => match node.next_mut() {
-                    Some(next) => {
-                        if let Some(end_node) = self.end_node {
-                            // if node == end_node, should not go to next node
-                            // in this case end_index == node.children.len()
-                            if std::ptr::eq(end_node, node_ptr) {
+                    if let Some(end) = self.end_cursor {
+                        if cursor.leaf == end.leaf && end.index == cursor.index {
+                            if cursor.offset == end.offset {
                                 return None;
+                            } else {
+                                // SAFETY: we just checked that the child exists
+                                let ans = Some(unsafe {
+                                    SafeCursorMut::new(
+                                        node.into(),
+                                        cursor.index,
+                                        cursor.offset,
+                                        Position::from_offset(
+                                            cursor.offset as isize,
+                                            node.children[cursor.index].len(),
+                                        ),
+                                        end.offset - cursor.offset,
+                                    )
+                                });
+                                cursor.offset = end.offset;
+                                self.cursor = None;
+                                return ans;
                             }
                         }
+                    }
 
-                        self.node = Some(next);
-                        self.child_index = 0;
+                    let child_len = node.children[cursor.index].len();
+                    // SAFETY: we just checked that the child exists
+                    let ans = Some(unsafe {
+                        SafeCursorMut::new(
+                            node.into(),
+                            cursor.index,
+                            cursor.offset,
+                            Position::from_offset(cursor.offset as isize, child_len),
+                            child_len - cursor.offset,
+                        )
+                    });
+
+                    cursor.index += 1;
+                    cursor.offset = 0;
+                    return ans;
+                }
+                None => match node.next() {
+                    Some(next) => {
+                        cursor.leaf = next.into();
+                        cursor.index = 0;
+                        cursor.offset = 0;
                         continue;
                     }
                     None => return None,

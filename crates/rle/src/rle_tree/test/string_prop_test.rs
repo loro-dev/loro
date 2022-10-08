@@ -125,9 +125,7 @@ impl Interaction {
     pub fn test_assert(&self, s: &mut String, tree: &mut RleTree<CustomString, StringTreeTrait>) {
         self.apply_to_str(s);
         self.apply_to_tree(tree);
-        // println!("{:#?}", tree);
         assert_eq!(&tree.to_string(), s);
-        // println!("{}", s);
     }
 
     fn apply_to_str(&self, s: &mut String) {

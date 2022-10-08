@@ -32,14 +32,17 @@ impl Marker {
                 let node = unsafe { ptr.as_ref() };
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
+                let child = &node.children()[position];
+                let start_counter = child.id.counter;
+                let offset = id.counter - start_counter;
                 // SAFETY: we just checked it is valid
                 Some(unsafe {
                     SafeCursor::new(
                         *ptr,
                         position,
+                        offset as usize,
+                        Position::from_offset(offset as isize, child.len()),
                         0,
-                        rle::rle_tree::Position::Start,
-                        self.len(),
                     )
                 })
             }

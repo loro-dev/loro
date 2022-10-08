@@ -25,20 +25,15 @@ struct CursorWithId<'tree> {
 
 impl ContentMap {
     #[inline]
-    pub(super) fn insert_yspan_at_pos<F>(&mut self, id: ID, pos: usize, len: usize, _notify: &mut F)
-    where
-        F: FnMut(&YSpan, *const LeafNode<'_, YSpan, YSpanTreeTrait>),
-    {
+    pub(super) fn get_yspan_at_pos(&mut self, id: ID, pos: usize, len: usize) -> YSpan {
         let (left, right) = self.get_sibling_at(pos);
-        let _yspan = YSpan {
+        YSpan {
             origin_left: left.as_ref().map(|x| x.id),
             origin_right: right.as_ref().map(|x| x.id),
             id,
             len,
             status: Default::default(),
-        };
-
-        // TODO: integrate yjs
+        }
     }
 
     /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`

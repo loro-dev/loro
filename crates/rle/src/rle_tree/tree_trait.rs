@@ -20,6 +20,23 @@ pub enum Position {
     After,
 }
 
+impl Position {
+    #[inline]
+    pub fn from_offset(offset: isize, len: usize) -> Self {
+        if offset < 0 {
+            Position::Before
+        } else if offset == 0 {
+            Position::Start
+        } else if (offset as usize) < len {
+            Position::Middle
+        } else if offset as usize == len {
+            Position::End
+        } else {
+            Position::After
+        }
+    }
+}
+
 pub struct FindPosResult<I> {
     pub child_index: usize,
     pub offset: I,
