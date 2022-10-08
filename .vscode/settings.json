@@ -3,6 +3,9 @@
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },
+  "rust-analyzer.cargo.features": ["fuzzing"],
+  "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  "editor.formatOnSave": true,
   "todo-tree.general.tags": [
     "BUG",
     "HACK",

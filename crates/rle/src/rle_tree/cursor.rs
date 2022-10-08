@@ -4,6 +4,8 @@ use crate::{Rle, RleTreeTrait};
 
 use super::{node::LeafNode, tree_trait::Position};
 
+/// when len > 0, it acts as a selection. When iterating the tree, the len should be the size of the element.
+#[derive(PartialEq, Eq)]
 pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
     pub leaf: NonNull<LeafNode<'bump, T, A>>,
     pub index: usize,
@@ -165,10 +167,12 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
         }
 
         let mut leaf = self.leaf.as_ref();
-        println!("s");
         while shift > 0 {
             let diff = leaf.children[self.index].len() - self.offset;
-            leaf.check();
+            #[cfg(test)]
+            {
+                leaf.check();
+            }
             match shift.cmp(&diff) {
                 std::cmp::Ordering::Less => {
                     self.offset += shift;

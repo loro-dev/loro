@@ -1,3 +1,3 @@
-mod text_container;
-mod text_content;
-mod tracker;
+pub mod text_container;
+pub mod text_content;
+pub mod tracker;

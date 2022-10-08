@@ -2,7 +2,7 @@ use crate::{id::Counter, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct Status {
+pub struct Status {
     unapplied: bool,
     delete_times: usize,
     undo_times: usize,
@@ -41,7 +41,7 @@ impl Status {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct YSpan {
+pub struct YSpan {
     pub origin_left: Option<ID>,
     pub origin_right: Option<ID>,
     pub id: ID,
@@ -50,7 +50,7 @@ pub(super) struct YSpan {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) enum StatusChange {
+pub enum StatusChange {
     Apply,
     PreApply,
     Redo,
@@ -98,25 +98,31 @@ impl Mergable for YSpan {
 
 impl Sliceable for YSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
+        if from == 0 && to == self.len() {
+            return self.clone();
+        }
+
         if from == 0 {
             YSpan {
                 origin_left: self.origin_left,
-                origin_right: self.origin_right,
+                origin_right: Some(self.id.inc(to as i32)),
                 id: self.id,
+                len: to - from,
+                status: self.status.clone(),
+            }
+        } else if to < self.len() {
+            YSpan {
+                origin_left: Some(self.id.inc(from as i32 - 1)),
+                origin_right: Some(self.id.inc(to as i32)),
+                id: self.id.inc(from as i32),
                 len: to - from,
                 status: self.status.clone(),
             }
         } else {
             YSpan {
-                origin_left: Some(ID {
-                    client_id: self.id.client_id,
-                    counter: self.id.counter + from as Counter - 1,
-                }),
+                origin_left: Some(self.id.inc(from as i32 - 1)),
                 origin_right: self.origin_right,
-                id: ID {
-                    client_id: self.id.client_id,
-                    counter: self.id.counter + from as Counter,
-                },
+                id: self.id.inc(from as i32),
                 len: to - from,
                 status: self.status.clone(),
             }

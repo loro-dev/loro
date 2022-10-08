@@ -1,6 +1,8 @@
+use crdt_list::crdt::ListCrdt;
 use rle::HasLength;
 
 use crate::{
+    container::text::tracker::yata::YataImpl,
     id::{Counter, ID},
     op::{utils::downcast_ref, Op},
     span::IdSpan,
@@ -18,7 +20,10 @@ use super::text_content::TextOpContent;
 mod content_map;
 mod cursor_map;
 mod y_span;
+#[cfg(not(feature = "fuzzing"))]
 mod yata;
+#[cfg(feature = "fuzzing")]
+pub mod yata;
 
 /// A tracker for a single text, we can use it to calculate the effect of an operation on a text.
 ///
@@ -28,7 +33,10 @@ mod yata;
 ///     - The deleted contents are marked with deleted, but still lives on the [ContentMap] with length of 0
 ///
 #[derive(Debug)]
-struct Tracker {
+pub struct Tracker {
+    #[cfg(feature = "fuzzing")]
+    client_id: u64,
+    vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -63,6 +71,9 @@ impl Tracker {
         Tracker {
             content,
             id_to_cursor,
+            #[cfg(feature = "fuzzing")]
+            client_id: 0,
+            vv: Default::default(),
         }
     }
 
@@ -72,20 +83,16 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, op: &Op) {
+        assert_eq!(*self.vv.get(&op.id.client_id).unwrap_or(&0), op.id.counter);
+        self.vv.set_end(op.id.inc(op.len() as i32));
         match &op.content {
             crate::op::OpContent::Normal { content } => {
                 if let Some(text_content) = downcast_ref::<TextOpContent>(&**content) {
                     match text_content {
                         TextOpContent::Insert { id, text, pos } => {
-                            self.content.insert_yspan_at_pos(
-                                *id,
-                                *pos,
-                                text.len(),
-                                &mut |_v, _leaf| {
-
-                                    //TODO notify
-                                },
-                            );
+                            let yspan = self.content.get_yspan_at_pos(*id, *pos, text.len());
+                            // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
+                            unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                         }
                         TextOpContent::Delete {
                             id: _,
@@ -98,6 +105,12 @@ impl Tracker {
             crate::op::OpContent::Undo { .. } => todo!(),
             crate::op::OpContent::Redo { .. } => todo!(),
         }
+    }
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
