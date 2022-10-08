@@ -100,8 +100,29 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     pub fn get(&self, index: Index) -> Option<&Value> {
         self.tree.with_tree(|tree| {
             let cursor = tree.get(index);
-            cursor.map(|x| &x.as_tree_ref().value)
+            if let Some(cursor) = cursor {
+                match cursor.pos() {
+                    crate::rle_tree::Position::Before
+                    | crate::rle_tree::Position::End
+                    | crate::rle_tree::Position::After => None,
+                    crate::rle_tree::Position::Start | crate::rle_tree::Position::Middle => {
+                        Some(&cursor.as_tree_ref().value)
+                    }
+                }
+            } else {
+                None
+            }
         })
+    }
+
+    #[inline]
+    pub fn has(&self, index: Index) -> bool {
+        self.get(index).is_some()
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.tree = Default::default();
     }
 }
 
