@@ -27,5 +27,6 @@ pub mod rle_tree;
 mod rle_vec;
 pub use crate::rle_trait::{HasLength, Mergable, Rle, Slice, Sliceable};
 pub use crate::rle_vec::{RleVec, SearchResult, SliceIterator};
+pub mod rle_impl;
 pub use rle_tree::tree_trait::RleTreeTrait;
 pub use rle_tree::RleTree;
