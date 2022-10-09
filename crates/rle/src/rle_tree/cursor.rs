@@ -6,8 +6,8 @@ use super::{node::LeafNode, tree_trait::Position};
 
 /// when len > 0, it acts as a selection. When iterating the tree, the len should be the size of the element.
 #[derive(PartialEq, Eq, Debug)]
-pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    pub leaf: NonNull<LeafNode<'bump, T, A>>,
+pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
+    pub leaf: NonNull<LeafNode<'tree, T, A>>,
     pub index: usize,
     pub offset: usize,
     pub pos: Position,
@@ -15,7 +15,7 @@ pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
     _phantom: PhantomData<&'tree usize>,
 }
 
-impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, T, A> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -29,32 +29,28 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bu
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, 'bump, T, A> {}
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, T, A> {}
 
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct SafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
-);
+pub struct SafeCursor<'tree, T: Rle, A: RleTreeTrait<T>>(pub(crate) UnsafeCursor<'tree, T, A>);
 
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct SafeCursorMut<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
-    pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
-);
+pub struct SafeCursorMut<'tree, T: Rle, A: RleTreeTrait<T>>(pub(crate) UnsafeCursor<'tree, T, A>);
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree, T, A> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, 'bump, T, A> {}
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, T, A> {}
 
-impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     #[inline]
     pub(crate) fn new(
-        leaf: NonNull<LeafNode<'bump, T, A>>,
+        leaf: NonNull<LeafNode<'tree, T, A>>,
         index: usize,
         offset: usize,
         pos: Position,
@@ -71,7 +67,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> 
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
@@ -209,7 +205,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'tree, T, A> {
     #[inline]
     fn as_ref(&self) -> &'tree T {
         // SAFETY: SafeCursor is a shared reference to the tree
@@ -217,13 +213,13 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'t
     }
 }
 
-impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, T, A> {
     /// # Safety
     ///
     /// Users should make sure aht leaf is pointing to a valid LeafNode with 'bump lifetime, and index is inbound
     #[inline]
     pub unsafe fn new(
-        leaf: NonNull<LeafNode<'bump, T, A>>,
+        leaf: NonNull<LeafNode<'tree, T, A>>,
         index: usize,
         offset: usize,
         pos: Position,
@@ -233,7 +229,7 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, T, A> {
     #[inline]
     pub fn as_tree_ref(&self) -> &'tree T {
         // SAFETY: SafeCursor is a shared reference to the tree
@@ -253,7 +249,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
     }
 
     #[inline]
-    pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+    pub fn leaf(&self) -> &'tree LeafNode<'tree, T, A> {
         // SAFETY: SafeCursor has shared reference lifetime to the tree
         unsafe { self.0.leaf.as_ref() }
     }
@@ -274,14 +270,12 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
     }
 
     #[inline]
-    pub fn unwrap(self) -> UnsafeCursor<'tree, 'bump, T, A> {
+    pub fn unwrap(self) -> UnsafeCursor<'tree, T, A> {
         self.0
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T>
-    for SafeCursorMut<'tree, 'bump, T, A>
-{
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursorMut<'tree, T, A> {
     #[inline]
     fn as_ref(&self) -> &T {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
@@ -289,7 +283,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T>
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     #[inline]
     pub fn as_ref_(&self) -> &'tree T {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
@@ -297,13 +291,13 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 
     #[inline]
-    pub fn leaf(&self) -> &'tree LeafNode<'bump, T, A> {
+    pub fn leaf(&self) -> &'tree LeafNode<'tree, T, A> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.leaf.as_ref() }
     }
 
     #[inline]
-    pub fn leaf_mut(&mut self) -> &'tree mut LeafNode<'bump, T, A> {
+    pub fn leaf_mut(&mut self) -> &'tree mut LeafNode<'tree, T, A> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe { self.0.leaf.as_mut() }
     }
@@ -314,13 +308,13 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     /// # Safety
     ///
     /// User must be sure that there is not exclusive reference to the tree and leaf pointer is valid
     #[inline]
     pub unsafe fn new(
-        leaf: NonNull<LeafNode<'bump, T, A>>,
+        leaf: NonNull<LeafNode<'tree, T, A>>,
         index: usize,
         offset: usize,
         pos: Position,
@@ -353,7 +347,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 
     #[inline]
-    pub fn unwrap(self) -> UnsafeCursor<'tree, 'bump, T, A> {
+    pub fn unwrap(self) -> UnsafeCursor<'tree, T, A> {
         self.0
     }
 
@@ -410,9 +404,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, 'bump
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
-    for SafeCursorMut<'tree, 'bump, T, A>
-{
+impl<'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T> for SafeCursorMut<'tree, T, A> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
@@ -421,7 +413,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T>
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursor<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursor<'tree, T, A> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -429,7 +421,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursor<'tree
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursorMut<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursorMut<'tree, T, A> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

@@ -50,7 +50,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     }
 
     #[inline]
-    pub fn get_cursor<'tree>(&'tree self, pos: A::Int) -> SafeCursor<'tree, 'bump, T, A> {
+    pub fn get_cursor<'tree>(&'tree self, pos: A::Int) -> SafeCursor<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
         // SAFETY: result.found is true
@@ -66,7 +66,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     }
 
     #[inline]
-    pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'b, 'bump, T, A> {
+    pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
         // SAFETY: result.found is true

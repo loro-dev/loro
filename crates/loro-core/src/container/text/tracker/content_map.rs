@@ -18,7 +18,7 @@ pub(super) struct ContentMap(RleTree<YSpan, YSpanTreeTrait>);
 
 struct CursorWithId<'tree> {
     id: ID,
-    cursor: UnsafeCursor<'tree, 'static, YSpan, YSpanTreeTrait>,
+    cursor: UnsafeCursor<'tree, YSpan, YSpanTreeTrait>,
 }
 
 impl ContentMap {
@@ -37,7 +37,7 @@ impl ContentMap {
     /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`
     fn get_sibling_at(&self, pos: usize) -> (Option<CursorWithId<'_>>, Option<CursorWithId<'_>>) {
         if let Some(cursor) = self.get(pos) {
-            let cursor: SafeCursor<'_, 'static, YSpan, YSpanTreeTrait> =
+            let cursor: SafeCursor<'_, YSpan, YSpanTreeTrait> =
                     // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
                     // because Bumpalo's lifetime is static due to the self-referential structure limitation; Maybe there is a better way?
                     unsafe { std::mem::transmute(cursor) };
@@ -153,8 +153,8 @@ impl DerefMut for ContentMap {
     }
 }
 
-pub(super) fn change_status<'a, 'b: 'a>(
-    cursor: &mut SafeCursorMut<'a, 'b, YSpan, YSpanTreeTrait>,
+pub(super) fn change_status(
+    cursor: &mut SafeCursorMut<'_, YSpan, YSpanTreeTrait>,
     change: StatusChange,
 ) {
     let value = cursor.as_mut();

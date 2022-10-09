@@ -52,9 +52,9 @@ impl ListCrdt for YataImpl {
 
     type Set = OpSpanSet;
 
-    type Cursor<'a> = SafeCursorMut<'a, 'static, YSpan, YSpanTreeTrait>;
+    type Cursor<'a> = SafeCursorMut<'a, YSpan, YSpanTreeTrait>;
 
-    type Iterator<'a> = IterMut<'a, 'static, YSpan, YSpanTreeTrait>;
+    type Iterator<'a> = IterMut<'a, YSpan, YSpanTreeTrait>;
 
     fn iter(
         container: &mut Self::Container,
@@ -173,6 +173,7 @@ mod test {
 
 #[cfg(feature = "fuzzing")]
 pub mod fuzz {
+    #![allow(unused_imports)]
     use crdt_list::{
         test::{Action, TestFramework},
         yata::Yata,
