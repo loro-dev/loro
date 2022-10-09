@@ -60,7 +60,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     /// return a cursor at the given index
     #[inline]
-    pub fn get(&self, mut index: A::Int) -> Option<SafeCursor<'_, '_, T, A>> {
+    pub fn get(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
         self.with_node(|mut node| {
             loop {
                 match node {
@@ -97,7 +97,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     /// return the first valid cursor after the given index
     #[inline]
-    fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, '_, T, A>> {
+    fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
         self.with_node(|mut node| {
             loop {
                 match node {
@@ -133,24 +133,24 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     }
 
     #[inline]
-    pub fn get_mut(&mut self, index: A::Int) -> Option<SafeCursorMut<'_, '_, T, A>> {
+    pub fn get_mut(&mut self, index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
         let cursor = self.get(index);
         cursor.map(|x| SafeCursorMut(x.0))
     }
 
     #[inline]
-    pub fn iter(&self) -> iter::Iter<'_, '_, T, A> {
+    pub fn iter(&self) -> iter::Iter<'_, T, A> {
         // SAFETY: the cursor and iter cannot outlive self
         self.with_node(|node| unsafe {
-            std::mem::transmute(iter::Iter::new(node.get_first_leaf()))
+            iter::Iter::new(std::mem::transmute(node.get_first_leaf()))
         })
     }
 
     #[inline]
-    pub fn iter_mut(&mut self) -> iter::IterMut<'_, '_, T, A> {
+    pub fn iter_mut(&mut self) -> iter::IterMut<'_, T, A> {
         // SAFETY: the cursor and iter cannot outlive self
         self.with_node_mut(|node| unsafe {
-            std::mem::transmute(iter::IterMut::new(node.get_first_leaf_mut()))
+            iter::IterMut::new(std::mem::transmute(node.get_first_leaf_mut()))
         })
     }
 
@@ -161,9 +161,9 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn iter_mut_in(
         &mut self,
-        start: Option<SafeCursor<'_, '_, T, A>>,
-        end: Option<SafeCursor<'_, '_, T, A>>,
-    ) -> iter::IterMut<'_, '_, T, A> {
+        start: Option<SafeCursor<'_, T, A>>,
+        end: Option<SafeCursor<'_, T, A>>,
+    ) -> iter::IterMut<'_, T, A> {
         if self.empty() || (start.is_none() && end.is_none()) {
             self.iter_mut()
         } else {
@@ -174,10 +174,10 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 let start = start.unwrap_or_else(|| {
                     std::mem::transmute(SafeCursor::new(leaf, 0, 0, Position::Start, 0))
                 });
-                let start: SafeCursorMut<'_, '_, T, A> = SafeCursorMut(start.0);
-                std::mem::transmute::<_, iter::IterMut<'_, '_, T, A>>(iter::IterMut::from_cursor(
-                    std::mem::transmute::<_, SafeCursorMut<'_, '_, T, A>>(start),
-                    std::mem::transmute(end),
+                let start: SafeCursorMut<'_, T, A> = SafeCursorMut(start.0);
+                std::mem::transmute::<_, iter::IterMut<'_, T, A>>(iter::IterMut::from_cursor(
+                    std::mem::transmute::<_, SafeCursorMut<'_, T, A>>(start),
+                    end,
                 ))
             })
         }
@@ -204,7 +204,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         })
     }
 
-    pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, '_, T, A> {
+    pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, T, A> {
         let cursor_from = self.get_cursor_ge(start);
         if cursor_from.is_none() {
             return iter::Iter::new(None);

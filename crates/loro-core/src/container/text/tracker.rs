@@ -1,4 +1,3 @@
-use crdt_list::crdt::ListCrdt;
 use rle::HasLength;
 
 use crate::{

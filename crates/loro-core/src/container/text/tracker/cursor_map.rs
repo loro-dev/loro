@@ -25,7 +25,7 @@ pub(super) enum Marker {
 }
 
 impl Marker {
-    pub fn as_cursor(&self, id: ID) -> Option<SafeCursor<'_, 'static, YSpan, YSpanTreeTrait>> {
+    pub fn as_cursor(&self, id: ID) -> Option<SafeCursor<'static, YSpan, YSpanTreeTrait>> {
         match self {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
@@ -53,7 +53,7 @@ impl Marker {
     pub fn as_cursor_mut(
         &mut self,
         id: ID,
-    ) -> Option<SafeCursorMut<'_, 'static, YSpan, YSpanTreeTrait>> {
+    ) -> Option<SafeCursorMut<'static, YSpan, YSpanTreeTrait>> {
         match self {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid

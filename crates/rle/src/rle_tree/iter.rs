@@ -7,19 +7,19 @@ use super::{
 };
 
 /// cursor's and `end_cursor`'s length means nothing in this context
-pub struct Iter<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
-    end_cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
+pub struct Iter<'some, T: Rle, A: RleTreeTrait<T>> {
+    cursor: Option<UnsafeCursor<'some, T, A>>,
+    end_cursor: Option<UnsafeCursor<'some, T, A>>,
 }
 
-pub struct IterMut<'some, 'bump, T: Rle, A: RleTreeTrait<T>> {
-    cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
-    end_cursor: Option<UnsafeCursor<'some, 'bump, T, A>>,
+pub struct IterMut<'some, T: Rle, A: RleTreeTrait<T>> {
+    cursor: Option<UnsafeCursor<'some, T, A>>,
+    end_cursor: Option<UnsafeCursor<'some, T, A>>,
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
     #[inline]
-    pub fn new(node: Option<&'tree mut LeafNode<'bump, T, A>>) -> Self {
+    pub fn new(node: Option<&'tree mut LeafNode<'tree, T, A>>) -> Self {
         if node.is_none() {
             return Self {
                 cursor: None,
@@ -36,8 +36,8 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A
 
     #[inline]
     pub fn from_cursor(
-        mut start: SafeCursorMut<'tree, 'bump, T, A>,
-        mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
+        mut start: SafeCursorMut<'tree, T, A>,
+        mut end: Option<SafeCursor<'tree, T, A>>,
     ) -> Self {
         if start.0.pos == Position::After {
             match start.next_elem_start() {
@@ -70,9 +70,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, T, A> {
     #[inline]
-    pub fn new(node: Option<&'tree LeafNode<'bump, T, A>>) -> Self {
+    pub fn new(node: Option<&'tree LeafNode<'tree, T, A>>) -> Self {
         if node.is_none() {
             return Self {
                 cursor: None,
@@ -89,8 +89,8 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
 
     #[inline]
     pub fn from_cursor(
-        mut start: SafeCursor<'tree, 'bump, T, A>,
-        mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
+        mut start: SafeCursor<'tree, T, A>,
+        mut end: Option<SafeCursor<'tree, T, A>>,
     ) -> Option<Self> {
         if start.0.pos == Position::After {
             start = start.next_elem_start()?
@@ -109,8 +109,8 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, 'bump, T, A> {
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, 'bump, T, A> {
-    type Item = SafeCursor<'tree, 'bump, T, A>;
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
+    type Item = SafeCursor<'tree, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.cursor?;
@@ -184,8 +184,8 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, '
     }
 }
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, 'bump, T, A> {
-    type Item = SafeCursorMut<'tree, 'bump, T, A>;
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
+    type Item = SafeCursorMut<'tree, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.cursor?;
