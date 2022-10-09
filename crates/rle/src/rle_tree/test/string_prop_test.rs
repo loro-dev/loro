@@ -53,13 +53,11 @@ impl Sliceable for CustomString {
 
 impl Display for RleTree<CustomString, StringTreeTrait> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.with_tree(|tree| {
-            for s in tree.iter() {
-                f.write_str(s.as_ref().0.as_str())?;
-            }
+        for s in self.iter() {
+            f.write_str(s.as_ref().0.as_str())?;
+        }
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 
@@ -78,10 +76,8 @@ impl From<&str> for CustomString {
 #[test]
 fn basic_string_op() {
     let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
-    tree.with_tree_mut(|tree| {
-        tree.insert(0, "test".into());
-        tree.insert(0, "hello ".into());
-    });
+    tree.insert(0, "test".into());
+    tree.insert(0, "hello ".into());
     let m = format!("{}", tree);
     assert_eq!(m, "hello test");
 }
@@ -90,29 +86,27 @@ fn basic_string_op() {
 fn issue_0() {
     let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
     let insert_keys = "0123456789abcdefghijklmnopq";
-    tree.with_tree_mut(|tree| {
-        for i in 0..(1e6 as usize) {
-            let start = i % insert_keys.len();
-            if i % 3 == 0 && tree.len() > 0 {
-                let start = i % tree.len();
-                let len = (i * i) % std::cmp::min(tree.len(), 10);
-                let end = std::cmp::min(start + len, tree.len());
-                if start == end {
-                    continue;
-                }
-                tree.delete_range(Some(start), Some(end));
-            } else if tree.len() == 0 {
-                tree.insert(0, insert_keys[start..start + 1].to_string().into());
-            } else {
-                tree.insert(
-                    i % tree.len(),
-                    insert_keys[start..start + 1].to_string().into(),
-                );
+    for i in 0..(1e6 as usize) {
+        let start = i % insert_keys.len();
+        if i % 3 == 0 && tree.len() > 0 {
+            let start = i % tree.len();
+            let len = (i * i) % std::cmp::min(tree.len(), 10);
+            let end = std::cmp::min(start + len, tree.len());
+            if start == end {
+                continue;
             }
-
-            tree.debug_check();
+            tree.delete_range(Some(start), Some(end));
+        } else if tree.len() == 0 {
+            tree.insert(0, insert_keys[start..start + 1].to_string().into());
+        } else {
+            tree.insert(
+                i % tree.len(),
+                insert_keys[start..start + 1].to_string().into(),
+            );
         }
-    });
+
+        tree.debug_check();
+    }
 }
 
 #[derive(enum_as_inner::EnumAsInner, Debug)]
@@ -153,35 +147,32 @@ impl Interaction {
     fn apply_to_tree(&self, tree: &mut RleTree<CustomString, StringTreeTrait>) {
         match self {
             Interaction::Insert { insert_at, content } => {
-                tree.with_tree_mut(|tree| {
-                    let insert_at = *insert_at % (tree.len() + 1);
-                    if insert_at % 3 == 0 && insert_at > 10 {
-                        let mut cursor = tree.get_mut(insert_at - 5).unwrap();
-                        cursor.0.len = 5;
-                        cursor.insert_after_notify(content.clone().into(), &mut |_a, _| {});
-                    } else {
-                        tree.node
-                            .as_internal_mut()
+                let insert_at = *insert_at % (tree.len() + 1);
+                if insert_at % 3 == 0 && insert_at > 10 {
+                    let mut cursor = tree.get_mut(insert_at - 5).unwrap();
+                    cursor.0.len = 5;
+                    cursor.insert_after_notify(content.clone().into(), &mut |_a, _| {});
+                } else {
+                    tree.with_node_mut(|node| {
+                        node.as_internal_mut()
                             .unwrap()
                             .insert(insert_at, content.clone().into(), &mut |_a, _b| {})
                             .unwrap();
-                    }
-                });
+                    })
+                }
             }
             Interaction::Delete { from, len } => {
-                tree.with_tree_mut(|tree| {
-                    if tree.len() == 0 {
-                        return;
-                    }
+                if tree.len() == 0 {
+                    return;
+                }
 
-                    let from = *from % tree.len();
-                    let mut to = from + *len;
-                    if to > tree.len() {
-                        to = tree.len();
-                    }
+                let from = *from % tree.len();
+                let mut to = from + *len;
+                if to > tree.len() {
+                    to = tree.len();
+                }
 
-                    tree.delete_range(Some(from), Some(to));
-                });
+                tree.delete_range(Some(from), Some(to));
             }
         }
     }
@@ -192,9 +183,7 @@ fn run_test(interactions: Vec<Interaction>) {
     let mut tree = RleTree::default();
     for interaction in interactions {
         interaction.test_assert(&mut s, &mut tree);
-        tree.with_tree_mut(|tree| {
-            tree.debug_check();
-        });
+        tree.debug_check();
     }
 }
 

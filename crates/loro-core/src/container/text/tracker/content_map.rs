@@ -1,5 +1,3 @@
-use crdt_list::crdt::ListCrdt;
-
 use std::ops::{Deref, DerefMut};
 
 use rle::{
@@ -38,108 +36,106 @@ impl ContentMap {
 
     /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`
     fn get_sibling_at(&self, pos: usize) -> (Option<CursorWithId<'_>>, Option<CursorWithId<'_>>) {
-        self.with_tree(|tree| {
-            if let Some(cursor) = tree.get(pos) {
-                let cursor: SafeCursor<'_, 'static, YSpan, YSpanTreeTrait> =
+        if let Some(cursor) = self.get(pos) {
+            let cursor: SafeCursor<'_, 'static, YSpan, YSpanTreeTrait> =
                     // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
                     // because Bumpalo's lifetime is static due to the self-referential structure limitation; Maybe there is a better way?
                     unsafe { std::mem::transmute(cursor) };
-                let (mut prev, mut next) = match cursor.pos() {
-                    Position::Start => {
-                        if cursor.as_ref().can_be_origin() {
-                            let id = cursor.as_ref().id;
-                            (
-                                None,
-                                Some(CursorWithId {
-                                    id,
-                                    cursor: cursor.unwrap(),
-                                }),
-                            )
-                        } else {
-                            (None, None)
-                        }
-                    }
-                    Position::Middle => {
-                        if cursor.as_ref().can_be_origin() {
-                            let id = cursor.as_ref().id;
-                            let offset = cursor.offset();
-                            let mut prev_offset_cursor = cursor.unwrap();
-                            prev_offset_cursor.offset -= 1;
-                            (
-                                Some(CursorWithId {
-                                    id: id.inc(offset as i32 - 1),
-                                    cursor: prev_offset_cursor,
-                                }),
-                                Some(CursorWithId {
-                                    id: id.inc(offset as i32),
-                                    cursor: cursor.unwrap(),
-                                }),
-                            )
-                        } else {
-                            (None, None)
-                        }
-                    }
-                    Position::End => {
-                        if cursor.as_ref().can_be_origin() {
-                            let mut prev_offset_cursor = cursor.unwrap();
-                            prev_offset_cursor.offset -= 1;
-                            (
-                                Some(CursorWithId {
-                                    id: cursor.as_ref().last_id(),
-                                    cursor: prev_offset_cursor,
-                                }),
-                                None,
-                            )
-                        } else {
-                            (None, None)
-                        }
-                    }
-                    _ => {
-                        unreachable!()
-                    }
-                };
-
-                if prev.is_none() {
-                    let mut prev_cursor = cursor.prev_elem_end();
-                    while let Some(prev_inner) = prev_cursor {
-                        if prev_inner.as_ref().status.is_activated() {
-                            let cursor = prev_inner;
-                            let offset = cursor.as_ref().len() - 1;
-                            let mut cursor = cursor.unwrap();
-                            cursor.offset = offset;
-                            cursor.pos = Position::Middle;
-                            prev = Some(CursorWithId {
-                                id: prev_inner.as_ref().last_id(),
-                                cursor,
-                            });
-                            break;
-                        }
-                        prev_cursor = prev_inner.prev_elem_end();
+            let (mut prev, mut next) = match cursor.pos() {
+                Position::Start => {
+                    if cursor.as_ref().can_be_origin() {
+                        let id = cursor.as_ref().id;
+                        (
+                            None,
+                            Some(CursorWithId {
+                                id,
+                                cursor: cursor.unwrap(),
+                            }),
+                        )
+                    } else {
+                        (None, None)
                     }
                 }
-
-                if next.is_none() {
-                    let mut next_cursor = cursor.next_elem_start();
-                    while let Some(next_inner) = next_cursor {
-                        if next_inner.as_ref().status.is_activated() {
-                            let mut cursor = next_inner.unwrap();
-                            cursor.offset = 0;
-                            cursor.pos = Position::Start;
-                            next = Some(CursorWithId {
-                                id: next_inner.as_ref().id,
-                                cursor,
-                            });
-                            break;
-                        }
-                        next_cursor = next_inner.next_elem_start();
+                Position::Middle => {
+                    if cursor.as_ref().can_be_origin() {
+                        let id = cursor.as_ref().id;
+                        let offset = cursor.offset();
+                        let mut prev_offset_cursor = cursor.unwrap();
+                        prev_offset_cursor.offset -= 1;
+                        (
+                            Some(CursorWithId {
+                                id: id.inc(offset as i32 - 1),
+                                cursor: prev_offset_cursor,
+                            }),
+                            Some(CursorWithId {
+                                id: id.inc(offset as i32),
+                                cursor: cursor.unwrap(),
+                            }),
+                        )
+                    } else {
+                        (None, None)
                     }
                 }
+                Position::End => {
+                    if cursor.as_ref().can_be_origin() {
+                        let mut prev_offset_cursor = cursor.unwrap();
+                        prev_offset_cursor.offset -= 1;
+                        (
+                            Some(CursorWithId {
+                                id: cursor.as_ref().last_id(),
+                                cursor: prev_offset_cursor,
+                            }),
+                            None,
+                        )
+                    } else {
+                        (None, None)
+                    }
+                }
+                _ => {
+                    unreachable!()
+                }
+            };
 
-                (prev, next)
-            } else {
-                (None, None)
+            if prev.is_none() {
+                let mut prev_cursor = cursor.prev_elem_end();
+                while let Some(prev_inner) = prev_cursor {
+                    if prev_inner.as_ref().status.is_activated() {
+                        let cursor = prev_inner;
+                        let offset = cursor.as_ref().len() - 1;
+                        let mut cursor = cursor.unwrap();
+                        cursor.offset = offset;
+                        cursor.pos = Position::Middle;
+                        prev = Some(CursorWithId {
+                            id: prev_inner.as_ref().last_id(),
+                            cursor,
+                        });
+                        break;
+                    }
+                    prev_cursor = prev_inner.prev_elem_end();
+                }
             }
-        })
+
+            if next.is_none() {
+                let mut next_cursor = cursor.next_elem_start();
+                while let Some(next_inner) = next_cursor {
+                    if next_inner.as_ref().status.is_activated() {
+                        let mut cursor = next_inner.unwrap();
+                        cursor.offset = 0;
+                        cursor.pos = Position::Start;
+                        next = Some(CursorWithId {
+                            id: next_inner.as_ref().id,
+                            cursor,
+                        });
+                        break;
+                    }
+                    next_cursor = next_inner.next_elem_start();
+                }
+            }
+
+            (prev, next)
+        } else {
+            (None, None)
+        }
     }
 }
 
