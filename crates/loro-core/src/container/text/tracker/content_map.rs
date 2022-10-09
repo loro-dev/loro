@@ -3,7 +3,7 @@ use crdt_list::crdt::ListCrdt;
 use std::ops::{Deref, DerefMut};
 
 use rle::{
-    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, RleTree,
 };
 
