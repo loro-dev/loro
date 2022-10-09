@@ -38,9 +38,17 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A
     pub fn from_cursor(
         mut start: SafeCursorMut<'tree, 'bump, T, A>,
         mut end: Option<SafeCursor<'tree, 'bump, T, A>>,
-    ) -> Option<Self> {
+    ) -> Self {
         if start.0.pos == Position::After {
-            start = start.next_elem_start()?
+            match start.next_elem_start() {
+                Some(next) => start = next,
+                None => {
+                    return Self {
+                        cursor: None,
+                        end_cursor: None,
+                    }
+                }
+            }
         }
 
         if let Some(end_inner) = end {
@@ -49,7 +57,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A
             }
         }
 
-        Some(Self {
+        Self {
             cursor: Some(UnsafeCursor::new(
                 start.0.leaf,
                 start.0.index,
@@ -58,7 +66,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, 'bump, T, A
                 0,
             )),
             end_cursor: end.map(|x| UnsafeCursor::new(x.0.leaf, x.0.index, x.0.offset, x.0.pos, 0)),
-        })
+        }
     }
 }
 

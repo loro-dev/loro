@@ -54,19 +54,17 @@ impl Tracker {
         let len = (max.counter - min.counter) as usize;
         let mut content: ContentMap = Default::default();
         let mut id_to_cursor: CursorMap = Default::default();
-        content.with_tree_mut(|tree| {
-            tree.insert_notify(
-                0,
-                YSpan {
-                    origin_left: None,
-                    origin_right: None,
-                    id: min,
-                    status: Status::new(),
-                    len,
-                },
-                &mut make_notify(&mut id_to_cursor),
-            );
-        });
+        content.insert_notify(
+            0,
+            YSpan {
+                origin_left: None,
+                origin_right: None,
+                id: min,
+                status: Status::new(),
+                len,
+            },
+            &mut make_notify(&mut id_to_cursor),
+        );
 
         Tracker {
             content,

@@ -1,21 +1,35 @@
-use crdt_list::{crdt::{ListCrdt, OpSet}, yata::Yata};
-use rle::{rle_tree::{iter::IterMut, SafeCursorMut, RleTreeRaw}, range_map::{RangeMap, WithStartEnd}};
+use crdt_list::{
+    crdt::{ListCrdt, OpSet},
+    yata::Yata,
+};
+use rle::{
+    range_map::{RangeMap, WithStartEnd},
+    rle_tree::{iter::IterMut, SafeCursorMut},
+};
 
-use crate::id::{ID, Counter};
+use crate::id::{Counter, ID};
 
 use super::{
+    cursor_map::make_notify,
     y_span::{YSpan, YSpanTreeTrait},
-    Tracker, cursor_map::make_notify,
+    Tracker,
 };
 
 #[derive(Default, Debug)]
 pub struct OpSpanSet {
-    map: RangeMap<u128, WithStartEnd<u128, bool>>
+    map: RangeMap<u128, WithStartEnd<u128, bool>>,
 }
 
 impl OpSet<YSpan, ID> for OpSpanSet {
     fn insert(&mut self, value: &YSpan) {
-        self.map.set(value.id.into(), WithStartEnd { start: value.id.into(), end: value.id.inc(value.len as i32).into(), value: true })
+        self.map.set(
+            value.id.into(),
+            WithStartEnd {
+                start: value.id.into(),
+                end: value.id.inc(value.len as i32).into(),
+                value: true,
+            },
+        )
     }
 
     fn contain(&self, id: ID) -> bool {
@@ -60,20 +74,14 @@ impl ListCrdt for YataImpl {
                 .and_then(|m| m.as_cursor(x))
         });
 
-        container
-        .content
-        .with_tree_mut(|tree| 
-            // SAFETY: loosen lifetime requirement here. It's safe because the function
-            // signature can limit the lifetime of the returned iterator
-            unsafe {std::mem::transmute::<_, &mut &mut RleTreeRaw<_, _>>(tree)}.iter_mut_in(from, to)
-        )
+        // SAFETY: loosen lifetime requirement here. It's safe because the function
+        // signature can limit the lifetime of the returned iterator
+        unsafe { std::mem::transmute(container.content.iter_mut_in(from, to)) }
     }
 
     fn insert_at(container: &mut Self::Container, op: Self::OpUnit, pos: usize) {
         let mut notify = make_notify(&mut container.id_to_cursor);
-        container.content.with_tree_mut(|tree| {
-            tree.insert_notify(pos, op,  &mut notify);
-        })
+        container.content.insert_notify(pos, op, &mut notify);
     }
 
     fn id(op: &Self::OpUnit) -> Self::OpId {
@@ -91,7 +99,7 @@ impl ListCrdt for YataImpl {
     fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
         container.vv.set_end(op.id.inc(op.len as i32));
         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-        unsafe {crdt_list::yata::integrate::<Self>(container, op)};
+        unsafe { crdt_list::yata::integrate::<Self>(container, op) };
     }
 
     fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
@@ -111,10 +119,9 @@ impl ListCrdt for YataImpl {
     }
 
     fn len(container: &Self::Container) -> usize {
-        container.content.with_tree(|tree|tree.len())
+        container.content.len()
     }
 }
-
 
 impl Yata for YataImpl {
     fn left_origin(op: &Self::OpUnit) -> Option<Self::OpId> {
@@ -131,27 +138,27 @@ impl Yata for YataImpl {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use crdt_list::crdt::OpSet;
 
-    use crate::{container::text::tracker::y_span::{YSpan, Status}, id::ID};
+    use crate::{
+        container::text::tracker::y_span::{Status, YSpan},
+        id::ID,
+    };
 
     use super::OpSpanSet;
 
     #[test]
     fn test() {
         let mut set = OpSpanSet::default();
-        set.insert(
-            &YSpan {
-                id: ID::new(1, 10), 
-                len: 10, 
-                origin_left: Some(ID::new(0, 1)), 
-                origin_right: Some(ID::new(0, 2)), 
-                status: Status::new() 
-            }
-        );
+        set.insert(&YSpan {
+            id: ID::new(1, 10),
+            len: 10,
+            origin_left: Some(ID::new(0, 1)),
+            origin_right: Some(ID::new(0, 2)),
+            status: Status::new(),
+        });
         assert!(set.contain(ID::new(1, 10)));
         assert!(set.contain(ID::new(1, 11)));
         assert!(set.contain(ID::new(1, 18)));
@@ -164,31 +171,36 @@ mod test {
     }
 }
 
-
-#[cfg(feature="fuzzing")]
+#[cfg(feature = "fuzzing")]
 pub mod fuzz {
-    use crdt_list::{test::{TestFramework, Action}, crdt, yata::Yata};
+    use crdt_list::{
+        test::{Action, TestFramework},
+        yata::Yata,
+    };
 
-    use crate::{container::text::tracker::Tracker, id::{ClientID, ID}};
+    use crate::{
+        container::text::tracker::Tracker,
+        id::{ClientID, ID},
+    };
 
     use super::YataImpl;
 
     impl TestFramework for YataImpl {
         fn is_content_eq(a: &Self::Container, b: &Self::Container) -> bool {
-            let aa = a.content.with_tree(|a| {
+            let aa = {
                 let mut ans = Vec::new();
-                for iter in a.iter() {
+                for iter in a.content.iter() {
                     ans.push((iter.id, iter.len));
                 }
                 ans
-            });
-            let bb = b.content.with_tree(|b| {
+            };
+            let bb = {
                 let mut ans = Vec::new();
-                for iter in b.iter() {
+                for iter in b.content.iter() {
                     ans.push((iter.id, iter.len));
                 }
                 ans
-            });
+            };
 
             if aa != bb {
                 dbg!(a);
@@ -209,11 +221,18 @@ pub mod fuzz {
             tracker
         }
 
-        fn new_op(_: &mut impl rand::Rng, container: &mut Self::Container, pos: usize) -> Self::OpUnit {
+        fn new_op(
+            _: &mut impl rand::Rng,
+            container: &mut Self::Container,
+            pos: usize,
+        ) -> Self::OpUnit {
             container.content.get_yspan_at_pos(
-                ID::new(container.client_id, *container.vv.get(&container.client_id).unwrap_or(&0)),
-                pos % container.content.with_tree(|tree|tree.len()),
-                pos % 10 + 1
+                ID::new(
+                    container.client_id,
+                    *container.vv.get(&container.client_id).unwrap_or(&0),
+                ),
+                pos % container.content.len(),
+                pos % 10 + 1,
             )
         }
     }
@@ -221,19 +240,22 @@ pub mod fuzz {
     #[test]
     fn issue_0() {
         use Action::*;
-        crdt_list::test::test_with_actions::<YataImpl>(5, &[
-            NewOp {
-                client_id: 16573246628723425271,
-                pos: 16565899579919523301,
-            },
-            NewOp {
-                client_id: 16504256534250120677,
-                pos: 16565899579919523301,
-            },
-            NewOp {
-                client_id: 16565899579910645221,
-                pos: 182786533,
-            },
-        ])
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            &[
+                NewOp {
+                    client_id: 16573246628723425271,
+                    pos: 16565899579919523301,
+                },
+                NewOp {
+                    client_id: 16504256534250120677,
+                    pos: 16565899579919523301,
+                },
+                NewOp {
+                    client_id: 16565899579910645221,
+                    pos: 182786533,
+                },
+            ],
+        )
     }
 }

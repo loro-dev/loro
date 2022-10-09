@@ -49,7 +49,7 @@ impl Interaction {
                 from,
                 len,
                 use_cursor,
-            } => tree.with_tree_mut(|tree| {
+            } => {
                 let mut from = *from;
                 let len = *len;
                 if tree.len() == 0 {
@@ -72,8 +72,8 @@ impl Interaction {
                 } else {
                     tree.insert_notify(from, value, notify);
                 }
-            }),
-            Interaction::Delete { from, len } => tree.with_tree_mut(|tree| {
+            }
+            Interaction::Delete { from, len } => {
                 let mut from = *from;
                 let mut len = *len;
                 if tree.len() == 0 {
@@ -86,7 +86,7 @@ impl Interaction {
                 }
                 _println!("Delete {{from: {}, len: {} }},", from, len);
                 tree.delete_range_notify(Some(from), Some(from + len), notify)
-            }),
+            }
         }
     }
 }
@@ -120,46 +120,41 @@ fn test(interactions: &[Interaction]) {
         };
         interaction.apply(&mut tree, &mut rng, &mut func);
         _dbg!(&tree);
-        range_map.tree.with_tree(|_range_tree| {
-            _println!("range_tree: {:#?}", range_tree);
-        });
+        _println!("range_tree: {:#?}", range_tree);
 
-        tree.with_tree(|tree| {
-            for origin_cursor in tree.iter() {
-                // println!("tree: {:#?}", &v);
-                let origin_value = origin_cursor.as_ref();
-                let id = origin_value.value;
-                let range_map_output = range_map.get(id);
+        for origin_cursor in tree.iter() {
+            // println!("tree: {:#?}", &v);
+            let origin_value = origin_cursor.as_ref();
+            let id = origin_value.value;
+            let range_map_output = range_map.get(id);
 
-                if range_map_output.is_none() {
-                    dbg!(origin_value);
-                }
-
-                let range_map_out = range_map_output.unwrap();
-                let range = range_map_out.start..range_map_out.end;
-                assert!(
-                    (origin_value.len() == 0 && origin_value.value == range.start)
-                        || (range.contains(&id)
-                            && range
-                                .contains(&(origin_value.value + origin_value.len() as u64 - 1))),
-                    "origin={:#?}, range={:#?}",
-                    origin_value,
-                    range
-                );
-                // SAFETY: this is a test
-                assert!(!unsafe { origin_cursor.0.leaf.as_ref().is_deleted() });
-                let origin_leaf_ptr = origin_cursor.0.leaf.as_ptr() as usize;
-                let range_map_ptr = range_map_out.value.as_ptr() as usize;
-                assert_eq!(
-                    range_map_ptr,
-                    origin_leaf_ptr,
-                    "id: {}; [PTR] actual: {:#016x} vs expected: {:#016x}",
-                    origin_cursor.as_ref().value,
-                    range_map_ptr,
-                    origin_leaf_ptr
-                );
+            if range_map_output.is_none() {
+                dbg!(origin_value);
             }
-        });
+
+            let range_map_out = range_map_output.unwrap();
+            let range = range_map_out.start..range_map_out.end;
+            assert!(
+                (origin_value.len() == 0 && origin_value.value == range.start)
+                    || (range.contains(&id)
+                        && range.contains(&(origin_value.value + origin_value.len() as u64 - 1))),
+                "origin={:#?}, range={:#?}",
+                origin_value,
+                range
+            );
+            // SAFETY: this is a test
+            assert!(!unsafe { origin_cursor.0.leaf.as_ref().is_deleted() });
+            let origin_leaf_ptr = origin_cursor.0.leaf.as_ptr() as usize;
+            let range_map_ptr = range_map_out.value.as_ptr() as usize;
+            assert_eq!(
+                range_map_ptr,
+                origin_leaf_ptr,
+                "id: {}; [PTR] actual: {:#016x} vs expected: {:#016x}",
+                origin_cursor.as_ref().value,
+                range_map_ptr,
+                origin_leaf_ptr
+            );
+        }
 
         _println!("========================================================================");
     }

@@ -63,56 +63,48 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> Default for RangeMap<In
 impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> {
     #[inline]
     pub fn set(&mut self, start: Index, value: Value) {
-        self.tree.with_tree_mut(|tree| {
-            tree.delete_range(
-                Some(start),
-                Some(start + Index::from_usize(std::cmp::max(value.len(), 1)).unwrap()),
-            );
-            tree.insert(
-                start,
-                WithGlobalIndex {
-                    value,
-                    index: start,
-                },
-            );
-        });
+        self.tree.delete_range(
+            Some(start),
+            Some(start + Index::from_usize(std::cmp::max(value.len(), 1)).unwrap()),
+        );
+        self.tree.insert(
+            start,
+            WithGlobalIndex {
+                value,
+                index: start,
+            },
+        );
     }
 
     #[inline]
     pub fn delete(&mut self, start: Option<Index>, end: Option<Index>) {
-        self.tree.with_tree_mut(|tree| {
-            tree.delete_range(start, end);
-        });
+        self.tree.delete_range(start, end);
     }
 
     #[inline]
     pub fn get_range(&self, start: Index, end: Index) -> Vec<&Value> {
         let mut ans = Vec::new();
-        self.tree.with_tree(|tree| {
-            for value in tree.iter_range(start, Some(end)) {
-                ans.push(&value.as_tree_ref().value)
-            }
-        });
+        for value in self.tree.iter_range(start, Some(end)) {
+            ans.push(&value.as_tree_ref().value)
+        }
         ans
     }
 
     #[inline]
     pub fn get(&self, index: Index) -> Option<&Value> {
-        self.tree.with_tree(|tree| {
-            let cursor = tree.get(index);
-            if let Some(cursor) = cursor {
-                match cursor.pos() {
-                    crate::rle_tree::Position::Before
-                    | crate::rle_tree::Position::End
-                    | crate::rle_tree::Position::After => None,
-                    crate::rle_tree::Position::Start | crate::rle_tree::Position::Middle => {
-                        Some(&cursor.as_tree_ref().value)
-                    }
+        let cursor = self.tree.get(index);
+        if let Some(cursor) = cursor {
+            match cursor.pos() {
+                crate::rle_tree::Position::Before
+                | crate::rle_tree::Position::End
+                | crate::rle_tree::Position::After => None,
+                crate::rle_tree::Position::Start | crate::rle_tree::Position::Middle => {
+                    Some(&cursor.as_tree_ref().value)
                 }
-            } else {
-                None
             }
-        })
+        } else {
+            None
+        }
     }
 
     #[inline]

@@ -51,7 +51,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree
 
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, 'bump, T, A> {}
 
-impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
+impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
     #[inline]
     pub(crate) fn new(
         leaf: NonNull<LeafNode<'bump, T, A>>,
@@ -69,7 +69,9 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump,
             _phantom: PhantomData,
         }
     }
+}
 
+impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, 'bump, T, A> {
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
@@ -215,6 +217,22 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> AsRef<T> for SafeCursor<'t
     }
 }
 
+impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
+    /// # Safety
+    ///
+    /// Users should make sure aht leaf is pointing to a valid LeafNode with 'bump lifetime, and index is inbound
+    #[inline]
+    pub unsafe fn new(
+        leaf: NonNull<LeafNode<'bump, T, A>>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+        len: usize,
+    ) -> Self {
+        Self(UnsafeCursor::new(leaf, index, offset, pos, len))
+    }
+}
+
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T, A> {
     #[inline]
     pub fn as_tree_ref(&self) -> &'tree T {
@@ -253,20 +271,6 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, 'bump, T
     #[inline]
     pub fn offset(&self) -> usize {
         self.0.offset
-    }
-
-    /// # Safety
-    ///
-    /// Users should make sure aht leaf is pointing to a valid LeafNode with 'bump lifetime, and index is inbound
-    #[inline]
-    pub unsafe fn new(
-        leaf: NonNull<LeafNode<'bump, T, A>>,
-        index: usize,
-        offset: usize,
-        pos: Position,
-        len: usize,
-    ) -> Self {
-        Self(UnsafeCursor::new(leaf, index, offset, pos, len))
     }
 
     #[inline]
