@@ -77,6 +77,11 @@ impl Tracker {
         }
     }
 
+    /// check whether id_to_cursor correctly reflect the status of the content
+    fn check_consistency(&self) {
+        todo!()
+    }
+
     fn turn_on(&mut self, _id: IdSpan) {}
     fn turn_off(&mut self, _id: IdSpan) {}
     fn checkout(&mut self, _vv: VersionVector) {}

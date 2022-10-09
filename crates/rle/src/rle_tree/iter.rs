@@ -137,6 +137,7 @@ impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, '
                                         end.offset - cursor.offset,
                                     )
                                 });
+                                cursor.offset = end.offset;
                                 self.cursor = None;
                                 return ans;
                             }

@@ -62,6 +62,7 @@ pub enum StatusChange {
 pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
 
 impl YSpan {
+    /// this is the last id of the span, which is **included** by self
     #[inline]
     pub fn last_id(&self) -> ID {
         self.id.inc(self.len as i32 - 1)
@@ -77,7 +78,7 @@ impl YSpan {
     pub fn contain_id(&self, id: ID) -> bool {
         self.id.client_id == id.client_id
             && self.id.counter <= id.counter
-            && self.last_id().counter > id.counter
+            && self.last_id().counter >= id.counter
     }
 }
 
