@@ -5,7 +5,7 @@ use crate::{Rle, RleTreeTrait};
 use super::{node::LeafNode, tree_trait::Position};
 
 /// when len > 0, it acts as a selection. When iterating the tree, the len should be the size of the element.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct UnsafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> {
     pub leaf: NonNull<LeafNode<'bump, T, A>>,
     pub index: usize,
@@ -32,11 +32,13 @@ impl<'tree, 'bump, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, 'bu
 impl<'tree, 'bump: 'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, 'bump, T, A> {}
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct SafeCursor<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
     pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct SafeCursorMut<'tree, 'bump, T: Rle, A: RleTreeTrait<T>>(
     pub(crate) UnsafeCursor<'tree, 'bump, T, A>,
 );
