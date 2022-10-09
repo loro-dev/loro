@@ -161,9 +161,9 @@ dependencies = [
 
 [[package]]
 name = "crdt-list"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ccf4b02e0ea18624e24710c974bdeab38a060cb572e97e56c7f675547ac917e"
+checksum = "15ab0245d29050a50d3431ad32d13bc59a187aa9c0e543b235ab8190f6b0d8af"
 dependencies = [
  "arbitrary",
  "arref",
