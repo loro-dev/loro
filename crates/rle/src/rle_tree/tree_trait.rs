@@ -74,7 +74,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>);
 
-    /// - `child_index` can only equal to children.len() when it's zero
+    /// - `child_index` can only equal to children.len() when index out of range
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
     /// - We need the `pos` to determine whether the child is included or excluded
     /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
@@ -83,7 +83,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
         index: Self::Int,
     ) -> FindPosResult<Self::Int>;
 
-    /// - `child_index` can only equal to children.len() when it's zero
+    /// - `child_index` can only equal to children.len() when index out of range
     /// - if `pos == Middle`, we need to split the node
     /// - We need the third arg to determine whether the child is included or excluded
     /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
@@ -259,6 +259,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             return;
         }
 
+        // TODO: Maybe panic if overlap?
         node.cache.end = node
             .children()
             .iter()
