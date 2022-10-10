@@ -96,6 +96,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     }
 
     /// return the first valid cursor after the given index
+    /// reviewed by @Leeeon233
     #[inline]
     fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
         self.with_node(|mut node| {
@@ -204,6 +205,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         })
     }
 
+    /// reviewed by @Leeeon233
     pub fn iter_range(&self, start: A::Int, end: Option<A::Int>) -> iter::Iter<'_, T, A> {
         let cursor_from = self.get_cursor_ge(start);
         if cursor_from.is_none() {
