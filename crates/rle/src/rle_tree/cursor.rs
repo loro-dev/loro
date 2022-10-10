@@ -99,7 +99,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
-    pub unsafe fn insert_notify<F>(&mut self, value: T, notify: &mut F)
+    pub unsafe fn insert_notify<F>(mut self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -203,6 +203,44 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         }
 
         None
+    }
+
+    /// move cursor forward
+    ///
+    /// # Safety
+    ///
+    /// self should still be valid pointer
+    pub unsafe fn update_with_split<F, U>(mut self, update_fn: U, notify: &mut F)
+    where
+        F: for<'a> FnMut(&T, *mut LeafNode<'a, T, A>),
+        U: FnOnce(&mut T),
+    {
+        let leaf = self.leaf.as_mut();
+        let result = leaf.update_at_pos(
+            self.pos,
+            self.index,
+            self.offset,
+            self.len,
+            update_fn,
+            notify,
+        );
+        let mut node = leaf.parent.as_mut();
+        if let Err(new) = result {
+            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
+            while let Err(new) = result {
+                let old_node_index = node.get_index_in_parent().unwrap();
+                // result is err, so we're sure parent is valid
+                node = node.parent.unwrap().as_mut();
+                result = node.insert_at_pos(old_node_index + 1, new);
+            }
+        } else {
+            A::update_cache_internal(node);
+        }
+
+        while node.parent.is_some() {
+            node = node.parent.unwrap().as_mut();
+            A::update_cache_internal(node);
+        }
     }
 }
 
@@ -402,6 +440,15 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
                 .unwrap()
                 .insert_notify(value, notify)
         }
+    }
+
+    pub fn update_with_split<F, U>(self, update: U, notify: &mut F)
+    where
+        F: for<'a> FnMut(&T, *mut LeafNode<'a, T, A>),
+        U: FnOnce(&mut T),
+    {
+        // SAFETY: we know the cursor is a valid pointer
+        unsafe { self.0.update_with_split(update, notify) }
     }
 }
 

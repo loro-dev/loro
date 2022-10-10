@@ -232,6 +232,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             node.as_internal_mut().unwrap().check();
         })
     }
+
+    // pub fn iter_cursor_mut(&mut self) -> impl Iterator<Item = SafeCursorMut<'_, T, A>> {}
 }
 
 impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {

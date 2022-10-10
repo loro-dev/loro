@@ -234,6 +234,110 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         self.with_cache_updated(result)
     }
 
+    /// update the content at given selection
+    pub(crate) fn update_at_pos<F, U>(
+        &mut self,
+        pos: Position,
+        child_index: usize,
+        offset: usize,
+        len: usize,
+        update_fn: U,
+        notify: &mut F,
+    ) -> Result<(), &'bump mut Node<'bump, T, A>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+        U: FnOnce(&mut T),
+    {
+        if len == 0 {
+            return Ok(());
+        }
+
+        if offset == 0 && self.children[child_index].len() == len {
+            update_fn(self.children[child_index]);
+            return Ok(());
+        }
+
+        let left = if offset == 0 {
+            None
+        } else {
+            Some(self.children[child_index].slice(0, offset))
+        };
+
+        let right = if self.children[child_index].len() == offset + len {
+            None
+        } else {
+            Some(self.children[child_index].slice(offset + len, self.children[child_index].len()))
+        };
+
+        let mut target = self.children[child_index].slice(offset, offset + len);
+        update_fn(&mut target);
+
+        if let Some(left) = left {
+            self.children[child_index] = self.bump.alloc(left);
+            let left = &mut self.children[child_index];
+            if left.is_mergable(&target, &()) {
+                left.merge(&target, &());
+                if let Some(right) = right {
+                    if left.is_mergable(&right, &()) {
+                        left.merge(&right, &());
+                        Ok(())
+                    } else {
+                        return self.insert_at_pos(
+                            Position::Start,
+                            child_index + 1,
+                            0,
+                            right,
+                            notify,
+                        );
+                    }
+                } else {
+                    Ok(())
+                }
+            } else if let Some(right) = right {
+                if target.is_mergable(&right, &()) {
+                    target.merge(&right, &());
+                    return self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify);
+                } else {
+                    let result =
+                        self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify);
+                    if let Err(new) = result {
+                        if self.children.len() >= child_index + 2 {
+                            // insert one element should not cause Err
+                            self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify)
+                                .unwrap();
+                            return Err(new);
+                        } else {
+                            let new_insert_index = child_index + 2 - self.children.len();
+                            // insert one element should not cause Err
+                            new.as_leaf_mut()
+                                .unwrap()
+                                .insert_at_pos(Position::Start, new_insert_index, 0, right, notify)
+                                .unwrap();
+                            return Err(new);
+                        }
+                    } else {
+                        return self.insert_at_pos(
+                            Position::Start,
+                            child_index + 2,
+                            0,
+                            right,
+                            notify,
+                        );
+                    }
+                }
+            } else {
+                return self.insert_at_pos(pos, child_index + 1, offset, target, notify);
+            }
+        } else {
+            self.children[child_index] = self.bump.alloc(target);
+            if let Some(right) = right {
+                self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn with_cache_updated(
         &mut self,
         result: Result<(), &'bump mut Node<'bump, T, A>>,
