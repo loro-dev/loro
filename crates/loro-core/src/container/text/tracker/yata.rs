@@ -178,10 +178,12 @@ pub mod fuzz {
         test::{Action, TestFramework},
         yata::Yata,
     };
+    use rle::RleVec;
 
     use crate::{
         container::text::tracker::Tracker,
         id::{ClientID, ID},
+        span::IdSpan,
     };
 
     use super::YataImpl;
@@ -235,6 +237,20 @@ pub mod fuzz {
                 pos % container.content.len(),
                 pos % 10 + 1,
             )
+        }
+
+        type DeleteOp = RleVec<IdSpan>;
+
+        fn new_del_op(container: &Self::Container, pos: usize, len: usize) -> Self::DeleteOp {
+            todo!()
+        }
+
+        fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
+            todo!()
+        }
+
+        fn can_apply_del_op(container: &Self::Container, op: &Self::DeleteOp) -> bool {
+            todo!()
         }
     }
 

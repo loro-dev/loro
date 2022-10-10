@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut},
-    HasLength, Mergable, Sliceable,
+    HasLength, Mergable, RleVec, Sliceable,
 };
 
 use crate::{id::ID, span::IdSpan};
@@ -20,7 +20,7 @@ pub(super) enum Marker {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
     },
-    Delete(IdSpan),
+    Delete(RleVec<IdSpan>),
     // TODO: REDO, UNDO
 }
 

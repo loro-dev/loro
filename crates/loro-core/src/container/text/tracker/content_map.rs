@@ -2,10 +2,13 @@ use std::ops::{Deref, DerefMut};
 
 use rle::{
     rle_tree::{Position, SafeCursor, SafeCursorMut, UnsafeCursor},
-    HasLength, RleTree,
+    HasLength, RleTree, RleVec,
 };
 
-use crate::id::ID;
+use crate::{
+    id::{Counter, ID},
+    span::IdSpan,
+};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
@@ -136,6 +139,19 @@ impl ContentMap {
         } else {
             (None, None)
         }
+    }
+
+    pub fn get_id_spans(&mut self, pos: usize, len: usize) -> RleVec<IdSpan> {
+        let mut ans = RleVec::new();
+        for cursor in self.iter_range(pos, Some(pos + len)) {
+            ans.push(IdSpan::new(
+                cursor.id.client_id,
+                cursor.id.counter,
+                cursor.id.counter + cursor.len as Counter,
+            ));
+        }
+
+        ans
     }
 }
 
