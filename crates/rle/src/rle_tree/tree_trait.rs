@@ -77,6 +77,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - `child_index` can only equal to children.len() when it's zero
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
     /// - We need the `pos` to determine whether the child is included or excluded
+    /// - If index is at the end of an element, `found` should be true
     /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
     fn find_pos_internal(
         node: &InternalNode<'_, T, Self>,
@@ -87,6 +88,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - if `pos == Middle`, we need to split the node
     /// - We need the third arg to determine whether the child is included or excluded
     /// - If not found, then `found` should be false and `child_index` should be the index of the insert position
+    /// - If index is at the end of an element, `found` should be true
     /// - If target index is after last child, then `child_index`  = children.len().wrapping_sub(1), `offset` = children.last().unwrap().len()
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
 
