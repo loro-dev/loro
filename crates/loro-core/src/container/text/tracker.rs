@@ -1,4 +1,4 @@
-use rle::HasLength;
+use rle::{HasLength, RleVec};
 
 use crate::{
     container::text::tracker::yata::YataImpl,
@@ -11,7 +11,7 @@ use crate::{
 use self::{
     content_map::ContentMap,
     cursor_map::{make_notify, CursorMap},
-    y_span::{Status, YSpan},
+    y_span::{Status, StatusChange, YSpan},
 };
 
 use super::text_content::TextOpContent;
@@ -96,16 +96,26 @@ impl Tracker {
                             // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                             unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                         }
-                        TextOpContent::Delete {
-                            id: _,
-                            pos: _,
-                            len: _,
-                        } => todo!(),
+                        TextOpContent::Delete { id, pos, len } => {
+                            let spans = self.content.get_id_spans(*pos, *len);
+                            todo!()
+                        }
                     }
                 }
             }
             crate::op::OpContent::Undo { .. } => todo!(),
             crate::op::OpContent::Redo { .. } => todo!(),
+        }
+    }
+
+    pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
+        for span in spans.iter() {
+            for marker in self
+                .id_to_cursor
+                .get_range(span.min_id().into(), span.max_id().into())
+            {
+                todo!()
+            }
         }
     }
 }

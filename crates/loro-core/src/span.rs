@@ -1,4 +1,4 @@
-use crate::id::{ClientID, Counter};
+use crate::id::{ClientID, Counter, ID};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,13 +103,23 @@ impl IdSpan {
     }
 
     #[inline]
-    pub fn min(&self) -> Counter {
+    pub fn min_ctr(&self) -> Counter {
         self.counter.min()
     }
 
     #[inline]
-    pub fn max(&self) -> Counter {
+    pub fn max_ctr(&self) -> Counter {
         self.counter.max()
+    }
+
+    #[inline]
+    pub fn min_id(&self) -> ID {
+        ID::new(self.client_id, self.counter.min())
+    }
+
+    #[inline]
+    pub fn max_id(&self) -> ID {
+        ID::new(self.client_id, self.counter.max())
     }
 }
 

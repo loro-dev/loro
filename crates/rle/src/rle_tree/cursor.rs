@@ -10,6 +10,7 @@ pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
     pub leaf: NonNull<LeafNode<'tree, T, A>>,
     pub index: usize,
     pub offset: usize,
+    // TODO: considering remove this field, use a getter function instead
     pub pos: Position,
     pub len: usize,
     _phantom: PhantomData<&'tree usize>,

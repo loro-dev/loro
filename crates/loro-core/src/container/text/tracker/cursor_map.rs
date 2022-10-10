@@ -50,18 +50,28 @@ impl Marker {
         }
     }
 
-    pub fn as_cursor_mut(
+    /// # Safety
+    ///
+    /// It's safe when you are sure that the returned cursor is the only reference to the target yspan tree
+    pub unsafe fn as_cursor_mut(
         &mut self,
         id: ID,
     ) -> Option<SafeCursorMut<'static, YSpan, YSpanTreeTrait>> {
         match self {
             Marker::Insert { ptr, len: _ } => {
-                // SAFETY: tree data is always valid
-                let node = unsafe { ptr.as_ref() };
+                let node = ptr.as_ref();
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
-                // SAFETY: we just checked it is valid
-                Some(unsafe { SafeCursorMut::new(*ptr, position, 0, Position::Start, self.len()) })
+                let child = &node.children()[position];
+                let start_counter = child.id.counter;
+                let offset = id.counter - start_counter;
+                Some(SafeCursorMut::new(
+                    *ptr,
+                    position,
+                    offset as usize,
+                    Position::from_offset(offset as isize, child.len()),
+                    0,
+                ))
             }
             Marker::Delete(_) => None,
         }
