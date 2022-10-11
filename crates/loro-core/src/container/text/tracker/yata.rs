@@ -183,7 +183,7 @@ pub mod fuzz {
     use crate::{
         container::text::tracker::{y_span::StatusChange, Tracker},
         id::{ClientID, ID},
-        span::IdSpan,
+        span::{self, IdSpan},
     };
 
     use super::YataImpl;
@@ -251,12 +251,13 @@ pub mod fuzz {
             }
 
             pos %= container.content.len();
-            len = std::cmp::min(len, container.content.len() - pos);
+            len = std::cmp::min(len % 10 + 1, container.content.len() - pos);
             if len == 0 {
                 return RleVec::new();
             }
 
-            container.content.get_id_spans(pos, len)
+            let spans = container.content.get_id_spans(pos, len);
+            spans
         }
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
@@ -264,13 +265,13 @@ pub mod fuzz {
         }
 
         fn can_apply_del_op(container: &Self::Container, op: &Self::DeleteOp) -> bool {
-            op.iter().all(|x| container.vv.includes(x.max_id()))
+            true
         }
     }
 
+    use Action::*;
     #[test]
     fn issue_0() {
-        use Action::*;
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
             &[
@@ -285,6 +286,59 @@ pub mod fuzz {
                 NewOp {
                     client_id: 16565899579910645221,
                     pos: 182786533,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn issue_1() {
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            &[
+                NewOp {
+                    client_id: 72057319153112726,
+                    pos: 18446743116487664383,
+                },
+                Delete {
+                    client_id: 18446742978492891135,
+                    pos: 18446744073709551615,
+                    len: 18446744073695461375,
+                },
+                Delete {
+                    client_id: 65535,
+                    pos: 281178623508480,
+                    len: 18446742974197923840,
+                },
+                Delete {
+                    client_id: 13107135066100727807,
+                    pos: 532050712311190,
+                    len: 18446744073701163007,
+                },
+                NewOp {
+                    client_id: 35184372089087,
+                    pos: 18446462598732840960,
+                },
+                Sync {
+                    from: 18446744073692774400,
+                    to: 16565899692026626047,
+                },
+                Delete {
+                    client_id: 18446462606851290549,
+                    pos: 18446744073709551487,
+                    len: 9910603680803979263,
+                },
+                NewOp {
+                    client_id: 9910603678816504201,
+                    pos: 9910603678816504201,
+                },
+                NewOp {
+                    client_id: 9910603678816504201,
+                    pos: 9910603678816504201,
+                },
+                NewOp {
+                    client_id: 9910603678816504201,
+                    pos: 18446744073701788041,
                 },
             ],
         )

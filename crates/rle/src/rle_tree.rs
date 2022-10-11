@@ -256,10 +256,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             }
         }
 
-        let mut internal_updates_map: HashMap<
-            NonNull<_>,
-            Vec<(usize, Vec<&'_ mut Node<'_, T, A>>)>,
-        > = Default::default();
+        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<_>)>> =
+            Default::default();
         for (mut leaf, updates) in updates_map {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };
@@ -294,6 +292,11 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                     internal_updates_map.insert(node.parent.unwrap(), Default::default());
                 }
             }
+        }
+
+        #[cfg(test)]
+        {
+            self.debug_check();
         }
     }
 

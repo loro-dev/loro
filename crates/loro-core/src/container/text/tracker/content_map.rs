@@ -144,10 +144,12 @@ impl ContentMap {
     pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVec<IdSpan> {
         let mut ans = RleVec::new();
         for cursor in self.iter_range(pos, Some(pos + len)) {
+            let id = cursor.id;
+            let cursor = cursor.unwrap();
             ans.push(IdSpan::new(
-                cursor.id.client_id,
-                cursor.id.counter,
-                cursor.id.counter + cursor.len as Counter,
+                id.client_id,
+                id.counter + (cursor.offset as i32),
+                id.counter + (cursor.offset + cursor.len) as i32,
             ));
         }
 
