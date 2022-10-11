@@ -121,6 +121,11 @@ impl IdSpan {
     pub fn max_id(&self) -> ID {
         ID::new(self.client_id, self.counter.max())
     }
+
+    #[inline]
+    pub fn end_id(&self) -> ID {
+        ID::new(self.client_id, self.counter.max() + 1)
+    }
 }
 
 impl HasLength for IdSpan {

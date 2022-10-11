@@ -30,9 +30,6 @@ impl Marker {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
                 let node = unsafe { ptr.as_ref() };
-                if node.is_deleted() {
-                    dbg!(&node);
-                }
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
                 let child = &node.children()[position];

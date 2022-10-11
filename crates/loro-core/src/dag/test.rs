@@ -105,10 +105,12 @@ impl TestDag {
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
         let deps = std::mem::replace(&mut self.frontier, vec![id]);
-        self.nodes
-            .entry(client_id)
-            .or_default()
-            .push(TestNode::new(id, self.next_lamport, deps, len));
+        self.nodes.entry(client_id).or_default().push(TestNode::new(
+            id,
+            self.next_lamport,
+            deps,
+            len,
+        ));
         self.next_lamport += len as u32;
     }
 
@@ -160,10 +162,7 @@ impl TestDag {
             node.id.inc((node.len() - 1) as Counter),
             &node.deps,
         );
-        self.nodes
-            .entry(client_id)
-            .or_default()
-            .push(node.clone());
+        self.nodes.entry(client_id).or_default().push(node.clone());
         self.version_vec
             .insert(client_id, node.id.counter + node.len as Counter);
         self.next_lamport = self.next_lamport.max(node.lamport + node.len as u32);
@@ -604,7 +603,6 @@ mod find_common_ancestors_proptest {
         let (dag0, dag1) = array_mut_ref!(&mut dags, [0, 1]);
         dag1.push(1);
         dag0.merge(dag1);
-        // dbg!(dag0, dag1, expected);
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id;
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id;
         let actual = dags[0].find_common_ancestor(a, b);
