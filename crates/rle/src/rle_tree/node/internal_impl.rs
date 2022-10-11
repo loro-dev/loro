@@ -65,12 +65,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 "children.len() = {}",
                 self.children.len()
             );
-            assert!(
-                self.children.len() <= A::MAX_CHILDREN_NUM,
-                "children.len() = {}",
-                self.children.len()
-            );
         }
+
+        assert!(
+            self.children.len() <= A::MAX_CHILDREN_NUM,
+            "children.len() = {}",
+            self.children.len()
+        );
 
         let self_ptr = self as *const _;
         for child in self.children.iter_mut() {
@@ -215,6 +216,69 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         result
+    }
+
+    pub(crate) fn apply_updates(
+        &mut self,
+        mut updates: Vec<(usize, Vec<&'a mut Node<'a, T, A>>)>,
+    ) -> Result<(), Vec<&'a mut Node<'a, T, A>>> {
+        updates.sort_by_key(|x| x.0);
+        let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::new();
+        let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
+        let mut last_end = 0;
+        for (index, replace) in updates {
+            let should_pop = index - last_end < self_children.len();
+            for child in self_children.drain(0..index - last_end + 1) {
+                new_children.push(child);
+            }
+
+            if should_pop {
+                new_children.pop();
+            }
+
+            for element in replace {
+                new_children.push(element);
+            }
+
+            last_end = index + 1;
+        }
+
+        let result = if new_children.len() <= A::MAX_CHILDREN_NUM {
+            for child in new_children {
+                self.children.push(child);
+            }
+
+            A::update_cache_internal(self);
+            Ok(())
+        } else {
+            for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                self.children.push(child);
+            }
+
+            A::update_cache_internal(self);
+            let mut ans_vec = Vec::new();
+            while !new_children.is_empty() {
+                let mut new_leaf = InternalNode::new(self.bump, self.parent);
+                for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                    new_leaf.children.push(child);
+                }
+
+                A::update_cache_internal(&mut new_leaf);
+                ans_vec.push(self.bump.alloc(Node::Internal(new_leaf)));
+            }
+
+            Err(ans_vec)
+        };
+
+        if result.is_err() && self.is_root() {
+            let mut new = result.unwrap_err();
+            assert!(new.len() == 1);
+            let v = new.pop().unwrap();
+            self._create_level(v);
+            Ok(())
+        } else {
+            result
+        }
     }
 
     /// connect [prev leaf of left] with [next leaf of right]

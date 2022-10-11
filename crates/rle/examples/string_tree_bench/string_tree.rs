@@ -10,7 +10,7 @@ use smartstring::SmartString;
 
 type SString = SmartString<smartstring::LazyCompact>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CustomString {
     str: Rc<RefCell<SString>>,
     slice: Range<usize>,

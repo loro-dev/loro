@@ -98,7 +98,9 @@ impl Tracker {
                         }
                         TextOpContent::Delete { id, pos, len } => {
                             let spans = self.content.get_id_spans(*pos, *len);
-                            todo!()
+                            self.update_spans(&spans, StatusChange::Delete);
+                            self.id_to_cursor
+                                .set((*id).into(), cursor_map::Marker::Delete(spans));
                         }
                     }
                 }
@@ -109,14 +111,26 @@ impl Tracker {
     }
 
     pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
+        let mut cursors = Vec::new();
         for span in spans.iter() {
+            let mut span_start = span.min_id();
             for marker in self
                 .id_to_cursor
                 .get_range(span.min_id().into(), span.max_id().into())
             {
-                todo!()
+                let cursor = marker.as_cursor(span_start).unwrap().unwrap();
+                span_start = span_start.inc(cursor.len as Counter);
+                cursors.push(cursor);
             }
         }
+
+        self.content.update_at_cursors(
+            cursors,
+            &mut |v| {
+                v.status.apply(change);
+            },
+            &mut make_notify(&mut self.id_to_cursor),
+        )
     }
 }
 

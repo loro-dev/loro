@@ -43,9 +43,9 @@ pub trait HasLength {
     fn len(&self) -> usize;
 }
 
-pub trait Rle<Cfg = ()>: HasLength + Sliceable + Mergable<Cfg> + Debug {}
+pub trait Rle<Cfg = ()>: HasLength + Sliceable + Mergable<Cfg> + Debug + Clone {}
 
-impl<T: HasLength + Sliceable + Mergable<Cfg> + Debug, Cfg> Rle<Cfg> for T {}
+impl<T: HasLength + Sliceable + Mergable<Cfg> + Debug + Clone, Cfg> Rle<Cfg> for T {}
 
 impl<T: Integer + NumCast + Copy> Sliceable for Range<T> {
     fn slice(&self, start: usize, end: usize) -> Self {

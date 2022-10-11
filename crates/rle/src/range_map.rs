@@ -5,7 +5,7 @@ use crate::{
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct WithGlobalIndex<Value, Index: GlobalIndex> {
     pub(crate) value: Value,
     pub(crate) index: Index,
@@ -118,7 +118,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WithStartEnd<Index: GlobalIndex, T> {
     pub start: Index,
     pub end: Index,
@@ -169,7 +169,7 @@ mod test {
     use std::ops::Range;
 
     use super::*;
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq, Clone)]
     struct V {
         from: usize,
         to: usize,

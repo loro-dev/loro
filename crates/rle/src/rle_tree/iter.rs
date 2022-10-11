@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::Rle;
 
 use super::{

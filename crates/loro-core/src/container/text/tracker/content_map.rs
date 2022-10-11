@@ -141,7 +141,7 @@ impl ContentMap {
         }
     }
 
-    pub fn get_id_spans(&mut self, pos: usize, len: usize) -> RleVec<IdSpan> {
+    pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVec<IdSpan> {
         let mut ans = RleVec::new();
         for cursor in self.iter_range(pos, Some(pos + len)) {
             ans.push(IdSpan::new(

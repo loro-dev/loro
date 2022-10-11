@@ -181,7 +181,7 @@ pub mod fuzz {
     use rle::RleVec;
 
     use crate::{
-        container::text::tracker::Tracker,
+        container::text::tracker::{y_span::StatusChange, Tracker},
         id::{ClientID, ID},
         span::IdSpan,
     };
@@ -241,16 +241,30 @@ pub mod fuzz {
 
         type DeleteOp = RleVec<IdSpan>;
 
-        fn new_del_op(container: &Self::Container, pos: usize, len: usize) -> Self::DeleteOp {
-            todo!()
+        fn new_del_op(
+            container: &Self::Container,
+            mut pos: usize,
+            mut len: usize,
+        ) -> Self::DeleteOp {
+            if container.content.len() == 0 {
+                return RleVec::new();
+            }
+
+            pos %= container.content.len();
+            len = std::cmp::min(len, container.content.len() - pos);
+            if len == 0 {
+                return RleVec::new();
+            }
+
+            container.content.get_id_spans(pos, len)
         }
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
-            todo!()
+            container.update_spans(&op, StatusChange::Delete);
         }
 
         fn can_apply_del_op(container: &Self::Container, op: &Self::DeleteOp) -> bool {
-            todo!()
+            op.iter().all(|x| container.vv.includes(x.max_id()))
         }
     }
 

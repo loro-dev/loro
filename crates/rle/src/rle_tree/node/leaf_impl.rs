@@ -117,6 +117,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
     pub(crate) fn check(&self) {
         assert!(self.children.len() <= A::MAX_CHILDREN_NUM);
+        // assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
         assert!(!self.is_deleted());
         A::check_cache_leaf(self);
         if let Some(next) = self.next {
@@ -335,6 +336,147 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             } else {
                 Ok(())
             }
+        }
+    }
+
+    /// this is a effect-less operation, it will not modify the data, it returns the needed change at the given index instead
+    pub(crate) fn pure_update<U>(
+        &self,
+        child_index: usize,
+        offset: usize,
+        len: usize,
+        update_fn: &mut U,
+    ) -> Option<Vec<T>>
+    where
+        U: FnMut(&mut T),
+    {
+        let mut ans = vec![];
+        if len == 0 {
+            return None;
+        }
+
+        let child = &self.children[child_index];
+        if offset == 0 && child.len() == len {
+            let mut element = child.slice(0, len);
+            update_fn(&mut element);
+            ans.push(element);
+            return Some(ans);
+        }
+
+        if offset != 0 {
+            ans.push(child.slice(0, offset));
+        }
+        let mut target = child.slice(offset, offset + len);
+        update_fn(&mut target);
+        if !ans.is_empty() {
+            if ans[0].is_mergable(&target, &()) {
+                ans[0].merge(&target, &());
+            } else {
+                ans.push(target);
+            }
+        }
+
+        if offset + len < child.len() {
+            let right = child.slice(offset + len, child.len());
+            let mut merged = false;
+            if let Some(last) = ans.last_mut() {
+                if last.is_mergable(&right, &()) {
+                    merged = true;
+                    last.merge(&right, &());
+                }
+            }
+
+            if !merged {
+                ans.push(right);
+            }
+        }
+
+        Some(ans)
+    }
+
+    pub(crate) fn apply_updates<F>(
+        &mut self,
+        mut updates: Vec<(usize, Vec<T>)>,
+        notify: &mut F,
+    ) -> Result<(), Vec<&'bump mut Node<'bump, T, A>>>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        updates.sort_by_key(|x| x.0);
+        let mut i = 0;
+        let mut j = 1;
+        // try merge sibling updates
+        while i + j < updates.len() {
+            if updates[i].0 + j == updates[i + j].0 {
+                let (a, b) = arref::array_mut_ref!(&mut updates, [i, i + j]);
+                for node in b.1.drain(..) {
+                    a.1.push(node);
+                }
+
+                j += 1;
+            } else {
+                i += j;
+                j = 1;
+            }
+        }
+
+        let mut new_children: Vec<&mut T> = Vec::new();
+        let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
+        let mut last_end = 0;
+        for (index, replace) in updates {
+            let should_pop = index - last_end < self_children.len();
+            for child in self_children.drain(0..index - last_end + 1) {
+                new_children.push(child);
+            }
+
+            if should_pop {
+                new_children.pop();
+            }
+
+            for element in replace {
+                let mut merged = false;
+                if let Some(last) = new_children.last_mut() {
+                    if last.is_mergable(&element, &()) {
+                        last.merge(&element, &());
+                        merged = true;
+                    }
+                }
+                if !merged {
+                    new_children.push(self.bump.alloc(element));
+                }
+            }
+
+            last_end = index + 1;
+        }
+
+        if new_children.len() <= A::MAX_CHILDREN_NUM {
+            for child in new_children {
+                notify(child, self);
+                self.children.push(child);
+            }
+
+            A::update_cache_leaf(self);
+            Ok(())
+        } else {
+            for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                notify(child, self);
+                self.children.push(child);
+            }
+
+            A::update_cache_leaf(self);
+            let mut leaf_vec = Vec::new();
+            while !new_children.is_empty() {
+                let mut new_leaf = LeafNode::new(self.bump, self.parent);
+                for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                    notify(child, &mut new_leaf);
+                    new_leaf.children.push(child);
+                }
+
+                A::update_cache_leaf(&mut new_leaf);
+                leaf_vec.push(self.bump.alloc(Node::Leaf(new_leaf)));
+            }
+
+            Err(leaf_vec)
         }
     }
 

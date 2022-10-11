@@ -5,7 +5,7 @@ use std::{
 
 use crate::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, RleTree, Sliceable};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CustomString(String);
 impl Deref for CustomString {
     type Target = String;
