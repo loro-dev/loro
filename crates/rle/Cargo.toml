@@ -10,6 +10,7 @@ bumpalo = { version = "3.10.0", features = ["collections", "boxed"] }
 num = "0.4.0"
 enum-as-inner = "0.5.1"
 ouroboros = "0.15.2"
+arref = "0.1.0"
 
 [dev-dependencies]
 color-backtrace = { version = "0.5" }

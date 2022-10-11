@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 use im::hashmap::HashMap as ImHashMap;
 
 use crate::{
@@ -140,8 +140,8 @@ impl VersionVector {
         }
     }
 
-    pub fn includes(&mut self, id: ID) -> bool {
-        if let Some(end) = self.get_mut(&id.client_id) {
+    pub fn includes(&self, id: ID) -> bool {
+        if let Some(end) = self.get(&id.client_id) {
             if *end > id.counter {
                 return true;
             }

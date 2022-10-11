@@ -1,3 +1,5 @@
+use std::{collections::HashMap, ptr::NonNull};
+
 use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
@@ -225,6 +227,93 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         } else {
             iter::Iter::from_cursor(cursor_from, None).unwrap()
         }
+    }
+
+    pub fn update_at_cursors<U, F>(
+        &mut self,
+        cursors: Vec<UnsafeCursor<T, A>>,
+        update_fn: &mut U,
+        notify: &mut F,
+    ) where
+        U: FnMut(&mut T),
+        F: FnMut(&T, *mut LeafNode<T, A>),
+    {
+        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>> = Default::default();
+        for cursor in cursors {
+            // SAFETY: we has the exclusive reference to the tree and the cursor is valid
+            let updates = unsafe {
+                cursor
+                    .leaf
+                    .as_ref()
+                    .pure_update(cursor.index, cursor.offset, cursor.len, update_fn)
+            };
+
+            if let Some(update) = updates {
+                updates_map
+                    .entry(cursor.leaf)
+                    .or_default()
+                    .push((cursor.index, update));
+            }
+        }
+
+        let mut internal_updates_map: HashMap<
+            NonNull<_>,
+            Vec<(usize, Vec<&'_ mut Node<'_, T, A>>)>,
+        > = Default::default();
+        for (mut leaf, updates) in updates_map {
+            // SAFETY: we has the exclusive reference to the tree and the cursor is valid
+            let leaf = unsafe { leaf.as_mut() };
+            if let Err(new) = leaf.apply_updates(updates, notify) {
+                internal_updates_map
+                    .entry(leaf.parent)
+                    .or_default()
+                    .push((leaf.get_index_in_parent().unwrap(), new));
+            } else {
+                // insert empty value to trigger cache update
+                internal_updates_map.insert(leaf.parent, Default::default());
+            }
+        }
+
+        while !internal_updates_map.is_empty() {
+            let updates_map = std::mem::take(&mut internal_updates_map);
+            for (mut node, updates) in updates_map {
+                // SAFETY: we has the exclusive reference to the tree and the cursor is valid
+                let node = unsafe { node.as_mut() };
+                if updates.is_empty() {
+                    A::update_cache_internal(node);
+                    continue;
+                }
+
+                if let Err(new) = node.apply_updates(updates) {
+                    internal_updates_map
+                        .entry(node.parent.unwrap())
+                        .or_default()
+                        .push((node.get_index_in_parent().unwrap(), new));
+                } else {
+                    // insert empty value to trigger cache update
+                    internal_updates_map.insert(node.parent.unwrap(), Default::default());
+                }
+            }
+        }
+    }
+
+    pub fn iter_update<U, F>(
+        &mut self,
+        start: A::Int,
+        end: Option<A::Int>,
+        update_fn: &mut U,
+        notify: &mut F,
+    ) where
+        U: FnMut(&mut T),
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        let mut cursors = Vec::new();
+        for cursor in self.iter_range(start, end) {
+            cursors.push(cursor.0);
+        }
+
+        // SAFETY: it's perfectly safe here because we know what we are doing in the update_at_cursors
+        self.update_at_cursors(unsafe { std::mem::transmute(cursors) }, update_fn, notify);
     }
 
     pub fn debug_check(&mut self) {
