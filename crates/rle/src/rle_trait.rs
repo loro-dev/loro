@@ -40,8 +40,10 @@ pub trait HasLength {
         self.len() == 0
     }
 
+    /// if the content is deleted, len should be zero
     fn len(&self) -> usize;
 
+    /// the actual length of the value, cannot be affected by delete state
     fn content_len(&self) -> usize {
         self.len()
     }

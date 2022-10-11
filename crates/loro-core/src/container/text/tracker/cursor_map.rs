@@ -14,7 +14,7 @@ use super::y_span::{YSpan, YSpanTreeTrait};
 
 // marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Debug, Clone, EnumAsInner, PartialEq, Eq)]
 pub(super) enum Marker {
     Insert {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
@@ -111,7 +111,7 @@ impl Marker {
                     *ptr,
                     position,
                     offset as usize,
-                    Position::from_offset(offset as isize, child.len()),
+                    Position::from_offset(offset as isize, child.content_len()),
                     0,
                 ))
             }

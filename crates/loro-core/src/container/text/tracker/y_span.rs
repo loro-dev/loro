@@ -1,7 +1,7 @@
 use crate::{id::Counter, span::IdSpan, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Status {
     unapplied: bool,
     delete_times: usize,
@@ -40,7 +40,7 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct YSpan {
     pub id: ID,
     pub len: usize,
@@ -96,7 +96,7 @@ impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
             && self.status == other.status
-            && self.id.counter + self.len() as Counter == other.id.counter
+            && self.id.counter + self.len as Counter == other.id.counter
             && self.origin_right == other.origin_right
             && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
     }
@@ -109,7 +109,7 @@ impl Mergable for YSpan {
 
 impl Sliceable for YSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
-        if from == 0 && to == self.len() {
+        if from == 0 && to == self.content_len() {
             return self.clone();
         }
 
@@ -121,7 +121,7 @@ impl Sliceable for YSpan {
                 len: to - from,
                 status: self.status.clone(),
             }
-        } else if to < self.len() {
+        } else if to < self.content_len() {
             YSpan {
                 origin_left: Some(self.id.inc(from as i32 - 1)),
                 origin_right: Some(self.id.inc(to as i32)),

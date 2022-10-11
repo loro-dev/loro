@@ -1,11 +1,11 @@
-use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
+use std::{hash::Hash, marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::{Rle, RleTreeTrait};
 
 use super::{node::LeafNode, tree_trait::Position};
 
 /// when len > 0, it acts as a selection. When iterating the tree, the len should be the size of the element.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
     pub leaf: NonNull<LeafNode<'tree, T, A>>,
     pub index: usize,
@@ -15,6 +15,28 @@ pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
     pub len: usize,
     _phantom: PhantomData<&'tree usize>,
 }
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Hash for UnsafeCursor<'tree, T, A> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.leaf.hash(state);
+        self.index.hash(state);
+        self.offset.hash(state);
+        self.pos.hash(state);
+        self.len.hash(state);
+    }
+}
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> PartialEq for UnsafeCursor<'tree, T, A> {
+    fn eq(&self, other: &Self) -> bool {
+        self.leaf == other.leaf
+            && self.index == other.index
+            && self.offset == other.offset
+            && self.pos == other.pos
+            && self.len == other.len
+    }
+}
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Eq for UnsafeCursor<'tree, T, A> {}
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, T, A> {
     #[inline]

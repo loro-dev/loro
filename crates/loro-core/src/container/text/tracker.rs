@@ -1,3 +1,4 @@
+use im::HashSet;
 use rle::{HasLength, RleVec};
 
 use crate::{
@@ -111,14 +112,14 @@ impl Tracker {
 
     pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
         println!("{} SPANS {:?}", self.client_id, &spans);
-        let mut cursors = Vec::new();
+        let mut cursors = HashSet::new();
         for span in spans.iter() {
             for marker in self
                 .id_to_cursor
                 .get_range(span.min_id().into(), span.max_id().into())
             {
                 for cursor in marker.get_spans(*span) {
-                    cursors.push(cursor);
+                    cursors.insert(cursor);
                 }
             }
         }
@@ -127,6 +128,11 @@ impl Tracker {
         //     panic!("cursors is empty");
         // }
 
+        let cursors: Vec<_> = cursors.into_iter().collect();
+        dbg!(&cursors);
+        debug_assert!(
+            cursors.iter().map(|x| x.len).sum::<usize>() == spans.iter().map(|x| x.len()).sum()
+        );
         self.content.update_at_cursors(
             cursors,
             &mut |v| {

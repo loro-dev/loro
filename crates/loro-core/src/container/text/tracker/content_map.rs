@@ -104,7 +104,7 @@ impl ContentMap {
                 while let Some(prev_inner) = prev_cursor {
                     if prev_inner.as_ref().status.is_activated() {
                         let cursor = prev_inner;
-                        let offset = cursor.as_ref().len() - 1;
+                        let offset = cursor.as_ref().content_len() - 1;
                         let mut cursor = cursor.unwrap();
                         cursor.offset = offset;
                         cursor.pos = Position::Middle;
