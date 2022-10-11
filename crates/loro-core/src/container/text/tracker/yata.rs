@@ -282,17 +282,11 @@ pub mod fuzz {
     fn issue_0() {
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
-            &[
-                NewOp {
-                    client_id: 0,
-                    pos: 0,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 4,
-                },
-            ],
+            &[Delete {
+                client_id: 0,
+                pos: 1,
+                len: 1,
+            }],
         )
     }
 

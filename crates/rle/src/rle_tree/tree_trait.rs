@@ -10,7 +10,7 @@ use super::node::{InternalNode, LeafNode, Node};
 ///
 /// - The target may be inside a node, in which case it's at the start/middle/end of a node.
 /// - Or it is before/after a node.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Position {
     Before,
     Start,
@@ -177,7 +177,7 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
 
         FindPosResult::new(
             node.children().len() - 1,
-            HasLength::len(&**node.children().last().unwrap()),
+            HasLength::content_len(&**node.children().last().unwrap()),
             Position::End,
         )
     }
@@ -345,7 +345,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
 
         FindPosResult::new_not_found(
             node.children.len().saturating_sub(1),
-            node.children().last().unwrap().len(),
+            node.children().last().unwrap().content_len(),
             Position::After,
         )
     }

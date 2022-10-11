@@ -29,7 +29,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let ans = self
             .bump
             .alloc(Node::Leaf(Self::new(self.bump, self.parent)));
-        let mut ans_inner = ans.as_leaf_mut().unwrap();
+        let ans_inner = ans.as_leaf_mut().unwrap();
         let ans_ptr = ans_inner as _;
         for child in self
             .children
@@ -39,14 +39,22 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             ans_inner.children.push(child);
         }
 
-        ans_inner.next = self.next;
-        ans_inner.prev = Some(NonNull::new(self).unwrap());
-        if let Some(mut next) = self.next {
-            // SAFETY: ans_inner is a valid pointer
-            unsafe { next.as_mut().prev = Some(NonNull::new_unchecked(ans_inner)) };
-        }
-        self.next = Some(NonNull::new(&mut *ans_inner).unwrap());
+        Self::connect(Some(ans_inner), self.next_mut());
+        Self::connect(Some(self), Some(ans_inner));
         ans
+    }
+
+    #[inline]
+    fn connect(a: Option<&mut LeafNode<'bump, T, A>>, b: Option<&mut LeafNode<'bump, T, A>>) {
+        match (a, b) {
+            (None, None) => {}
+            (None, Some(next)) => next.prev = None,
+            (Some(prev), None) => prev.next = None,
+            (Some(a), Some(b)) => {
+                a.next = Some(NonNull::new(b).unwrap());
+                b.prev = Some(NonNull::new(a).unwrap());
+            }
+        }
     }
 
     #[inline]
@@ -253,7 +261,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             return Ok(());
         }
 
-        if offset == 0 && self.children[child_index].len() == len {
+        if offset == 0 && self.children[child_index].content_len() == len {
             update_fn(self.children[child_index]);
             return Ok(());
         }
@@ -264,7 +272,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             Some(self.children[child_index].slice(0, offset))
         };
 
-        let right = if self.children[child_index].len() == offset + len {
+        let right = if self.children[child_index].content_len() == offset + len {
             None
         } else {
             Some(
@@ -490,6 +498,15 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 leaf_vec.push(new_leaf_node);
             }
 
+            let next = self.next;
+            let mut last = self;
+            for leaf in leaf_vec.iter_mut() {
+                Self::connect(Some(last), Some(leaf.as_leaf_mut().unwrap()));
+                last = leaf.as_leaf_mut().unwrap();
+            }
+
+            // SAFETY: there will not be shared mutable references
+            Self::connect(Some(last), unsafe { next.map(|mut x| x.as_mut()) });
             Err(leaf_vec)
         }
     }

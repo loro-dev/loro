@@ -257,7 +257,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        dbg!(&cursors);
         let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>> = Default::default();
         for cursor in cursors {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
