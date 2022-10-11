@@ -227,20 +227,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
         let mut last_end = 0;
         for (index, replace) in updates {
-            let should_pop = index - last_end < self_children.len();
             for child in self_children.drain(0..index - last_end + 1) {
                 new_children.push(child);
-            }
-
-            if should_pop {
-                new_children.pop();
             }
 
             for element in replace {
                 new_children.push(element);
             }
 
-            last_end = index + 1;
+            last_end = index;
+        }
+
+        for child in self_children.drain(..) {
+            new_children.push(child);
         }
 
         let self_ptr: NonNull<_> = self.into();
@@ -253,7 +252,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             A::update_cache_internal(self);
             Ok(())
         } else {
-            for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+            for child in
+                new_children.drain(0..(std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len())))
+            {
                 child.set_parent(self_ptr);
                 self.children.push(child);
             }
@@ -265,7 +266,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     .bump
                     .alloc(Node::Internal(InternalNode::new(self.bump, self.parent)));
                 let new_internal = new_internal_node.as_internal_mut().unwrap();
-                for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                for child in
+                    new_children.drain(0..(std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len())))
+                {
                     child.set_parent(new_internal.into());
                     new_internal.children.push(child);
                 }
@@ -368,7 +371,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         left_inner.parent = Some(NonNull::new(self).unwrap());
-        new.as_internal_mut().unwrap().parent = Some(NonNull::new(self).unwrap());
+        new.as_internal_mut().unwrap().parent = Some(self.into());
         self.children.push(left);
         self.children.push(new);
         A::update_cache_internal(self);

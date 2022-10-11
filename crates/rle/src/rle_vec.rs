@@ -1,5 +1,4 @@
-
-use std::ops::{Range};
+use std::ops::Range;
 
 use crate::{HasLength, Mergable, Slice, Sliceable};
 
@@ -28,6 +27,14 @@ pub struct SearchResult<'a, T> {
     pub merged_index: usize,
     pub offset: usize,
 }
+
+impl<T: Eq + PartialEq> PartialEq for RleVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.vec == other.vec
+    }
+}
+
+impl<T: Eq + PartialEq> Eq for RleVec<T> {}
 
 impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
     /// push a new element to the end of the array. It may be merged with last element.

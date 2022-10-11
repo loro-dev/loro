@@ -81,7 +81,11 @@ impl ListCrdt for YataImpl {
 
     fn insert_at(container: &mut Self::Container, op: Self::OpUnit, pos: usize) {
         let mut notify = make_notify(&mut container.id_to_cursor);
-        container.content.insert_notify(pos, op, &mut notify);
+        if pos == 0 {
+            container.content.insert_at_first(op, &mut notify);
+        } else {
+            container.content.insert_notify(pos, op, &mut notify);
+        }
     }
 
     fn id(op: &Self::OpUnit) -> Self::OpId {
@@ -178,6 +182,7 @@ pub mod fuzz {
         test::{Action, TestFramework},
         yata::Yata,
     };
+    use moveit::New;
     use rle::RleVec;
 
     use crate::{
@@ -191,21 +196,23 @@ pub mod fuzz {
     impl TestFramework for YataImpl {
         fn is_content_eq(a: &Self::Container, b: &Self::Container) -> bool {
             let aa = {
-                let mut ans = Vec::new();
+                let mut ans = RleVec::new();
                 for iter in a.content.iter() {
-                    ans.push((iter.id, iter.len));
+                    ans.push(iter.as_ref().clone());
                 }
                 ans
             };
             let bb = {
-                let mut ans = Vec::new();
+                let mut ans = RleVec::new();
                 for iter in b.content.iter() {
-                    ans.push((iter.id, iter.len));
+                    ans.push(iter.as_ref().clone());
                 }
                 ans
             };
 
             if aa != bb {
+                dbg!(aa.vec());
+                dbg!(bb.vec());
                 dbg!(a);
                 dbg!(b);
             }
@@ -251,7 +258,7 @@ pub mod fuzz {
             }
 
             pos %= container.content.len();
-            len = std::cmp::min(len % 10 + 1, container.content.len() - pos);
+            len = std::cmp::min(len % 10, container.content.len() - pos);
             if len == 0 {
                 return RleVec::new();
             }
@@ -262,6 +269,7 @@ pub mod fuzz {
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
             container.update_spans(&op, StatusChange::Delete);
+            // dbg!(&container);
         }
 
         fn can_apply_del_op(container: &Self::Container, op: &Self::DeleteOp) -> bool {
@@ -276,16 +284,13 @@ pub mod fuzz {
             5,
             &[
                 NewOp {
-                    client_id: 16573246628723425271,
-                    pos: 16565899579919523301,
+                    client_id: 0,
+                    pos: 0,
                 },
-                NewOp {
-                    client_id: 16504256534250120677,
-                    pos: 16565899579919523301,
-                },
-                NewOp {
-                    client_id: 16565899579910645221,
-                    pos: 182786533,
+                Delete {
+                    client_id: 1,
+                    pos: 0,
+                    len: 4,
                 },
             ],
         )
@@ -297,48 +302,99 @@ pub mod fuzz {
             5,
             &[
                 NewOp {
-                    client_id: 72057319153112726,
-                    pos: 18446743116487664383,
+                    client_id: 11719107999768421014,
+                    pos: 11719107999768421026,
                 },
                 Delete {
-                    client_id: 18446742978492891135,
+                    client_id: 10851025925718409122,
+                    pos: 531712649396118,
+                    len: 18446504380166307839,
+                },
+                Delete {
+                    client_id: 10880696699727118335,
+                    pos: 18374967954648334335,
+                    len: 18446744069414584321,
+                },
+                Delete {
+                    client_id: 11719210655348162559,
+                    pos: 18446641418129810082,
+                    len: 10873349650923257855,
+                },
+                Delete {
+                    client_id: 11719107999768421119,
+                    pos: 11719107999768421026,
+                    len: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 16835197176461304482,
+                    pos: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 11719107999768421026,
+                    pos: 10851025927479993010,
+                },
+                NewOp {
+                    client_id: 9223370937374840575,
+                    pos: 18446744073695264767,
+                },
+                Delete {
+                    client_id: 18446743622737985535,
+                    pos: 2194745065471,
+                    len: 18446742974197924096,
+                },
+                Delete {
+                    client_id: 11745387828182253567,
+                    pos: 11719107999768421026,
+                    len: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 11719107999768421026,
+                    pos: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 11719107999768421026,
+                    pos: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 11719107999768421026,
+                    pos: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 11719107999768421026,
+                    pos: 11719107999768421026,
+                },
+                NewOp {
+                    client_id: 10850930719374615202,
+                    pos: 18446628623220119190,
+                },
+                Delete {
+                    client_id: 18446744073709551615,
+                    pos: 18446743206884093439,
+                    len: 15914838024376868095,
+                },
+                Delete {
+                    client_id: 15863046628662107356,
+                    pos: 98784247772,
+                    len: 18446744069414584320,
+                },
+                Delete {
+                    client_id: 18446744073709551615,
                     pos: 18446744073709551615,
-                    len: 18446744073695461375,
+                    len: 18446744073709551615,
                 },
                 Delete {
-                    client_id: 65535,
-                    pos: 281178623508480,
-                    len: 18446742974197923840,
+                    client_id: 16777471,
+                    pos: 2954361355538333696,
+                    len: 18446744073709551615,
                 },
                 Delete {
-                    client_id: 13107135066100727807,
-                    pos: 532050712311190,
-                    len: 18446744073701163007,
+                    client_id: 11745387828182253567,
+                    pos: 11719107999768421026,
+                    len: 11719107999768421026,
                 },
                 NewOp {
-                    client_id: 35184372089087,
-                    pos: 18446462598732840960,
-                },
-                Sync {
-                    from: 18446744073692774400,
-                    to: 16565899692026626047,
-                },
-                Delete {
-                    client_id: 18446462606851290549,
-                    pos: 18446744073709551487,
-                    len: 9910603680803979263,
-                },
-                NewOp {
-                    client_id: 9910603678816504201,
-                    pos: 9910603678816504201,
-                },
-                NewOp {
-                    client_id: 9910603678816504201,
-                    pos: 9910603678816504201,
-                },
-                NewOp {
-                    client_id: 9910603678816504201,
-                    pos: 18446744073701788041,
+                    client_id: 11719107999768421026,
+                    pos: 11719107999768421026,
                 },
             ],
         )

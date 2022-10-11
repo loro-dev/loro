@@ -41,6 +41,10 @@ pub trait HasLength {
     }
 
     fn len(&self) -> usize;
+
+    fn content_len(&self) -> usize {
+        self.len()
+    }
 }
 
 pub trait Rle<Cfg = ()>: HasLength + Sliceable + Mergable<Cfg> + Debug + Clone {}
