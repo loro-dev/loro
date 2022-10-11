@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut},
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVec, Sliceable,
 };
 
@@ -30,6 +30,9 @@ impl Marker {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
                 let node = unsafe { ptr.as_ref() };
+                if node.is_deleted() {
+                    dbg!(&node);
+                }
                 debug_assert!(!node.is_deleted());
                 let position = node.children().iter().position(|x| x.contain_id(id))?;
                 let child = &node.children()[position];
@@ -41,12 +44,51 @@ impl Marker {
                         *ptr,
                         position,
                         offset as usize,
-                        Position::from_offset(offset as isize, child.len()),
+                        Position::from_offset(offset as isize, child.content_len()),
                         0,
                     )
                 })
             }
             Marker::Delete(_) => None,
+        }
+    }
+
+    pub fn get_spans(&self, id_span: IdSpan) -> Vec<UnsafeCursor<'static, YSpan, YSpanTreeTrait>> {
+        match self {
+            Marker::Insert { ptr, len: _ } => {
+                // SAFETY: tree data is always valid
+                let node = unsafe { ptr.as_ref() };
+                debug_assert!(!node.is_deleted());
+                node.children()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, child)| {
+                        if child.overlap(id_span) {
+                            let start_counter = child.id.counter;
+                            let offset = std::cmp::max(id_span.counter.min() - start_counter, 0);
+                            debug_assert!((offset as usize) < child.len);
+                            let max_offset = std::cmp::min(
+                                id_span.counter.max() - start_counter,
+                                (child.len - 1) as i32,
+                            );
+                            let len = max_offset - offset + 1;
+                            // SAFETY: we just checked it is valid
+                            Some(unsafe {
+                                std::mem::transmute(UnsafeCursor::new(
+                                    *ptr,
+                                    i,
+                                    offset as usize,
+                                    Position::from_offset(offset as isize, child.len),
+                                    len as usize,
+                                ))
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            Marker::Delete(_) => unreachable!(),
         }
     }
 
@@ -140,7 +182,7 @@ pub(super) fn make_notify(
                 ptr: unsafe {
                     NonNull::new_unchecked(leaf as usize as *mut LeafNode<'static, _, _>)
                 },
-                len: span.len(),
+                len: span.content_len(),
             },
         )
     }

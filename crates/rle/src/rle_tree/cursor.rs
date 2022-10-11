@@ -50,7 +50,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, T, A> {}
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     #[inline]
-    pub(crate) fn new(
+    pub fn new(
         leaf: NonNull<LeafNode<'tree, T, A>>,
         index: usize,
         offset: usize,
@@ -169,7 +169,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
 
         let mut leaf = self.leaf.as_ref();
         while shift > 0 {
-            let diff = leaf.children[self.index].len() - self.offset;
+            let diff = leaf.children[self.index].content_len() - self.offset;
             #[cfg(test)]
             {
                 leaf.check();
@@ -181,7 +181,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
                     return Some(self);
                 }
                 std::cmp::Ordering::Equal => {
-                    self.offset = leaf.children[self.index].len();
+                    self.offset = leaf.children[self.index].content_len();
                     self.pos = Position::End;
                     return Some(self);
                 }

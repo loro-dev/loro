@@ -40,7 +40,7 @@ impl CounterSpan {
         if self.from > self.to {
             self.from
         } else {
-            self.to
+            self.to - 1
         }
     }
 }

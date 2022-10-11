@@ -33,7 +33,7 @@ pub mod yata;
 ///
 #[derive(Debug)]
 pub struct Tracker {
-    #[cfg(feature = "fuzzing")]
+    // #[cfg(feature = "fuzzing")]
     client_id: u64,
     vv: VersionVector,
     content: ContentMap,
@@ -49,7 +49,7 @@ impl From<ID> for u128 {
 impl Tracker {
     pub fn new() -> Self {
         let min = ID::unknown(0);
-        let max = ID::unknown(Counter::MAX);
+        let max = ID::unknown(Counter::MAX / 2);
         let len = (max.counter - min.counter) as usize;
         let mut content: ContentMap = Default::default();
         let mut id_to_cursor: CursorMap = Default::default();
@@ -68,7 +68,6 @@ impl Tracker {
         Tracker {
             content,
             id_to_cursor,
-            #[cfg(feature = "fuzzing")]
             client_id: 0,
             vv: Default::default(),
         }
@@ -111,28 +110,28 @@ impl Tracker {
     }
 
     pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
+        println!("{} SPANS {:?}", self.client_id, &spans);
         let mut cursors = Vec::new();
         for span in spans.iter() {
-            let mut span_start = span.min_id();
             for marker in self
                 .id_to_cursor
                 .get_range(span.min_id().into(), span.max_id().into())
             {
-                let m = marker.as_cursor(span_start);
-                if m.is_none() {
-                    println!("XXX ID {:?} {:?}", span_start, span.max_id());
-                    let m = marker.as_cursor(span_start);
+                for cursor in marker.get_spans(*span) {
+                    cursors.push(cursor);
                 }
-                let cursor = m.unwrap().unwrap();
-                span_start = span_start.inc(cursor.len as Counter);
-                cursors.push(cursor);
             }
         }
+
+        // if cursors.len() == 0 {
+        //     panic!("cursors is empty");
+        // }
 
         self.content.update_at_cursors(
             cursors,
             &mut |v| {
                 v.status.apply(change);
+                dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )

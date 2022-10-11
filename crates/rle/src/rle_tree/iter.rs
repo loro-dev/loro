@@ -142,7 +142,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                                         cursor.offset,
                                         Position::from_offset(
                                             cursor.offset as isize,
-                                            node.children[cursor.index].len(),
+                                            node.children[cursor.index].content_len(),
                                         ),
                                         end.offset - cursor.offset,
                                     )
@@ -154,7 +154,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                         }
                     }
 
-                    let child_len = node.children[cursor.index].len();
+                    let child_len = node.children[cursor.index].content_len();
                     // SAFETY: we just checked that the child exists
                     let ans = Some(unsafe {
                         SafeCursor::new(
@@ -217,7 +217,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                                         cursor.offset,
                                         Position::from_offset(
                                             cursor.offset as isize,
-                                            node.children[cursor.index].len(),
+                                            node.children[cursor.index].content_len(),
                                         ),
                                         end.offset - cursor.offset,
                                     )
@@ -229,7 +229,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                         }
                     }
 
-                    let child_len = node.children[cursor.index].len();
+                    let child_len = node.children[cursor.index].content_len();
                     // SAFETY: we just checked that the child exists
                     let ans = Some(unsafe {
                         SafeCursorMut::new(

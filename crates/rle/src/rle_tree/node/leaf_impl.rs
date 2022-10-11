@@ -267,7 +267,10 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let right = if self.children[child_index].len() == offset + len {
             None
         } else {
-            Some(self.children[child_index].slice(offset + len, self.children[child_index].len()))
+            Some(
+                self.children[child_index]
+                    .slice(offset + len, self.children[child_index].content_len()),
+            )
         };
 
         let mut target = self.children[child_index].slice(offset, offset + len);
@@ -356,8 +359,8 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
 
         let child = &self.children[child_index];
-        if offset == 0 && child.len() == len {
-            let mut element = child.slice(0, len);
+        if offset == 0 && child.content_len() == len {
+            let mut element = (**child).clone();
             update_fn(&mut element);
             ans.push(element);
             return Some(ans);
@@ -374,10 +377,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             } else {
                 ans.push(target);
             }
+        } else {
+            ans.push(target);
         }
 
-        if offset + len < child.len() {
-            let right = child.slice(offset + len, child.len());
+        if offset + len < child.content_len() {
+            let right = child.slice(offset + len, child.content_len());
             let mut merged = false;
             if let Some(last) = ans.last_mut() {
                 if last.is_mergable(&right, &()) {
@@ -425,15 +430,11 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let mut last_end = 0;
         // append element to the new_children list
         for (index, replace) in updates {
-            let should_pop = index - last_end < self_children.len();
-            for child in self_children.drain(0..index - last_end + 1) {
+            for child in self_children.drain(0..index + 1 - last_end) {
                 new_children.push(child);
             }
 
-            if should_pop {
-                // ignore original element at index
-                new_children.pop();
-            }
+            new_children.pop();
 
             for element in replace {
                 let mut merged = false;
@@ -451,6 +452,10 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             last_end = index + 1;
         }
 
+        for child in self_children.drain(..) {
+            new_children.push(child);
+        }
+
         if new_children.len() <= A::MAX_CHILDREN_NUM {
             for child in new_children {
                 notify(child, self);
@@ -460,7 +465,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             A::update_cache_leaf(self);
             Ok(())
         } else {
-            for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+            for child in
+                new_children.drain(0..std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len()))
+            {
                 notify(child, self);
                 self.children.push(child);
             }
@@ -472,7 +479,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                     .bump
                     .alloc(Node::Leaf(LeafNode::new(self.bump, self.parent)));
                 let new_leaf = new_leaf_node.as_leaf_mut().unwrap();
-                for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                for child in
+                    new_children.drain(0..std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len()))
+                {
                     notify(child, new_leaf);
                     new_leaf.children.push(child);
                 }
@@ -540,7 +549,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
         // need to split child
         let a = self.children[child_index].slice(0, offset);
-        let b = self.children[child_index].slice(offset, self.children[child_index].len());
+        let b = self.children[child_index].slice(offset, self.children[child_index].content_len());
         self.children[child_index] = self.bump.alloc(a);
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
             let next_node = self._split(notify);
@@ -635,7 +644,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 let end = &mut self.children[del_end];
                 let (left, right) = (
                     end.slice(0, del_relative_from),
-                    end.slice(del_relative_to, end.len()),
+                    end.slice(del_relative_to, end.content_len()),
                 );
 
                 *end = self.bump.alloc(left);
@@ -653,7 +662,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             if let Some(del_relative_to) = del_relative_to {
                 let self_ptr = self as *mut _;
                 let end = &mut self.children[del_end];
-                *end = self.bump.alloc(end.slice(del_relative_to, end.len()));
+                *end = self
+                    .bump
+                    .alloc(end.slice(del_relative_to, end.content_len()));
                 notify(end, self_ptr);
             }
         }

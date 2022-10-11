@@ -36,6 +36,25 @@ impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
 }
 
 impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
+    pub fn insert_at_first<F>(&mut self, value: T, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        if let Some(value) = self.with_node_mut(|node| {
+            let leaf = node.get_first_leaf();
+            if let Some(leaf) = leaf {
+                // SAFETY: we have exclusive ref to the tree
+                let cursor = unsafe { SafeCursorMut::new(leaf.into(), 0, 0, Position::Start, 0) };
+                cursor.insert_before_notify(value, notify);
+                None
+            } else {
+                Some(value)
+            }
+        }) {
+            self.insert_notify(A::Int::from_u8(0).unwrap(), value, notify);
+        }
+    }
+
     #[inline]
     pub fn insert(&mut self, index: A::Int, value: T) {
         self.with_node_mut(|node| {
@@ -238,6 +257,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
+        dbg!(&cursors);
         let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>> = Default::default();
         for cursor in cursors {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
@@ -287,20 +307,17 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         .entry(node.parent.unwrap())
                         .or_default()
                         .push((node.get_index_in_parent().unwrap(), new));
-                } else {
+                } else if node.parent.is_some() {
                     // insert empty value to trigger cache update
                     internal_updates_map.insert(node.parent.unwrap(), Default::default());
+                } else {
+                    A::update_cache_internal(node);
                 }
             }
         }
-
-        #[cfg(test)]
-        {
-            self.debug_check();
-        }
     }
 
-    pub fn iter_update<U, F>(
+    pub fn update_range<U, F>(
         &mut self,
         start: A::Int,
         end: Option<A::Int>,

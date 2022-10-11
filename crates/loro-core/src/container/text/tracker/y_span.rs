@@ -1,4 +1,4 @@
-use crate::{id::Counter, ContentType, InsertContent, ID};
+use crate::{id::Counter, span::IdSpan, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -40,13 +40,13 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YSpan {
-    pub origin_left: Option<ID>,
-    pub origin_right: Option<ID>,
     pub id: ID,
     pub len: usize,
     pub status: Status,
+    pub origin_left: Option<ID>,
+    pub origin_right: Option<ID>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -80,15 +80,25 @@ impl YSpan {
             && self.id.counter <= id.counter
             && self.last_id().counter >= id.counter
     }
+
+    #[inline]
+    pub fn overlap(&self, id: IdSpan) -> bool {
+        if self.id.client_id != id.client_id {
+            return false;
+        }
+
+        self.id.counter < id.counter.to
+            && self.id.counter + (self.len as Counter) > id.counter.min()
+    }
 }
 
 impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
-            && self.id.counter + self.len() as Counter == other.id.counter
-            && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
-            && self.origin_right == other.origin_right
             && self.status == other.status
+            && self.id.counter + self.len() as Counter == other.id.counter
+            && self.origin_right == other.origin_right
+            && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
@@ -145,6 +155,11 @@ impl HasLength for YSpan {
         } else {
             0
         }
+    }
+
+    #[inline]
+    fn content_len(&self) -> usize {
+        self.len
     }
 }
 
