@@ -110,6 +110,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let (direct_delete_end, to_del_end_offset) =
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
         let deleted_len = direct_delete_end as isize - direct_delete_start as isize;
+        // TODO: maybe we can simplify this insertions logic
         let mut insertions = vec![];
         {
             // handle removing at the end point
@@ -153,11 +154,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(Some(del_from), None, visited, depth + 1, notify)
                             {
+                                // TODO: maybe even if we panic here it can still work
                                 insertions.push((direct_delete_start, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(Some(del_from), None, notify) {
+                                // TODO: maybe even if we panic here it can still work
                                 insertions.push((direct_delete_start, new));
                             }
                         }
@@ -173,11 +176,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(None, Some(del_to), visited, depth + 1, notify)
                             {
+                                // TODO: maybe even if we panic here it can still work
                                 insertions.push((direct_delete_end + 1, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(None, Some(del_to), notify) {
+                                // TODO: maybe even if we panic here it can still work
                                 insertions.push((direct_delete_end + 1, new));
                             }
                         }
