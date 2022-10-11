@@ -423,6 +423,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         let mut new_children: Vec<&mut T> = Vec::new();
         let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
         let mut last_end = 0;
+        // append element to the new_children list
         for (index, replace) in updates {
             let should_pop = index - last_end < self_children.len();
             for child in self_children.drain(0..index - last_end + 1) {
@@ -430,6 +431,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             }
 
             if should_pop {
+                // ignore original element at index
                 new_children.pop();
             }
 
@@ -466,14 +468,17 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             A::update_cache_leaf(self);
             let mut leaf_vec = Vec::new();
             while !new_children.is_empty() {
-                let mut new_leaf = LeafNode::new(self.bump, self.parent);
+                let new_leaf_node = self
+                    .bump
+                    .alloc(Node::Leaf(LeafNode::new(self.bump, self.parent)));
+                let new_leaf = new_leaf_node.as_leaf_mut().unwrap();
                 for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
-                    notify(child, &mut new_leaf);
+                    notify(child, new_leaf);
                     new_leaf.children.push(child);
                 }
 
-                A::update_cache_leaf(&mut new_leaf);
-                leaf_vec.push(self.bump.alloc(Node::Leaf(new_leaf)));
+                A::update_cache_leaf(new_leaf);
+                leaf_vec.push(new_leaf_node);
             }
 
             Err(leaf_vec)

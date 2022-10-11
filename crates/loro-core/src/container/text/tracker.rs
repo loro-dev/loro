@@ -118,7 +118,12 @@ impl Tracker {
                 .id_to_cursor
                 .get_range(span.min_id().into(), span.max_id().into())
             {
-                let cursor = marker.as_cursor(span_start).unwrap().unwrap();
+                let m = marker.as_cursor(span_start);
+                if m.is_none() {
+                    println!("XXX ID {:?} {:?}", span_start, span.max_id());
+                    let m = marker.as_cursor(span_start);
+                }
+                let cursor = m.unwrap().unwrap();
                 span_start = span_start.inc(cursor.len as Counter);
                 cursors.push(cursor);
             }

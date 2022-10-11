@@ -243,8 +243,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             last_end = index + 1;
         }
 
+        let self_ptr: NonNull<_> = self.into();
         let result = if new_children.len() <= A::MAX_CHILDREN_NUM {
             for child in new_children {
+                child.set_parent(self_ptr);
                 self.children.push(child);
             }
 
@@ -252,19 +254,24 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Ok(())
         } else {
             for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
+                child.set_parent(self_ptr);
                 self.children.push(child);
             }
 
             A::update_cache_internal(self);
             let mut ans_vec = Vec::new();
             while !new_children.is_empty() {
-                let mut new_leaf = InternalNode::new(self.bump, self.parent);
+                let new_internal_node = self
+                    .bump
+                    .alloc(Node::Internal(InternalNode::new(self.bump, self.parent)));
+                let new_internal = new_internal_node.as_internal_mut().unwrap();
                 for child in new_children.drain(0..A::MAX_CHILDREN_NUM) {
-                    new_leaf.children.push(child);
+                    child.set_parent(new_internal.into());
+                    new_internal.children.push(child);
                 }
 
-                A::update_cache_internal(&mut new_leaf);
-                ans_vec.push(self.bump.alloc(Node::Internal(new_leaf)));
+                A::update_cache_internal(new_internal);
+                ans_vec.push(new_internal_node);
             }
 
             Err(ans_vec)

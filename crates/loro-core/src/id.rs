@@ -34,6 +34,15 @@ pub const ROOT_ID: ID = ID {
     counter: i32::MAX,
 };
 
+impl From<u128> for ID {
+    fn from(id: u128) -> Self {
+        ID {
+            client_id: (id >> 64) as ClientID,
+            counter: id as Counter,
+        }
+    }
+}
+
 impl ID {
     #[inline]
     pub fn new(client_id: u64, counter: Counter) -> Self {
