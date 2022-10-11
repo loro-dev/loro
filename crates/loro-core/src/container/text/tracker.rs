@@ -111,12 +111,11 @@ impl Tracker {
     }
 
     pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
-        println!("{} SPANS {:?}", self.client_id, &spans);
         let mut cursors = HashSet::new();
         for span in spans.iter() {
             for marker in self
                 .id_to_cursor
-                .get_range(span.min_id().into(), span.max_id().into())
+                .get_range(span.min_id().into(), span.end_id().into())
             {
                 for cursor in marker.get_spans(*span) {
                     cursors.insert(cursor);
@@ -129,7 +128,6 @@ impl Tracker {
         // }
 
         let cursors: Vec<_> = cursors.into_iter().collect();
-        dbg!(&cursors);
         debug_assert!(
             cursors.iter().map(|x| x.len).sum::<usize>() == spans.iter().map(|x| x.len()).sum()
         );
@@ -137,7 +135,6 @@ impl Tracker {
             cursors,
             &mut |v| {
                 v.status.apply(change);
-                dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )

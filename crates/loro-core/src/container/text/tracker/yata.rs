@@ -269,11 +269,6 @@ pub mod fuzz {
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
             container.update_spans(&op, StatusChange::Delete);
-            // dbg!(&container);
-        }
-
-        fn can_apply_del_op(container: &Self::Container, op: &Self::DeleteOp) -> bool {
-            true
         }
     }
 
@@ -282,11 +277,22 @@ pub mod fuzz {
     fn issue_0() {
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
-            &[Delete {
-                client_id: 0,
-                pos: 1,
-                len: 1,
-            }],
+            &[
+                NewOp {
+                    client_id: 1,
+                    pos: 0,
+                },
+                Sync { from: 1, to: 0 },
+                NewOp {
+                    client_id: 0,
+                    pos: 0,
+                },
+                Delete {
+                    client_id: 0,
+                    pos: 0,
+                    len: 2,
+                },
+            ],
         )
     }
 

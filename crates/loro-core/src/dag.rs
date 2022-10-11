@@ -6,9 +6,7 @@
 //! - Each node has its ID (client_id, counter).
 //! - We use ID to refer to node rather than content addressing (hash)
 //!
-use std::{
-    collections::{BinaryHeap, HashMap},
-};
+use std::collections::{BinaryHeap, HashMap};
 
 use fxhash::{FxHashMap, FxHashSet};
 mod iter;
@@ -352,13 +350,6 @@ where
                         return Some(id);
                     }
                 }
-
-                // if swapped {
-                //     println!("A");
-                // } else {
-                //     println!("B");
-                // }
-                // dbg!(&a);
 
                 #[cfg(debug_assertions)]
                 {
