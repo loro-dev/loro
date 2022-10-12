@@ -296,10 +296,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             for (mut node, updates) in updates_map {
                 // SAFETY: we has the exclusive reference to the tree and the cursor is valid
                 let node = unsafe { node.as_mut() };
-                if updates.is_empty() {
-                    A::update_cache_internal(node);
-                    continue;
-                }
 
                 if let Err(new) = node.apply_updates(updates) {
                     internal_updates_map
@@ -316,6 +312,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 }
             }
         }
+
+        self.debug_check();
     }
 
     pub fn update_range<U, F>(

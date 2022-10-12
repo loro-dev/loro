@@ -9,6 +9,7 @@ use crate::Rle;
 use super::{cursor::SafeCursor, tree_trait::RleTreeTrait, BumpVec};
 use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
+mod utils;
 mod internal_impl;
 mod leaf_impl;
 pub(crate) mod node_trait;

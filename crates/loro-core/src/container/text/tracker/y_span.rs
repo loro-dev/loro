@@ -121,6 +121,7 @@ impl Sliceable for YSpan {
             Some(self.id.inc(from as i32 - 1))
         };
 
+        // origin_right should be the same
         let origin_right = self.origin_right;
         YSpan {
             origin_left,

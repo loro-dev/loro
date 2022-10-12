@@ -4,7 +4,7 @@ use crate::rle_tree::{
 };
 use std::fmt::{Debug, Error, Formatter};
 
-use super::*;
+use super::{utils::distribute, *};
 
 impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     #[inline]
@@ -473,13 +473,15 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             A::update_cache_leaf(self);
             Ok(())
         } else {
-            for child in
-                new_children.drain(0..std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len()))
-            {
+            let children_nums =
+                distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
+            let mut index = 0;
+            for child in new_children.drain(..children_nums[index]) {
                 notify(child, self);
                 self.children.push(child);
             }
 
+            index += 1;
             A::update_cache_leaf(self);
             let mut leaf_vec = Vec::new();
             while !new_children.is_empty() {
@@ -487,13 +489,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                     .bump
                     .alloc(Node::Leaf(LeafNode::new(self.bump, self.parent)));
                 let new_leaf = new_leaf_node.as_leaf_mut().unwrap();
-                for child in
-                    new_children.drain(0..std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len()))
-                {
+                for child in new_children.drain(..children_nums[index]) {
                     notify(child, new_leaf);
                     new_leaf.children.push(child);
                 }
 
+                index += 1;
                 A::update_cache_leaf(new_leaf);
                 leaf_vec.push(new_leaf_node);
             }
