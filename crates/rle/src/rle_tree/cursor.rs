@@ -168,7 +168,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
-    pub unsafe fn prev_elem_end(&self) -> Option<Self> {
+    pub unsafe fn prev_elem(&self) -> Option<Self> {
         let leaf = self.leaf.as_ref();
         if self.index > 0 {
             return Some(Self::new(self.leaf, self.index - 1, 0, Position::Start, 0));
@@ -316,9 +316,9 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, T, A> {
     }
 
     #[inline]
-    pub fn prev_elem_end(&self) -> Option<Self> {
+    pub fn prev_elem(&self) -> Option<Self> {
         // SAFETY: SafeCursor is a shared reference to the tree
-        unsafe { self.0.prev_elem_end().map(|x| Self(x)) }
+        unsafe { self.0.prev_elem().map(|x| Self(x)) }
     }
 
     #[inline]
@@ -444,10 +444,10 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     }
 
     #[inline]
-    pub fn prev_elem_end(&self) -> Option<Self> {
+    pub fn prev_elem(&self) -> Option<Self> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree so we are safe to
         // get a reference to the element
-        unsafe { self.0.prev_elem_end().map(|x| Self(x)) }
+        unsafe { self.0.prev_elem().map(|x| Self(x)) }
     }
 
     #[inline]

@@ -272,8 +272,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             return Ok(());
         }
 
-        self.check_balance_recursively();
-        self.check_children_parent_link();
         updates.sort_by_key(|x| x.0);
         let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::new();
         let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
@@ -333,8 +331,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Err(ans_vec)
         };
 
-        self.check_children_parent_link();
-        self.check_balance_recursively();
         if result.is_err() && self.is_root() {
             let mut new = result.unwrap_err();
             assert!(new.len() == 1);
@@ -344,8 +340,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             A::update_cache_internal(self);
             A::update_cache_internal(inner);
             self._create_level(new);
-            self.check();
-            self.check_balance_recursively();
             Ok(())
         } else {
             result

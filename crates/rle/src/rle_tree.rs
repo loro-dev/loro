@@ -312,8 +312,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 }
             }
         }
-
-        self.debug_check();
     }
 
     pub fn update_range<U, F>(
