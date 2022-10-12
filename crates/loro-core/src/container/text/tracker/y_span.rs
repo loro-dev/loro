@@ -115,32 +115,19 @@ impl Sliceable for YSpan {
             return self.clone();
         }
 
-        if from == 0 {
-            YSpan {
-                origin_left: self.origin_left,
-                origin_right: Some(self.id.inc(to as i32)),
-                id: self.id,
-                len: to - from,
-                status: self.status.clone(),
-            }
-        } else if to < self.content_len() {
-            YSpan {
-                origin_left: Some(self.id.inc(from as i32 - 1)),
-                origin_right: Some(self.id.inc(to as i32)),
-                id: self.id.inc(from as i32),
-                len: to - from,
-                status: self.status.clone(),
-            }
-        } else if to == self.content_len() {
-            YSpan {
-                origin_left: Some(self.id.inc(from as i32 - 1)),
-                origin_right: self.origin_right,
-                id: self.id.inc(from as i32),
-                len: to - from,
-                status: self.status.clone(),
-            }
+        let origin_left = if from == 0 {
+            self.origin_left
         } else {
-            unreachable!("`to` is greater than content_len")
+            Some(self.id.inc(from as i32 - 1))
+        };
+
+        let origin_right = self.origin_right;
+        YSpan {
+            origin_left,
+            origin_right,
+            id: self.id.inc(from as i32),
+            len: to - from,
+            status: self.status.clone(),
         }
     }
 }
