@@ -39,7 +39,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
     #[inline]
     pub fn from_cursor(
         mut start: SafeCursorMut<'tree, T, A>,
-        mut end: Option<SafeCursor<'tree, T, A>>,
+        end: Option<SafeCursor<'tree, T, A>>,
     ) -> Self {
         if start.0.pos == Position::After {
             match start.next_elem_start() {
@@ -50,12 +50,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
                         end_cursor: None,
                     }
                 }
-            }
-        }
-
-        if let Some(end_inner) = end {
-            if end_inner.0.pos == Position::End || end_inner.0.pos == Position::After {
-                end = end_inner.next_elem_start();
             }
         }
 
@@ -115,16 +109,14 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
     type Item = SafeCursor<'tree, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.cursor?;
-        if self.end_cursor.is_some() {
-            let start = self.cursor.as_mut().unwrap();
-            let end = self.end_cursor.as_mut().unwrap();
-            if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset {
-                return None;
-            }
-        }
-
         while let Some(ref mut cursor) = self.cursor {
+            if let Some(end) = self.end_cursor {
+                let start = &cursor;
+                if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset
+                {
+                    return None;
+                }
+            }
             // SAFETY: we are sure that the cursor is valid
             let node = unsafe { cursor.leaf.as_ref() };
             match node.children.get(cursor.index) {
@@ -155,6 +147,13 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                     }
 
                     let child_len = node.children[cursor.index].content_len();
+                    if child_len - cursor.offset == 0 {
+                        cursor.index += 1;
+                        cursor.offset = 0;
+                        cursor.pos = Position::Start;
+                        continue;
+                    }
+
                     // SAFETY: we just checked that the child exists
                     let ans = Some(unsafe {
                         SafeCursor::new(
@@ -168,6 +167,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
 
                     cursor.index += 1;
                     cursor.offset = 0;
+                    cursor.pos = Position::Start;
                     return ans;
                 }
                 None => match node.next() {
@@ -175,6 +175,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                         cursor.leaf = next.into();
                         cursor.index = 0;
                         cursor.offset = 0;
+                        cursor.pos = Position::Start;
                         continue;
                     }
                     None => return None,
@@ -190,16 +191,15 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
     type Item = SafeCursorMut<'tree, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.cursor?;
-        if self.end_cursor.is_some() {
-            let start = self.cursor.as_mut().unwrap();
-            let end = self.end_cursor.as_mut().unwrap();
-            if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset {
-                return None;
-            }
-        }
-
         while let Some(ref mut cursor) = self.cursor {
+            if let Some(end) = self.end_cursor {
+                let start = &cursor;
+                if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset
+                {
+                    return None;
+                }
+            }
+
             // SAFETY: we are sure that the cursor is valid
             let node = unsafe { cursor.leaf.as_ref() };
             match node.children.get(cursor.index) {
@@ -230,6 +230,13 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                     }
 
                     let child_len = node.children[cursor.index].content_len();
+                    if child_len - cursor.offset == 0 {
+                        cursor.index += 1;
+                        cursor.offset = 0;
+                        cursor.pos = Position::Start;
+                        continue;
+                    }
+
                     // SAFETY: we just checked that the child exists
                     let ans = Some(unsafe {
                         SafeCursorMut::new(
@@ -243,6 +250,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
 
                     cursor.index += 1;
                     cursor.offset = 0;
+                    cursor.pos = Position::Start;
                     return ans;
                 }
                 None => match node.next() {
@@ -250,6 +258,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                         cursor.leaf = next.into();
                         cursor.index = 0;
                         cursor.offset = 0;
+                        cursor.pos = Position::Start;
                         continue;
                     }
                     None => return None,
