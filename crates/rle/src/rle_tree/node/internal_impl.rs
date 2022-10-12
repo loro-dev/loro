@@ -3,7 +3,10 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
-use crate::rle_tree::tree_trait::{FindPosResult, Position};
+use crate::rle_tree::{
+    node::utils::distribute,
+    tree_trait::{FindPosResult, Position},
+};
 
 use super::*;
 
@@ -19,22 +22,29 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
+    /// return result need to update cache
     #[inline]
     fn _split(&mut self) -> &'a mut Node<'a, T, A> {
         let ans = self
             .bump
             .alloc(Node::Internal(Self::new(self.bump, self.parent)));
-        let inner_ptr = NonNull::new(&mut *ans.as_internal_mut().unwrap()).unwrap();
         let inner = ans.as_internal_mut().unwrap();
-        for child in self
-            .children
-            .drain(self.children.len() - A::MIN_CHILDREN_NUM..self.children.len())
-        {
-            child.set_parent(inner_ptr);
-            inner.children.push(child);
+        self._balance(inner);
+        ans
+    }
+
+    /// return result need to update cache
+    #[inline]
+    fn _balance(&mut self, other: &mut Self) {
+        let keep_num = (self.children.len() + other.children.len()) / 2;
+        debug_assert!(keep_num >= A::MIN_CHILDREN_NUM);
+        for child in self.children.drain(keep_num..) {
+            child.set_parent(other.into());
+            other.children.push(child);
         }
 
-        ans
+        debug_assert!(self.children.len() >= A::MIN_CHILDREN_NUM);
+        debug_assert!(other.children.len() >= A::MIN_CHILDREN_NUM);
     }
 
     #[inline]
@@ -59,6 +69,23 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     pub(crate) fn check(&mut self) {
+        self.check_balance();
+
+        self.check_children_parent_link();
+        for child in self.children.iter_mut() {
+            match child {
+                Node::Internal(node) => {
+                    node.check();
+                }
+                Node::Leaf(node) => {
+                    node.check();
+                }
+            }
+        }
+        A::check_cache_internal(self);
+    }
+
+    fn check_balance(&mut self) {
         if !self.is_root() {
             assert!(
                 self.children.len() >= A::MIN_CHILDREN_NUM,
@@ -66,28 +93,46 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 self.children.len()
             );
         }
+        assert!(
+            self.children.len() <= A::MAX_CHILDREN_NUM,
+            "children.len() = {}",
+            self.children.len()
+        );
+    }
 
+    fn check_balance_recursively(&self) {
+        if !self.is_root() {
+            assert!(
+                self.children.len() >= A::MIN_CHILDREN_NUM,
+                "children.len() = {}",
+                self.children.len()
+            );
+        }
         assert!(
             self.children.len() <= A::MAX_CHILDREN_NUM,
             "children.len() = {}",
             self.children.len()
         );
 
+        for child in self.children.iter() {
+            if let Some(child) = child.as_internal() {
+                child.check_balance_recursively();
+            }
+        }
+    }
+
+    fn check_children_parent_link(&mut self) {
         let self_ptr = self as *const _;
         for child in self.children.iter_mut() {
             match child {
                 Node::Internal(node) => {
-                    node.check();
                     assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self_ptr));
                 }
                 Node::Leaf(node) => {
-                    node.check();
                     assert!(std::ptr::eq(node.parent.as_ptr(), self_ptr));
                 }
             }
         }
-
-        A::check_cache_internal(self);
     }
 
     // TODO: simplify this func?
@@ -222,12 +267,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         &mut self,
         mut updates: Vec<(usize, Vec<&'a mut Node<'a, T, A>>)>,
     ) -> Result<(), Vec<&'a mut Node<'a, T, A>>> {
+        if updates.is_empty() {
+            A::update_cache_internal(self);
+            return Ok(());
+        }
+
+        self.check_balance_recursively();
+        self.check_children_parent_link();
         updates.sort_by_key(|x| x.0);
         let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::new();
         let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
-        let mut last_end = 0;
+        let mut saved_end = 0;
         for (index, replace) in updates {
-            for child in self_children.drain(0..index - last_end + 1) {
+            for child in self_children.drain(0..index + 1 - saved_end) {
                 new_children.push(child);
             }
 
@@ -235,7 +287,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 new_children.push(element);
             }
 
-            last_end = index;
+            saved_end = index + 1;
         }
 
         for child in self_children.drain(..) {
@@ -252,13 +304,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             A::update_cache_internal(self);
             Ok(())
         } else {
-            for child in
-                new_children.drain(0..(std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len())))
-            {
+            let children_nums =
+                distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
+            let mut index = 0;
+            for child in new_children.drain(0..children_nums[index]) {
                 child.set_parent(self_ptr);
                 self.children.push(child);
             }
 
+            index += 1;
             A::update_cache_internal(self);
             let mut ans_vec = Vec::new();
             while !new_children.is_empty() {
@@ -266,13 +320,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     .bump
                     .alloc(Node::Internal(InternalNode::new(self.bump, self.parent)));
                 let new_internal = new_internal_node.as_internal_mut().unwrap();
-                for child in
-                    new_children.drain(0..(std::cmp::min(A::MAX_CHILDREN_NUM, new_children.len())))
-                {
+                for child in new_children.drain(..children_nums[index]) {
                     child.set_parent(new_internal.into());
                     new_internal.children.push(child);
                 }
 
+                index += 1;
                 A::update_cache_internal(new_internal);
                 ans_vec.push(new_internal_node);
             }
@@ -280,11 +333,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Err(ans_vec)
         };
 
+        self.check_children_parent_link();
+        self.check_balance_recursively();
         if result.is_err() && self.is_root() {
             let mut new = result.unwrap_err();
             assert!(new.len() == 1);
-            let v = new.pop().unwrap();
-            self._create_level(v);
+            let new = new.pop().unwrap();
+            let inner = new.as_internal_mut().unwrap();
+            self._balance(inner);
+            A::update_cache_internal(self);
+            A::update_cache_internal(inner);
+            self._create_level(new);
+            self.check();
+            self.check_balance_recursively();
             Ok(())
         } else {
             result
