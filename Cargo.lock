@@ -161,9 +161,7 @@ dependencies = [
 
 [[package]]
 name = "crdt-list"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c6c20076c40cfc4fc484455bda1ba3cac6f9585b2e5a464b98fc4a2600f95b"
+version = "0.2.1"
 dependencies = [
  "arbitrary",
  "arref",
@@ -789,6 +787,7 @@ dependencies = [
  "arref",
  "bumpalo",
  "color-backtrace",
+ "crdt-list",
  "ctor",
  "enum-as-inner",
  "num",

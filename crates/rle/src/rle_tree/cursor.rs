@@ -1,6 +1,8 @@
 use std::{hash::Hash, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use crate::{Rle, RleTreeTrait};
+use crdt_list::crdt::GetOp;
+
+use crate::{HasLength, Rle, RleTreeTrait};
 
 use super::{node::LeafNode, tree_trait::Position};
 
@@ -373,6 +375,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     }
 }
 
+impl<'tree, T: Rle, A: RleTreeTrait<T>> HasLength for SafeCursorMut<'tree, T, A> {
+    fn len(&self) -> usize {
+        self.0.len
+    }
+}
+
 impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     /// # Safety
     ///
@@ -446,7 +454,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     }
 
     /// self should be moved here, because after mutating self should be invalidate
-    pub fn insert_before_notify<F>(mut self, value: T, notify: &mut F)
+    pub fn insert_before_notify<F>(self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -498,18 +506,11 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> AsMut<T> for SafeCursorMut<'tree, T, A> 
     }
 }
 
-impl<'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursor<'tree, T, A> {
+impl<'tree, T: Rle, A: RleTreeTrait<T>> GetOp for SafeCursorMut<'tree, T, A> {
     type Target = T;
 
-    fn deref(&self) -> &Self::Target {
+    fn get_op(&self) -> Self::Target {
         self.as_ref()
-    }
-}
-
-impl<'tree, T: Rle, A: RleTreeTrait<T>> Deref for SafeCursorMut<'tree, T, A> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
+            .slice(self.offset(), self.offset() + self.len())
     }
 }

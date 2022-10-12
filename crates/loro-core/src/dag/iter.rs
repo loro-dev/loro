@@ -147,7 +147,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                     }
 
                     if dep.id_start() != dep_id {
-                        vv.as_mut().unwrap().set_end(dep_id);
+                        vv.as_mut().unwrap().set_max(dep_id);
                     }
                 }
 
