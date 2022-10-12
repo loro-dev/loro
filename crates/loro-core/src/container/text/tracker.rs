@@ -75,8 +75,29 @@ impl Tracker {
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
-    fn check_consistency(&self) {
-        todo!()
+    fn check_consistency(&mut self) {
+        for span in self.content.iter() {
+            let yspan = span.as_ref();
+            let id_span = IdSpan::new(
+                yspan.id.client_id,
+                yspan.id.counter,
+                yspan.len as Counter + yspan.id.counter,
+            );
+            let mut len = 0;
+            for marker in self
+                .id_to_cursor
+                .get_range(id_span.min_id().into(), id_span.end_id().into())
+            {
+                for span in marker.get_spans(id_span) {
+                    len += span.len;
+                }
+            }
+
+            assert_eq!(len, yspan.len);
+        }
+
+        self.content.debug_check();
+        self.id_to_cursor.debug_check();
     }
 
     fn turn_on(&mut self, _id: IdSpan) {}
@@ -131,6 +152,13 @@ impl Tracker {
         debug_assert!(
             cursors.iter().map(|x| x.len).sum::<usize>() == spans.iter().map(|x| x.len()).sum()
         );
+        // println!("SPANS {:?}", spans);
+        // for cursor in cursors.iter() {
+        //     // SAFETY: Test
+        //     println!("    LEAF {:?}", unsafe { cursor.leaf.as_ref() });
+        //     println!("    CURSOR {:?}", cursor);
+        // }
+        // dbg!(&self);
         self.content.update_at_cursors(
             cursors,
             &mut |v| {

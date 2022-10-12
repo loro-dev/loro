@@ -126,7 +126,11 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         let leaf = self.leaf.as_mut();
+        // println!("insert cursor {:?}", self);
+        // println!("insert value {:?}", value);
+        // dbg!(&leaf);
         let result = leaf.insert_at_pos(self.pos, self.index, self.offset, value, notify);
+        // dbg!(&leaf);
         let mut node = leaf.parent.as_mut();
         if let Err(new) = result {
             let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);

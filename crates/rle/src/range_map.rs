@@ -77,6 +77,11 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> 
     }
 
     #[inline]
+    pub fn debug_check(&mut self) {
+        self.tree.debug_check()
+    }
+
+    #[inline]
     pub fn delete(&mut self, start: Option<Index>, end: Option<Index>) {
         self.tree.delete_range(start, end);
     }

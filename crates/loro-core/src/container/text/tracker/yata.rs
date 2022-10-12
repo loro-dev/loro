@@ -93,7 +93,7 @@ impl ListCrdt for YataImpl {
     }
 
     fn cmp_id(op_a: &Self::OpUnit, op_b: &Self::OpUnit) -> std::cmp::Ordering {
-        op_a.id.cmp(&op_b.id)
+        op_a.id.client_id.cmp(&op_b.id.client_id)
     }
 
     fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
@@ -104,6 +104,7 @@ impl ListCrdt for YataImpl {
         container.vv.set_end(op.id.inc(op.len as i32));
         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
         unsafe { crdt_list::yata::integrate::<Self>(container, op) };
+        container.check_consistency();
     }
 
     fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
@@ -278,6 +279,7 @@ pub mod fuzz {
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
             container.update_spans(&op, StatusChange::Delete);
+            container.check_consistency();
         }
     }
 
@@ -286,7 +288,8 @@ pub mod fuzz {
     fn issue_0() {
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
-            &[
+            5,
+            vec![
                 NewOp {
                     client_id: 1,
                     pos: 0,
@@ -309,26 +312,116 @@ pub mod fuzz {
     fn issue_1() {
         crdt_list::test::test_with_actions::<YataImpl>(
             3,
-            &[
+            5,
+            vec![
+                Delete {
+                    client_id: 1,
+                    pos: 3,
+                    len: 3,
+                },
+                Delete {
+                    client_id: 1,
+                    pos: 1,
+                    len: 4,
+                },
+                NewOp {
+                    client_id: 0,
+                    pos: 4,
+                },
+                NewOp {
+                    client_id: 0,
+                    pos: 4,
+                },
+                NewOp {
+                    client_id: 0,
+                    pos: 3,
+                },
+                NewOp {
+                    client_id: 0,
+                    pos: 4,
+                },
+                NewOp {
+                    client_id: 0,
+                    pos: 0,
+                },
+                Delete {
+                    client_id: 1,
+                    pos: 4,
+                    len: 4,
+                },
+                NewOp {
+                    client_id: 1,
+                    pos: 0,
+                },
                 Delete {
                     client_id: 1,
                     pos: 0,
-                    len: 1,
+                    len: 2,
                 },
                 Delete {
                     client_id: 0,
-                    pos: 1,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
+                    pos: 0,
+                    len: 4,
                 },
             ],
         )
+    }
+
+    #[test]
+    fn normalize() {
+        let mut actions = vec![
+            Delete {
+                client_id: 18446744073709551615,
+                pos: 18446462602589896703,
+                len: 18374687467077894143,
+            },
+            Delete {
+                client_id: 18374939255676862463,
+                pos: 64710657328087551,
+                len: 11429747308416114334,
+            },
+            NewOp {
+                client_id: 4872331909652192926,
+                pos: 11429747308416114334,
+            },
+            NewOp {
+                client_id: 11429747308416114334,
+                pos: 11429747308416114334,
+            },
+            NewOp {
+                client_id: 11429738512323092126,
+                pos: 11429747306828660733,
+            },
+            NewOp {
+                client_id: 18446744073709524638,
+                pos: 10876193100099747839,
+            },
+            NewOp {
+                client_id: 18374687126443038358,
+                pos: 18446744073709551615,
+            },
+            Delete {
+                client_id: 7451037802331897855,
+                pos: 7451037802321897319,
+                len: 7451037802321897319,
+            },
+            NewOp {
+                client_id: 7451037802321897319,
+                pos: 16529055059114682215,
+            },
+            Delete {
+                client_id: 648103854079,
+                pos: 7133702213043879935,
+                len: 18446744069565579237,
+            },
+            Delete {
+                client_id: 16638239752757634710,
+                pos: 18446744073288476390,
+                len: 7133701809771642879,
+            },
+        ];
+
+        crdt_list::test::normalize_actions(&mut actions, 2, 5);
+        dbg!(actions);
     }
 }

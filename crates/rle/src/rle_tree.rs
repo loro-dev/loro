@@ -287,7 +287,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                     .push((leaf.get_index_in_parent().unwrap(), new));
             } else {
                 // insert empty value to trigger cache update
-                internal_updates_map.insert(leaf.parent, Default::default());
+                internal_updates_map.entry(leaf.parent).or_default();
             }
         }
 
@@ -308,7 +308,9 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         .push((node.get_index_in_parent().unwrap(), new));
                 } else if node.parent.is_some() {
                     // insert empty value to trigger cache update
-                    internal_updates_map.insert(node.parent.unwrap(), Default::default());
+                    internal_updates_map
+                        .entry(node.parent.unwrap())
+                        .or_default();
                 } else {
                     A::update_cache_internal(node);
                 }
