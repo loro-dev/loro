@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
-    HasLength, Mergable, RleVec, Sliceable,
+    HasLength, Mergable, RleVec, Sliceable, ZeroElement,
 };
 
 use crate::{id::ID, span::IdSpan};
@@ -22,6 +22,15 @@ pub(super) enum Marker {
     },
     Delete(RleVec<IdSpan>),
     // TODO: REDO, UNDO
+}
+
+impl ZeroElement for Marker {
+    fn zero_element() -> Self {
+        Self::Insert {
+            ptr: NonNull::dangling(),
+            len: 0,
+        }
+    }
 }
 
 impl Marker {

@@ -110,6 +110,7 @@ impl ListCrdt for YataImpl {
         unsafe { crdt_list::yata::integrate::<Self>(container, op) };
     }
 
+    #[inline]
     fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
         if let Some(value) = op.origin_left {
             if !value.is_unknown() && !container.vv.includes(value) {

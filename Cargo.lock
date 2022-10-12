@@ -790,6 +790,7 @@ dependencies = [
  "crdt-list",
  "ctor",
  "enum-as-inner",
+ "fxhash",
  "num",
  "ouroboros",
  "proptest",

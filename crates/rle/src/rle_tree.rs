@@ -5,6 +5,7 @@ use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 use bumpalo::Bump;
 pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
+use fxhash::FxHashMap;
 use num::FromPrimitive;
 use ouroboros::self_referencing;
 pub use tree_trait::Position;
@@ -244,7 +245,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         } {
             ans
         } else {
-            iter::Iter::from_cursor(cursor_from, None).unwrap()
+            iter::Iter::from_cursor(cursor_from, None).unwrap_or_default()
         }
     }
 
@@ -257,7 +258,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>> = Default::default();
+        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>, _> = FxHashMap::default();
         for cursor in cursors {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let updates = unsafe {
@@ -275,8 +276,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             }
         }
 
-        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<_>)>> =
-            Default::default();
+        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<_>)>, _> =
+            FxHashMap::default();
         for (mut leaf, updates) in updates_map {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };

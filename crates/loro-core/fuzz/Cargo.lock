@@ -527,6 +527,7 @@ dependencies = [
  "bumpalo",
  "crdt-list",
  "enum-as-inner",
+ "fxhash",
  "num",
  "ouroboros",
 ]

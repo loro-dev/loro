@@ -1,14 +1,16 @@
+use num::Zero;
 use proptest::prop_compose;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::{
     range_map::{RangeMap, WithStartEnd},
+    rle_trait::ZeroElement,
     rle_tree::tree_trait::CumulateTreeTrait,
-    HasLength, Sliceable,
+    HasLength, Mergable, Sliceable,
 };
 
 use super::super::*;
-use std::ptr::NonNull;
+use std::{ops::Deref, ptr::NonNull};
 
 type Value = WithStartEnd<usize, u64>;
 type ValueTreeTrait = CumulateTreeTrait<Value, 4>;
@@ -97,16 +99,76 @@ impl Sliceable for u64 {
     }
 }
 
-impl<T> Sliceable for NonNull<T> {
-    fn slice(&self, _from: usize, _to: usize) -> Self {
-        *self
+#[derive(Debug)]
+struct MyNonNull<T>(NonNull<T>, usize);
+
+impl<T> PartialEq for MyNonNull<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.1 == other.1
+    }
+}
+
+impl<T> Eq for MyNonNull<T> {}
+impl<T> Default for MyNonNull<T> {
+    fn default() -> Self {
+        Self(NonNull::dangling(), 0)
+    }
+}
+
+impl<T> Clone for MyNonNull<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), self.1.clone())
+    }
+}
+
+impl<T> Copy for MyNonNull<T> {}
+
+impl<T> Deref for MyNonNull<T> {
+    type Target = NonNull<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> Sliceable for MyNonNull<T> {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self(self.0, to - from)
+    }
+}
+
+impl<T> From<NonNull<T>> for MyNonNull<T> {
+    fn from(value: NonNull<T>) -> Self {
+        Self(value, 1)
+    }
+}
+
+impl<T> Mergable for MyNonNull<T> {
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    fn merge(&mut self, _other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        unreachable!()
+    }
+}
+
+impl<T> HasLength for MyNonNull<T> {
+    fn len(&self) -> usize {
+        self.1
     }
 }
 
 fn test(interactions: &[Interaction]) {
     let mut tree: RleTree<Value, ValueTreeTrait> = Default::default();
     let mut rng = StdRng::seed_from_u64(123);
-    type ValueIndex<'a> = WithStartEnd<u64, NonNull<LeafNode<'a, Value, ValueTreeTrait>>>;
+    type ValueIndex<'a> = WithStartEnd<u64, MyNonNull<LeafNode<'a, Value, ValueTreeTrait>>>;
     let mut range_map: RangeMap<u64, ValueIndex<'_>> = Default::default();
     for interaction in interactions.iter() {
         let mut func = |value: &Value, node: *mut LeafNode<'_, Value, ValueTreeTrait>| {
@@ -114,7 +176,7 @@ fn test(interactions: &[Interaction]) {
             let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
             range_map.set(
                 value.value,
-                WithStartEnd::new(value.value, value.value + value.len() as u64, ptr),
+                WithStartEnd::new(value.value, value.value + value.len() as u64, ptr.into()),
             );
             _println!("notify Value: {:?}, Ptr: {:#016x}", value, node as usize);
         };
