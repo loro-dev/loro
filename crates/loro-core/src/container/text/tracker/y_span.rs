@@ -1,3 +1,5 @@
+use std::thread::panicking;
+
 use crate::{id::Counter, span::IdSpan, ContentType, InsertContent, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
@@ -129,7 +131,7 @@ impl Sliceable for YSpan {
                 len: to - from,
                 status: self.status.clone(),
             }
-        } else {
+        } else if to == self.content_len() {
             YSpan {
                 origin_left: Some(self.id.inc(from as i32 - 1)),
                 origin_right: self.origin_right,
@@ -137,6 +139,8 @@ impl Sliceable for YSpan {
                 len: to - from,
                 status: self.status.clone(),
             }
+        } else {
+            unreachable!("`to` is greater than content_len")
         }
     }
 }

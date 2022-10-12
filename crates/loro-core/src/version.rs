@@ -91,9 +91,16 @@ impl VersionVector {
         Self(ImHashMap::new())
     }
 
+    /// set the inclusive ending point. target id will be included by self
+    #[inline]
+    pub fn set_max(&mut self, id: ID) {
+        self.0.insert(id.client_id, id.counter + 1);
+    }
+
+    /// set the exclusive ending point. target id will NOT be included by self
     #[inline]
     pub fn set_end(&mut self, id: ID) {
-        self.0.insert(id.client_id, id.counter + 1);
+        self.0.insert(id.client_id, id.counter);
     }
 
     /// update the end counter of the given client, if the end is greater
@@ -170,7 +177,7 @@ impl From<Vec<ID>> for VersionVector {
     fn from(vec: Vec<ID>) -> Self {
         let mut vv = VersionVector::new();
         for id in vec {
-            vv.set_end(id);
+            vv.set_max(id);
         }
 
         vv
@@ -211,8 +218,8 @@ mod tests {
     #[test]
     fn im() {
         let mut a = VersionVector::new();
-        a.set_end(ID::new(1, 1));
-        a.set_end(ID::new(2, 1));
+        a.set_max(ID::new(1, 1));
+        a.set_max(ID::new(2, 1));
         let mut b = a.clone();
         b.merge(&vec![ID::new(1, 2), ID::new(2, 2)].into());
         assert!(a != b);

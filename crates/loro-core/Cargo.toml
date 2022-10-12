@@ -19,7 +19,7 @@ thiserror = "1.0.31"
 im = "15.1.0"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
-crdt-list = "0.2.0"
+crdt-list = { version = "0.2.1", path="../../../crdt-list" }
 rand = { version = "0.8.5", optional = true }
 
 [dev-dependencies]

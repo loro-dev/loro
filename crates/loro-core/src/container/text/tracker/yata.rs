@@ -1,10 +1,11 @@
 use crdt_list::{
-    crdt::{ListCrdt, OpSet},
+    crdt::{GetOp, ListCrdt, OpSet},
     yata::Yata,
 };
 use rle::{
     range_map::{RangeMap, WithStartEnd},
     rle_tree::{iter::IterMut, SafeCursorMut},
+    Sliceable,
 };
 
 use crate::id::{Counter, ID};
@@ -223,8 +224,8 @@ pub mod fuzz {
             if aa != bb {
                 dbg!(aa.vec());
                 dbg!(bb.vec());
-                dbg!(a);
-                dbg!(b);
+                dbg!(&a.content);
+                dbg!(&b.content);
             }
 
             assert_eq!(aa, bb);
@@ -246,14 +247,15 @@ pub mod fuzz {
             container: &mut Self::Container,
             pos: usize,
         ) -> Self::OpUnit {
-            container.content.get_yspan_at_pos(
+            let ans = container.content.get_yspan_at_pos(
                 ID::new(
                     container.client_id,
                     *container.vv.get(&container.client_id).unwrap_or(&0),
                 ),
                 pos % container.content.len(),
                 pos % 10 + 1,
-            )
+            );
+            ans
         }
 
         type DeleteOp = RleVec<IdSpan>;
@@ -319,11 +321,6 @@ pub mod fuzz {
                     pos: 3,
                     len: 3,
                 },
-                Delete {
-                    client_id: 1,
-                    pos: 1,
-                    len: 4,
-                },
                 NewOp {
                     client_id: 0,
                     pos: 4,
@@ -346,22 +343,23 @@ pub mod fuzz {
                 },
                 Delete {
                     client_id: 1,
-                    pos: 4,
-                    len: 4,
+                    pos: 1,
+                    len: 1,
                 },
                 NewOp {
-                    client_id: 1,
-                    pos: 0,
+                    client_id: 0,
+                    pos: 1,
                 },
+                Sync { from: 1, to: 0 },
+                Sync { from: 0, to: 1 },
                 Delete {
                     client_id: 1,
                     pos: 0,
                     len: 2,
                 },
-                Delete {
-                    client_id: 0,
+                NewOp {
+                    client_id: 1,
                     pos: 0,
-                    len: 4,
                 },
             ],
         )
@@ -381,7 +379,7 @@ pub mod fuzz {
                 len: 11429747308416114334,
             },
             NewOp {
-                client_id: 4872331909652192926,
+                client_id: 4872506250964672158,
                 pos: 11429747308416114334,
             },
             NewOp {
@@ -401,23 +399,42 @@ pub mod fuzz {
                 pos: 18446744073709551615,
             },
             Delete {
-                client_id: 7451037802331897855,
+                client_id: 12796479807323897855,
+                pos: 7450921,
+                len: 11429747308416114176,
+            },
+            NewOp {
+                client_id: 18275218707659529886,
+                pos: 10811735328793034751,
+            },
+            Sync { from: 29105, to: 0 },
+            Sync {
+                from: 16565750046338121728,
+                to: 18446744069414584549,
+            },
+            Delete {
+                client_id: 18446744073709551615,
+                pos: 18446744004990074879,
+                len: 18446744073709551615,
+            },
+            Delete {
+                client_id: 9,
+                pos: 0,
+                len: 18446229502267752447,
+            },
+            Delete {
+                client_id: 18446744073709551615,
+                pos: 9223367630218330111,
+                len: 18446742974332141567,
+            },
+            Delete {
+                client_id: 7451205583484485631,
                 pos: 7451037802321897319,
                 len: 7451037802321897319,
             },
             NewOp {
-                client_id: 7451037802321897319,
-                pos: 16529055059114682215,
-            },
-            Delete {
-                client_id: 648103854079,
-                pos: 7133702213043879935,
-                len: 18446744069565579237,
-            },
-            Delete {
-                client_id: 16638239752757634710,
-                pos: 18446744073288476390,
-                len: 7133701809771642879,
+                client_id: 18446743620969457511,
+                pos: 18446744073702670335,
             },
         ];
 

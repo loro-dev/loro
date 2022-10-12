@@ -69,7 +69,7 @@ fn update_at_cursor() {
         }
     }
 
-    let arr: Vec<_> = tree.iter().map(|x| (*x).clone()).collect();
+    let arr: Vec<_> = tree.iter().map(|x| (*x.as_ref()).clone()).collect();
     assert_eq!(
         arr,
         vec![0..3, 4..5, 7..10, 11..12, 13..15, 16..20, 21..30, 31..40]
