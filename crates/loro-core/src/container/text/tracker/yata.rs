@@ -140,6 +140,15 @@ impl Yata for YataImpl {
         let mut notify = make_notify(&mut container.id_to_cursor);
         anchor.insert_after_notify(op, &mut notify)
     }
+
+    fn insert_immediately_after(
+        container: &mut Self::Container,
+        anchor: Self::Cursor<'_>,
+        op: Self::OpUnit,
+    ) {
+        let mut notify = make_notify(&mut container.id_to_cursor);
+        anchor.insert_shift_notify(op, 1, &mut notify)
+    }
 }
 
 #[cfg(test)]
@@ -299,102 +308,25 @@ pub mod fuzz {
     #[test]
     fn issue_1() {
         crdt_list::test::test_with_actions::<YataImpl>(
-            5,
+            3,
             &[
-                NewOp {
-                    client_id: 11719107999768421014,
-                    pos: 11719107999768421026,
+                Delete {
+                    client_id: 1,
+                    pos: 0,
+                    len: 1,
                 },
                 Delete {
-                    client_id: 10851025925718409122,
-                    pos: 531712649396118,
-                    len: 18446504380166307839,
-                },
-                Delete {
-                    client_id: 10880696699727118335,
-                    pos: 18374967954648334335,
-                    len: 18446744069414584321,
-                },
-                Delete {
-                    client_id: 11719210655348162559,
-                    pos: 18446641418129810082,
-                    len: 10873349650923257855,
-                },
-                Delete {
-                    client_id: 11719107999768421119,
-                    pos: 11719107999768421026,
-                    len: 11719107999768421026,
+                    client_id: 0,
+                    pos: 1,
+                    len: 1,
                 },
                 NewOp {
-                    client_id: 16835197176461304482,
-                    pos: 11719107999768421026,
+                    client_id: 1,
+                    pos: 1,
                 },
                 NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 10851025927479993010,
-                },
-                NewOp {
-                    client_id: 9223370937374840575,
-                    pos: 18446744073695264767,
-                },
-                Delete {
-                    client_id: 18446743622737985535,
-                    pos: 2194745065471,
-                    len: 18446742974197924096,
-                },
-                Delete {
-                    client_id: 11745387828182253567,
-                    pos: 11719107999768421026,
-                    len: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 10850930719374615202,
-                    pos: 18446628623220119190,
-                },
-                Delete {
-                    client_id: 18446744073709551615,
-                    pos: 18446743206884093439,
-                    len: 15914838024376868095,
-                },
-                Delete {
-                    client_id: 15863046628662107356,
-                    pos: 98784247772,
-                    len: 18446744069414584320,
-                },
-                Delete {
-                    client_id: 18446744073709551615,
-                    pos: 18446744073709551615,
-                    len: 18446744073709551615,
-                },
-                Delete {
-                    client_id: 16777471,
-                    pos: 2954361355538333696,
-                    len: 18446744073709551615,
-                },
-                Delete {
-                    client_id: 11745387828182253567,
-                    pos: 11719107999768421026,
-                    len: 11719107999768421026,
-                },
-                NewOp {
-                    client_id: 11719107999768421026,
-                    pos: 11719107999768421026,
+                    client_id: 0,
+                    pos: 1,
                 },
             ],
         )

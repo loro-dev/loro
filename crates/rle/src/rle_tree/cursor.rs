@@ -464,6 +464,17 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
         }
     }
 
+    /// insert to the cursor start position with shift in offset. `shift` is based on the content_len.
+    ///
+    /// self should be moved here, because after mutating self should be invalidate
+    pub fn insert_shift_notify<F>(self, value: T, shift: usize, notify: &mut F)
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        // SAFETY: we know the cursor is a valid pointer
+        unsafe { self.0.shift(shift).unwrap().insert_notify(value, notify) }
+    }
+
     pub fn update_with_split<F, U>(self, update: U, notify: &mut F)
     where
         F: for<'a> FnMut(&T, *mut LeafNode<'a, T, A>),

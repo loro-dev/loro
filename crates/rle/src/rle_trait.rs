@@ -35,11 +35,8 @@ impl<T: Sliceable> Slice<'_, T> {
     }
 }
 
+#[allow(clippy::len_without_is_empty)]
 pub trait HasLength {
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// if the content is deleted, len should be zero
     fn len(&self) -> usize;
 
