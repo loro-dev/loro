@@ -190,12 +190,18 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     /// # Safety
     ///
     /// self should still be valid pointer
-    unsafe fn shift(mut self, mut shift: usize) -> Option<Self> {
+    pub unsafe fn shift(mut self, mut shift: usize) -> Option<Self> {
         if shift == 0 {
             return Some(self);
         }
 
         let mut leaf = self.leaf.as_ref();
+        if self.len < shift {
+            self.len = 0;
+        } else {
+            self.len -= shift;
+        }
+
         while shift > 0 {
             let diff = leaf.children[self.index].content_len() - self.offset;
             #[cfg(test)]
@@ -339,6 +345,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursor<'tree, T, A> {
     #[inline]
     pub fn unwrap(self) -> UnsafeCursor<'tree, T, A> {
         self.0
+    }
+
+    #[inline]
+    pub fn shift(self, shift: usize) -> Option<Self> {
+        // SAFETY: SafeCursor is a shared reference to the tree
+        unsafe { Some(Self(self.0.shift(shift)?)) }
     }
 }
 

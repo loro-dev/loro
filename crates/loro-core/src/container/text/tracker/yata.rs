@@ -62,12 +62,14 @@ impl ListCrdt for YataImpl {
         from: Option<Self::OpId>,
         to: Option<Self::OpId>,
     ) -> Self::Iterator<'_> {
-        let from = from.and_then(|x| {
-            container
-                .id_to_cursor
-                .get(x.into())
-                .and_then(|m| m.as_cursor(x))
-        });
+        let from = from
+            .and_then(|x| {
+                container
+                    .id_to_cursor
+                    .get(x.into())
+                    .and_then(|m| m.as_cursor(x))
+            })
+            .and_then(|x| x.shift(1));
         let to = to.and_then(|x| {
             container
                 .id_to_cursor
@@ -75,6 +77,8 @@ impl ListCrdt for YataImpl {
                 .and_then(|m| m.as_cursor(x))
         });
 
+        // dbg!(&from, &to);
+        // dbg!(&container.content);
         // SAFETY: loosen lifetime requirement here. It's safe because the function
         // signature can limit the lifetime of the returned iterator
         unsafe { std::mem::transmute(container.content.iter_mut_in(from, to)) }
@@ -103,6 +107,7 @@ impl ListCrdt for YataImpl {
 
     fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
         container.vv.set_end(op.id.inc(op.len as i32));
+        // dbg!(&container);
         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
         unsafe { crdt_list::yata::integrate::<Self>(container, op) };
         container.check_consistency();
@@ -143,13 +148,22 @@ impl Yata for YataImpl {
         anchor.insert_after_notify(op, &mut notify)
     }
 
-    fn insert_immediately_after(
-        container: &mut Self::Container,
-        anchor: Self::Cursor<'_>,
-        op: Self::OpUnit,
-    ) {
-        let mut notify = make_notify(&mut container.id_to_cursor);
-        anchor.insert_shift_notify(op, 1, &mut notify)
+    fn insert_after_id(container: &mut Self::Container, id: Option<Self::OpId>, op: Self::OpUnit) {
+        if let Some(id) = id {
+            let left = container.id_to_cursor.get(id.into()).unwrap();
+            let left = left.as_cursor(id).unwrap();
+            let mut notify = make_notify(&mut container.id_to_cursor);
+            // SAFETY: we own the tree here
+            unsafe {
+                left.unwrap()
+                    .shift(1)
+                    .unwrap()
+                    .insert_notify(op, &mut notify);
+            }
+        } else {
+            let mut notify = make_notify(&mut container.id_to_cursor);
+            container.content.insert_at_first(op, &mut notify);
+        }
     }
 }
 
@@ -316,50 +330,13 @@ pub mod fuzz {
             3,
             5,
             vec![
-                Delete {
-                    client_id: 1,
-                    pos: 3,
-                    len: 3,
-                },
                 NewOp {
                     client_id: 0,
                     pos: 4,
                 },
                 NewOp {
-                    client_id: 0,
+                    client_id: 1,
                     pos: 4,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 3,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 4,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 0,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 1,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                Sync { from: 1, to: 0 },
-                Sync { from: 0, to: 1 },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 2,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 0,
                 },
             ],
         )
@@ -368,73 +345,13 @@ pub mod fuzz {
     #[test]
     fn normalize() {
         let mut actions = vec![
-            Delete {
-                client_id: 18446744073709551615,
-                pos: 18446462602589896703,
-                len: 18374687467077894143,
-            },
-            Delete {
-                client_id: 18374939255676862463,
-                pos: 64710657328087551,
-                len: 11429747308416114334,
+            NewOp {
+                client_id: 10489325084848624384,
+                pos: 10490853853016199569,
             },
             NewOp {
-                client_id: 4872506250964672158,
-                pos: 11429747308416114334,
-            },
-            NewOp {
-                client_id: 11429747308416114334,
-                pos: 11429747308416114334,
-            },
-            NewOp {
-                client_id: 11429738512323092126,
-                pos: 11429747306828660733,
-            },
-            NewOp {
-                client_id: 18446744073709524638,
-                pos: 10876193100099747839,
-            },
-            NewOp {
-                client_id: 18374687126443038358,
-                pos: 18446744073709551615,
-            },
-            Delete {
-                client_id: 12796479807323897855,
-                pos: 7450921,
-                len: 11429747308416114176,
-            },
-            NewOp {
-                client_id: 18275218707659529886,
-                pos: 10811735328793034751,
-            },
-            Sync { from: 29105, to: 0 },
-            Sync {
-                from: 16565750046338121728,
-                to: 18446744069414584549,
-            },
-            Delete {
-                client_id: 18446744073709551615,
-                pos: 18446744004990074879,
-                len: 18446744073709551615,
-            },
-            Delete {
-                client_id: 9,
-                pos: 0,
-                len: 18446229502267752447,
-            },
-            Delete {
-                client_id: 18446744073709551615,
-                pos: 9223367630218330111,
-                len: 18446742974332141567,
-            },
-            Delete {
-                client_id: 7451205583484485631,
-                pos: 7451037802321897319,
-                len: 7451037802321897319,
-            },
-            NewOp {
-                client_id: 18446743620969457511,
-                pos: 18446744073702670335,
+                client_id: 10490853404242804625,
+                pos: 10489325061612240659,
             },
         ];
 

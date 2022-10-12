@@ -80,7 +80,7 @@ impl YSpan {
     pub fn contain_id(&self, id: ID) -> bool {
         self.id.client_id == id.client_id
             && self.id.counter <= id.counter
-            && self.last_id().counter >= id.counter
+            && id.counter < self.id.counter + self.len as i32
     }
 
     #[inline]
