@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 use crate::{
+    rle_trait::ZeroElement,
     rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -47,12 +48,14 @@ impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, I
 
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + 'static> {
+pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> {
     pub(crate) tree:
         RleTree<WithGlobalIndex<Value, Index>, GlobalTreeTrait<WithGlobalIndex<Value, Index>, 10>>,
 }
 
-impl<Index: GlobalIndex + 'static, Value: Rle + 'static> Default for RangeMap<Index, Value> {
+impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> Default
+    for RangeMap<Index, Value>
+{
     fn default() -> Self {
         Self {
             tree: Default::default(),
@@ -60,8 +63,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + 'static> Default for RangeMap<In
     }
 }
 
-impl<Index: GlobalIndex + 'static, Value: Rle + 'static> RangeMap<Index, Value> {
-    #[inline]
+impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<Index, Value> {
     pub fn set(&mut self, start: Index, value: Value) {
         self.tree.delete_range(
             Some(start),
@@ -153,6 +155,16 @@ impl<Index: GlobalIndex, T> HasLength for WithStartEnd<Index, T> {
     }
 }
 
+impl<Index: GlobalIndex, T: ZeroElement> ZeroElement for WithStartEnd<Index, T> {
+    fn zero_element() -> Self {
+        Self {
+            start: Index::from_usize(0).unwrap(),
+            end: Index::from_usize(0).unwrap(),
+            value: T::zero_element(),
+        }
+    }
+}
+
 impl<Index: GlobalIndex, T: PartialEq + Eq> Mergable for WithStartEnd<Index, T> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
@@ -197,6 +209,12 @@ mod test {
                 from: self.from + from,
                 to: self.from + to,
             }
+        }
+    }
+
+    impl ZeroElement for V {
+        fn zero_element() -> Self {
+            Self { from: 0, to: 0 }
         }
     }
 

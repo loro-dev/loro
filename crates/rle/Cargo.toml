@@ -12,6 +12,7 @@ enum-as-inner = "0.5.1"
 ouroboros = "0.15.2"
 arref = "0.1.0"
 crdt-list = { version = "0.2.1", path = "../../../crdt-list" }
+fxhash = "0.2.1"
 
 [dev-dependencies]
 color-backtrace = { version = "0.5" }
@@ -20,3 +21,6 @@ proptest = "1.0.0"
 smartstring = "1.0.1"
 rand = "0.8.5"
 static_assertions = "1.1.0"
+
+[features]
+fuzzing = []

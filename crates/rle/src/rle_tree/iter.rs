@@ -19,6 +19,24 @@ pub struct IterMut<'some, T: Rle, A: RleTreeTrait<T>> {
     end_cursor: Option<UnsafeCursor<'some, T, A>>,
 }
 
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Default for Iter<'tree, T, A> {
+    fn default() -> Self {
+        Self {
+            cursor: None,
+            end_cursor: None,
+        }
+    }
+}
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> Default for IterMut<'tree, T, A> {
+    fn default() -> Self {
+        Self {
+            cursor: None,
+            end_cursor: None,
+        }
+    }
+}
+
 impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
     #[inline]
     pub fn new(node: Option<&'tree mut LeafNode<'tree, T, A>>) -> Self {

@@ -48,6 +48,16 @@ pub trait HasLength {
 
 pub trait Rle<Cfg = ()>: HasLength + Sliceable + Mergable<Cfg> + Debug + Clone {}
 
+pub trait ZeroElement {
+    fn zero_element() -> Self;
+}
+
+impl<T: Default> ZeroElement for T {
+    fn zero_element() -> Self {
+        Default::default()
+    }
+}
+
 impl<T: HasLength + Sliceable + Mergable<Cfg> + Debug + Clone, Cfg> Rle<Cfg> for T {}
 
 impl<T: Integer + NumCast + Copy> Sliceable for Range<T> {

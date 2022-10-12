@@ -3,6 +3,8 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
+use fxhash::FxHashSet;
+
 use crate::rle_tree::{
     node::utils::distribute,
     tree_trait::{FindPosResult, Position},
@@ -513,8 +515,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let removed = self._root_shrink_levels_if_one_child();
 
         // filter the same
-        let mut visited: HashSet<NonNull<_>> = HashSet::default();
-        let mut should_skip: HashSet<NonNull<_>> = HashSet::default();
+        let mut visited: HashSet<NonNull<_>, _> = FxHashSet::default();
+        let mut should_skip: HashSet<NonNull<_>, _> = FxHashSet::default();
         let mut zipper: Vec<(usize, NonNull<Node<'a, T, A>>)> = zipper
             .into_iter()
             .filter(|(_, ptr)| {
