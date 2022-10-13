@@ -334,14 +334,31 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         };
 
         if result.is_err() && self.is_root() {
-            let mut new = result.unwrap_err();
-            assert!(new.len() == 1);
-            let new = new.pop().unwrap();
-            let inner = new.as_internal_mut().unwrap();
-            self._balance(inner);
+            let new_vec = result.unwrap_err();
+            {
+                // create level
+                let origin_root = self.bump.alloc(Node::Internal(InternalNode::new(
+                    self.bump,
+                    Some(self.into()),
+                )));
+                let origin_root_internal = origin_root.as_internal_mut().unwrap();
+                std::mem::swap(&mut self.children, &mut origin_root_internal.children);
+                let ptr = origin_root_internal.into();
+                for child in origin_root_internal.children.iter_mut() {
+                    child.set_parent(ptr);
+                }
+
+                A::update_cache_internal(origin_root_internal);
+                self.children.push(origin_root);
+            }
+
+            let ptr = self.into();
+            for new_node in new_vec {
+                new_node.set_parent(ptr);
+                self.children.push(new_node);
+            }
+
             A::update_cache_internal(self);
-            A::update_cache_internal(inner);
-            self._create_level(new);
             Ok(())
         } else {
             result
