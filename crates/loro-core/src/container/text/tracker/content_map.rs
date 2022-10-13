@@ -365,13 +365,13 @@ mod test_get_yspan_at_pos {
         insert(&mut map, ID::new(3, 0), 30, 10);
 
         // dbg!(&map);
-        assert_at_pos(&map, 10, Some(ID::new(0, 9)), Some(ID::new(0, 10)));
+        assert_at_pos(&map, 10, Some(ID::new(0, 9)), Some(ID::new(1, 0)));
         assert_at_pos(&map, 11, Some(ID::new(1, 0)), Some(ID::new(1, 1)));
 
         assert_at_pos(&map, 20, Some(ID::new(1, 9)), Some(ID::new(2, 0)));
         assert_at_pos(&map, 21, Some(ID::new(2, 0)), Some(ID::new(2, 1)));
         delete(&mut map, 20, 1);
-        assert_at_pos(&map, 20, Some(ID::new(1, 9)), Some(ID::new(2, 0)));
+        assert_at_pos(&map, 20, Some(ID::new(1, 9)), Some(ID::new(2, 1)));
         assert_at_pos(&map, 21, Some(ID::new(2, 1)), Some(ID::new(2, 2)));
 
         delete(&mut map, 0, 10);
