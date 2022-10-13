@@ -1,4 +1,4 @@
-use std::{hash::Hash, marker::PhantomData, ops::Deref, ptr::NonNull};
+use std::{hash::Hash, marker::PhantomData, ptr::NonNull};
 
 use crdt_list::crdt::GetOp;
 

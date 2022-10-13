@@ -1,10 +1,9 @@
-use num::Zero;
+
 use proptest::prop_compose;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::{
     range_map::{RangeMap, WithStartEnd},
-    rle_trait::ZeroElement,
     rle_tree::tree_trait::CumulateTreeTrait,
     HasLength, Mergable, Sliceable,
 };
@@ -117,7 +116,7 @@ impl<T> Default for MyNonNull<T> {
 
 impl<T> Clone for MyNonNull<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1.clone())
+        Self(self.0, self.1)
     }
 }
 
