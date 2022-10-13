@@ -18,7 +18,7 @@ crev:
   cargo crev crate check
 
 fuzz:
-  cargo fuzz run yata -- -max_total_time=60
+  cargo fuzz run yata -- -max_total_time=60 -max_len=10000 -jobs=2
 
 flame:
   cargo flamegraph --example test --features=fuzzing --root
