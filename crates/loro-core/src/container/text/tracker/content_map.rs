@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use rle::{
-    rle_tree::{Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{Position, SafeCursor, SafeCursorMut},
     HasLength, RleTree, RleVec,
 };
 
@@ -16,28 +16,20 @@ use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 #[derive(Debug, Default)]
 pub(super) struct ContentMap(RleTree<YSpan, YSpanTreeTrait>);
 
-struct CursorWithId<'tree> {
-    id: ID,
-    cursor: UnsafeCursor<'tree, YSpan, YSpanTreeTrait>,
-}
-
 impl ContentMap {
     #[inline]
     pub(super) fn get_yspan_at_pos(&self, id: ID, pos: usize, len: usize) -> YSpan {
-        let (left, right) = self.get_sibling_at_dumb(pos);
+        let (left, right) = self.get_sibling_at(pos);
         YSpan {
-            origin_left: left.as_ref().map(|x| x.id),
-            origin_right: right.as_ref().map(|x| x.id),
+            origin_left: left,
+            origin_right: right,
             id,
             len,
             status: Default::default(),
         }
     }
 
-    fn get_sibling_at_dumb(
-        &self,
-        pos: usize,
-    ) -> (Option<CursorWithId<'_>>, Option<CursorWithId<'_>>) {
+    fn get_sibling_at(&self, pos: usize) -> (Option<ID>, Option<ID>) {
         if let Some(cursor) = self.get(pos) {
             let mut cursor: SafeCursor<'_, YSpan, YSpanTreeTrait> =
                     // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
@@ -51,16 +43,7 @@ impl ContentMap {
                     let mut prev_offset_cursor = cursor.unwrap();
                     prev_offset_cursor.offset -= 1;
                     if cursor.as_ref().can_be_origin() {
-                        return (
-                            Some(CursorWithId {
-                                id: id.inc(offset as i32 - 1),
-                                cursor: prev_offset_cursor,
-                            }),
-                            Some(CursorWithId {
-                                id: id.inc(offset as i32),
-                                cursor: cursor.unwrap(),
-                            }),
-                        );
+                        return (Some(id.inc(offset as i32 - 1)), Some(id.inc(offset as i32)));
                     } else {
                         None
                     }
@@ -70,10 +53,7 @@ impl ContentMap {
                         let mut prev_offset_cursor = cursor.unwrap();
                         prev_offset_cursor.offset -= 1;
                         prev_offset_cursor.pos = Position::Middle;
-                        Some(CursorWithId {
-                            id: cursor.as_ref().last_id(),
-                            cursor: prev_offset_cursor,
-                        })
+                        Some(cursor.as_ref().last_id())
                     } else {
                         None
                     }
@@ -93,10 +73,7 @@ impl ContentMap {
                         let mut cursor = cursor.unwrap();
                         cursor.offset = offset;
                         cursor.pos = Position::Middle;
-                        prev = Some(CursorWithId {
-                            id: prev_inner.as_ref().last_id(),
-                            cursor,
-                        });
+                        prev = Some(prev_inner.as_ref().last_id());
                         break;
                     }
                     prev_cursor = prev_inner.prev_elem();
@@ -104,142 +81,19 @@ impl ContentMap {
             }
 
             let next = if prev.is_some() {
-                let mut next_cursor = cursor.next_elem_start();
+                let next_cursor = cursor.next_elem_start();
                 let mut ans = None;
-                while let Some(next_inner) = next_cursor {
-                    if next_inner.as_ref().status.is_activated() {
-                        let mut cursor = next_inner.unwrap();
-                        cursor.offset = 0;
-                        cursor.pos = Position::Start;
-                        ans = Some(CursorWithId {
-                            id: next_inner.as_ref().id,
-                            cursor,
-                        });
-                        break;
-                    }
-
-                    next_cursor = next_inner.next_elem_start();
+                if let Some(next_inner) = next_cursor {
+                    let mut cursor = next_inner.unwrap();
+                    cursor.offset = 0;
+                    cursor.pos = Position::Start;
+                    ans = Some(next_inner.as_ref().id);
                 }
 
                 ans
             } else {
-                // if prev is none, next should be the first element in the tree
-                let mut prev = cursor.prev_elem();
-                while let Some(prev_inner) = prev {
-                    cursor = prev_inner;
-                    prev = prev_inner.prev_elem();
-                }
-
-                Some(CursorWithId {
-                    id: cursor.as_ref().id,
-                    cursor: cursor.unwrap(),
-                })
+                Some(cursor.as_ref().id)
             };
-
-            (prev, next)
-        } else {
-            (None, None)
-        }
-    }
-
-    /// When we insert a new [YSpan] at given position, we need to calculate its `originLeft` and `originRight`
-    fn get_sibling_at(&self, pos: usize) -> (Option<CursorWithId<'_>>, Option<CursorWithId<'_>>) {
-        if let Some(cursor) = self.get(pos) {
-            let cursor: SafeCursor<'_, YSpan, YSpanTreeTrait> =
-                    // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
-                    // because Bumpalo's lifetime is static due to the self-referential structure limitation; Maybe there is a better way?
-                    unsafe { std::mem::transmute(cursor) };
-            let (mut prev, mut next) = match cursor.pos() {
-                Position::Start => {
-                    if cursor.as_ref().can_be_origin() {
-                        let id = cursor.as_ref().id;
-                        (
-                            None,
-                            Some(CursorWithId {
-                                id,
-                                cursor: cursor.unwrap(),
-                            }),
-                        )
-                    } else {
-                        (None, None)
-                    }
-                }
-                Position::Middle => {
-                    if cursor.as_ref().can_be_origin() {
-                        let id = cursor.as_ref().id;
-                        let offset = cursor.offset();
-                        let mut prev_offset_cursor = cursor.unwrap();
-                        prev_offset_cursor.offset -= 1;
-                        (
-                            Some(CursorWithId {
-                                id: id.inc(offset as i32 - 1),
-                                cursor: prev_offset_cursor,
-                            }),
-                            Some(CursorWithId {
-                                id: id.inc(offset as i32),
-                                cursor: cursor.unwrap(),
-                            }),
-                        )
-                    } else {
-                        (None, None)
-                    }
-                }
-                Position::End => {
-                    if cursor.as_ref().can_be_origin() {
-                        let mut prev_offset_cursor = cursor.unwrap();
-                        prev_offset_cursor.offset -= 1;
-                        prev_offset_cursor.pos = Position::Middle;
-                        (
-                            Some(CursorWithId {
-                                id: cursor.as_ref().last_id(),
-                                cursor: prev_offset_cursor,
-                            }),
-                            None,
-                        )
-                    } else {
-                        (None, None)
-                    }
-                }
-                _ => {
-                    unreachable!()
-                }
-            };
-
-            if prev.is_none() {
-                let mut prev_cursor = cursor.prev_elem();
-                while let Some(prev_inner) = prev_cursor {
-                    if prev_inner.as_ref().status.is_activated() {
-                        let cursor = prev_inner;
-                        let offset = cursor.as_ref().content_len() - 1;
-                        let mut cursor = cursor.unwrap();
-                        cursor.offset = offset;
-                        cursor.pos = Position::Middle;
-                        prev = Some(CursorWithId {
-                            id: prev_inner.as_ref().last_id(),
-                            cursor,
-                        });
-                        break;
-                    }
-                    prev_cursor = prev_inner.prev_elem();
-                }
-            }
-
-            if next.is_none() {
-                let mut next_cursor = cursor.next_elem_start();
-                while let Some(next_inner) = next_cursor {
-                    if next_inner.as_ref().status.is_activated() {
-                        let mut cursor = next_inner.unwrap();
-                        cursor.offset = 0;
-                        cursor.pos = Position::Start;
-                        next = Some(CursorWithId {
-                            id: next_inner.as_ref().id,
-                            cursor,
-                        });
-                        break;
-                    }
-                    next_cursor = next_inner.next_elem_start();
-                }
-            }
 
             (prev, next)
         } else {
