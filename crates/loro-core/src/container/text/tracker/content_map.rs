@@ -104,18 +104,24 @@ impl ContentMap {
             }
 
             let next = if prev.is_some() {
-                let next_cursor = cursor.next_elem_start();
-                if let Some(next_inner) = next_cursor {
-                    let mut cursor = next_inner.unwrap();
-                    cursor.offset = 0;
-                    cursor.pos = Position::Start;
-                    Some(CursorWithId {
-                        id: next_inner.as_ref().id,
-                        cursor,
-                    })
-                } else {
-                    None
+                let mut next_cursor = cursor.next_elem_start();
+                let mut ans = None;
+                while let Some(next_inner) = next_cursor {
+                    if next_inner.as_ref().status.is_activated() {
+                        let mut cursor = next_inner.unwrap();
+                        cursor.offset = 0;
+                        cursor.pos = Position::Start;
+                        ans = Some(CursorWithId {
+                            id: next_inner.as_ref().id,
+                            cursor,
+                        });
+                        break;
+                    }
+
+                    next_cursor = next_inner.next_elem_start();
                 }
+
+                ans
             } else {
                 // if prev is none, next should be the first element in the tree
                 let mut prev = cursor.prev_elem();
