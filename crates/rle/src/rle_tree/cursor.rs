@@ -204,10 +204,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
 
         while shift > 0 {
             let diff = leaf.children[self.index].content_len() - self.offset;
-            #[cfg(test)]
-            {
-                leaf.check();
-            }
             match shift.cmp(&diff) {
                 std::cmp::Ordering::Less => {
                     self.offset += shift;
