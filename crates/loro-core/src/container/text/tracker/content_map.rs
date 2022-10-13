@@ -5,10 +5,7 @@ use rle::{
     HasLength, RleTree, RleVec,
 };
 
-use crate::{
-    id::{Counter, ID},
-    span::IdSpan,
-};
+use crate::{id::ID, span::IdSpan};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
