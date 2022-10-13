@@ -140,13 +140,13 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
             last_cache = match child {
                 Node::Internal(x) => {
                     if index <= x.cache {
-                        return FindPosResult::new(i, index, get_pos(index, child.len()));
+                        return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
                     }
                     x.cache
                 }
                 Node::Leaf(x) => {
                     if index <= x.cache {
-                        return FindPosResult::new(i, index, get_pos(index, child.len()));
+                        return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
                     }
                     x.cache
                 }
@@ -169,7 +169,7 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
 
         for (i, child) in node.children().iter().enumerate() {
             if index < HasLength::len(&**child) {
-                return FindPosResult::new(i, index, get_pos(index, child.len()));
+                return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
             }
 
             index -= HasLength::len(&**child);
@@ -199,14 +199,15 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
     }
 }
 
-#[inline]
-fn get_pos(index: usize, len: usize) -> Position {
-    if index == 0 {
-        Position::Start
-    } else if index == len {
-        Position::End
-    } else {
-        Position::Middle
+impl Position {
+    pub fn get_pos(index: usize, len: usize) -> Position {
+        if index == 0 {
+            Position::Start
+        } else if index == len {
+            Position::End
+        } else {
+            Position::Middle
+        }
     }
 }
 

@@ -303,429 +303,72 @@ pub mod fuzz {
     #[test]
     fn issue_1() {
         crdt_list::test::test_with_actions::<YataImpl>(
-            3,
             5,
+            100,
             vec![
-                NewOp {
-                    client_id: 2,
-                    pos: 2,
+                Delete {
+                    client_id: 252,
+                    pos: 252,
+                    len: 252,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 2,
+                    client_id: 39,
+                    pos: 252,
+                    len: 178,
                 },
                 Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 0,
+                    client_id: 252,
+                    pos: 252,
+                    len: 252,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
+                    client_id: 252,
+                    pos: 252,
+                    len: 252,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 2,
-                    len: 3,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 2,
+                    client_id: 145,
+                    pos: 145,
+                    len: 252,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 4,
-                },
-                Sync { from: 0, to: 1 },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 0,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 3,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 0,
+                    client_id: 252,
+                    pos: 178,
+                    len: 178,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 2,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 4,
+                    client_id: 252,
+                    pos: 252,
+                    len: 178,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 1,
-                },
-                Sync { from: 0, to: 0 },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
+                    client_id: 252,
+                    pos: 252,
+                    len: 252,
                 },
                 NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 0,
+                    client_id: 145,
+                    pos: 252,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 1,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 1,
+                    client_id: 252,
+                    pos: 178,
+                    len: 252,
                 },
                 Sync { from: 0, to: 0 },
                 Delete {
-                    client_id: 0,
-                    pos: 3,
-                    len: 2,
+                    client_id: 252,
+                    pos: 178,
+                    len: 178,
                 },
                 Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 2,
-                    pos: 1,
-                    len: 1,
-                },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 0 },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 2,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 2,
-                    len: 1,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 3,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 2,
-                    pos: 1,
-                    len: 2,
-                },
-                Delete {
-                    client_id: 2,
-                    pos: 0,
-                    len: 2,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 2,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 1,
+                    client_id: 252,
+                    pos: 252,
+                    len: 252,
                 },
                 NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 0,
-                },
-                Sync { from: 0, to: 1 },
-                Delete {
-                    client_id: 2,
-                    pos: 4,
-                    len: 4,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 1,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 2,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 4,
-                },
-                Sync { from: 0, to: 1 },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 0,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 3,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 2,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 2,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 2,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 4,
-                    len: 3,
-                },
-                NewOp {
-                    client_id: 2,
-                    pos: 3,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 3,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                Delete {
-                    client_id: 2,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 4,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 2,
-                    len: 0,
-                },
-                Sync { from: 2, to: 2 },
-                Delete {
-                    client_id: 2,
-                    pos: 0,
-                    len: 3,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 4,
-                    len: 1,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 0,
-                },
-                Sync { from: 0, to: 0 },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 3,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 0,
-                    len: 1,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 4,
-                },
-                NewOp {
-                    client_id: 2,
-                    pos: 0,
-                },
-                Delete {
-                    client_id: 1,
-                    pos: 0,
-                    len: 0,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 1,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 2,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 1,
-                    pos: 4,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 1,
-                    len: 4,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 4,
-                    len: 3,
-                },
-                NewOp {
-                    client_id: 2,
-                    pos: 0,
+                    client_id: 252,
+                    pos: 252,
                 },
             ],
         )
@@ -733,9 +376,74 @@ pub mod fuzz {
 
     #[test]
     fn normalize() {
-        let mut actions = vec![];
+        let mut actions = vec![
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            Delete {
+                client_id: 39,
+                pos: 252,
+                len: 178,
+            },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            Delete {
+                client_id: 145,
+                pos: 145,
+                len: 252,
+            },
+            Delete {
+                client_id: 252,
+                pos: 178,
+                len: 178,
+            },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 178,
+            },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            NewOp {
+                client_id: 145,
+                pos: 252,
+            },
+            Delete {
+                client_id: 252,
+                pos: 178,
+                len: 252,
+            },
+            Sync { from: 0, to: 0 },
+            Delete {
+                client_id: 252,
+                pos: 178,
+                len: 178,
+            },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            NewOp {
+                client_id: 252,
+                pos: 252,
+            },
+        ];
 
-        crdt_list::test::normalize_actions(&mut actions, 3, 5);
+        crdt_list::test::normalize_actions(&mut actions, 5, 100);
         dbg!(actions);
     }
 }

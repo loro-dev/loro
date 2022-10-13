@@ -5,9 +5,9 @@ use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceabl
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Status {
-    unapplied: bool,
-    delete_times: usize,
-    undo_times: usize,
+    pub unapplied: bool,
+    pub delete_times: usize,
+    pub undo_times: usize,
 }
 
 impl Status {
@@ -61,7 +61,7 @@ pub enum StatusChange {
     UndoDelete,
 }
 
-pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 10>;
+pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 4>;
 
 impl YSpan {
     /// this is the last id of the span, which is **included** by self
