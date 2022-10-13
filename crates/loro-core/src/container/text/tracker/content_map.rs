@@ -7,7 +7,7 @@ use rle::{
 
 use crate::{id::ID, span::IdSpan};
 
-use super::y_span::{Status, StatusChange, YSpan, YSpanTreeTrait};
+use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
 /// It stores all the [YSpan] data, including the deleted/undo ones
 ///
