@@ -7,7 +7,7 @@ use rle::{
 
 use crate::{id::ID, span::IdSpan};
 
-use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
+use super::y_span::{Status, StatusChange, YSpan, YSpanTreeTrait};
 
 /// It stores all the [YSpan] data, including the deleted/undo ones
 ///
@@ -80,22 +80,33 @@ impl ContentMap {
                 }
             }
 
-            let next = if prev.is_some() {
-                let next_cursor = cursor.next_elem_start();
+            if prev.is_some() {
+                let mut next_cursor = cursor.next_elem_start();
                 let mut ans = None;
-                if let Some(next_inner) = next_cursor {
-                    let mut cursor = next_inner.unwrap();
-                    cursor.offset = 0;
-                    cursor.pos = Position::Start;
-                    ans = Some(next_inner.as_ref().id);
+                while let Some(next_inner) = next_cursor {
+                    if next_inner.as_ref().status.unapplied {
+                        let mut cursor = next_inner.unwrap();
+                        cursor.offset = 0;
+                        cursor.pos = Position::Start;
+                        ans = Some(next_inner.as_ref().id);
+                        break;
+                    }
+
+                    next_cursor = next_inner.next_elem_start();
                 }
 
-                ans
+                (prev, ans)
             } else {
-                Some(cursor.as_ref().id)
-            };
+                while cursor.as_ref().status.unapplied {
+                    if let Some(next) = cursor.next_elem_start() {
+                        cursor = next;
+                    } else {
+                        return (prev, None);
+                    }
+                }
 
-            (prev, next)
+                (prev, Some(cursor.as_ref().id))
+            }
         } else {
             (None, None)
         }

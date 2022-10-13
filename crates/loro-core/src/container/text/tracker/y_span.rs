@@ -72,7 +72,6 @@ impl YSpan {
 
     #[inline]
     pub fn can_be_origin(&self) -> bool {
-        debug_assert!(self.len > 0);
         self.status.is_activated()
     }
 
