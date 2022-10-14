@@ -83,15 +83,6 @@ impl ListCrdt for YataImpl {
         unsafe { std::mem::transmute(container.content.iter_mut_in(from, to)) }
     }
 
-    fn insert_at(container: &mut Self::Container, op: Self::OpUnit, pos: usize) {
-        let mut notify = make_notify(&mut container.id_to_cursor);
-        if pos == 0 {
-            container.content.insert_at_first(op, &mut notify);
-        } else {
-            container.content.insert_notify(pos, op, &mut notify);
-        }
-    }
-
     fn id(op: &Self::OpUnit) -> Self::OpId {
         op.id
     }
@@ -102,37 +93,6 @@ impl ListCrdt for YataImpl {
 
     fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
         op.id.contains(op.len as Counter, id)
-    }
-
-    fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
-        container.vv.set_end(op.id.inc(op.len as i32));
-        // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-        unsafe { crdt_list::yata::integrate::<Self>(container, op) };
-    }
-
-    #[inline]
-    fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
-        if let Some(value) = op.origin_left {
-            if !value.is_unknown() && !container.vv.includes(value) {
-                return false;
-            }
-        }
-
-        if let Some(value) = op.origin_right {
-            if !value.is_unknown() && !container.vv.includes(value) {
-                return false;
-            }
-        }
-
-        if op.id.counter != 0 && !container.vv.includes(op.id.inc(-1)) {
-            return false;
-        }
-
-        true
-    }
-
-    fn len(container: &Self::Container) -> usize {
-        container.content.len()
     }
 }
 
@@ -221,6 +181,33 @@ pub mod fuzz {
     use super::YataImpl;
 
     impl TestFramework for YataImpl {
+        fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
+            container.vv.set_end(op.id.inc(op.len as i32));
+            // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
+            unsafe { crdt_list::yata::integrate::<Self>(container, op) };
+        }
+
+        #[inline]
+        fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
+            if let Some(value) = op.origin_left {
+                if !value.is_unknown() && !container.vv.includes(value) {
+                    return false;
+                }
+            }
+
+            if let Some(value) = op.origin_right {
+                if !value.is_unknown() && !container.vv.includes(value) {
+                    return false;
+                }
+            }
+
+            if op.id.counter != 0 && !container.vv.includes(op.id.inc(-1)) {
+                return false;
+            }
+
+            true
+        }
+
         fn is_content_eq(a: &Self::Container, b: &Self::Container) -> bool {
             let aa = {
                 let mut ans = RleVec::new();
