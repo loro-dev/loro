@@ -158,7 +158,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     #[inline]
     pub fn get_mut(&mut self, index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
         let cursor = self.get(index);
-        cursor.map(|x| SafeCursorMut(x.0))
+        // SAFETY: this is safe because we have exclusive ref to the tree
+        cursor.map(|x| unsafe { SafeCursorMut::from(x.0) })
     }
 
     #[inline]
@@ -197,7 +198,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 let start = start.unwrap_or_else(|| {
                     std::mem::transmute(SafeCursor::new(leaf, 0, 0, Position::Start, 0))
                 });
-                let start: SafeCursorMut<'_, T, A> = SafeCursorMut(start.0);
+                let start: SafeCursorMut<'_, T, A> = SafeCursorMut::from(start.0);
                 std::mem::transmute::<_, iter::IterMut<'_, T, A>>(iter::IterMut::from_cursor(
                     std::mem::transmute::<_, SafeCursorMut<'_, T, A>>(start),
                     end,
