@@ -27,7 +27,7 @@ mod value;
 pub(crate) mod macros;
 pub(crate) use change::{Change, Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
-pub(crate) use op::{ContentType, InsertContent, Op, OpContent, OpType};
+pub(crate) use op::{ContentType, InsertContentTrait, Op, OpContent, OpType};
 
 pub(crate) type InternalString = DefaultAtom;
 

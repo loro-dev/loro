@@ -6,66 +6,58 @@ use rle::{HasLength, Mergable, Sliceable};
 use crate::id::ID;
 
 #[derive(PartialEq, Eq, Debug, EnumAsInner, Clone)]
-pub(super) enum TextPointer {
+pub(crate) enum ListSlice {
     Slice(Range<usize>),
     Unknown(usize),
 }
 
 #[derive(Debug, EnumAsInner)]
 pub(super) enum TextOpContent {
-    Insert {
-        id: ID,
-        text: TextPointer,
-        pos: usize,
-    },
-    Delete {
-        id: ID,
-        pos: usize,
-        len: usize,
-    },
+    Insert { id: ID, text: ListSlice, pos: usize },
+    Delete { id: ID, pos: usize, len: usize },
 }
 
-pub(super) fn new_unknown_text(len: usize) -> TextPointer {
-    TextPointer::Unknown(len)
+pub(super) fn new_unknown_text(len: usize) -> ListSlice {
+    ListSlice::Unknown(len)
 }
 
-pub(super) fn is_unknown_text(a: &TextPointer) -> bool {
+pub(super) fn is_unknown_text(a: &ListSlice) -> bool {
     a.as_unknown().is_some()
 }
 
-impl HasLength for TextPointer {
+impl HasLength for ListSlice {
     fn len(&self) -> usize {
         match self {
-            TextPointer::Slice(x) => std::iter::ExactSizeIterator::len(x),
-            TextPointer::Unknown(x) => *x,
+            ListSlice::Slice(x) => std::iter::ExactSizeIterator::len(x),
+            ListSlice::Unknown(x) => *x,
         }
     }
 }
 
-impl Sliceable for TextPointer {
+impl Sliceable for ListSlice {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            TextPointer::Slice(x) => TextPointer::Slice(x.start + from..x.start + to),
-            TextPointer::Unknown(_) => TextPointer::Unknown(to - from),
+            ListSlice::Slice(x) => ListSlice::Slice(x.start + from..x.start + to),
+            ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
         }
     }
 }
 
-impl Mergable for TextPointer {
+impl Mergable for ListSlice {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         match (self, other) {
-            (TextPointer::Slice(x), TextPointer::Slice(y)) => x.end == y.start,
-            (TextPointer::Unknown(_), TextPointer::Unknown(_)) => true,
+            (ListSlice::Slice(x), ListSlice::Slice(y)) => x.end == y.start,
+            (ListSlice::Unknown(_), ListSlice::Unknown(_)) => true,
             _ => false,
         }
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
         match (self, other) {
-            (TextPointer::Slice(x), TextPointer::Slice(y)) => {
+            (ListSlice::Slice(x), ListSlice::Slice(y)) => {
                 *x = x.start..y.end;
             }
-            (TextPointer::Unknown(x), TextPointer::Unknown(y)) => {
+            (ListSlice::Unknown(x), ListSlice::Unknown(y)) => {
                 *x += y;
             }
             _ => unreachable!(),

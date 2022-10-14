@@ -6,14 +6,14 @@ use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogAccessor,
-    op::{utils::downcast_ref, Op},
+    op::{utils::downcast_ref, InsertContent, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
     InternalString,
 };
 
-use super::MapInsertContent;
+use super::MapSet;
 
 /// We can only insert to Map
 /// delete = set null
@@ -57,10 +57,10 @@ impl MapContainer {
                 id,
                 container: self_id,
                 content: OpContent::Normal {
-                    content: Box::new(MapInsertContent {
+                    content: InsertContent::Dyn(Box::new(MapSet {
                         key: key.clone(),
                         value: value.clone(),
-                    }),
+                    })),
                 },
             }]);
 
@@ -104,7 +104,7 @@ impl Container for MapContainer {
         debug_assert_eq!(&op.op().container, self.id());
         match op.content() {
             OpContent::Normal { content } => {
-                let v: &MapInsertContent = downcast_ref(&**content).unwrap();
+                let v: &MapSet = content.as_map().unwrap();
                 let order = TotalOrderStamp {
                     lamport: op.lamport(),
                     client_id: op.id().client_id,

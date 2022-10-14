@@ -1,6 +1,4 @@
-
-
-use crate::{id::Counter, span::IdSpan, ContentType, InsertContent, ID};
+use crate::{id::Counter, span::IdSpan, ContentType, InsertContentTrait, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
@@ -132,7 +130,7 @@ impl Sliceable for YSpan {
     }
 }
 
-impl InsertContent for YSpan {
+impl InsertContentTrait for YSpan {
     fn id(&self) -> ContentType {
         ContentType::Text
     }
@@ -159,6 +157,7 @@ mod test {
     use crate::{
         container::{ContainerID, ContainerType},
         id::ROOT_ID,
+        op::InsertContent,
         ContentType, Op, OpContent, ID,
     };
     use rle::{HasLength, RleVec};
@@ -171,13 +170,13 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: Box::new(YSpan {
+                content: InsertContent::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
                     len: 1,
                     status: Default::default(),
-                }),
+                })),
             },
             ContainerID::Normal {
                 id: ROOT_ID,
@@ -187,13 +186,13 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: Box::new(YSpan {
+                content: InsertContent::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 1)),
                     origin_right: None,
                     id: ID::new(0, 2),
                     len: 1,
                     status: Default::default(),
-                }),
+                })),
             },
             ContainerID::Normal {
                 id: ROOT_ID,
@@ -202,9 +201,8 @@ mod test {
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0).unwrap();
-        assert_eq!(merged.insert_content().id(), ContentType::Text);
-        let text_content =
-            crate::op::utils::downcast_ref::<YSpan>(&**merged.insert_content()).unwrap();
+        assert_eq!(merged.content.as_normal().unwrap().id(), ContentType::Text);
+        let text_content = merged.content.as_normal().unwrap().as_dyn().unwrap();
         assert_eq!(text_content.len(), 2);
     }
 
@@ -214,13 +212,13 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: Box::new(YSpan {
+                content: InsertContent::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
                     len: 4,
                     status: Default::default(),
-                }),
+                })),
             },
             ContainerID::Normal {
                 id: ROOT_ID,
@@ -230,13 +228,13 @@ mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: Box::new(YSpan {
+                content: InsertContent::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
                     len: 4,
                     status: Default::default(),
-                }),
+                })),
             },
             ContainerID::Normal {
                 id: ROOT_ID,
@@ -246,11 +244,7 @@ mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(|x| crate::op::utils::downcast_ref::<YSpan>(
-                    &**x.into_inner().insert_content()
-                )
-                .unwrap()
-                .len)
+                .map(|x| x.into_inner().content.len())
                 .collect::<Vec<usize>>(),
             vec![2, 2]
         )

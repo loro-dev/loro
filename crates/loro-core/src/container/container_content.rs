@@ -1,7 +1,6 @@
-use crate::{InsertContent, ID};
+use crate::{InsertContentTrait, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::Serialize;
-
 
 #[derive(Debug, Clone)]
 pub(crate) enum Slot {}
@@ -54,7 +53,7 @@ impl Sliceable for ContainerContent {
     }
 }
 
-impl InsertContent for ContainerContent {
+impl InsertContentTrait for ContainerContent {
     fn id(&self) -> crate::ContentType {
         crate::ContentType::Container
     }

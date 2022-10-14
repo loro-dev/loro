@@ -81,11 +81,11 @@ impl<'a> OpProxy<'a> {
         &self.slice_range
     }
 
-    pub fn content(&self) -> &OpContent {
+    pub(crate) fn content(&self) -> &OpContent {
         &self.op.content
     }
 
-    pub fn content_sliced(&self) -> OpContent {
+    pub(crate) fn content_sliced(&self) -> OpContent {
         self.op.content.slice(
             self.slice_range.start as usize,
             self.slice_range.end as usize,

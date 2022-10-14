@@ -1,6 +1,6 @@
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::{value::InsertValue, ContentType, InsertContent};
+use crate::{value::InsertValue, ContentType, InsertContentTrait};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListInsertContent {
@@ -21,7 +21,7 @@ impl HasLength for ListInsertContent {
     }
 }
 
-impl InsertContent for ListInsertContent {
+impl InsertContentTrait for ListInsertContent {
     fn id(&self) -> ContentType {
         ContentType::Map
     }
