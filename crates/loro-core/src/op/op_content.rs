@@ -1,17 +1,19 @@
+use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 
 use crate::{span::IdSpan, OpType};
 
 use super::InsertContent;
 
-#[derive(Debug)]
-pub enum OpContent {
-    Normal { content: Box<dyn InsertContent> },
+#[derive(Debug, EnumAsInner)]
+pub(crate) enum OpContent {
+    Normal { content: InsertContent },
     Undo { target: RleVec<IdSpan> },
     Redo { target: RleVec<IdSpan> },
 }
 
 impl OpContent {
+    #[inline]
     pub fn op_type(&self) -> OpType {
         match self {
             OpContent::Normal { .. } => OpType::Normal,
@@ -35,7 +37,7 @@ impl Clone for OpContent {
     fn clone(&self) -> Self {
         match self {
             OpContent::Normal { content } => OpContent::Normal {
-                content: content.clone_content(),
+                content: content.clone(),
             },
             OpContent::Undo { target } => OpContent::Undo {
                 target: target.clone(),
@@ -51,7 +53,7 @@ impl Sliceable for OpContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             OpContent::Normal { content } => OpContent::Normal {
-                content: content.slice_content(from, to),
+                content: content.slice(from, to),
             },
             OpContent::Undo { target } => OpContent::Undo {
                 target: target.slice(from, to),
@@ -72,7 +74,7 @@ impl Mergable for OpContent {
             OpContent::Normal { content } => match other {
                 OpContent::Normal {
                     content: ref other_content,
-                } => content.is_mergable_content(&**other_content),
+                } => content.is_mergable(other_content, cfg),
                 _ => false,
             },
             OpContent::Undo { target } => match other {

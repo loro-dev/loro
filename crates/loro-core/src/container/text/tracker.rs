@@ -1,8 +1,7 @@
-
 use rle::{HasLength, RleVec};
 
 use crate::{
-    container::text::tracker::yata::YataImpl,
+    container::{list::list_op::ListOp, text::tracker::yata::YataImpl},
     id::{Counter, ID},
     op::{utils::downcast_ref, Op},
     span::IdSpan,
@@ -108,20 +107,21 @@ impl Tracker {
     fn apply(&mut self, op: &Op) {
         assert_eq!(*self.vv.get(&op.id.client_id).unwrap_or(&0), op.id.counter);
         self.vv.set_end(op.id.inc(op.len() as i32));
+        let id = op.id;
         match &op.content {
             crate::op::OpContent::Normal { content } => {
-                if let Some(text_content) = downcast_ref::<TextOpContent>(&**content) {
+                if let Some(text_content) = content.as_list() {
                     match text_content {
-                        TextOpContent::Insert { id, text, pos } => {
-                            let yspan = self.content.get_yspan_at_pos(*id, *pos, text.len());
+                        ListOp::Insert { slice, pos } => {
+                            let yspan = self.content.get_yspan_at_pos(id, *pos, slice.len());
                             // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                             unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                         }
-                        TextOpContent::Delete { id, pos, len } => {
+                        ListOp::Delete { pos, len } => {
                             let spans = self.content.get_id_spans(*pos, *len);
                             self.update_spans(&spans, StatusChange::Delete);
                             self.id_to_cursor
-                                .set((*id).into(), cursor_map::Marker::Delete(spans));
+                                .set((id).into(), cursor_map::Marker::Delete(spans));
                         }
                     }
                 }

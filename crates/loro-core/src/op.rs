@@ -1,7 +1,7 @@
 use crate::{
     container::ContainerID,
     id::{Counter, ID},
-    span::{IdSpan},
+    span::IdSpan,
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
@@ -9,8 +9,9 @@ mod op_content;
 mod op_proxy;
 
 pub use insert_content::*;
-pub use op_content::*;
 pub use op_proxy::*;
+
+pub(crate) use self::op_content::OpContent;
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +38,7 @@ pub struct Op {
 
 impl Op {
     #[inline]
-    pub fn new(id: ID, content: OpContent, container: ContainerID) -> Self {
+    pub(crate) fn new(id: ID, content: OpContent, container: ContainerID) -> Self {
         Op {
             id,
             content,
@@ -46,7 +47,7 @@ impl Op {
     }
 
     #[inline]
-    pub fn new_insert_op(id: ID, container: ContainerID, content: Box<dyn InsertContent>) -> Self {
+    pub(crate) fn new_insert_op(id: ID, container: ContainerID, content: InsertContent) -> Self {
         Op::new(id, OpContent::Normal { content }, container)
     }
 
@@ -66,14 +67,6 @@ impl Op {
     pub fn container(&self) -> &ContainerID {
         &self.container
     }
-
-    #[allow(clippy::borrowed_box)]
-    pub fn insert_content(&self) -> &Box<dyn InsertContent> {
-        match &self.content {
-            OpContent::Normal { content, .. } => content,
-            _ => unreachable!(),
-        }
-    }
 }
 
 impl Mergable for Op {
@@ -89,7 +82,7 @@ impl Mergable for Op {
                 OpContent::Normal {
                     content: other_content,
                 } => {
-                    content.merge_content(&**other_content);
+                    content.merge(other_content, cfg);
                 }
                 _ => unreachable!(),
             },
