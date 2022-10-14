@@ -6,7 +6,7 @@ use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogAccessor,
-    op::{utils::downcast_ref, InsertContent, Op},
+    op::{InsertContent, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
