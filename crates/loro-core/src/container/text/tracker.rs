@@ -3,7 +3,7 @@ use rle::{HasLength, RleVec};
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata::YataImpl},
     id::{Counter, ID},
-    op::{utils::downcast_ref, Op},
+    op::{Op},
     span::IdSpan,
     VersionVector,
 };
@@ -14,7 +14,7 @@ use self::{
     y_span::{Status, StatusChange, YSpan},
 };
 
-use super::text_content::TextOpContent;
+
 
 mod content_map;
 mod cursor_map;
