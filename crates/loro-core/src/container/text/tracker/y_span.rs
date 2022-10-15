@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{id::Counter, span::IdSpan, ContentType, InsertContentTrait, ID};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
@@ -6,6 +8,20 @@ pub struct Status {
     pub unapplied: bool,
     pub delete_times: usize,
     pub undo_times: usize,
+}
+
+impl Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_activated() {
+            write!(f, "Active",)
+        } else {
+            write!(
+                f,
+                "unapplied: {}, delete_times: {}, undo_times: {}",
+                self.unapplied, self.delete_times, self.undo_times
+            )
+        }
+    }
 }
 
 impl Status {
@@ -154,6 +170,94 @@ impl HasLength for YSpan {
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Cow;
+
+    use tabled::{Style, Table, Tabled};
+    impl Tabled for YSpan {
+        const LENGTH: usize = 7;
+
+        fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
+            vec![
+                self.id.to_string().into(),
+                self.len.to_string().into(),
+                self.status.unapplied.to_string().into(),
+                self.status.delete_times.to_string().into(),
+                self.status.undo_times.to_string().into(),
+                self.origin_left
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+                    .into(),
+                self.origin_right
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+                    .into(),
+            ]
+        }
+
+        fn headers() -> Vec<Cow<'static, str>> {
+            vec![
+                "id".into(),
+                "len".into(),
+                "future".into(),
+                "del".into(),
+                "undo".into(),
+                "origin\nleft".into(),
+                "origin\nright".into(),
+            ]
+        }
+    }
+
+    #[test]
+    fn test_table() {
+        let y_spans = vec![
+            YSpan {
+                id: ID::new(1, 0),
+                len: 1,
+                status: Status::new(),
+                origin_left: None,
+                origin_right: None,
+            },
+            YSpan {
+                id: ID::new(1, 1),
+                len: 1,
+                status: Status::new(),
+                origin_left: Some(ID {
+                    client_id: 0,
+                    counter: 2,
+                }),
+                origin_right: None,
+            },
+            YSpan {
+                id: ID::new(1, 2),
+                len: 1,
+                status: Status {
+                    unapplied: true,
+                    delete_times: 5,
+                    undo_times: 3,
+                },
+                origin_left: None,
+                origin_right: None,
+            },
+            YSpan {
+                id: ID::new(1, 3),
+                len: 1,
+                status: Status::new(),
+                origin_left: None,
+                origin_right: None,
+            },
+            YSpan {
+                id: ID::new(1, 4),
+                len: 1,
+                status: Status::new(),
+                origin_left: None,
+                origin_right: None,
+            },
+        ];
+        let mut t = Table::new(y_spans);
+        t.with(Style::rounded());
+        println!("{}", &t)
+    }
+
     use crate::{
         container::{ContainerID, ContainerType},
         id::ROOT_ID,
@@ -162,7 +266,7 @@ mod test {
     };
     use rle::{HasLength, RleVec};
 
-    use super::YSpan;
+    use super::{Status, YSpan};
 
     #[test]
     fn test_merge() {
