@@ -1,20 +1,18 @@
-use rle::{HasLength, RleVec};
+use rle::HasLength;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata::YataImpl},
     id::{Counter, ID},
-    op::{Op},
+    op::Op,
     span::IdSpan,
     VersionVector,
 };
 
 use self::{
     content_map::ContentMap,
-    cursor_map::{make_notify, CursorMap},
+    cursor_map::{make_notify, CursorMap, IdSpanQueryResult},
     y_span::{Status, StatusChange, YSpan},
 };
-
-
 
 mod content_map;
 mod cursor_map;
@@ -35,7 +33,10 @@ pub mod yata;
 pub struct Tracker {
     // #[cfg(feature = "fuzzing")]
     client_id: u64,
-    vv: VersionVector,
+    /// all applied operations version vector
+    all_vv: VersionVector,
+    /// current content version vector
+    head_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -69,7 +70,8 @@ impl Tracker {
             content,
             id_to_cursor,
             client_id: 0,
-            vv: Default::default(),
+            head_vv: Default::default(),
+            all_vv: Default::default(),
         }
     }
 
@@ -99,30 +101,105 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    fn turn_on(&mut self, _id: IdSpan) {}
-    fn turn_off(&mut self, _id: IdSpan) {}
-    fn checkout(&mut self, _vv: VersionVector) {}
+    fn checkout(&mut self, vv: VersionVector) {
+        let to_retreat = self.head_vv.clone() - vv.clone();
+        let to_forward = vv.clone() - self.head_vv.clone();
+        self.retreat(&to_retreat);
+        self.forward(&to_forward);
+        self.head_vv = vv;
+    }
+
+    fn forward(&mut self, spans: &[IdSpan]) {
+        let mut to_set_as_applied = Vec::with_capacity(spans.len());
+        let mut to_delete = Vec::with_capacity(spans.len());
+        for span in spans.iter() {
+            let IdSpanQueryResult {
+                mut inserts,
+                deletes,
+            } = self.id_to_cursor.get_cursor_at_id_span(*span);
+            for delete in deletes {
+                for deleted_span in delete.iter() {
+                    to_delete.append(
+                        &mut self
+                            .id_to_cursor
+                            .get_cursor_at_id_span(*deleted_span)
+                            .inserts,
+                    );
+                }
+            }
+
+            to_set_as_applied.append(&mut inserts);
+        }
+
+        self.content.update_at_cursors_twice(
+            &[&to_set_as_applied, &to_delete],
+            &mut |v| {
+                v.status.apply(StatusChange::SetAsFuture);
+            },
+            &mut |v: &mut YSpan| {
+                v.status.apply(StatusChange::UndoDelete);
+            },
+            &mut make_notify(&mut self.id_to_cursor),
+        )
+    }
+
+    fn retreat(&mut self, spans: &[IdSpan]) {
+        let mut to_set_as_future = Vec::with_capacity(spans.len());
+        let mut to_undo_delete = Vec::with_capacity(spans.len());
+        for span in spans.iter() {
+            let IdSpanQueryResult {
+                mut inserts,
+                deletes,
+            } = self.id_to_cursor.get_cursor_at_id_span(*span);
+            for delete in deletes {
+                for deleted_span in delete.iter() {
+                    to_undo_delete.append(
+                        &mut self
+                            .id_to_cursor
+                            .get_cursor_at_id_span(*deleted_span)
+                            .inserts,
+                    );
+                }
+            }
+
+            to_set_as_future.append(&mut inserts);
+        }
+
+        self.content.update_at_cursors_twice(
+            &[&to_set_as_future, &to_undo_delete],
+            &mut |v| {
+                v.status.apply(StatusChange::SetAsFuture);
+            },
+            &mut |v: &mut YSpan| {
+                v.status.apply(StatusChange::UndoDelete);
+            },
+            &mut make_notify(&mut self.id_to_cursor),
+        )
+    }
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, op: &Op) {
-        assert_eq!(*self.vv.get(&op.id.client_id).unwrap_or(&0), op.id.counter);
-        self.vv.set_end(op.id.inc(op.len() as i32));
+        if self.all_vv.includes_id(op.id.inc(op.len() as i32 - 1)) {}
+        assert_eq!(
+            *self.head_vv.get(&op.id.client_id).unwrap_or(&0),
+            op.id.counter
+        );
+        self.head_vv.set_end(op.id.inc(op.len() as i32));
         let id = op.id;
         match &op.content {
             crate::op::OpContent::Normal { content } => {
-                if let Some(text_content) = content.as_list() {
-                    match text_content {
-                        ListOp::Insert { slice, pos } => {
-                            let yspan = self.content.get_yspan_at_pos(id, *pos, slice.len());
-                            // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-                            unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
-                        }
-                        ListOp::Delete { pos, len } => {
-                            let spans = self.content.get_id_spans(*pos, *len);
-                            self.update_spans(&spans, StatusChange::Delete);
-                            self.id_to_cursor
-                                .set((id).into(), cursor_map::Marker::Delete(spans));
-                        }
+                let text_content = content.as_list().expect("Content is not for list");
+                match text_content {
+                    ListOp::Insert { slice, pos } => {
+                        let yspan = self.content.get_yspan_at_pos(id, *pos, slice.len());
+                        // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
+                        unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
+                    }
+                    ListOp::Delete { pos, len } => {
+                        let spans = self.content.get_id_spans(*pos, *len);
+                        self.update_spans(&spans, StatusChange::Delete);
+                        self.id_to_cursor
+                            .set((id).into(), cursor_map::Marker::Delete(spans));
                     }
                 }
             }
@@ -131,22 +208,11 @@ impl Tracker {
         }
     }
 
-    pub fn update_spans(&mut self, spans: &RleVec<IdSpan>, change: StatusChange) {
+    fn update_spans(&mut self, spans: &[IdSpan], change: StatusChange) {
         let mut cursors = Vec::new();
         for span in spans.iter() {
-            let mut group = Vec::new();
-            for marker in self
-                .id_to_cursor
-                .get_range(span.min_id().into(), span.end_id().into())
-            {
-                for cursor in marker.get_spans(*span) {
-                    if !group.contains(&cursor) {
-                        group.push(cursor);
-                    }
-                }
-            }
-
-            cursors.append(&mut group);
+            let mut inserts = self.id_to_cursor.get_cursor_at_id_span(*span).inserts;
+            cursors.append(&mut inserts);
         }
 
         self.content.update_at_cursors(

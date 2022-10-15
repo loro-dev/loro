@@ -277,9 +277,64 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             }
         }
 
+        self.update_with_gathered_map(updates_map, notify);
+    }
+
+    pub fn update_at_cursors_twice<U, V, F>(
+        &mut self,
+        cursor_groups: &[&[UnsafeCursor<T, A>]; 2],
+        update_fn_u: &mut U,
+        update_fn_v: &mut V,
+        notify: &mut F,
+    ) where
+        U: FnMut(&mut T),
+        V: FnMut(&mut T),
+        F: FnMut(&T, *mut LeafNode<T, A>),
+    {
+        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>, _> = FxHashMap::default();
+        for (i, cursors) in cursor_groups.iter().enumerate() {
+            for cursor in cursors.iter() {
+                // SAFETY: we has the exclusive reference to the tree and the cursor is valid
+                let updates = unsafe {
+                    if i == 0 {
+                        cursor.leaf.as_ref().pure_update(
+                            cursor.index,
+                            cursor.offset,
+                            cursor.len,
+                            update_fn_u,
+                        )
+                    } else {
+                        cursor.leaf.as_ref().pure_update(
+                            cursor.index,
+                            cursor.offset,
+                            cursor.len,
+                            update_fn_v,
+                        )
+                    }
+                };
+
+                if let Some(update) = updates {
+                    updates_map
+                        .entry(cursor.leaf)
+                        .or_default()
+                        .push((cursor.index, update));
+                }
+            }
+        }
+
+        self.update_with_gathered_map(updates_map, notify);
+    }
+
+    fn update_with_gathered_map<F, M>(
+        &mut self,
+        iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, Vec<T>)>, M>,
+        notify: &mut F,
+    ) where
+        F: FnMut(&T, *mut LeafNode<T, A>),
+    {
         let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<_>)>, _> =
             FxHashMap::default();
-        for (mut leaf, updates) in updates_map {
+        for (mut leaf, updates) in iter {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };
             if let Err(new) = leaf.apply_updates(updates, notify) {

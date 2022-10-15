@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Sub},
 };
 
 use fxhash::FxHashMap;
@@ -34,6 +34,25 @@ impl Deref for VersionVector {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Sub for VersionVector {
+    type Output = Vec<IdSpan>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut ans = Vec::new();
+        for (client_id, &counter) in self.iter() {
+            if let Some(&rhs_counter) = rhs.get(client_id) {
+                if counter > rhs_counter {
+                    ans.push(IdSpan::new(*client_id, rhs_counter, counter));
+                }
+            } else {
+                ans.push(IdSpan::new(*client_id, 0, counter));
+            }
+        }
+
+        ans
     }
 }
 
@@ -147,7 +166,7 @@ impl VersionVector {
         }
     }
 
-    pub fn includes(&self, id: ID) -> bool {
+    pub fn includes_id(&self, id: ID) -> bool {
         if let Some(end) = self.get(&id.client_id) {
             if *end > id.counter {
                 return true;

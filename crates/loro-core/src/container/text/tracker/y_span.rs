@@ -3,7 +3,8 @@ use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceabl
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Status {
-    pub unapplied: bool,
+    /// is this span from a future operation
+    pub future: bool,
     pub delete_times: usize,
     pub undo_times: usize,
 }
@@ -12,7 +13,7 @@ impl Status {
     #[inline]
     pub fn new() -> Self {
         Status {
-            unapplied: false,
+            future: false,
             delete_times: 0,
             undo_times: 0,
         }
@@ -20,7 +21,7 @@ impl Status {
 
     #[inline]
     pub fn is_activated(&self) -> bool {
-        !self.unapplied && self.delete_times == 0 && self.undo_times == 0
+        !self.future && self.delete_times == 0 && self.undo_times == 0
     }
 
     /// Return whether the activation changed
@@ -28,8 +29,8 @@ impl Status {
     pub fn apply(&mut self, change: StatusChange) -> bool {
         let activated = self.is_activated();
         match change {
-            StatusChange::Apply => self.unapplied = false,
-            StatusChange::PreApply => self.unapplied = true,
+            StatusChange::SetAsCurrent => self.future = false,
+            StatusChange::SetAsFuture => self.future = true,
             StatusChange::Redo => self.undo_times -= 1,
             StatusChange::Undo => self.undo_times += 1,
             StatusChange::Delete => self.delete_times += 1,
@@ -51,8 +52,8 @@ pub struct YSpan {
 
 #[derive(Clone, Copy, Debug)]
 pub enum StatusChange {
-    Apply,
-    PreApply,
+    SetAsCurrent,
+    SetAsFuture,
     Redo,
     Undo,
     Delete,

@@ -1,7 +1,12 @@
-use std::{fmt::Debug, ptr::NonNull};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
 use enum_as_inner::EnumAsInner;
 
+use moveit::DerefMove;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
@@ -21,7 +26,7 @@ pub(super) enum Marker {
         len: usize,
     },
     Delete(RleVec<IdSpan>),
-    // TODO: REDO, UNDO
+    // FUTURE: REDO, UNDO
 }
 
 impl ZeroElement for Marker {
@@ -172,7 +177,21 @@ impl Mergable for Marker {
     }
 }
 
-pub(super) type CursorMap = RangeMap<u128, Marker>;
+#[derive(Debug, Default)]
+pub(super) struct CursorMap(RangeMap<u128, Marker>);
+
+impl Deref for CursorMap {
+    type Target = RangeMap<u128, Marker>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for CursorMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 pub(super) fn make_notify(
     map: &mut CursorMap,
@@ -188,5 +207,33 @@ pub(super) fn make_notify(
                 len: span.content_len(),
             },
         )
+    }
+}
+
+pub(super) struct IdSpanQueryResult<'a> {
+    pub inserts: Vec<UnsafeCursor<'static, YSpan, YSpanTreeTrait>>,
+    pub deletes: Vec<&'a RleVec<IdSpan>>,
+}
+
+impl CursorMap {
+    pub fn get_cursor_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
+        let mut inserts = Vec::new();
+        let mut deletes = Vec::new();
+        for marker in self.get_range(span.min_id().into(), span.end_id().into()) {
+            match marker {
+                Marker::Insert { .. } => {
+                    for cursor in marker.get_spans(span) {
+                        if !inserts.contains(&cursor) {
+                            inserts.push(cursor);
+                        }
+                    }
+                }
+                Marker::Delete(del) => {
+                    deletes.push(del);
+                }
+            }
+        }
+
+        IdSpanQueryResult { inserts, deletes }
     }
 }
