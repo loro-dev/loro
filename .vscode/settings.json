@@ -11,6 +11,7 @@
     "HACK",
     "FIXME",
     "TODO",
+    "FUTURE",
     "XXX",
     "[ ]",
     "[x]"
