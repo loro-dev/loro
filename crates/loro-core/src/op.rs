@@ -1,7 +1,7 @@
 use crate::{
     container::ContainerID,
     id::{Counter, ID},
-    span::IdSpan,
+    span::{HasId, IdSpan},
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
@@ -122,5 +122,11 @@ impl Sliceable for Op {
             content,
             container: self.container.clone(),
         }
+    }
+}
+
+impl HasId for Op {
+    fn id_start(&self) -> ID {
+        self.id
     }
 }

@@ -5,10 +5,10 @@
 //!
 //! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
 
-
 use crate::{
     id::{Counter, ID},
     op::Op,
+    span::HasId,
 };
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::SmallVec;
@@ -119,5 +119,11 @@ impl Mergable<ChangeMergeCfg> for Change {
         self.id.client_id == other.id.client_id
             && self.id.counter + self.len() as Counter == other.id.counter
             && self.lamport + self.len() as Lamport == other.lamport
+    }
+}
+
+impl HasId for Change {
+    fn id_start(&self) -> ID {
+        self.id
     }
 }
