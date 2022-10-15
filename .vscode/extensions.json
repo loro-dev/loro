@@ -1,5 +1,7 @@
 {
   "recommendations": [
-    "skellock.just"
+    "skellock.just",
+    "Gruntfuggly.todo-tree",
+    "rust-lang.rust-analyzer"
   ]
 }
