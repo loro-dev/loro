@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Deref, Range};
 
 use crate::{HasLength, Mergable, Slice, Sliceable};
 
@@ -174,32 +174,32 @@ impl<T, Conf> RleVec<T, Conf> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn merged_len(&self) -> usize {
         self.vec.len()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn to_vec(self) -> Vec<T> {
         self.vec
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn vec(&self) -> &Vec<T> {
         &self.vec
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.vec.iter()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn vec_mut(&mut self) -> &mut Vec<T> {
         &mut self.vec
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_merged(&self, index: usize) -> Option<&T> {
         self.vec.get(index)
     }
@@ -282,6 +282,14 @@ impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVec<T> {
 impl<T> HasLength for RleVec<T> {
     fn len(&self) -> usize {
         self._len
+    }
+}
+
+impl<T> Deref for RleVec<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.vec()
     }
 }
 

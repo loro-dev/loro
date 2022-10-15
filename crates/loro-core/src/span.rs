@@ -43,6 +43,14 @@ impl CounterSpan {
             self.to - 1
         }
     }
+
+    fn end(&self) -> i32 {
+        if self.from > self.to {
+            self.from + 1
+        } else {
+            self.to
+        }
+    }
 }
 
 impl HasLength for CounterSpan {
@@ -124,7 +132,7 @@ impl IdSpan {
 
     #[inline]
     pub fn end_id(&self) -> ID {
-        ID::new(self.client_id, self.counter.max() + 1)
+        ID::new(self.client_id, self.counter.end())
     }
 }
 

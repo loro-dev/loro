@@ -87,7 +87,7 @@ pub(crate) trait Dag {
 
     #[inline]
     fn contains(&self, id: ID) -> bool {
-        self.vv().includes(id)
+        self.vv().includes_id(id)
     }
 
     fn frontier(&self) -> &[ID];
