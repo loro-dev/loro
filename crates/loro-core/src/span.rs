@@ -155,6 +155,28 @@ impl Mergable for IdSpan {
     }
 }
 
+pub trait HasId {
+    fn id_start(&self) -> ID;
+}
+
+pub trait HasIdSpan: HasId + HasLength {
+    fn id_end(&self) -> ID {
+        self.id_start().inc(self.len() as i32)
+    }
+
+    fn id_last(&self) -> ID {
+        self.id_start().inc(self.len() as i32 - 1)
+    }
+}
+impl<T: HasId + HasLength> HasIdSpan for T {}
+
+impl HasId for IdSpan {
+    #[inline]
+    fn id_start(&self) -> ID {
+        self.min_id()
+    }
+}
+
 #[cfg(test)]
 mod test_id_span {
     use rle::RleVec;
