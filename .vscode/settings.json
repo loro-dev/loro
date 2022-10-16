@@ -15,5 +15,9 @@
     "XXX",
     "[ ]",
     "[x]"
-  ]
+  ],
+  "explorer.fileNesting.patterns": {
+    "*.rs": "${capture}.excalidraw"
+  },
+  "excalidraw.theme": "dark"
 }

@@ -51,6 +51,12 @@ struct TestDag {
     client_id: ClientID,
 }
 
+impl TestDag {
+    fn is_first(&self) -> bool {
+        *self.version_vec.get(&self.client_id).unwrap_or(&0) == 0
+    }
+}
+
 impl Dag for TestDag {
     type Node = TestNode;
 
@@ -204,7 +210,9 @@ fn test_dag() {
     assert_eq!(b.next_lamport, 3);
     assert_eq!(b.frontier().len(), 2);
     assert_eq!(
-        b.find_common_ancestor(ID::new(0, 2), ID::new(1, 1)),
+        b.find_common_ancestor(ID::new(0, 2), ID::new(1, 1))
+            .first()
+            .copied(),
         Some(ID::new(1, 0))
     );
 }
@@ -435,7 +443,10 @@ mod find_common_ancestors {
         a.push(1);
         b.push(1);
         a.merge(&b);
-        let actual = a.find_common_ancestor(ID::new(0, 0), ID::new(1, 0));
+        let actual = a
+            .find_common_ancestor(ID::new(0, 0), ID::new(1, 0))
+            .first()
+            .copied();
         assert_eq!(actual, None);
 
         // interactions between b and c
@@ -446,7 +457,10 @@ mod find_common_ancestors {
         b.push(3);
 
         // should no exist any common ancestor between a and b
-        let actual = a.find_common_ancestor(ID::new(0, 0), ID::new(1, 0));
+        let actual = a
+            .find_common_ancestor(ID::new(0, 0), ID::new(1, 0))
+            .first()
+            .copied();
         assert_eq!(actual, None);
     }
 
@@ -462,7 +476,9 @@ mod find_common_ancestors {
         let k = b.nodes.get_mut(&1).unwrap();
         k[1].deps.push(ID::new(0, 2));
         assert_eq!(
-            b.find_common_ancestor(ID::new(0, 3), ID::new(1, 8)),
+            b.find_common_ancestor(ID::new(0, 3), ID::new(1, 8))
+                .first()
+                .copied(),
             Some(ID::new(0, 2))
         );
     }
@@ -495,7 +511,9 @@ mod find_common_ancestors {
         a1.merge(&a2);
         a1.merge(&a0);
         assert_eq!(
-            a1.find_common_ancestor(ID::new(0, 3), ID::new(1, 4)),
+            a1.find_common_ancestor(ID::new(0, 3), ID::new(1, 4))
+                .first()
+                .copied(),
             Some(ID::new(0, 2))
         );
     }
@@ -530,7 +548,7 @@ mod find_common_ancestors_proptest {
             before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..300),
             after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..300)
         ) {
-            test(2, before_merged_insertions, after_merged_insertions)?;
+            test_single_common_ancestor(2, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
@@ -538,7 +556,7 @@ mod find_common_ancestors_proptest {
             before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300),
             after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300)
         ) {
-            test(4, before_merged_insertions, after_merged_insertions)?;
+            test_single_common_ancestor(4, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
@@ -546,7 +564,31 @@ mod find_common_ancestors_proptest {
             before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300),
             after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300)
         ) {
-            test(10, before_merged_insertions, after_merged_insertions)?;
+            test_single_common_ancestor(10, before_merged_insertions, after_merged_insertions)?;
+        }
+
+        #[test]
+        fn test_mul_ancestors_8dags(
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300)
+        ) {
+            test_mul_ancestors::<3>(10, before_merged_insertions, after_merged_insertions)?;
+        }
+    }
+
+    #[test]
+    fn issue() {
+        if let Err(err) = test_mul_ancestors::<3>(
+            10,
+            vec![],
+            vec![Interaction {
+                dag_idx: 4,
+                merge_with: Some(2),
+                len: 1,
+            }],
+        ) {
+            println!("{}", err);
+            panic!();
         }
     }
 
@@ -562,7 +604,7 @@ mod find_common_ancestors_proptest {
         }
     }
 
-    fn test(
+    fn test_single_common_ancestor(
         dag_num: i32,
         mut before_merge_insertion: Vec<Interaction>,
         mut after_merge_insertion: Vec<Interaction>,
@@ -606,7 +648,7 @@ mod find_common_ancestors_proptest {
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id;
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id;
         let actual = dags[0].find_common_ancestor(a, b);
-        prop_assert_eq!(actual.unwrap(), expected);
+        prop_assert_eq!(actual.first().copied().unwrap(), expected);
         Ok(())
     }
 
@@ -624,5 +666,126 @@ mod find_common_ancestors_proptest {
         } else {
             dags[dag_idx].push(len);
         }
+    }
+
+    fn test_mul_ancestors<const N: usize>(
+        dag_num: i32,
+        mut before_merge_insertion: Vec<Interaction>,
+        mut after_merge_insertion: Vec<Interaction>,
+    ) -> Result<(), TestCaseError> {
+        assert!(dag_num - 2 >= N as i32);
+        preprocess(&mut before_merge_insertion, dag_num);
+        preprocess(&mut after_merge_insertion, dag_num);
+        let mut dags = Vec::new();
+        for i in 0..dag_num {
+            dags.push(TestDag::new(i as ClientID));
+        }
+
+        for interaction in before_merge_insertion {
+            apply(interaction, &mut dags);
+        }
+
+        for target in 0..N {
+            for i in N..dags.len() {
+                let (target, dag): (&mut TestDag, &mut TestDag) =
+                    unsafe_array_mut_ref!(dags, [target, i]);
+                dag.merge(target);
+                target.merge(dag);
+            }
+        }
+
+        let mut expected = Vec::with_capacity(N);
+        for i in 0..N {
+            dags[i].push(1);
+            expected.push(dags[i].frontier[0]);
+        }
+
+        let mut merged_to_even = [false; N];
+        let mut merged_to_odd = [false; N];
+
+        for interaction in after_merge_insertion.iter_mut() {
+            if interaction.dag_idx < N {
+                // cannot act on first N nodes
+                interaction.dag_idx = interaction.dag_idx % (dags.len() - N) + N;
+            }
+            if let Some(mut merge) = interaction.merge_with {
+                if interaction.dag_idx == merge {
+                    let next_merge = (merge + 1) % dags.len();
+                    interaction.merge_with = Some(next_merge);
+                    merge = next_merge;
+                }
+
+                // odd dag merges with the odd
+                // even dag merges with the even
+                if merge >= N && merge % 2 != interaction.dag_idx % 2 {
+                    interaction.merge_with = None;
+                }
+                if merge < N {
+                    if interaction.dag_idx % 2 == 0 {
+                        merged_to_even[merge] = true;
+                    } else {
+                        merged_to_odd[merge] = true;
+                    }
+                }
+            }
+
+            let (dag,): (&mut TestDag,) = unsafe_array_mut_ref!(&mut dags, [interaction.dag_idx]);
+            if dag.is_first() {
+                // need to merge to one of the common ancestors first
+                let target = interaction.dag_idx % N;
+                dag.merge(&dags[target]);
+            }
+
+            apply(*interaction, &mut dags);
+        }
+
+        // make common ancestor dags be merged to opposite side (even/odd)
+        for i in 0..N {
+            let (odd, even) = if N % 2 == 0 { (N + 1, N) } else { (N, N + 1) };
+            if !merged_to_even[i] && i % 2 != 0 {
+                let (dag_a, dag_b) = array_mut_ref!(&mut dags, [even, i]);
+                dag_a.merge(dag_b);
+                dag_a.push(1);
+            }
+            if !merged_to_odd[i] && i % 2 == 0 {
+                let (dag_a, dag_b) = array_mut_ref!(&mut dags, [odd, i]);
+                dag_a.merge(dag_b);
+                dag_a.push(1);
+            }
+        }
+
+        // merge with all odds or evens
+        for i in dags.len() - 2..dags.len() {
+            if i % 2 == 0 {
+                for target in (0..dags.len() - 2).step_by(2) {
+                    let (dag_a, dag_b) = array_mut_ref!(&mut dags, [i, target]);
+                    dag_a.merge(dag_b);
+                    dag_a.push(1);
+                }
+            } else {
+                for target in (1..dags.len() - 2).step_by(2) {
+                    let (dag_a, dag_b) = array_mut_ref!(&mut dags, [i, target]);
+                    dag_a.merge(dag_b);
+                    dag_a.push(1);
+                }
+            }
+        }
+
+        let len = dags.len();
+        let (dag_a, dag_b) = array_mut_ref!(&mut dags, [len - 2, len - 1]);
+        dag_a.push(1);
+        dag_b.push(1);
+        dag_a.merge(dag_b);
+        let a = dag_a.get_last_node().id;
+        let b = dag_b.get_last_node().id;
+        let mut actual = dag_a.find_common_ancestor(a, b);
+        actual.sort();
+        let actual = actual.iter().copied().collect::<Vec<_>>();
+        if actual != expected {
+            println!("{}", dag_to_mermaid(dag_a));
+        }
+
+        prop_assert_eq!(actual, expected);
+        Ok(())
     }
 }

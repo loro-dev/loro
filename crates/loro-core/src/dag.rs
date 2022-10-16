@@ -9,6 +9,7 @@
 use std::collections::{BinaryHeap, HashMap};
 
 use fxhash::{FxHashMap, FxHashSet};
+use rle::rle_tree::node::Node;
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -103,7 +104,7 @@ pub(crate) trait Dag {
 }
 
 trait DagUtils: Dag {
-    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> Option<ID>;
+    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>;
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: ID, to: ID) -> Option<Path>;
     fn iter(&self) -> DagIterator<'_, Self::Node>
@@ -130,10 +131,8 @@ impl<T: Dag> DagUtils for T {
     /// But that is a rare case.
     ///
     #[inline]
-    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> Option<ID> {
+    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]> {
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
-            .first()
-            .cloned()
     }
 
     /// TODO: we probably need cache to speedup this
@@ -357,17 +356,19 @@ where
         // if top nodes are from the same client with different source, we find a shared node
         if let Some((other_node, other_type)) = queue.peek() {
             if node_type != *other_type && node.id.client_id == other_node.id.client_id {
-                ans.push(ID {
-                    client_id: node.id.client_id,
-                    counter: node.id.counter.min(other_node.id.counter),
-                });
+                if node_type != NodeType::Shared {
+                    ans.push(ID {
+                        client_id: node.id.client_id,
+                        counter: node.id.counter.min(other_node.id.counter),
+                    });
+                    node_type = NodeType::Shared;
+                }
                 match other_type {
                     NodeType::A => a_count -= 1,
                     NodeType::B => b_count -= 1,
                     NodeType::Shared => {}
                 }
                 queue.pop();
-                node_type = NodeType::Shared;
             }
         }
 
@@ -395,12 +396,16 @@ where
             NodeType::Shared => {}
         }
 
-        if a_count == 0 || b_count == 0 {
+        if a_count == 0 && b_count == 0 {
             break;
         }
 
         for &dep_id in node.deps {
             queue.push((OrdId::from_dag_node(dep_id, get).unwrap(), node_type));
+        }
+
+        if node_type != NodeType::Shared && queue.is_empty() {
+            ans.clear();
         }
     }
 
