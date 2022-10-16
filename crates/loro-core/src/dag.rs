@@ -9,6 +9,7 @@
 use std::collections::{BinaryHeap, HashMap};
 
 use fxhash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 mod iter;
 mod mermaid;
 #[cfg(test)]
@@ -26,11 +27,12 @@ use self::{
     mermaid::dag_to_mermaid,
 };
 
+// TODO: use HasId, HasLength
 pub(crate) trait DagNode {
     fn id_start(&self) -> ID;
     fn lamport_start(&self) -> Lamport;
     fn len(&self) -> usize;
-    fn deps(&self) -> &Vec<ID>;
+    fn deps(&self) -> &[ID];
 
     #[inline]
     fn is_empty(&self) -> bool {
@@ -54,6 +56,11 @@ pub(crate) trait DagNode {
             client_id: id.client_id,
             counter: id.counter + self.len() as Counter - 1,
         }
+    }
+
+    #[inline]
+    fn get_offset(&self, c: Counter) -> Counter {
+        c - self.id_start().counter
     }
 
     #[inline]
@@ -93,7 +100,24 @@ pub(crate) trait Dag {
     fn frontier(&self) -> &[ID];
     fn roots(&self) -> Vec<&Self::Node>;
     fn vv(&self) -> VersionVector;
+}
 
+trait DagUtils: Dag {
+    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> Option<ID>;
+    fn get_vv(&self, id: ID) -> VersionVector;
+    fn find_path(&self, from: ID, to: ID) -> Option<Path>;
+    fn iter(&self) -> DagIterator<'_, Self::Node>
+    where
+        Self: Sized;
+    fn iter_with_vv(&self) -> DagIteratorVV<'_, Self::Node>
+    where
+        Self: Sized;
+    fn mermaid(&self) -> String
+    where
+        Self: Sized;
+}
+
+impl<T: Dag> DagUtils for T {
     //
     // TODO: Maybe use Result return type
     // TODO: Maybe we only need one heap?
@@ -107,18 +131,15 @@ pub(crate) trait Dag {
     ///
     #[inline]
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> Option<ID> {
-        find_common_ancestor(
-            &|id| self.get(id).map(|x| x as &dyn DagNode),
-            a_id,
-            b_id,
-            |_, _, _| {},
-        )
+        find_common_ancestor(&|id| self.get(id), a_id, b_id)
+            .first()
+            .cloned()
     }
 
     /// TODO: we probably need cache to speedup this
     #[inline]
     fn get_vv(&self, id: ID) -> VersionVector {
-        get_version_vector(&|id| self.get(id).map(|x| x as &dyn DagNode), id)
+        get_version_vector(&|id| self.get(id), id)
     }
 
     #[inline]
@@ -167,24 +188,20 @@ pub(crate) trait Dag {
             a_rev_path
         }
 
-        find_common_ancestor(
-            &|id| self.get(id).map(|x| x as &dyn DagNode),
-            from,
-            to,
-            |ancestor, a_path, b_path| {
-                let mut a_path = get_rev_path(ancestor, from, a_path);
-                let b_path = get_rev_path(ancestor, to, b_path);
-                reverse_path(&mut a_path);
-                ans = Some(Path {
-                    retreat: a_path,
-                    forward: b_path,
-                });
-            },
-        );
+        find_common_ancestor_old(&|id| self.get(id), from, to, |ancestor, a_path, b_path| {
+            let mut a_path = get_rev_path(ancestor, from, a_path);
+            let b_path = get_rev_path(ancestor, to, b_path);
+            reverse_path(&mut a_path);
+            ans = Some(Path {
+                retreat: a_path,
+                forward: b_path,
+            });
+        });
 
         ans
     }
 
+    #[inline(always)]
     fn iter_with_vv(&self) -> DagIteratorVV<'_, Self::Node>
     where
         Self: Sized,
@@ -192,6 +209,7 @@ pub(crate) trait Dag {
         iter_dag_with_vv(self)
     }
 
+    #[inline(always)]
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized,
@@ -209,9 +227,10 @@ pub(crate) trait Dag {
     }
 }
 
-fn get_version_vector<'a, Get>(get: &'a Get, id: ID) -> VersionVector
+fn get_version_vector<'a, Get, D>(get: &'a Get, id: ID) -> VersionVector
 where
-    Get: Fn(ID) -> Option<&'a dyn DagNode>,
+    Get: Fn(ID) -> Option<&'a D>,
+    D: DagNode + 'a,
 {
     let mut vv = VersionVector::new();
     let mut visited: FxHashSet<ID> = FxHashSet::default();
@@ -246,13 +265,157 @@ where
     vv
 }
 
-// fn mermaid<T>(dag: &impl Dag<Node = T>) -> String {
-//     dag
-// }
+#[derive(Debug, PartialEq, Eq)]
+struct OrdId<'a> {
+    id: ID,
+    lamport: Lamport,
+    deps: &'a [ID],
+}
 
-fn find_common_ancestor<'a, F, G>(get: &'a F, a_id: ID, b_id: ID, mut on_found: G) -> Option<ID>
+impl<'a> PartialOrd for OrdId<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(
+            self.lamport
+                .cmp(&other.lamport)
+                .then(self.id.cmp(&other.id)),
+        )
+    }
+}
+
+impl<'a> Ord for OrdId<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamport
+            .cmp(&other.lamport)
+            .then(self.id.cmp(&other.id))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum NodeType {
+    A,
+    B,
+    Shared,
+}
+
+impl<'a> OrdId<'a> {
+    #[inline]
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdId>
+    where
+        D: DagNode + 'a,
+        F: Fn(ID) -> Option<&'a D>,
+    {
+        let m = get(id)?;
+        Some(OrdId {
+            id,
+            lamport: m.get_lamport_from_counter(id.counter),
+            deps: m.deps(),
+        })
+    }
+}
+
+fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>
 where
-    F: Fn(ID) -> Option<&'a dyn DagNode>,
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<&'a D>,
+{
+    let mut ans: SmallVec<[ID; 2]> = SmallVec::new();
+    let mut queue: BinaryHeap<(OrdId, NodeType)> = BinaryHeap::new();
+    queue.push((OrdId::from_dag_node(a_id, get).unwrap(), NodeType::A));
+    queue.push((OrdId::from_dag_node(b_id, get).unwrap(), NodeType::B));
+    let mut visited: HashMap<ClientID, (Counter, NodeType), _> = FxHashMap::default();
+    // invariants in this method:
+    //
+    // - visited's entries are subset of max(version_vector_a, version_vector_b)
+    // - ans's client id never repeat
+    // - nodes with the same id will only be visited once
+    // - we may visit nodes that are before the common ancestors
+
+    // type count in the queue. if either one is zero, we can stop
+    let mut a_count = 1;
+    let mut b_count = 1;
+    while let Some((node, mut node_type)) = queue.pop() {
+        match node_type {
+            NodeType::A => a_count -= 1,
+            NodeType::B => b_count -= 1,
+            NodeType::Shared => {}
+        }
+
+        // pop the same node in the queue
+        while let Some((other_node, other_type)) = queue.peek() {
+            if node_type == *other_type && node == *other_node {
+                match node_type {
+                    NodeType::A => a_count -= 1,
+                    NodeType::B => b_count -= 1,
+                    NodeType::Shared => {}
+                }
+                queue.pop();
+            } else {
+                break;
+            }
+        }
+
+        // if top nodes are from the same client with different source, we find a shared node
+        if let Some((other_node, other_type)) = queue.peek() {
+            if node_type != *other_type && node.id.client_id == other_node.id.client_id {
+                ans.push(ID {
+                    client_id: node.id.client_id,
+                    counter: node.id.counter.min(other_node.id.counter),
+                });
+                match other_type {
+                    NodeType::A => a_count -= 1,
+                    NodeType::B => b_count -= 1,
+                    NodeType::Shared => {}
+                }
+                queue.pop();
+                node_type = NodeType::Shared;
+            }
+        }
+
+        // detect whether client is visited by other
+        if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
+            debug_assert!(*ctr >= node.id.counter);
+            if *visited_type != NodeType::Shared && *visited_type != node_type {
+                // if node_type is shared, ans should already contains it or its descendance
+                if node_type != NodeType::Shared {
+                    ans.push(ID {
+                        client_id: node.id.client_id,
+                        counter: node.id.counter,
+                    });
+                }
+                *visited_type = NodeType::Shared;
+                node_type = NodeType::Shared;
+            }
+        } else {
+            visited.insert(node.id.client_id, (node.id.counter, node_type));
+        }
+
+        match node_type {
+            NodeType::A => a_count += node.deps.len(),
+            NodeType::B => b_count += node.deps.len(),
+            NodeType::Shared => {}
+        }
+
+        if a_count == 0 || b_count == 0 {
+            break;
+        }
+
+        for &dep_id in node.deps {
+            queue.push((OrdId::from_dag_node(dep_id, get).unwrap(), node_type));
+        }
+    }
+
+    ans
+}
+
+fn find_common_ancestor_old<'a, F, G, D>(
+    get: &'a F,
+    a_id: ID,
+    b_id: ID,
+    mut on_found: G,
+) -> Option<ID>
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<&'a D>,
     G: FnMut(ID, &FxHashMap<ID, ID>, &FxHashMap<ID, ID>),
 {
     if a_id.client_id == b_id.client_id {
@@ -262,25 +425,6 @@ where
             Some(b_id)
         }
     } else {
-        #[derive(Debug, PartialEq, Eq)]
-        struct OrdId<'a> {
-            id: ID,
-            lamport: Lamport,
-            deps: &'a [ID],
-        }
-
-        impl<'a> PartialOrd for OrdId<'a> {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(self.lamport.cmp(&other.lamport))
-            }
-        }
-
-        impl<'a> Ord for OrdId<'a> {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                self.lamport.cmp(&other.lamport)
-            }
-        }
-
         let mut _a_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
         let mut _b_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
         // Invariant: every op id inserted to the a_heap is a key in a_path map, except for a_id
@@ -358,20 +502,20 @@ where
                     }
                 }
 
-                for dep_id in a.deps {
-                    if a_path.contains_key(dep_id) {
+                for &dep_id in a.deps {
+                    if a_path.contains_key(&dep_id) {
                         continue;
                     }
 
-                    let dep = get(*dep_id).unwrap();
+                    let dep = get(dep_id).unwrap();
                     a_heap.push(OrdId {
-                        id: *dep_id,
+                        id: dep_id,
                         lamport: dep.get_lamport_from_counter(dep_id.counter),
                         deps: dep.deps(),
                     });
-                    a_path.insert(*dep_id, a.id);
-                    if dep.id_start() != *dep_id {
-                        a_path.insert(dep.id_start(), *dep_id);
+                    a_path.insert(dep_id, a.id);
+                    if dep.id_start() != dep_id {
+                        a_path.insert(dep.id_start(), dep_id);
                     }
 
                     if let Some(v) = a_vv.get_mut(&dep_id.client_id) {

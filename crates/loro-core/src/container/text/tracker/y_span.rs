@@ -19,7 +19,7 @@ impl Display for Status {
             write!(
                 f,
                 "unapplied: {}, delete_times: {}, undo_times: {}",
-                self.unapplied, self.delete_times, self.undo_times
+                self.future, self.delete_times, self.undo_times
             )
         }
     }
@@ -181,7 +181,7 @@ mod test {
             vec![
                 self.id.to_string().into(),
                 self.len.to_string().into(),
-                self.status.unapplied.to_string().into(),
+                self.status.future.to_string().into(),
                 self.status.delete_times.to_string().into(),
                 self.status.undo_times.to_string().into(),
                 self.origin_left
@@ -232,7 +232,7 @@ mod test {
                 id: ID::new(1, 2),
                 len: 1,
                 status: Status {
-                    unapplied: true,
+                    future: true,
                     delete_times: 5,
                     undo_times: 3,
                 },
