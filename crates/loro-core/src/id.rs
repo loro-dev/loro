@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use serde::Serialize;
 
 pub type ClientID = u64;
@@ -8,6 +10,12 @@ const UNKNOWN: ClientID = 404;
 pub struct ID {
     pub client_id: ClientID,
     pub counter: Counter,
+}
+
+impl Display for ID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.client_id, self.counter)
+    }
 }
 
 impl PartialOrd for ID {
