@@ -18,7 +18,7 @@ impl Ord for IdHeapItem {
     }
 }
 
-pub(crate) fn iter_dag_with_vv<T>(dag: &dyn Dag<Node = T>) -> DagIteratorVV<'_, T> {
+pub(crate) fn iter_dag_with_vv<T, D: Dag<Node = T>>(dag: &D) -> DagIteratorVV<'_, T> {
     DagIteratorVV {
         dag,
         vv_map: Default::default(),

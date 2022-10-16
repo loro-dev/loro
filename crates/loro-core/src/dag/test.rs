@@ -37,7 +37,7 @@ impl DagNode for TestNode {
     fn len(&self) -> usize {
         self.len
     }
-    fn deps(&self) -> &Vec<ID> {
+    fn deps(&self) -> &[ID] {
         &self.deps
     }
 }
