@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
 use std::cmp::Ordering;
 
 use super::*;
@@ -123,7 +124,7 @@ impl TestDag {
         let counter = self.version_vec.entry(client_id).or_insert(0);
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
-        let deps = std::mem::replace(&mut self.frontier, vec![id]);
+        let deps = std::mem::replace(&mut self.frontier, vec![id.inc(len as Counter - 1)]);
         if deps.len() == 1 && deps[0].client_id == client_id {
             // can merge two op
             let arr = self.nodes.get_mut(&client_id).unwrap();
@@ -277,6 +278,21 @@ impl Interaction {
     }
 }
 
+prop_compose! {
+    fn gen_interaction(num: usize) (
+            dag_idx in 0..num,
+            merge_with in 0..num,
+            length in 1..10,
+            should_merge in 0..2
+        ) -> Interaction {
+        Interaction {
+            dag_idx,
+            merge_with: if should_merge == 1 && merge_with != dag_idx { Some(merge_with) } else { None },
+            len: length as usize,
+        }
+    }
+}
+
 fn preprocess(interactions: &mut [Interaction], num: i32) {
     for interaction in interactions.iter_mut() {
         interaction.dag_idx %= num as usize;
@@ -414,7 +430,7 @@ mod get_version_vector {
 
 #[cfg(test)]
 mod find_path {
-    use crate::fx_map;
+    use crate::{fx_map, span::CounterSpan, tests::PROPTEST_FACTOR_10};
 
     use super::*;
 
@@ -486,14 +502,17 @@ mod find_path {
         );
     }
 
-    fn proptest(dag_num: i32, interactions: &mut [Interaction]) {
-        preprocess(interactions, dag_num);
+    fn test_find_path(
+        dag_num: i32,
+        mut interactions: Vec<Interaction>,
+    ) -> Result<(), TestCaseError> {
+        preprocess(&mut interactions, dag_num);
         let mut dags = Vec::new();
         for i in 0..dag_num {
             dags.push(TestDag::new(i as ClientID));
         }
 
-        for interaction in interactions {
+        for interaction in interactions.iter_mut() {
             interaction.apply(&mut dags);
         }
 
@@ -508,15 +527,98 @@ mod find_path {
             nodes.push((node, vv));
         }
 
+        // println!("{}", a.mermaid());
         for (i, (node, vv)) in nodes.iter().enumerate() {
+            if i > 3 {
+                break;
+            }
+
             for (j, (other_node, other_vv)) in nodes.iter().enumerate() {
                 if i == j {
                     continue;
                 }
+
                 let actual = a.find_path(node.id, other_node.id);
-                // let expected = find_path(*vv, *other_vv);
-                // assert_eq!(actual, expected);
+                let expected = vv.clone() - other_vv.clone();
+                prop_assert_eq!(
+                    actual,
+                    expected,
+                    "\ni={} j={} node={} other={}",
+                    i,
+                    j,
+                    node.id,
+                    other_node.id
+                );
             }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn issue() {
+        if let Err(err) = test_find_path(
+            5,
+            vec![
+                Interaction {
+                    dag_idx: 1,
+                    merge_with: None,
+                    len: 3,
+                },
+                Interaction {
+                    dag_idx: 1,
+                    merge_with: None,
+                    len: 3,
+                },
+                Interaction {
+                    dag_idx: 4,
+                    merge_with: Some(1),
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 0,
+                    merge_with: None,
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 2,
+                    merge_with: Some(0),
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 0,
+                    merge_with: None,
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 2,
+                    merge_with: Some(0),
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 3,
+                    merge_with: Some(0),
+                    len: 1,
+                },
+            ],
+        ) {
+            panic!("{}", err);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_path(
+            interactions in prop::collection::vec(gen_interaction(5), 0..50 * PROPTEST_FACTOR_10),
+        ) {
+            test_find_path(5, interactions)?;
+        }
+
+        #[test]
+        fn proptest_path_large(
+            interactions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
+        ) {
+            test_find_path(10, interactions)?;
         }
     }
 }
@@ -619,7 +721,6 @@ mod find_common_ancestors {
 }
 
 mod find_common_ancestors_proptest {
-    use proptest::prelude::*;
 
     use crate::{
         array_mut_ref,
@@ -629,21 +730,6 @@ mod find_common_ancestors_proptest {
     };
 
     use super::*;
-
-    prop_compose! {
-        fn gen_interaction(num: usize) (
-                dag_idx in 0..num,
-                merge_with in 0..num,
-                length in 1..10,
-                should_merge in 0..2
-            ) -> Interaction {
-            Interaction {
-                dag_idx,
-                merge_with: if should_merge == 1 && merge_with != dag_idx { Some(merge_with) } else { None },
-                len: length as usize,
-            }
-        }
-    }
 
     proptest! {
         #[test]
