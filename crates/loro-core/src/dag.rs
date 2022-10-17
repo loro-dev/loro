@@ -324,12 +324,13 @@ where
     let mut visited: HashMap<ClientID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
     //
-    // - visited's entries are subset of max(version_vector_a, version_vector_b)
+    // - visited's (client, counters) are subset of max(version_vector_a, version_vector_b)
+    // - visited's node type reflecting whether we found the shared node of this client
     // - ans's client id never repeat
     // - nodes with the same id will only be visited once
     // - we may visit nodes that are before the common ancestors
 
-    // type count in the queue. if either one is zero, we can stop
+    // type count in the queue. if both are zero, we can stop
     let mut a_count = 1;
     let mut b_count = 1;
     while let Some((node, mut node_type)) = queue.pop() {
@@ -341,37 +342,37 @@ where
 
         // pop the same node in the queue
         while let Some((other_node, other_type)) = queue.peek() {
-            if node_type == *other_type && node == *other_node {
-                match node_type {
-                    NodeType::A => a_count -= 1,
-                    NodeType::B => b_count -= 1,
-                    NodeType::Shared => {}
+            if node.id == other_node.id {
+                if node_type == *other_type {
+                    match node_type {
+                        NodeType::A => a_count -= 1,
+                        NodeType::B => b_count -= 1,
+                        NodeType::Shared => {}
+                    }
+                } else {
+                    if node_type != NodeType::Shared {
+                        if visited.get(&node.id.client_id).map(|(_, t)| *t)
+                            != Some(NodeType::Shared)
+                        {
+                            ans.push(ID {
+                                client_id: node.id.client_id,
+                                counter: other_node.id.counter,
+                            });
+                        }
+                        node_type = NodeType::Shared;
+                    }
+                    match other_type {
+                        NodeType::A => a_count -= 1,
+                        NodeType::B => b_count -= 1,
+                        NodeType::Shared => {}
+                    }
                 }
+
                 queue.pop();
             } else {
                 break;
             }
         }
-
-        // // if top nodes are from the same client with different source, we find a shared node
-        // if let Some((other_node, other_type)) = queue.peek() {
-        //     if node_type != *other_type && node.id.client_id == other_node.id.client_id {
-        //         if node_type != NodeType::Shared {
-        //             debug_assert!(other_node.id.counter < node.id.counter);
-        //             ans.push(ID {
-        //                 client_id: node.id.client_id,
-        //                 counter: other_node.id.counter,
-        //             });
-        //             node_type = NodeType::Shared;
-        //         }
-        //         match other_type {
-        //             NodeType::A => a_count -= 1,
-        //             NodeType::B => b_count -= 1,
-        //             NodeType::Shared => {}
-        //         }
-        //         queue.pop();
-        //     }
-        // }
 
         // detect whether client is visited by other
         if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
