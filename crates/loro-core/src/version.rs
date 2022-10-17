@@ -9,7 +9,7 @@ use im::hashmap::HashMap as ImHashMap;
 use crate::{
     change::Lamport,
     id::{Counter, ID},
-    span::IdSpan,
+    span::{CounterSpan, HasIdSpan, IdSpan},
     ClientID,
 };
 
@@ -37,18 +37,92 @@ impl Deref for VersionVector {
     }
 }
 
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct VersionVectorDiff {
+    /// need to add these spans to move from right to left
+    pub to_left: FxHashMap<ClientID, CounterSpan>,
+    /// need to add these spans to move from left to right
+    pub to_right: FxHashMap<ClientID, CounterSpan>,
+}
+
+impl VersionVectorDiff {
+    #[inline]
+    pub fn merge_left(&mut self, span: IdSpan) {
+        merge(&mut self.to_left, span);
+    }
+
+    #[inline]
+    pub fn merge_right(&mut self, span: IdSpan) {
+        merge(&mut self.to_right, span);
+    }
+
+    pub fn get_id_spans_left(&self) -> impl Iterator<Item = IdSpan> + '_ {
+        self.to_left.iter().map(|(client_id, span)| IdSpan {
+            client_id: *client_id,
+            counter: *span,
+        })
+    }
+
+    pub fn get_id_spans_right(&self) -> impl Iterator<Item = IdSpan> + '_ {
+        self.to_right.iter().map(|(client_id, span)| IdSpan {
+            client_id: *client_id,
+            counter: *span,
+        })
+    }
+}
+
+fn merge(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
+    if let Some(span) = m.get_mut(&target.client_id) {
+        span.from = span.from.min(target.counter.from);
+        span.to = span.to.max(target.counter.to);
+    } else {
+        m.insert(target.client_id, target.counter);
+    }
+}
+
 impl Sub for VersionVector {
-    type Output = Vec<IdSpan>;
+    type Output = VersionVectorDiff;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        let mut ans = Vec::new();
+        let mut ans: VersionVectorDiff = Default::default();
         for (client_id, &counter) in self.iter() {
             if let Some(&rhs_counter) = rhs.get(client_id) {
                 if counter > rhs_counter {
-                    ans.push(IdSpan::new(*client_id, rhs_counter, counter));
+                    ans.to_left.insert(
+                        *client_id,
+                        CounterSpan {
+                            from: rhs_counter,
+                            to: counter,
+                        },
+                    );
+                } else if counter < rhs_counter {
+                    ans.to_right.insert(
+                        *client_id,
+                        CounterSpan {
+                            from: counter,
+                            to: rhs_counter,
+                        },
+                    );
                 }
             } else {
-                ans.push(IdSpan::new(*client_id, 0, counter));
+                ans.to_left.insert(
+                    *client_id,
+                    CounterSpan {
+                        from: 0,
+                        to: counter,
+                    },
+                );
+            }
+        }
+        for (client_id, &rhs_counter) in rhs.iter() {
+            if !self.contains_key(client_id) {
+                ans.to_right.insert(
+                    *client_id,
+                    CounterSpan {
+                        from: 0,
+                        to: rhs_counter,
+                    },
+                );
             }
         }
 
@@ -174,6 +248,20 @@ impl VersionVector {
         }
         false
     }
+
+    pub fn intersect_span<S: HasIdSpan>(&self, target: &S) -> Option<CounterSpan> {
+        let id = target.id_start();
+        if let Some(end) = self.get(&id.client_id) {
+            if *end > id.counter {
+                return Some(CounterSpan {
+                    from: id.counter,
+                    to: *end,
+                });
+            }
+        }
+
+        None
+    }
 }
 
 impl Default for VersionVector {
@@ -196,6 +284,17 @@ impl From<Vec<ID>> for VersionVector {
     fn from(vec: Vec<ID>) -> Self {
         let mut vv = VersionVector::new();
         for id in vec {
+            vv.set_max(id);
+        }
+
+        vv
+    }
+}
+
+impl FromIterator<ID> for VersionVector {
+    fn from_iter<T: IntoIterator<Item = ID>>(iter: T) -> Self {
+        let mut vv = VersionVector::new();
+        for id in iter {
             vv.set_max(id);
         }
 

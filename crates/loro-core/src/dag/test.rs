@@ -7,7 +7,7 @@ use crate::{
     array_mut_ref,
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{HasIdSpan, IdSpan},
+    span::HasIdSpan,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -277,6 +277,18 @@ impl Interaction {
     }
 }
 
+fn preprocess(interactions: &mut [Interaction], num: i32) {
+    for interaction in interactions.iter_mut() {
+        interaction.dag_idx %= num as usize;
+        if let Some(ref mut merge_with) = interaction.merge_with {
+            *merge_with %= num as usize;
+            if *merge_with == interaction.dag_idx {
+                *merge_with = (*merge_with + 1) % num as usize;
+            }
+        }
+    }
+}
+
 mod iter {
     use super::*;
 
@@ -400,18 +412,27 @@ mod get_version_vector {
     }
 }
 
+#[cfg(test)]
 mod find_path {
+    use crate::fx_map;
+
     use super::*;
 
     #[test]
-    fn no_path() {
+    fn retreat_to_beginning() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
         a.push(1);
         b.push(1);
         a.merge(&b);
         let actual = a.find_path(ID::new(0, 0), ID::new(1, 0));
-        assert_eq!(actual, None);
+        assert_eq!(
+            actual,
+            VersionVectorDiff {
+                to_left: fx_map!(0 => CounterSpan { from: 0, to: 1 }),
+                to_right: fx_map!(1 => CounterSpan { from: 0, to: 1 })
+            }
+        );
     }
 
     #[test]
@@ -429,10 +450,10 @@ mod find_path {
         let actual = a.find_path(ID::new(0, 1), ID::new(1, 0));
         assert_eq!(
             actual,
-            Some(Path {
-                retreat: vec![IdSpan::new(0, 1, 0)],
-                forward: vec![IdSpan::new(1, 0, 1)],
-            })
+            VersionVectorDiff {
+                to_left: fx_map!(0 => CounterSpan { from: 1, to: 2 }),
+                to_right: fx_map!(1 => CounterSpan { from: 0, to: 1 })
+            }
         );
     }
 
@@ -440,20 +461,63 @@ mod find_path {
     fn middle() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
-        a.push(4);
+        a.push(2);
         b.push(1);
-        b.push(1);
-        let node = b.get_last_node();
-        node.deps.push(ID::new(0, 2));
         b.merge(&a);
+        b.push(1);
+        a.push(2);
+        b.merge(&a);
+        // println!("{}", b.mermaid());
         let actual = b.find_path(ID::new(0, 3), ID::new(1, 1));
         assert_eq!(
             actual,
-            Some(Path {
-                retreat: vec![IdSpan::new(0, 3, 2)],
-                forward: vec![IdSpan::new(1, 1, 2)],
-            })
+            VersionVectorDiff {
+                to_left: fx_map!(0 => CounterSpan { from: 2, to: 4 }),
+                to_right: fx_map!(1 => CounterSpan { from: 0, to: 2 })
+            }
         );
+        let actual = b.find_path(ID::new(1, 1), ID::new(0, 3));
+        assert_eq!(
+            actual,
+            VersionVectorDiff {
+                to_left: fx_map!(1 => CounterSpan { from: 0, to: 2 }),
+                to_right: fx_map!(0 => CounterSpan { from: 2, to: 4 })
+            }
+        );
+    }
+
+    fn proptest(dag_num: i32, interactions: &mut [Interaction]) {
+        preprocess(interactions, dag_num);
+        let mut dags = Vec::new();
+        for i in 0..dag_num {
+            dags.push(TestDag::new(i as ClientID));
+        }
+
+        for interaction in interactions {
+            interaction.apply(&mut dags);
+        }
+
+        for i in 1..dag_num {
+            let (a, b) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(b);
+        }
+
+        let a = &dags[0];
+        let mut nodes = Vec::new();
+        for (node, vv) in a.iter_with_vv() {
+            nodes.push((node, vv));
+        }
+
+        for (i, (node, vv)) in nodes.iter().enumerate() {
+            for (j, (other_node, other_vv)) in nodes.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let actual = a.find_path(node.id, other_node.id);
+                // let expected = find_path(*vv, *other_vv);
+                // assert_eq!(actual, expected);
+            }
+        }
     }
 }
 
@@ -555,11 +619,14 @@ mod find_common_ancestors {
 }
 
 mod find_common_ancestors_proptest {
-    use std::thread::panicking;
-
     use proptest::prelude::*;
 
-    use crate::{array_mut_ref, span::HasIdSpan, tests::PROPTEST_FACTOR_10, unsafe_array_mut_ref};
+    use crate::{
+        array_mut_ref,
+        span::HasIdSpan,
+        tests::{PROPTEST_FACTOR_1, PROPTEST_FACTOR_10},
+        unsafe_array_mut_ref,
+    };
 
     use super::*;
 
@@ -605,8 +672,8 @@ mod find_common_ancestors_proptest {
 
         #[test]
         fn test_mul_ancestors_5dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100 * PROPTEST_FACTOR_10),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100 * PROPTEST_FACTOR_10)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..30 + PROPTEST_FACTOR_1 * 500),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..30 + PROPTEST_FACTOR_1 * 500)
         ) {
             test_mul_ancestors::<2>(5, before_merged_insertions, after_merged_insertions)?;
         }
@@ -625,18 +692,6 @@ mod find_common_ancestors_proptest {
             after_merged_insertions in prop::collection::vec(gen_interaction(15), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10)
         ) {
             test_mul_ancestors::<5>(15, before_merged_insertions, after_merged_insertions)?;
-        }
-    }
-
-    fn preprocess(interactions: &mut [Interaction], num: i32) {
-        for interaction in interactions.iter_mut() {
-            interaction.dag_idx %= num as usize;
-            if let Some(ref mut merge_with) = interaction.merge_with {
-                *merge_with %= num as usize;
-                if *merge_with == interaction.dag_idx {
-                    *merge_with = (*merge_with + 1) % num as usize;
-                }
-            }
         }
     }
 
