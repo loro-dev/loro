@@ -23,15 +23,16 @@ fn basic() {
     assert_eq!(*container.get_value(), LoroValue::Map(ans));
 }
 
-#[cfg(not(no_proptest))]
 mod map_proptest {
+    use crate::tests::PROPTEST_FACTOR_10;
+
     use super::*;
 
     proptest! {
         #[test]
         fn insert(
-            key in prop::collection::vec("[a-z]", 0..22),
-            value in prop::collection::vec(gen_insert_value(), 0..22)
+            key in prop::collection::vec("[a-z]", 0..10 * PROPTEST_FACTOR_10),
+            value in prop::collection::vec(gen_insert_value(), 0..10 * PROPTEST_FACTOR_10)
         ) {
             let mut loro = LoroCore::default();
             let accessor = loro.store.get_accessor();

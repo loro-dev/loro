@@ -21,7 +21,7 @@ mod smstring;
 mod snapshot;
 mod span;
 #[cfg(test)]
-mod tests;
+pub mod tests;
 mod value;
 
 pub(crate) mod macros;

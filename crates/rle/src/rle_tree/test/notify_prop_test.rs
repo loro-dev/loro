@@ -334,15 +334,16 @@ fn issue_5() {
     ])
 }
 
-#[cfg(not(no_proptest))]
 mod notify_proptest {
+    use crate::test::PROPTEST_FACTOR_10;
+
     use super::*;
     use proptest::prelude::*;
 
     proptest! {
         #[test]
         fn test_notify(
-            interactions in prop::collection::vec(gen_interaction(), 1..100),
+            interactions in prop::collection::vec(gen_interaction(), 1..20 * PROPTEST_FACTOR_10* PROPTEST_FACTOR_10),
         ) {
             test(&interactions);
         }
