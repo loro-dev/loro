@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 6fa5e507d2f2f20cb7f5d8a40762b5dfbe9832884ba1ec4fdd98afb3618a1495 # shrinks to before_merged_insertions = [], after_merged_insertions = []
+cc 33ec71c1f62792545519d525dcd8cdd8a4a666640aada85fc78bfe2d2b92591d # shrinks to mut interactions = [Interaction { dag_idx: 0, merge_with: None, len: 1 }, Interaction { dag_idx: 1, merge_with: None, len: 2 }, Interaction { dag_idx: 1, merge_with: Some(0), len: 1 }]
+cc cbbf51fd3f0bad25aede701c73321a1ead8738e3052655595bd29aa378bc0655 # shrinks to interactions = [Interaction { dag_idx: 1, merge_with: None, len: 3 }, Interaction { dag_idx: 1, merge_with: None, len: 3 }, Interaction { dag_idx: 4, merge_with: Some(1), len: 1 }, Interaction { dag_idx: 0, merge_with: None, len: 1 }, Interaction { dag_idx: 2, merge_with: Some(0), len: 1 }, Interaction { dag_idx: 0, merge_with: None, len: 1 }, Interaction { dag_idx: 2, merge_with: Some(0), len: 1 }, Interaction { dag_idx: 3, merge_with: Some(0), len: 1 }]

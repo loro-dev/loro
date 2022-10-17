@@ -56,6 +56,16 @@ impl VersionVectorDiff {
         merge(&mut self.to_right, span);
     }
 
+    #[inline]
+    pub fn subtract_start_left(&mut self, span: IdSpan) {
+        subtract_start(&mut self.to_left, span);
+    }
+
+    #[inline]
+    pub fn subtract_start_right(&mut self, span: IdSpan) {
+        subtract_start(&mut self.to_right, span);
+    }
+
     pub fn get_id_spans_left(&self) -> impl Iterator<Item = IdSpan> + '_ {
         self.to_left.iter().map(|(client_id, span)| IdSpan {
             client_id: *client_id,
@@ -68,6 +78,14 @@ impl VersionVectorDiff {
             client_id: *client_id,
             counter: *span,
         })
+    }
+}
+
+fn subtract_start(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
+    if let Some(span) = m.get_mut(&target.client_id) {
+        if span.from < target.counter.to {
+            span.from = target.counter.to;
+        }
     }
 }
 

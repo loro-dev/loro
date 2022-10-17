@@ -12,7 +12,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::{HasLength, Sliceable};
+use rle::HasLength;
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -22,7 +22,7 @@ mod test;
 use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
+    span::{HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{VersionVector, VersionVectorDiff},
 };
 
@@ -119,7 +119,26 @@ impl<T: Dag> DagUtils for T {
 
     #[inline(always)]
     fn find_path(&self, from: ID, to: ID) -> VersionVectorDiff {
-        find_path(&|id: ID| self.get(id), from, to)
+        let mut ans = VersionVectorDiff::default();
+        _find_common_ancestor(
+            &|v| self.get(v),
+            from,
+            to,
+            &mut |span, node_type| {
+                // dbg!(span, node_type);
+                match node_type {
+                    NodeType::A => ans.merge_left(span),
+                    NodeType::B => ans.merge_right(span),
+                    NodeType::Shared => {
+                        ans.subtract_start_left(span);
+                        ans.subtract_start_right(span);
+                    }
+                }
+            },
+            true,
+        );
+
+        ans
     }
 
     #[inline(always)]
@@ -244,14 +263,24 @@ impl<'a> OrdIdSpan<'a> {
         D: DagNode + 'a,
         F: Fn(ID) -> Option<&'a D>,
     {
-        let m = get(id)?;
-        let diff = id.counter - m.id_start().counter;
+        let span = get(id)?;
+        let span_id = span.id_start();
         Some(OrdIdSpan {
-            id: id.inc(-diff),
-            lamport: m.lamport_start(),
-            deps: m.deps(),
-            len: diff as usize + 1,
+            id: span_id,
+            lamport: span.lamport_start(),
+            deps: span.deps(),
+            len: (id.counter - span_id.counter) as usize + 1,
         })
+    }
+
+    #[inline]
+    fn get_min(&self) -> OrdIdSpan<'a> {
+        OrdIdSpan {
+            id: self.id,
+            lamport: self.lamport,
+            deps: &self.deps[0..0],
+            len: 1,
+        }
     }
 }
 
@@ -261,60 +290,26 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
-    _find_common_ancestor(get, a_id, b_id, &mut |_, _| {})
+    _find_common_ancestor(get, a_id, b_id, &mut |_, _| {}, false)
+        .into_iter()
+        .map(|x| ID::new(x.0, x.1))
+        .collect()
 }
 
-fn find_path<'a, F, D>(get: &'a F, left_id: ID, right_id: ID) -> VersionVectorDiff
-where
-    D: DagNode + 'a,
-    F: Fn(ID) -> Option<&'a D>,
-{
-    let mut ans = VersionVectorDiff::default();
-    let ancestors =
-        _find_common_ancestor(
-            get,
-            left_id,
-            right_id,
-            &mut |span, node_type| match node_type {
-                NodeType::A => ans.merge_left(span),
-                NodeType::B => ans.merge_right(span),
-                NodeType::Shared => {}
-            },
-        );
-    let vv: VersionVector = ancestors.into_iter().collect();
-    for (client, span) in ans.to_left.iter_mut() {
-        if let Some(CounterSpan { from: _, to }) = vv.intersect_span(&IdSpan {
-            client_id: *client,
-            counter: *span,
-        }) {
-            span.from = to;
-        }
-    }
-
-    for (client, span) in ans.to_right.iter_mut() {
-        if let Some(CounterSpan { from: _, to }) = vv.intersect_span(&IdSpan {
-            client_id: *client,
-            counter: *span,
-        }) {
-            span.from = to;
-        }
-    }
-
-    ans
-}
-
+/// - deep whether keep searching until the min of non-shared node is found
 fn _find_common_ancestor<'a, F, D, G>(
     get: &'a F,
     a_id: ID,
     b_id: ID,
     notify: &mut G,
-) -> SmallVec<[ID; 2]>
+    deep: bool,
+) -> FxHashMap<ClientID, Counter>
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
     G: FnMut(IdSpan, NodeType),
 {
-    let mut ans: SmallVec<[ID; 2]> = SmallVec::new();
+    let mut ans: FxHashMap<ClientID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     queue.push((OrdIdSpan::from_dag_node(a_id, get).unwrap(), NodeType::A));
     queue.push((OrdIdSpan::from_dag_node(b_id, get).unwrap(), NodeType::B));
@@ -330,6 +325,7 @@ where
     // type count in the queue. if both are zero, we can stop
     let mut a_count = 1;
     let mut b_count = 1;
+    let mut min = None;
     while let Some((node, mut node_type)) = queue.pop() {
         match node_type {
             NodeType::A => a_count -= 1,
@@ -337,9 +333,20 @@ where
             NodeType::Shared => {}
         }
 
+        if node_type != NodeType::Shared {
+            if let Some(min) = &mut min {
+                let node_start = node.get_min();
+                if node_start < *min {
+                    *min = node_start;
+                }
+            } else {
+                min = Some(node.get_min())
+            }
+        }
+
         // pop the same node in the queue
         while let Some((other_node, other_type)) = queue.peek() {
-            if node.id_last() == other_node.id_last() {
+            if node.id_span() == other_node.id_span() {
                 if node_type == *other_type {
                     match node_type {
                         NodeType::A => a_count -= 1,
@@ -351,10 +358,7 @@ where
                         if visited.get(&node.id.client_id).map(|(_, t)| *t)
                             != Some(NodeType::Shared)
                         {
-                            ans.push(ID {
-                                client_id: node.id.client_id,
-                                counter: other_node.id_last().counter,
-                            });
+                            ans.insert(node.id.client_id, other_node.id_last().counter);
                         }
                         node_type = NodeType::Shared;
                     }
@@ -374,13 +378,12 @@ where
         // detect whether client is visited by other
         if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
             debug_assert!(*ctr >= node.id_last().counter);
-            if *visited_type != NodeType::Shared && *visited_type != node_type {
+            if *visited_type == NodeType::Shared {
+                node_type = NodeType::Shared;
+            } else if *visited_type != node_type {
                 // if node_type is shared, ans should already contains it or its descendance
                 if node_type != NodeType::Shared {
-                    ans.push(ID {
-                        client_id: node.id.client_id,
-                        counter: node.id_last().counter,
-                    });
+                    ans.insert(node.id.client_id, node.id_last().counter);
                 }
                 *visited_type = NodeType::Shared;
                 node_type = NodeType::Shared;
@@ -399,7 +402,10 @@ where
             NodeType::Shared => {}
         }
 
-        if a_count == 0 && b_count == 0 {
+        if a_count == 0
+            && b_count == 0
+            && (!deep || min.is_none() || &node <= min.as_ref().unwrap())
+        {
             break;
         }
 
