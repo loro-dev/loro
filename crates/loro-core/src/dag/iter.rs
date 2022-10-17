@@ -71,8 +71,6 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
             let item = self.heap.pop().unwrap();
             let id = item.id;
             let node = self.dag.get(id).unwrap();
-            debug_assert_eq!(id, node.id_start());
-
             // push next node from the same client to the heap
             let next_id = id.inc(node.len() as i32);
             if self.dag.contains(next_id) {
@@ -154,7 +152,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                 vv.unwrap_or_else(VersionVector::new)
             };
 
-            vv.try_update_end(id);
+            vv.try_update_last(id);
             self.vv_map.insert(node.id_start(), vv.clone());
 
             // push next node from the same client to the heap

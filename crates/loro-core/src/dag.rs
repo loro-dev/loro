@@ -6,10 +6,13 @@
 //! - Each node has its ID (client_id, counter).
 //! - We use ID to refer to node rather than content addressing (hash)
 //!
-use std::collections::{BinaryHeap, HashMap};
+use std::{
+    collections::{BinaryHeap, HashMap},
+    fmt::Debug,
+};
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::rle_tree::node::Node;
+use rle::{rle_tree::node::Node, HasLength};
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -19,7 +22,7 @@ mod test;
 use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{CounterSpan, IdSpan},
+    span::{CounterSpan, HasId, IdSpan},
     version::VersionVector,
 };
 
@@ -29,34 +32,13 @@ use self::{
 };
 
 // TODO: use HasId, HasLength
-pub(crate) trait DagNode {
-    fn id_start(&self) -> ID;
+pub(crate) trait DagNode: HasId + HasLength + Debug {
     fn lamport_start(&self) -> Lamport;
-    fn len(&self) -> usize;
     fn deps(&self) -> &[ID];
 
     #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    #[inline]
-    fn id_span(&self) -> IdSpan {
-        let id = self.id_start();
-        IdSpan {
-            client_id: id.client_id,
-            counter: CounterSpan::new(id.counter, id.counter + self.len() as Counter),
-        }
-    }
-
-    /// inclusive end
-    #[inline]
-    fn id_end(&self) -> ID {
-        let id = self.id_start();
-        ID {
-            client_id: id.client_id,
-            counter: id.counter + self.len() as Counter - 1,
-        }
     }
 
     #[inline]
@@ -250,7 +232,7 @@ where
         let node = get(node_id).unwrap();
         let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {
-            vv.try_update_end(node_id);
+            vv.try_update_last(node_id);
             for dep in node.deps() {
                 if !visited.contains(dep) {
                     stack.push(dep);

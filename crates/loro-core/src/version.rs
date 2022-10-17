@@ -125,7 +125,7 @@ impl VersionVector {
     /// update the end counter of the given client, if the end is greater
     /// return whether updated
     #[inline]
-    pub fn try_update_end(&mut self, id: ID) -> bool {
+    pub fn try_update_last(&mut self, id: ID) -> bool {
         if let Some(end) = self.0.get_mut(&id.client_id) {
             if *end < id.counter + 1 {
                 *end = id.counter + 1;
