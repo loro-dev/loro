@@ -1,4 +1,7 @@
-use crate::id::{ClientID, Counter, ID};
+use crate::{
+    change::Lamport,
+    id::{ClientID, Counter, ID},
+};
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -168,6 +171,11 @@ pub trait HasId {
 }
 
 pub trait HasIdSpan: HasId + HasLength {
+    fn id_span(&self) -> IdSpan {
+        let id = self.id_start();
+        IdSpan::new(id.client_id, id.counter, id.counter + self.len() as Counter)
+    }
+
     fn id_end(&self) -> ID {
         self.id_start().inc(self.len() as i32)
     }
@@ -186,6 +194,21 @@ pub trait HasIdSpan: HasId + HasLength {
     }
 }
 impl<T: HasId + HasLength> HasIdSpan for T {}
+
+pub trait HasLamport {
+    fn lamport(&self) -> Lamport;
+}
+
+pub trait HasLamportSpan: HasLamport + HasLength {
+    fn lamport_end(&self) -> Lamport {
+        self.lamport() + self.len() as Lamport
+    }
+
+    fn lamport_last(&self) -> Lamport {
+        self.lamport() + self.len() as Lamport - 1
+    }
+}
+impl<T: HasLamport + HasLength> HasLamportSpan for T {}
 
 impl HasId for IdSpan {
     #[inline]

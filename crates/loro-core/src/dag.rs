@@ -12,7 +12,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::{rle_tree::node::Node, HasLength};
+use rle::HasLength;
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -22,7 +22,7 @@ mod test;
 use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::{CounterSpan, HasId, IdSpan},
+    span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::VersionVector,
 };
 
@@ -247,27 +247,46 @@ where
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct OrdId<'a> {
+struct OrdIdSpan<'a> {
     id: ID,
     lamport: Lamport,
+    len: usize,
     deps: &'a [ID],
 }
 
-impl<'a> PartialOrd for OrdId<'a> {
+impl<'a> HasLength for OrdIdSpan<'a> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<'a> HasId for OrdIdSpan<'a> {
+    fn id_start(&self) -> ID {
+        self.id
+    }
+}
+
+impl<'a> HasLamport for OrdIdSpan<'a> {
+    fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+}
+
+impl<'a> PartialOrd for OrdIdSpan<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(
-            self.lamport
-                .cmp(&other.lamport)
-                .then(self.id.cmp(&other.id)),
+            self.lamport_last()
+                .cmp(&other.lamport_last())
+                .then(self.id_last().cmp(&other.id_last())),
         )
     }
 }
 
-impl<'a> Ord for OrdId<'a> {
+impl<'a> Ord for OrdIdSpan<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.lamport
-            .cmp(&other.lamport)
-            .then(self.id.cmp(&other.id))
+        self.lamport_last()
+            .cmp(&other.lamport_last())
+            .then(self.id_last().cmp(&other.id_last()))
     }
 }
 
@@ -278,31 +297,48 @@ enum NodeType {
     Shared,
 }
 
-impl<'a> OrdId<'a> {
+impl<'a> OrdIdSpan<'a> {
     #[inline]
-    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdId>
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
     where
         D: DagNode + 'a,
         F: Fn(ID) -> Option<&'a D>,
     {
         let m = get(id)?;
-        Some(OrdId {
-            id,
-            lamport: m.get_lamport_from_counter(id.counter),
+        let diff = id.counter - m.id_start().counter;
+        Some(OrdIdSpan {
+            id: id.inc(-diff),
+            lamport: m.lamport_start(),
             deps: m.deps(),
+            len: diff as usize + 1,
         })
     }
 }
 
+#[inline(always)]
 fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
+    _find_common_ancestor(get, a_id, b_id, |_, _| {})
+}
+
+fn _find_common_ancestor<'a, F, D, G>(
+    get: &'a F,
+    a_id: ID,
+    b_id: ID,
+    notify: G,
+) -> SmallVec<[ID; 2]>
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<&'a D>,
+    G: FnMut(IdSpan, NodeType),
+{
     let mut ans: SmallVec<[ID; 2]> = SmallVec::new();
-    let mut queue: BinaryHeap<(OrdId, NodeType)> = BinaryHeap::new();
-    queue.push((OrdId::from_dag_node(a_id, get).unwrap(), NodeType::A));
-    queue.push((OrdId::from_dag_node(b_id, get).unwrap(), NodeType::B));
+    let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
+    queue.push((OrdIdSpan::from_dag_node(a_id, get).unwrap(), NodeType::A));
+    queue.push((OrdIdSpan::from_dag_node(b_id, get).unwrap(), NodeType::B));
     let mut visited: HashMap<ClientID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
     //
@@ -324,7 +360,7 @@ where
 
         // pop the same node in the queue
         while let Some((other_node, other_type)) = queue.peek() {
-            if node.id == other_node.id {
+            if node.id_last() == other_node.id_last() {
                 if node_type == *other_type {
                     match node_type {
                         NodeType::A => a_count -= 1,
@@ -338,7 +374,7 @@ where
                         {
                             ans.push(ID {
                                 client_id: node.id.client_id,
-                                counter: other_node.id.counter,
+                                counter: other_node.id_last().counter,
                             });
                         }
                         node_type = NodeType::Shared;
@@ -358,20 +394,20 @@ where
 
         // detect whether client is visited by other
         if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
-            debug_assert!(*ctr >= node.id.counter);
+            debug_assert!(*ctr >= node.id_last().counter);
             if *visited_type != NodeType::Shared && *visited_type != node_type {
                 // if node_type is shared, ans should already contains it or its descendance
                 if node_type != NodeType::Shared {
                     ans.push(ID {
                         client_id: node.id.client_id,
-                        counter: node.id.counter,
+                        counter: node.id_last().counter,
                     });
                 }
                 *visited_type = NodeType::Shared;
                 node_type = NodeType::Shared;
             }
         } else {
-            visited.insert(node.id.client_id, (node.id.counter, node_type));
+            visited.insert(node.id.client_id, (node.id_last().counter, node_type));
         }
 
         match node_type {
@@ -385,7 +421,7 @@ where
         }
 
         for &dep_id in node.deps {
-            queue.push((OrdId::from_dag_node(dep_id, get).unwrap(), node_type));
+            queue.push((OrdIdSpan::from_dag_node(dep_id, get).unwrap(), node_type));
         }
 
         if node_type != NodeType::Shared && queue.is_empty() {
@@ -417,24 +453,26 @@ where
         let mut _a_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
         let mut _b_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
         // Invariant: every op id inserted to the a_heap is a key in a_path map, except for a_id
-        let mut _a_heap: BinaryHeap<OrdId> = BinaryHeap::new();
+        let mut _a_heap: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
         // Likewise
-        let mut _b_heap: BinaryHeap<OrdId> = BinaryHeap::new();
+        let mut _b_heap: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
         // FxHashMap<To, From> is used to track the deps path of each node
         let mut _a_path: FxHashMap<ID, ID> = FxHashMap::default();
         let mut _b_path: FxHashMap<ID, ID> = FxHashMap::default();
         {
             let a = get(a_id).unwrap();
             let b = get(b_id).unwrap();
-            _a_heap.push(OrdId {
+            _a_heap.push(OrdIdSpan {
                 id: a_id,
                 lamport: a.get_lamport_from_counter(a_id.counter),
                 deps: a.deps(),
+                len: 1,
             });
-            _b_heap.push(OrdId {
+            _b_heap.push(OrdIdSpan {
                 id: b_id,
                 lamport: b.get_lamport_from_counter(b_id.counter),
                 deps: b.deps(),
+                len: 1,
             });
             _a_vv.insert(a_id.client_id, a_id.counter + 1);
             _b_vv.insert(b_id.client_id, b_id.counter + 1);
@@ -497,10 +535,11 @@ where
                     }
 
                     let dep = get(dep_id).unwrap();
-                    a_heap.push(OrdId {
+                    a_heap.push(OrdIdSpan {
                         id: dep_id,
                         lamport: dep.get_lamport_from_counter(dep_id.counter),
                         deps: dep.deps(),
+                        len: 1,
                     });
                     a_path.insert(dep_id, a.id);
                     if dep.id_start() != dep_id {
