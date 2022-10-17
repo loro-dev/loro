@@ -580,12 +580,12 @@ mod find_common_ancestors_proptest {
     fn issue() {
         if let Err(err) = test_mul_ancestors::<3>(
             10,
-            vec![],
             vec![Interaction {
-                dag_idx: 4,
-                merge_with: Some(2),
+                dag_idx: 2,
+                merge_with: Some(5),
                 len: 1,
             }],
+            vec![],
         ) {
             println!("{}", err);
             panic!();
@@ -681,7 +681,18 @@ mod find_common_ancestors_proptest {
             dags.push(TestDag::new(i as ClientID));
         }
 
-        for interaction in before_merge_insertion {
+        for mut interaction in before_merge_insertion {
+            if interaction.dag_idx < N {
+                // cannot act on first N nodes
+                interaction.dag_idx = interaction.dag_idx % (dags.len() - N) + N;
+            }
+            if let Some(merge) = interaction.merge_with {
+                if interaction.dag_idx == merge {
+                    let next_merge = (merge + 1) % dags.len();
+                    interaction.merge_with = Some(next_merge);
+                }
+            }
+
             apply(interaction, &mut dags);
         }
 
