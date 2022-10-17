@@ -1,11 +1,13 @@
 #![cfg(test)]
 
+use std::cmp::Ordering;
+
 use super::*;
 use crate::{
     array_mut_ref,
     change::Lamport,
     id::{ClientID, Counter, ID},
-    span::IdSpan,
+    span::{HasIdSpan, IdSpan},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -28,17 +30,23 @@ impl TestNode {
 }
 
 impl DagNode for TestNode {
-    fn id_start(&self) -> ID {
-        self.id
-    }
     fn lamport_start(&self) -> Lamport {
         self.lamport
     }
-    fn len(&self) -> usize {
-        self.len
-    }
     fn deps(&self) -> &[ID] {
         &self.deps
+    }
+}
+
+impl HasId for TestNode {
+    fn id_start(&self) -> ID {
+        self.id
+    }
+}
+
+impl HasLength for TestNode {
+    fn len(&self) -> usize {
+        self.len
     }
 }
 
@@ -61,9 +69,17 @@ impl Dag for TestDag {
     type Node = TestNode;
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
-        self.nodes.get(&id.client_id)?.iter().find(|node| {
-            id.counter >= node.id.counter && id.counter < node.id.counter + node.len as Counter
+        let arr = self.nodes.get(&id.client_id)?;
+        arr.binary_search_by(|node| {
+            if node.id.counter > id.counter {
+                Ordering::Greater
+            } else if node.id.counter + node.len as i32 <= id.counter {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
         })
+        .map_or(None, |x| Some(&arr[x]))
     }
 
     fn frontier(&self) -> &[ID] {
@@ -75,10 +91,7 @@ impl Dag for TestDag {
     }
 
     fn contains(&self, id: ID) -> bool {
-        self.version_vec
-            .get(&id.client_id)
-            .and_then(|x| if *x > id.counter { Some(()) } else { None })
-            .is_some()
+        self.version_vec.includes_id(id)
     }
 
     fn vv(&self) -> VersionVector {
@@ -111,12 +124,19 @@ impl TestDag {
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
         let deps = std::mem::replace(&mut self.frontier, vec![id]);
-        self.nodes.entry(client_id).or_default().push(TestNode::new(
-            id,
-            self.next_lamport,
-            deps,
-            len,
-        ));
+        if deps.len() == 1 && deps[0].client_id == client_id {
+            // can merge two op
+            let arr = self.nodes.get_mut(&client_id).unwrap();
+            let mut last = arr.last_mut().unwrap();
+            last.len += len;
+        } else {
+            self.nodes.entry(client_id).or_default().push(TestNode::new(
+                id,
+                self.next_lamport,
+                deps,
+                len,
+            ));
+        }
         self.next_lamport += len as u32;
     }
 
@@ -156,21 +176,23 @@ impl TestDag {
         i: usize,
     ) -> bool {
         let client_id = node.id.client_id;
-        if self.contains(node.id) {
+        if self.contains(node.id_last()) {
             return false;
         }
         if node.deps.iter().any(|dep| !self.contains(*dep)) {
             pending.push((client_id, i));
             return true;
         }
-        update_frontier(
-            &mut self.frontier,
-            node.id.inc((node.len() - 1) as Counter),
-            &node.deps,
-        );
-        self.nodes.entry(client_id).or_default().push(node.clone());
-        self.version_vec
-            .insert(client_id, node.id.counter + node.len as Counter);
+        update_frontier(&mut self.frontier, node.id_last(), &node.deps);
+        let contains_start = self.contains(node.id_start());
+        let mut arr = self.nodes.entry(client_id).or_default();
+        if contains_start {
+            arr.pop();
+            arr.push(node.clone());
+        } else {
+            arr.push(node.clone());
+        }
+        self.version_vec.set_end(node.id_end());
         self.next_lamport = self.next_lamport.max(node.lamport + node.len as u32);
         false
     }
@@ -292,6 +314,8 @@ mod iter {
 
 mod mermaid {
 
+    use rand::{rngs::StdRng, SeedableRng};
+
     use super::*;
 
     #[test]
@@ -334,7 +358,7 @@ mod mermaid {
     #[test]
     fn gen() {
         let num = 5;
-        let mut rng = rand::thread_rng();
+        let mut rng = StdRng::seed_from_u64(100);
         let mut dags = (0..num).map(TestDag::new).collect::<Vec<_>>();
         for _ in 0..100 {
             Interaction::gen(&mut rng, num as usize).apply(&mut dags);
@@ -437,6 +461,17 @@ mod find_common_ancestors {
     use super::*;
 
     #[test]
+    fn siblings() {
+        let mut a = TestDag::new(0);
+        a.push(5);
+        let actual = a
+            .find_common_ancestor(ID::new(0, 2), ID::new(0, 4))
+            .first()
+            .copied();
+        assert_eq!(actual, Some(ID::new(0, 2)));
+    }
+
+    #[test]
     fn no_common_ancestors() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
@@ -474,7 +509,7 @@ mod find_common_ancestors {
         b.merge(&a);
         b.frontier.retain(|x| x.client_id == 1);
         let k = b.nodes.get_mut(&1).unwrap();
-        k[1].deps.push(ID::new(0, 2));
+        k[0].deps.push(ID::new(0, 2));
         assert_eq!(
             b.find_common_ancestor(ID::new(0, 3), ID::new(1, 8))
                 .first()
@@ -520,9 +555,11 @@ mod find_common_ancestors {
 }
 
 mod find_common_ancestors_proptest {
+    use std::thread::panicking;
+
     use proptest::prelude::*;
 
-    use crate::{array_mut_ref, tests::PROPTEST_FACTOR_10, unsafe_array_mut_ref};
+    use crate::{array_mut_ref, span::HasIdSpan, tests::PROPTEST_FACTOR_10, unsafe_array_mut_ref};
 
     use super::*;
 
@@ -603,6 +640,22 @@ mod find_common_ancestors_proptest {
         }
     }
 
+    #[test]
+    fn issue() {
+        if let Err(err) = test_single_common_ancestor(
+            4,
+            vec![Interaction {
+                dag_idx: 0,
+                merge_with: None,
+                len: 1,
+            }],
+            vec![],
+        ) {
+            println!("{}", err);
+            panic!();
+        }
+    }
+
     fn test_single_common_ancestor(
         dag_num: i32,
         mut before_merge_insertion: Vec<Interaction>,
@@ -644,8 +697,8 @@ mod find_common_ancestors_proptest {
         let (dag0, dag1) = array_mut_ref!(&mut dags, [0, 1]);
         dag1.push(1);
         dag0.merge(dag1);
-        let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id;
-        let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id;
+        let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
+        let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
         let actual = dags[0].find_common_ancestor(a, b);
         prop_assert_eq!(actual.first().copied().unwrap(), expected);
         Ok(())
