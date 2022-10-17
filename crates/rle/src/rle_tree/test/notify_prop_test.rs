@@ -1,4 +1,3 @@
-
 use proptest::prop_compose;
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -343,7 +342,7 @@ mod notify_proptest {
     proptest! {
         #[test]
         fn test_notify(
-            interactions in prop::collection::vec(gen_interaction(), 1..1000),
+            interactions in prop::collection::vec(gen_interaction(), 1..100),
         ) {
             test(&interactions);
         }

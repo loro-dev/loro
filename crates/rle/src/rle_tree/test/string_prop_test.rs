@@ -86,7 +86,7 @@ fn basic_string_op() {
 fn issue_0() {
     let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
     let insert_keys = "0123456789abcdefghijklmnopq";
-    for i in 0..(1e6 as usize) {
+    for i in 0..(1e5 as usize) {
         let start = i % insert_keys.len();
         if i % 3 == 0 && tree.len() > 0 {
             let start = i % tree.len();
@@ -319,7 +319,7 @@ mod string_proptest {
     proptest! {
         #[test]
         fn test_tree_string_op_the_same(
-            interactions in prop::collection::vec(gen_interaction(), 1..100),
+            interactions in prop::collection::vec(gen_interaction(), 1..50),
         ) {
             run_test(interactions);
         }

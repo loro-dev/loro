@@ -30,8 +30,8 @@ mod map_proptest {
     proptest! {
         #[test]
         fn insert(
-            key in prop::collection::vec("[a-z]", 0..100),
-            value in prop::collection::vec(gen_insert_value(), 0..100)
+            key in prop::collection::vec("[a-z]", 0..22),
+            value in prop::collection::vec(gen_insert_value(), 0..22)
         ) {
             let mut loro = LoroCore::default();
             let accessor = loro.store.get_accessor();
