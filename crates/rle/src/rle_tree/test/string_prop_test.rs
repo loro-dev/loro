@@ -86,7 +86,7 @@ fn basic_string_op() {
 fn issue_0() {
     let mut tree: RleTree<CustomString, StringTreeTrait> = RleTree::default();
     let insert_keys = "0123456789abcdefghijklmnopq";
-    for i in 0..(1e5 as usize) {
+    for i in 0..(1e4 as usize * crate::test::PROPTEST_FACTOR_10) {
         let start = i % insert_keys.len();
         if i % 3 == 0 && tree.len() > 0 {
             let start = i % tree.len();
@@ -290,8 +290,9 @@ fn issue_delete() {
     ])
 }
 
-#[cfg(not(no_proptest))]
 mod string_proptest {
+    use crate::test::{PROPTEST_FACTOR_1, PROPTEST_FACTOR_10};
+
     use super::*;
     use proptest::prelude::*;
 
@@ -319,17 +320,16 @@ mod string_proptest {
     proptest! {
         #[test]
         fn test_tree_string_op_the_same(
-            interactions in prop::collection::vec(gen_interaction(), 1..50),
+            interactions in prop::collection::vec(gen_interaction(), 1..20 * PROPTEST_FACTOR_10 + PROPTEST_FACTOR_1 * 1000),
         ) {
             run_test(interactions);
         }
     }
 
-    #[cfg(slow_proptest)]
     proptest! {
         #[test]
         fn test_tree_string_op_the_same_slow(
-            interactions in prop::collection::vec(gen_interaction(), 1..2000),
+            interactions in prop::collection::vec(gen_interaction(), 1..20 * PROPTEST_FACTOR_10 + PROPTEST_FACTOR_1 * 1000),
         ) {
             let mut s = String::new();
             let mut tree = RleTree::default();

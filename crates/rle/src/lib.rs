@@ -30,3 +30,5 @@ pub use crate::rle_vec::{RleVec, SearchResult, SliceIterator};
 pub mod rle_impl;
 pub use rle_tree::tree_trait::RleTreeTrait;
 pub use rle_tree::RleTree;
+#[cfg(test)]
+mod test;

@@ -519,11 +519,10 @@ mod find_common_ancestors {
     }
 }
 
-#[cfg(not(no_proptest))]
 mod find_common_ancestors_proptest {
     use proptest::prelude::*;
 
-    use crate::{array_mut_ref, unsafe_array_mut_ref};
+    use crate::{array_mut_ref, tests::PROPTEST_FACTOR_10, unsafe_array_mut_ref};
 
     use super::*;
 
@@ -545,66 +544,50 @@ mod find_common_ancestors_proptest {
     proptest! {
         #[test]
         fn test_2dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100),
-            after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100)
+            before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100 * PROPTEST_FACTOR_10)
         ) {
             test_single_common_ancestor(2, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_4dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100),
-            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100)
+            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100 * PROPTEST_FACTOR_10)
         ) {
             test_single_common_ancestor(4, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_10dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10)
         ) {
             test_single_common_ancestor(10, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_mul_ancestors_5dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100 * PROPTEST_FACTOR_10)
         ) {
             test_mul_ancestors::<2>(5, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_mul_ancestors_10dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10)
         ) {
             test_mul_ancestors::<3>(10, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_mul_ancestors_15dags_2(
-            before_merged_insertions in prop::collection::vec(gen_interaction(15), 0..50),
-            after_merged_insertions in prop::collection::vec(gen_interaction(15), 0..50)
+            before_merged_insertions in prop::collection::vec(gen_interaction(15), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(15), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10)
         ) {
             test_mul_ancestors::<5>(15, before_merged_insertions, after_merged_insertions)?;
-        }
-    }
-
-    #[test]
-    fn issue() {
-        if let Err(err) = test_mul_ancestors::<3>(
-            10,
-            vec![Interaction {
-                dag_idx: 2,
-                merge_with: Some(5),
-                len: 1,
-            }],
-            vec![],
-        ) {
-            println!("{}", err);
-            panic!();
         }
     }
 
