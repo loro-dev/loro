@@ -545,40 +545,48 @@ mod find_common_ancestors_proptest {
     proptest! {
         #[test]
         fn test_2dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..300)
+            before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100),
+            after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100)
         ) {
             test_single_common_ancestor(2, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_4dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..300)
+            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100),
+            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100)
         ) {
             test_single_common_ancestor(4, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_10dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
         ) {
             test_single_common_ancestor(10, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
+        fn test_mul_ancestors_5dags(
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
+        ) {
+            test_mul_ancestors::<2>(5, before_merged_insertions, after_merged_insertions)?;
+        }
+
+        #[test]
         fn test_mul_ancestors_10dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300),
-            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..300)
+            before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100),
+            after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..100)
         ) {
             test_mul_ancestors::<3>(10, before_merged_insertions, after_merged_insertions)?;
         }
 
         #[test]
         fn test_mul_ancestors_15dags_2(
-            before_merged_insertions in prop::collection::vec(gen_interaction(15), 0..500),
-            after_merged_insertions in prop::collection::vec(gen_interaction(15), 0..500)
+            before_merged_insertions in prop::collection::vec(gen_interaction(15), 0..50),
+            after_merged_insertions in prop::collection::vec(gen_interaction(15), 0..50)
         ) {
             test_mul_ancestors::<5>(15, before_merged_insertions, after_merged_insertions)?;
         }
