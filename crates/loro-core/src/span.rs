@@ -4,6 +4,11 @@ use crate::{
 };
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
+/// This struct supports reverse repr: `from` can be less than `to`.
+/// We need this because it'll make merging deletions easier.
+///
+/// But we should use it behavior conservatively.
+/// If it is not necessary to be reverse, it should not.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CounterSpan {
     pub from: Counter,
@@ -98,6 +103,8 @@ impl Mergable for CounterSpan {
     }
 }
 
+/// This struct supports reverse repr: [CounterSpan]'s from can be less than to. But we should use it conservatively.
+/// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdSpan {
     pub client_id: ClientID,

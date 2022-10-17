@@ -12,7 +12,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::HasLength;
+use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -23,7 +23,7 @@ use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
-    version::VersionVector,
+    version::{VersionVector, VersionVectorDiff},
 };
 
 use self::{
@@ -50,12 +50,6 @@ pub(crate) trait DagNode: HasId + HasLength + Debug {
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
         self.lamport_start() + c as Lamport - self.id_start().counter as Lamport
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Path {
-    retreat: Vec<IdSpan>,
-    forward: Vec<IdSpan>,
 }
 
 #[allow(clippy::ptr_arg)]
@@ -88,7 +82,7 @@ pub(crate) trait Dag {
 trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>;
     fn get_vv(&self, id: ID) -> VersionVector;
-    fn find_path(&self, from: ID, to: ID) -> Option<Path>;
+    fn find_path(&self, from: ID, to: ID) -> VersionVectorDiff;
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized;
@@ -123,63 +117,9 @@ impl<T: Dag> DagUtils for T {
         get_version_vector(&|id| self.get(id), id)
     }
 
-    #[inline]
-    fn find_path(&self, from: ID, to: ID) -> Option<Path> {
-        let mut ans: Option<Path> = None;
-
-        fn get_rev_path(target: ID, from: ID, to_from_map: &FxHashMap<ID, ID>) -> Vec<IdSpan> {
-            let mut last_visited: Option<ID> = None;
-            let mut a_rev_path = vec![];
-            let mut node_id = target;
-            node_id = *to_from_map.get(&node_id).unwrap();
-            loop {
-                if let Some(last_id) = last_visited {
-                    if last_id.client_id == node_id.client_id {
-                        debug_assert!(last_id.counter < node_id.counter);
-                        a_rev_path.push(IdSpan {
-                            client_id: last_id.client_id,
-                            counter: CounterSpan::new(last_id.counter, node_id.counter + 1),
-                        });
-                        last_visited = None;
-                    } else {
-                        a_rev_path.push(IdSpan {
-                            client_id: last_id.client_id,
-                            counter: CounterSpan::new(last_id.counter, last_id.counter + 1),
-                        });
-                        last_visited = Some(node_id);
-                    }
-                } else {
-                    last_visited = Some(node_id);
-                }
-
-                if node_id == from {
-                    break;
-                }
-
-                node_id = *to_from_map.get(&node_id).unwrap();
-            }
-
-            if let Some(last_id) = last_visited {
-                a_rev_path.push(IdSpan {
-                    client_id: last_id.client_id,
-                    counter: CounterSpan::new(last_id.counter, last_id.counter + 1),
-                });
-            }
-
-            a_rev_path
-        }
-
-        find_common_ancestor_old(&|id| self.get(id), from, to, |ancestor, a_path, b_path| {
-            let mut a_path = get_rev_path(ancestor, from, a_path);
-            let b_path = get_rev_path(ancestor, to, b_path);
-            reverse_path(&mut a_path);
-            ans = Some(Path {
-                retreat: a_path,
-                forward: b_path,
-            });
-        });
-
-        ans
+    #[inline(always)]
+    fn find_path(&self, from: ID, to: ID) -> VersionVectorDiff {
+        find_path(&|id: ID| self.get(id), from, to)
     }
 
     #[inline(always)]
@@ -321,14 +261,53 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
-    _find_common_ancestor(get, a_id, b_id, |_, _| {})
+    _find_common_ancestor(get, a_id, b_id, &mut |_, _| {})
+}
+
+fn find_path<'a, F, D>(get: &'a F, left_id: ID, right_id: ID) -> VersionVectorDiff
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<&'a D>,
+{
+    let mut ans = VersionVectorDiff::default();
+    let ancestors =
+        _find_common_ancestor(
+            get,
+            left_id,
+            right_id,
+            &mut |span, node_type| match node_type {
+                NodeType::A => ans.merge_left(span),
+                NodeType::B => ans.merge_right(span),
+                NodeType::Shared => {}
+            },
+        );
+    let vv: VersionVector = ancestors.into_iter().collect();
+    for (client, span) in ans.to_left.iter_mut() {
+        if let Some(CounterSpan { from: _, to }) = vv.intersect_span(&IdSpan {
+            client_id: *client,
+            counter: *span,
+        }) {
+            span.from = to;
+        }
+    }
+
+    for (client, span) in ans.to_right.iter_mut() {
+        if let Some(CounterSpan { from: _, to }) = vv.intersect_span(&IdSpan {
+            client_id: *client,
+            counter: *span,
+        }) {
+            span.from = to;
+        }
+    }
+
+    ans
 }
 
 fn _find_common_ancestor<'a, F, D, G>(
     get: &'a F,
     a_id: ID,
     b_id: ID,
-    notify: G,
+    notify: &mut G,
 ) -> SmallVec<[ID; 2]>
 where
     D: DagNode + 'a,
@@ -409,6 +388,10 @@ where
         } else {
             visited.insert(node.id.client_id, (node.id_last().counter, node_type));
         }
+
+        // if this is not shared, the end of the span must be only reachable from A, or only reachable from B.
+        // but the begin of the span may be reachable from both A and B
+        notify(node.id_span(), node_type);
 
         match node_type {
             NodeType::A => a_count += node.deps.len(),
