@@ -353,24 +353,25 @@ where
             }
         }
 
-        // if top nodes are from the same client with different source, we find a shared node
-        if let Some((other_node, other_type)) = queue.peek() {
-            if node_type != *other_type && node.id.client_id == other_node.id.client_id {
-                if node_type != NodeType::Shared {
-                    ans.push(ID {
-                        client_id: node.id.client_id,
-                        counter: node.id.counter.min(other_node.id.counter),
-                    });
-                    node_type = NodeType::Shared;
-                }
-                match other_type {
-                    NodeType::A => a_count -= 1,
-                    NodeType::B => b_count -= 1,
-                    NodeType::Shared => {}
-                }
-                queue.pop();
-            }
-        }
+        // // if top nodes are from the same client with different source, we find a shared node
+        // if let Some((other_node, other_type)) = queue.peek() {
+        //     if node_type != *other_type && node.id.client_id == other_node.id.client_id {
+        //         if node_type != NodeType::Shared {
+        //             debug_assert!(other_node.id.counter < node.id.counter);
+        //             ans.push(ID {
+        //                 client_id: node.id.client_id,
+        //                 counter: other_node.id.counter,
+        //             });
+        //             node_type = NodeType::Shared;
+        //         }
+        //         match other_type {
+        //             NodeType::A => a_count -= 1,
+        //             NodeType::B => b_count -= 1,
+        //             NodeType::Shared => {}
+        //         }
+        //         queue.pop();
+        //     }
+        // }
 
         // detect whether client is visited by other
         if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
