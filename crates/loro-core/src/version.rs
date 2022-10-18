@@ -9,7 +9,7 @@ use im::hashmap::HashMap as ImHashMap;
 use crate::{
     change::Lamport,
     id::{Counter, ID},
-    span::{CounterSpan, HasIdSpan, IdSpan},
+    span::{CounterSpan, HasId, HasIdSpan, IdSpan},
     ClientID,
 };
 
@@ -26,8 +26,20 @@ use crate::{
 ///
 /// see also [im].
 #[repr(transparent)]
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct VersionVector(ImHashMap<ClientID, Counter>);
+
+impl PartialEq for VersionVector {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter()
+            .all(|(client, counter)| other.get(client).unwrap_or(&0) == counter)
+            && other
+                .iter()
+                .all(|(client, counter)| self.get(client).unwrap_or(&0) == counter)
+    }
+}
+
+impl Eq for VersionVector {}
 
 impl Deref for VersionVector {
     type Target = ImHashMap<ClientID, Counter>;
@@ -37,44 +49,56 @@ impl Deref for VersionVector {
     }
 }
 
+// TODO: wrap this type?
+pub type IdSpanVector = FxHashMap<ClientID, CounterSpan>;
+
+impl HasId for (&ClientID, &CounterSpan) {
+    fn id_start(&self) -> ID {
+        ID {
+            client_id: *self.0,
+            counter: self.1.min(),
+        }
+    }
+}
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct VersionVectorDiff {
     /// need to add these spans to move from right to left
-    pub to_left: FxHashMap<ClientID, CounterSpan>,
+    pub left: IdSpanVector,
     /// need to add these spans to move from left to right
-    pub to_right: FxHashMap<ClientID, CounterSpan>,
+    pub right: IdSpanVector,
 }
 
 impl VersionVectorDiff {
     #[inline]
     pub fn merge_left(&mut self, span: IdSpan) {
-        merge(&mut self.to_left, span);
+        merge(&mut self.left, span);
     }
 
     #[inline]
     pub fn merge_right(&mut self, span: IdSpan) {
-        merge(&mut self.to_right, span);
+        merge(&mut self.right, span);
     }
 
     #[inline]
     pub fn subtract_start_left(&mut self, span: IdSpan) {
-        subtract_start(&mut self.to_left, span);
+        subtract_start(&mut self.left, span);
     }
 
     #[inline]
     pub fn subtract_start_right(&mut self, span: IdSpan) {
-        subtract_start(&mut self.to_right, span);
+        subtract_start(&mut self.right, span);
     }
 
     pub fn get_id_spans_left(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.to_left.iter().map(|(client_id, span)| IdSpan {
+        self.left.iter().map(|(client_id, span)| IdSpan {
             client_id: *client_id,
             counter: *span,
         })
     }
 
     pub fn get_id_spans_right(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.to_right.iter().map(|(client_id, span)| IdSpan {
+        self.right.iter().map(|(client_id, span)| IdSpan {
             client_id: *client_id,
             counter: *span,
         })
@@ -83,68 +107,18 @@ impl VersionVectorDiff {
 
 fn subtract_start(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
     if let Some(span) = m.get_mut(&target.client_id) {
-        if span.from < target.counter.to {
-            span.from = target.counter.to;
+        if span.start < target.counter.end {
+            span.start = target.counter.end;
         }
     }
 }
 
 fn merge(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
     if let Some(span) = m.get_mut(&target.client_id) {
-        span.from = span.from.min(target.counter.from);
-        span.to = span.to.max(target.counter.to);
+        span.start = span.start.min(target.counter.start);
+        span.end = span.end.max(target.counter.end);
     } else {
         m.insert(target.client_id, target.counter);
-    }
-}
-
-impl Sub for VersionVector {
-    type Output = VersionVectorDiff;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut ans: VersionVectorDiff = Default::default();
-        for (client_id, &counter) in self.iter() {
-            if let Some(&rhs_counter) = rhs.get(client_id) {
-                if counter > rhs_counter {
-                    ans.to_left.insert(
-                        *client_id,
-                        CounterSpan {
-                            from: rhs_counter,
-                            to: counter,
-                        },
-                    );
-                } else if counter < rhs_counter {
-                    ans.to_right.insert(
-                        *client_id,
-                        CounterSpan {
-                            from: counter,
-                            to: rhs_counter,
-                        },
-                    );
-                }
-            } else {
-                ans.to_left.insert(
-                    *client_id,
-                    CounterSpan {
-                        from: 0,
-                        to: counter,
-                    },
-                );
-            }
-        }
-        for (client_id, &rhs_counter) in rhs.iter() {
-            if !self.contains_key(client_id) {
-                ans.to_right.insert(
-                    *client_id,
-                    CounterSpan {
-                        from: 0,
-                        to: rhs_counter,
-                    },
-                );
-            }
-        }
-
-        ans
     }
 }
 
@@ -197,6 +171,52 @@ impl DerefMut for VersionVector {
 }
 
 impl VersionVector {
+    pub fn diff(&self, rhs: &Self) -> VersionVectorDiff {
+        let mut ans: VersionVectorDiff = Default::default();
+        for (client_id, &counter) in self.iter() {
+            if let Some(&rhs_counter) = rhs.get(client_id) {
+                if counter > rhs_counter {
+                    ans.left.insert(
+                        *client_id,
+                        CounterSpan {
+                            start: rhs_counter,
+                            end: counter,
+                        },
+                    );
+                } else if counter < rhs_counter {
+                    ans.right.insert(
+                        *client_id,
+                        CounterSpan {
+                            start: counter,
+                            end: rhs_counter,
+                        },
+                    );
+                }
+            } else {
+                ans.left.insert(
+                    *client_id,
+                    CounterSpan {
+                        start: 0,
+                        end: counter,
+                    },
+                );
+            }
+        }
+        for (client_id, &rhs_counter) in rhs.iter() {
+            if !self.contains_key(client_id) {
+                ans.right.insert(
+                    *client_id,
+                    CounterSpan {
+                        start: 0,
+                        end: rhs_counter,
+                    },
+                );
+            }
+        }
+
+        ans
+    }
+
     #[inline]
     pub fn new() -> Self {
         Self(ImHashMap::new())
@@ -272,13 +292,49 @@ impl VersionVector {
         if let Some(end) = self.get(&id.client_id) {
             if *end > id.counter {
                 return Some(CounterSpan {
-                    from: id.counter,
-                    to: *end,
+                    start: id.counter,
+                    end: *end,
                 });
             }
         }
 
         None
+    }
+
+    pub fn extend_to_include(&mut self, span: IdSpan) {
+        if let Some(counter) = self.get_mut(&span.client_id) {
+            if *counter < span.counter.end() {
+                *counter = span.counter.end();
+            }
+        } else {
+            self.insert(span.client_id, span.counter.end());
+        }
+    }
+
+    pub fn shrink_to_exclude(&mut self, span: IdSpan) {
+        if let Some(counter) = self.get_mut(&span.client_id) {
+            if *counter > span.counter.min() {
+                *counter = span.counter.min();
+            }
+        }
+    }
+
+    pub fn forward(&mut self, spans: &IdSpanVector) {
+        for span in spans.iter() {
+            self.extend_to_include(IdSpan {
+                client_id: *span.0,
+                counter: *span.1,
+            });
+        }
+    }
+
+    pub fn retreat(&mut self, spans: &IdSpanVector) {
+        for span in spans.iter() {
+            self.shrink_to_exclude(IdSpan {
+                client_id: *span.0,
+                counter: *span.1,
+            });
+        }
     }
 }
 

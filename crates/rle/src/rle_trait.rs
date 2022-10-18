@@ -84,3 +84,10 @@ impl<T: num::Integer + NumCast + Copy> HasLength for Range<T> {
         cast(self.end - self.start).unwrap()
     }
 }
+
+/// this can make iter return type has len
+impl<A, T: HasLength> HasLength for (A, T) {
+    fn len(&self) -> usize {
+        self.1.len()
+    }
+}

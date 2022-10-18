@@ -31,11 +31,29 @@ impl TestNode {
 }
 
 impl DagNode for TestNode {
-    fn lamport_start(&self) -> Lamport {
-        self.lamport
-    }
     fn deps(&self) -> &[ID] {
         &self.deps
+    }
+}
+
+impl Sliceable for TestNode {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self {
+            id: self.id.inc(from as Counter),
+            lamport: self.lamport + from as Lamport,
+            len: to - from,
+            deps: if from > 0 {
+                vec![self.id.inc(from as Counter - 1)]
+            } else {
+                self.deps.clone()
+            },
+        }
+    }
+}
+
+impl HasLamport for TestNode {
+    fn lamport(&self) -> Lamport {
+        self.lamport
     }
 }
 
@@ -91,12 +109,8 @@ impl Dag for TestDag {
         self.nodes.values().map(|v| &v[0]).collect()
     }
 
-    fn contains(&self, id: ID) -> bool {
-        self.version_vec.includes_id(id)
-    }
-
-    fn vv(&self) -> VersionVector {
-        self.version_vec.clone()
+    fn vv(&self) -> &VersionVector {
+        &self.version_vec
     }
 }
 
@@ -445,8 +459,8 @@ mod find_path {
         assert_eq!(
             actual,
             VersionVectorDiff {
-                to_left: fx_map!(0 => CounterSpan { from: 0, to: 1 }),
-                to_right: fx_map!(1 => CounterSpan { from: 0, to: 1 })
+                left: fx_map!(0 => CounterSpan { start: 0, end: 1 }),
+                right: fx_map!(1 => CounterSpan { start: 0, end: 1 })
             }
         );
     }
@@ -467,8 +481,8 @@ mod find_path {
         assert_eq!(
             actual,
             VersionVectorDiff {
-                to_left: fx_map!(0 => CounterSpan { from: 1, to: 2 }),
-                to_right: fx_map!(1 => CounterSpan { from: 0, to: 1 })
+                left: fx_map!(0 => CounterSpan { start: 1, end: 2 }),
+                right: fx_map!(1 => CounterSpan { start: 0, end: 1 })
             }
         );
     }
@@ -488,16 +502,16 @@ mod find_path {
         assert_eq!(
             actual,
             VersionVectorDiff {
-                to_left: fx_map!(0 => CounterSpan { from: 2, to: 4 }),
-                to_right: fx_map!(1 => CounterSpan { from: 0, to: 3 })
+                left: fx_map!(0 => CounterSpan { start: 2, end: 4 }),
+                right: fx_map!(1 => CounterSpan { start: 0, end: 3 })
             }
         );
         let actual = b.find_path(&[ID::new(1, 1), ID::new(1, 2)], &[ID::new(0, 3)]);
         assert_eq!(
             actual,
             VersionVectorDiff {
-                to_left: fx_map!(1 => CounterSpan { from: 0, to: 3 }),
-                to_right: fx_map!(0 => CounterSpan { from: 2, to: 4 })
+                left: fx_map!(1 => CounterSpan { start: 0, end: 3 }),
+                right: fx_map!(0 => CounterSpan { start: 2, end: 4 })
             }
         );
     }
@@ -540,7 +554,7 @@ mod find_path {
                 }
 
                 let actual = a.find_path(&[node.id], &[other_node.id]);
-                let expected = vv.clone() - other_vv.clone();
+                let expected = vv.diff(other_vv);
                 prop_assert_eq!(
                     actual,
                     expected,
@@ -555,7 +569,7 @@ mod find_path {
                     let mut vv = vv.clone();
                     vv.merge(other_vv);
                     let actual = a.find_path(&[node.id, other_node.id], &[vec[k].1 .0.id]);
-                    let expected = vv.clone() - vec[k].1 .1.clone();
+                    let expected = vv.diff(&vec[k].1 .1);
                     prop_assert_eq!(actual, expected);
                 }
             }
@@ -1000,5 +1014,131 @@ mod find_common_ancestors_proptest {
 
         prop_assert_eq!(actual, expected);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dag_partial_iter {
+    use crate::{dag::iter::IterReturn, tests::PROPTEST_FACTOR_10};
+
+    use super::*;
+
+    fn test_partial_iter(
+        dag_num: i32,
+        mut interactions: Vec<Interaction>,
+    ) -> Result<(), TestCaseError> {
+        preprocess(&mut interactions, dag_num);
+        let mut dags = Vec::new();
+        for i in 0..dag_num {
+            dags.push(TestDag::new(i as ClientID));
+        }
+
+        for interaction in interactions.iter_mut() {
+            interaction.apply(&mut dags);
+        }
+
+        for i in 1..dag_num {
+            let (a, b) = array_mut_ref!(&mut dags, [0, i as usize]);
+            a.merge(b);
+        }
+
+        let a = &dags[0];
+        let mut nodes = Vec::new();
+        for (node, vv) in a.iter_with_vv() {
+            nodes.push((node, vv));
+        }
+
+        let mut map = FxHashMap::default();
+        for (node, vv) in nodes.iter() {
+            map.insert(node.id, vv.clone());
+        }
+        let vec: Vec<_> = nodes.iter().enumerate().collect();
+        // println!("{}", a.mermaid());
+        for &(i, (node, vv)) in vec.iter() {
+            if i > 3 {
+                break;
+            }
+
+            for &(j, (other_node, other_vv)) in vec.iter() {
+                if i >= j {
+                    continue;
+                }
+
+                let diff_spans = other_vv.diff(vv).left;
+                // println!("TARGET IS TO GO FROM {} TO {}", node.id, other_node.id);
+                // dbg!(&diff_spans);
+                let mut target_vv = vv.clone();
+                target_vv.forward(&diff_spans);
+                let mut vv = vv.clone();
+                for IterReturn {
+                    data,
+                    forward,
+                    retreat,
+                    slice,
+                } in a.iter_partial(&[node.id], diff_spans.clone())
+                {
+                    let sliced = data.slice(slice.start as usize, slice.end as usize);
+                    // println!("-----------------------------------");
+                    // dbg!(&sliced, &forward, &retreat, slice);
+                    assert!(diff_spans
+                        .get(&data.id.client_id)
+                        .unwrap()
+                        .contains(sliced.id.counter));
+                    vv.forward(&forward);
+                    vv.retreat(&retreat);
+                    let mut data_vv = map.get(&data.id).unwrap().clone();
+                    data_vv.extend_to_include(IdSpan::new(
+                        sliced.id.client_id,
+                        sliced.id.counter,
+                        sliced.id.counter + 1,
+                    ));
+                    assert_eq!(vv, data_vv);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn issue() {
+        if let Err(err) = test_partial_iter(
+            5,
+            vec![
+                Interaction {
+                    dag_idx: 3,
+                    merge_with: None,
+                    len: 2,
+                },
+                Interaction {
+                    dag_idx: 0,
+                    merge_with: Some(3),
+                    len: 1,
+                },
+            ],
+        ) {
+            panic!("{}", err);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_iter_2(
+            interactions in prop::collection::vec(gen_interaction(2), 0..40 * PROPTEST_FACTOR_10),
+        ) {
+            test_partial_iter(2, interactions)?;
+        }
+
+        fn proptest_iter_3(
+            interactions in prop::collection::vec(gen_interaction(3), 0..40 * PROPTEST_FACTOR_10),
+        ) {
+            test_partial_iter(3, interactions)?;
+        }
+
+        fn proptest_iter_5(
+            interactions in prop::collection::vec(gen_interaction(5), 0..40 * PROPTEST_FACTOR_10),
+        ) {
+            test_partial_iter(5, interactions)?;
+        }
     }
 }

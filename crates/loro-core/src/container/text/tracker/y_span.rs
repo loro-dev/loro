@@ -103,7 +103,7 @@ impl YSpan {
             return false;
         }
 
-        self.id.counter < id.counter.to
+        self.id.counter < id.counter.end
             && self.id.counter + (self.len as Counter) > id.counter.min()
     }
 }
