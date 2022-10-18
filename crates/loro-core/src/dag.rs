@@ -82,7 +82,7 @@ pub(crate) trait Dag {
 trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>;
     fn get_vv(&self, id: ID) -> VersionVector;
-    fn find_path(&self, from: ID, to: ID) -> VersionVectorDiff;
+    fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized;
@@ -108,7 +108,7 @@ impl<T: Dag> DagUtils for T {
     ///
     #[inline]
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]> {
-        find_common_ancestor(&|id| self.get(id), a_id, b_id)
+        find_common_ancestor(&|id| self.get(id), &[a_id], &[b_id])
     }
 
     /// TODO: we probably need cache to speedup this
@@ -118,7 +118,7 @@ impl<T: Dag> DagUtils for T {
     }
 
     #[inline(always)]
-    fn find_path(&self, from: ID, to: ID) -> VersionVectorDiff {
+    fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
         _find_common_ancestor(
             &|v| self.get(v),
@@ -285,7 +285,7 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
-fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>
+fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
@@ -299,8 +299,8 @@ where
 /// - deep whether keep searching until the min of non-shared node is found
 fn _find_common_ancestor<'a, F, D, G>(
     get: &'a F,
-    a_id: ID,
-    b_id: ID,
+    a_ids: &[ID],
+    b_ids: &[ID],
     notify: &mut G,
     deep: bool,
 ) -> FxHashMap<ClientID, Counter>
@@ -311,8 +311,12 @@ where
 {
     let mut ans: FxHashMap<ClientID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
-    queue.push((OrdIdSpan::from_dag_node(a_id, get).unwrap(), NodeType::A));
-    queue.push((OrdIdSpan::from_dag_node(b_id, get).unwrap(), NodeType::B));
+    for id in a_ids {
+        queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::A));
+    }
+    for id in b_ids {
+        queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::B));
+    }
     let mut visited: HashMap<ClientID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
     //
@@ -323,8 +327,8 @@ where
     // - we may visit nodes that are before the common ancestors
 
     // type count in the queue. if both are zero, we can stop
-    let mut a_count = 1;
-    let mut b_count = 1;
+    let mut a_count = a_ids.len();
+    let mut b_count = b_ids.len();
     let mut min = None;
     while let Some((node, mut node_type)) = queue.pop() {
         match node_type {

@@ -441,7 +441,7 @@ mod find_path {
         a.push(1);
         b.push(1);
         a.merge(&b);
-        let actual = a.find_path(ID::new(0, 0), ID::new(1, 0));
+        let actual = a.find_path(&[ID::new(0, 0)], &[ID::new(1, 0)]);
         assert_eq!(
             actual,
             VersionVectorDiff {
@@ -463,7 +463,7 @@ mod find_path {
         // 0 - 1
         a.push(1);
         a.merge(&b);
-        let actual = a.find_path(ID::new(0, 1), ID::new(1, 0));
+        let actual = a.find_path(&[ID::new(0, 1)], &[ID::new(1, 0)]);
         assert_eq!(
             actual,
             VersionVectorDiff {
@@ -480,23 +480,23 @@ mod find_path {
         a.push(2);
         b.push(1);
         b.merge(&a);
-        b.push(1);
+        b.push(2);
         a.push(2);
         b.merge(&a);
         // println!("{}", b.mermaid());
-        let actual = b.find_path(ID::new(0, 3), ID::new(1, 1));
+        let actual = b.find_path(&[ID::new(0, 3)], &[ID::new(1, 2)]);
         assert_eq!(
             actual,
             VersionVectorDiff {
                 to_left: fx_map!(0 => CounterSpan { from: 2, to: 4 }),
-                to_right: fx_map!(1 => CounterSpan { from: 0, to: 2 })
+                to_right: fx_map!(1 => CounterSpan { from: 0, to: 3 })
             }
         );
-        let actual = b.find_path(ID::new(1, 1), ID::new(0, 3));
+        let actual = b.find_path(&[ID::new(1, 1), ID::new(1, 2)], &[ID::new(0, 3)]);
         assert_eq!(
             actual,
             VersionVectorDiff {
-                to_left: fx_map!(1 => CounterSpan { from: 0, to: 2 }),
+                to_left: fx_map!(1 => CounterSpan { from: 0, to: 3 }),
                 to_right: fx_map!(0 => CounterSpan { from: 2, to: 4 })
             }
         );
@@ -528,17 +528,18 @@ mod find_path {
         }
 
         // println!("{}", a.mermaid());
-        for (i, (node, vv)) in nodes.iter().enumerate() {
+        let mut vec: Vec<_> = nodes.iter().enumerate().collect();
+        for &(i, (node, vv)) in vec.iter() {
             if i > 3 {
                 break;
             }
 
-            for (j, (other_node, other_vv)) in nodes.iter().enumerate() {
-                if i == j {
+            for &(j, (other_node, other_vv)) in vec.iter() {
+                if i >= j {
                     continue;
                 }
 
-                let actual = a.find_path(node.id, other_node.id);
+                let actual = a.find_path(&[node.id], &[other_node.id]);
                 let expected = vv.clone() - other_vv.clone();
                 prop_assert_eq!(
                     actual,
@@ -549,6 +550,14 @@ mod find_path {
                     node.id,
                     other_node.id
                 );
+
+                for k in j + 1..nodes.len() {
+                    let mut vv = vv.clone();
+                    vv.merge(other_vv);
+                    let actual = a.find_path(&[node.id, other_node.id], &[vec[k].1 .0.id]);
+                    let expected = vv.clone() - vec[k].1 .1.clone();
+                    prop_assert_eq!(actual, expected);
+                }
             }
         }
 
@@ -609,14 +618,14 @@ mod find_path {
     proptest! {
         #[test]
         fn proptest_path(
-            interactions in prop::collection::vec(gen_interaction(5), 0..50 * PROPTEST_FACTOR_10),
+            interactions in prop::collection::vec(gen_interaction(5), 0..10 * PROPTEST_FACTOR_10),
         ) {
             test_find_path(5, interactions)?;
         }
 
         #[test]
         fn proptest_path_large(
-            interactions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
+            interactions in prop::collection::vec(gen_interaction(10), 0..5 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
         ) {
             test_find_path(10, interactions)?;
         }
