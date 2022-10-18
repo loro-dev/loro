@@ -1,3 +1,8 @@
+use super::DagUtils;
+use std::{cmp::Reverse, ops::Range};
+
+use crate::version::IdSpanVector;
+
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +64,7 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                 if let Some(node) = self.dag.get(ID::new(client_id, 0)) {
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
-                        lamport: node.lamport_start(),
+                        lamport: node.lamport(),
                     });
                 }
 
@@ -77,7 +82,7 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                 let next_node = self.dag.get(next_id).unwrap();
                 self.heap.push(IdHeapItem {
                     id: next_id,
-                    lamport: next_node.lamport_start(),
+                    lamport: next_node.lamport(),
                 });
             }
 
@@ -113,13 +118,13 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             for (&client_id, _) in self.dag.vv().iter() {
                 let vv = VersionVector::new();
                 if let Some(node) = self.dag.get(ID::new(client_id, 0)) {
-                    if node.lamport_start() == 0 {
+                    if node.lamport() == 0 {
                         self.vv_map.insert(ID::new(client_id, 0), vv.clone());
                     }
 
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
-                        lamport: node.lamport_start(),
+                        lamport: node.lamport(),
                     });
                 }
 
@@ -161,7 +166,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                 let next_node = self.dag.get(next_id).unwrap();
                 self.heap.push(IdHeapItem {
                     id: next_id,
-                    lamport: next_node.lamport_start(),
+                    lamport: next_node.lamport(),
                 });
             }
 
@@ -169,5 +174,105 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
         }
 
         None
+    }
+}
+
+/// visit every span in the target IdSpanVector
+pub(crate) struct DagPartialIter<'a, Dag> {
+    dag: &'a Dag,
+    frontier: SmallVec<[ID; 2]>,
+    target: IdSpanVector,
+    heap: BinaryHeap<Reverse<IdHeapItem>>,
+}
+
+pub(crate) struct IterReturn<'a, T> {
+    pub retreat: IdSpanVector,
+    pub forward: IdSpanVector,
+    pub data: &'a T,
+    pub slice: Range<Counter>,
+}
+
+impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
+    pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
+        for id in from.iter() {
+            if let Some(target) = target.get(&id.client_id) {
+                assert_eq!(target.start, id.counter + 1);
+            }
+        }
+
+        let mut heap = BinaryHeap::new();
+        for id in target.iter() {
+            if id.1.len() > 0 {
+                let id = id.id_start();
+                let node = dag.get(id).unwrap();
+                let diff = id.counter - node.id_start().counter;
+                heap.push(Reverse(IdHeapItem {
+                    id,
+                    lamport: node.lamport() + diff as Lamport,
+                }));
+            }
+        }
+
+        Self {
+            dag,
+            frontier: from,
+            target,
+            heap,
+        }
+    }
+}
+
+impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
+    type Item = IterReturn<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.heap.is_empty() {
+            debug_assert_eq!(0, self.target.iter().map(|x| x.1.len() as i32).sum());
+            return None;
+        }
+
+        let node_id = self.heap.pop().unwrap();
+        let node_id = node_id.0.id;
+        let target_span = self.target.get_mut(&node_id.client_id).unwrap();
+        debug_assert_eq!(
+            node_id.counter,
+            target_span.min(),
+            "{} {:?}",
+            node_id,
+            target_span
+        );
+
+        let node = self.dag.get(node_id).unwrap();
+        // node start_id may be smaller than node_id
+        let counter = node.id_span().counter;
+        let slice_from = if counter.start < target_span.start {
+            target_span.start - counter.start
+        } else {
+            0
+        };
+        let slice_end = if counter.end > target_span.end {
+            counter.end - counter.start
+        } else {
+            target_span.end - counter.start
+        };
+        assert!(slice_end > slice_from);
+        let last_counter = node.id_last().counter;
+        target_span.set_start(last_counter + 1);
+        if target_span.len() > 0 {
+            let next_id = ID::new(node_id.client_id, last_counter + 1);
+            self.heap.push(Reverse(IdHeapItem {
+                id: next_id,
+                lamport: node.lamport(),
+            }));
+        }
+
+        let path = self.dag.find_path(&self.frontier, &[node_id]);
+        self.frontier = smallvec::smallvec![node_id];
+        Some(IterReturn {
+            retreat: path.left,
+            forward: path.right,
+            data: node,
+            slice: slice_from..slice_end,
+        })
     }
 }

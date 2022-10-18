@@ -12,7 +12,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::HasLength;
+use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;
@@ -23,17 +23,16 @@ use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
     span::{HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
-    version::{VersionVector, VersionVectorDiff},
+    version::{IdSpanVector, VersionVector, VersionVectorDiff},
 };
 
 use self::{
-    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV},
+    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV, DagPartialIter},
     mermaid::dag_to_mermaid,
 };
 
 // TODO: use HasId, HasLength
-pub(crate) trait DagNode: HasId + HasLength + Debug {
-    fn lamport_start(&self) -> Lamport;
+pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];
 
     #[inline]
@@ -48,7 +47,7 @@ pub(crate) trait DagNode: HasId + HasLength + Debug {
 
     #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
-        self.lamport_start() + c as Lamport - self.id_start().counter as Lamport
+        self.lamport() + c as Lamport - self.id_start().counter as Lamport
     }
 }
 
@@ -69,20 +68,19 @@ pub(crate) trait Dag {
 
     fn get(&self, id: ID) -> Option<&Self::Node>;
 
-    #[inline]
-    fn contains(&self, id: ID) -> bool {
-        self.vv().includes_id(id)
-    }
-
     fn frontier(&self) -> &[ID];
     fn roots(&self) -> Vec<&Self::Node>;
-    fn vv(&self) -> VersionVector;
+    fn vv(&self) -> &VersionVector;
 }
 
-trait DagUtils: Dag {
+pub(crate) trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>;
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
+    fn contains(&self, id: ID) -> bool;
+    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    where
+        Self: Sized;
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized;
@@ -94,7 +92,7 @@ trait DagUtils: Dag {
         Self: Sized;
 }
 
-impl<T: Dag> DagUtils for T {
+impl<T: Dag + ?Sized> DagUtils for T {
     //
     // TODO: Maybe use Result return type
     // TODO: Maybe we only need one heap?
@@ -109,6 +107,11 @@ impl<T: Dag> DagUtils for T {
     #[inline]
     fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]> {
         find_common_ancestor(&|id| self.get(id), &[a_id], &[b_id])
+    }
+
+    #[inline]
+    fn contains(&self, id: ID) -> bool {
+        self.vv().includes_id(id)
     }
 
     /// TODO: we probably need cache to speedup this
@@ -147,6 +150,14 @@ impl<T: Dag> DagUtils for T {
         Self: Sized,
     {
         iter_dag_with_vv(self)
+    }
+
+    #[inline(always)]
+    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    where
+        Self: Sized,
+    {
+        DagPartialIter::new(self, from.into(), target)
     }
 
     #[inline(always)]
@@ -267,7 +278,7 @@ impl<'a> OrdIdSpan<'a> {
         let span_id = span.id_start();
         Some(OrdIdSpan {
             id: span_id,
-            lamport: span.lamport_start(),
+            lamport: span.lamport(),
             deps: span.deps(),
             len: (id.counter - span_id.counter) as usize + 1,
         })

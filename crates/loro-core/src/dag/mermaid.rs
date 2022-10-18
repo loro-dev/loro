@@ -1,5 +1,3 @@
-
-
 use super::*;
 struct BreakPoints {
     vv: VersionVector,
@@ -45,10 +43,10 @@ fn to_str(output: Output) -> String {
             s += format!(
                 "{}-{}(\"c{}: [{}, {})\")",
                 id_span.client_id,
-                id_span.counter.from,
+                id_span.counter.start,
                 id_span.client_id,
-                id_span.counter.from,
-                id_span.counter.to
+                id_span.counter.start,
+                id_span.counter.end
             )
             .as_str();
         }
@@ -111,7 +109,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
 
 fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
     let mut break_points = BreakPoints {
-        vv: dag.vv(),
+        vv: dag.vv().clone(),
         break_points: FxHashMap::default(),
         links: FxHashMap::default(),
     };

@@ -11,52 +11,82 @@ use rle::{HasLength, Mergable, Slice, Sliceable};
 /// If it is not necessary to be reverse, it should not.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CounterSpan {
-    pub from: Counter,
-    pub to: Counter,
+    // TODO: should be private. user should not be able to change start from smaller than end to be greater than end
+    pub start: Counter,
+    // TODO: should be private
+    pub end: Counter,
 }
 
 impl CounterSpan {
     #[inline]
     pub fn new(from: Counter, to: Counter) -> Self {
-        CounterSpan { from, to }
+        CounterSpan {
+            start: from,
+            end: to,
+        }
     }
 
     #[inline]
     pub fn reverse(&mut self) {
-        if self.from == self.to {
+        if self.start == self.end {
             return;
         }
 
-        if self.from < self.to {
-            (self.from, self.to) = (self.to - 1, self.from - 1);
+        if self.start < self.end {
+            (self.start, self.end) = (self.end - 1, self.start - 1);
         } else {
-            (self.from, self.to) = (self.to + 1, self.from + 1);
+            (self.start, self.end) = (self.end + 1, self.start + 1);
         }
     }
 
     #[inline]
     pub fn min(&self) -> Counter {
-        if self.from < self.to {
-            self.from
+        if self.start < self.end {
+            self.start
         } else {
-            self.to
+            self.end
         }
     }
 
     #[inline]
     pub fn max(&self) -> Counter {
-        if self.from > self.to {
-            self.from
+        if self.start > self.end {
+            self.start
         } else {
-            self.to - 1
+            self.end - 1
         }
     }
 
-    fn end(&self) -> i32 {
-        if self.from > self.to {
-            self.from + 1
+    pub fn end(&self) -> i32 {
+        if self.start > self.end {
+            self.start + 1
         } else {
-            self.to
+            self.end
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, v: Counter) -> bool {
+        if self.start < self.end {
+            self.start <= v && v < self.end
+        } else {
+            self.start >= v && v > self.end
+        }
+    }
+
+    pub fn set_start(&mut self, start: Counter) {
+        if self.start < self.end {
+            self.start = start.min(self.end);
+        } else {
+            self.start = start.max(self.end);
+        }
+    }
+
+    pub fn set_end(&mut self, end: Counter) {
+        if self.start < self.end {
+            self.end = end.max(self.start);
+        } else {
+            self.end = end.min(self.start);
         }
     }
 }
@@ -64,10 +94,10 @@ impl CounterSpan {
 impl HasLength for CounterSpan {
     #[inline]
     fn len(&self) -> usize {
-        if self.to > self.from {
-            (self.to - self.from) as usize
+        if self.end > self.start {
+            (self.end - self.start) as usize
         } else {
-            (self.from - self.to) as usize
+            (self.start - self.end) as usize
         }
     }
 }
@@ -77,15 +107,15 @@ impl Sliceable for CounterSpan {
         assert!(from <= to);
         let len = to - from;
         assert!(len <= self.len());
-        if self.from < self.to {
+        if self.start < self.end {
             CounterSpan {
-                from: self.from + from as Counter,
-                to: self.from + to as Counter,
+                start: self.start + from as Counter,
+                end: self.start + to as Counter,
             }
         } else {
             CounterSpan {
-                from: self.from - from as Counter,
-                to: self.from - to as Counter,
+                start: self.start - from as Counter,
+                end: self.start - to as Counter,
             }
         }
     }
@@ -94,12 +124,12 @@ impl Sliceable for CounterSpan {
 impl Mergable for CounterSpan {
     #[inline]
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        self.to == other.from
+        self.end == other.start
     }
 
     #[inline]
     fn merge(&mut self, other: &Self, _: &()) {
-        self.to = other.to;
+        self.end = other.end;
     }
 }
 
@@ -116,7 +146,10 @@ impl IdSpan {
     pub fn new(client_id: ClientID, from: Counter, to: Counter) -> Self {
         Self {
             client_id,
-            counter: CounterSpan { from, to },
+            counter: CounterSpan {
+                start: from,
+                end: to,
+            },
         }
     }
 

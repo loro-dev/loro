@@ -102,7 +102,7 @@ impl Tracker {
     }
 
     fn checkout(&mut self, vv: VersionVector) {
-        let diff = self.head_vv.clone() - vv.clone();
+        let diff = self.head_vv.diff(&vv);
         self.retreat(&diff.get_id_spans_left().collect::<Vec<_>>());
         self.forward(&diff.get_id_spans_right().collect::<Vec<_>>());
         self.head_vv = vv;
