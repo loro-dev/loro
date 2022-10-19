@@ -2,10 +2,8 @@
 //!
 //!
 mod iter;
-use pin_project::pin_project;
 use std::{
     marker::PhantomPinned,
-    pin::Pin,
     ptr::NonNull,
     sync::{Arc, RwLock, Weak},
 };
@@ -18,7 +16,7 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::manager::ContainerManager,
+    container::{manager::ContainerManager, text::string_pool::StringPool},
     id::{ClientID, Counter},
     op::OpProxy,
     Lamport, Op, Timestamp, ID,
@@ -62,6 +60,7 @@ pub struct LogStore {
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
     pub(crate) container: ContainerManager,
+    pub(crate) raw_str: StringPool,
 
     _pin: PhantomPinned,
 }
@@ -80,6 +79,7 @@ impl LogStore {
                 store: NonNull::dangling(),
             },
             frontier: Default::default(),
+            raw_str: StringPool::default(),
             _pin: PhantomPinned,
         }));
 
@@ -99,11 +99,24 @@ impl LogStore {
     }
 
     #[inline(always)]
-    pub fn next_id(&self, client_id: ClientID) -> ID {
+    pub fn next_id(&self) -> ID {
         ID {
-            client_id,
-            counter: self.get_next_counter(client_id),
+            client_id: self.this_client_id,
+            counter: self.get_next_counter(self.this_client_id),
         }
+    }
+
+    #[inline(always)]
+    pub fn next_id_for(&self, client: ClientID) -> ID {
+        ID {
+            client_id: client,
+            counter: self.get_next_counter(client),
+        }
+    }
+
+    #[inline(always)]
+    pub fn this_client_id(&self) -> ClientID {
+        self.this_client_id
     }
 
     pub fn append_local_ops(&mut self, ops: Vec<Op>) {
@@ -135,7 +148,7 @@ impl LogStore {
             .push(change);
     }
 
-    pub fn apply_remote_change(self: &mut Pin<&mut Self>, mut change: Change) {
+    pub fn apply_remote_change(&mut self, mut change: Change) {
         change.freezed = true;
         if self.contains(change.last_id()) {
             return;
@@ -180,7 +193,7 @@ impl LogStore {
 
     /// this function assume op is not included in the log, and its deps are included.
     #[inline]
-    fn apply_remote_op(self: &mut Pin<&mut Self>, change: &Change, op: &Op) {
+    fn apply_remote_op(&mut self, change: &Change, op: &Op) {
         let container = self.container.get_or_create(op.container());
         container.apply(&OpProxy::new(change, op, None));
     }

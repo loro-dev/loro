@@ -5,7 +5,7 @@ use fxhash::FxHashMap;
 use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
-    log_store::LogAccessor,
+    log_store::LogStoreWeakRef,
     op::{InsertContent, Op},
     op::{OpContent, OpProxy},
     value::{InsertValue, LoroValue},
@@ -42,50 +42,50 @@ impl MapContainer {
         }
     }
 
-    pub fn insert(&mut self, key: InternalString, value: InsertValue, store: &Arc<LogAccessor>) {
+    pub fn insert(&mut self, key: InternalString, value: InsertValue, store: LogStoreWeakRef) {
         let self_id = self.id.clone();
-        store.with_mut(|store| {
-            let client_id = store.this_client_id;
-            let order = TotalOrderStamp {
-                client_id,
-                lamport: store.next_lamport(),
-            };
+        let m = store.upgrade().unwrap();
+        let mut store = m.write().unwrap();
+        let client_id = store.this_client_id;
+        let order = TotalOrderStamp {
+            client_id,
+            lamport: store.next_lamport(),
+        };
 
-            let id = store.next_id(client_id);
-            let counter = id.counter;
-            store.append_local_ops(vec![Op {
-                id,
-                container: self_id,
-                content: OpContent::Normal {
-                    content: InsertContent::Dyn(Box::new(MapSet {
-                        key: key.clone(),
-                        value: value.clone(),
-                    })),
-                },
-            }]);
+        let id = store.next_id_for(client_id);
+        let counter = id.counter;
+        store.append_local_ops(vec![Op {
+            id,
+            container: self_id,
+            content: OpContent::Normal {
+                content: InsertContent::Dyn(Box::new(MapSet {
+                    key: key.clone(),
+                    value: value.clone(),
+                })),
+            },
+        }]);
 
-            if self.value.is_some() {
-                self.value
-                    .as_mut()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(key.clone(), value.clone().into());
-            }
+        if self.value.is_some() {
+            self.value
+                .as_mut()
+                .unwrap()
+                .as_map_mut()
+                .unwrap()
+                .insert(key.clone(), value.clone().into());
+        }
 
-            self.state.insert(
-                key,
-                ValueSlot {
-                    value,
-                    order,
-                    counter,
-                },
-            );
-        });
+        self.state.insert(
+            key,
+            ValueSlot {
+                value,
+                order,
+                counter,
+            },
+        );
     }
 
     #[inline]
-    pub fn delete(&mut self, key: InternalString, store: &Arc<LogAccessor>) {
+    pub fn delete(&mut self, key: InternalString, store: LogStoreWeakRef) {
         self.insert(key, InsertValue::Null, store);
     }
 }

@@ -1,4 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
+
+use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
     configure::Configure,
@@ -24,22 +26,36 @@ impl LoroCore {
         }
     }
 
-    pub fn get_container(
-        &mut self,
+    pub fn get_container<'a>(
+        &'a mut self,
         name: InternalString,
         container: ContainerType,
-    ) -> &mut dyn Container {
-        if let Ok(store) = self.store.get_mut() {
-            store
-                .container
-                .get_or_create(&ContainerID::new_root(name, container))
+    ) -> OwningRefMut<RwLockWriteGuard<LogStore>, dyn Container + 'a> {
+        if let Ok(store) = self.store.write() {
+            OwningRefMut::new(store).map_mut(|store| {
+                let r = store
+                    .container
+                    .get_or_create(&ContainerID::new_root(name, container));
+                r
+            })
         } else {
             todo!()
         }
     }
 
-    pub fn get_map_container(&mut self, name: InternalString) -> Option<&mut MapContainer> {
-        let a = self.get_container(name, ContainerType::Map);
-        a.cast_mut()
+    pub fn get_map_container(
+        &mut self,
+        name: InternalString,
+    ) -> OwningRefMut<RwLockWriteGuard<LogStore>, MapContainer> {
+        if let Ok(store) = self.store.write() {
+            OwningRefMut::new(store).map_mut(|store| {
+                let r = store
+                    .container
+                    .get_or_create(&ContainerID::new_root(name, ContainerType::Map));
+                r.cast_mut().unwrap()
+            })
+        } else {
+            todo!()
+        }
     }
 }
