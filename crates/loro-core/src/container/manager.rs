@@ -33,11 +33,11 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply(&mut self, op: &crate::op::OpProxy) {
+    fn apply(&mut self, op: &crate::op::OpProxy, log: &LogStore) {
         match self {
-            ContainerInstance::Map(x) => x.apply(op),
-            ContainerInstance::Text(x) => x.apply(op),
-            ContainerInstance::Dyn(x) => x.apply(op),
+            ContainerInstance::Map(x) => x.apply(op, log),
+            ContainerInstance::Text(x) => x.apply(op, log),
+            ContainerInstance::Dyn(x) => x.apply(op, log),
         }
     }
 

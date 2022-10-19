@@ -215,7 +215,7 @@ pub(super) struct IdSpanQueryResult<'a> {
 }
 
 impl CursorMap {
-    pub fn get_cursor_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
+    pub fn get_cursors_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
         let mut inserts = Vec::new();
         let mut deletes = Vec::new();
         for marker in self.get_range(span.min_id().into(), span.end_id().into()) {

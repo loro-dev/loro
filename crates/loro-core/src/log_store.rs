@@ -118,6 +118,11 @@ impl LogStore {
         self.this_client_id
     }
 
+    #[inline]
+    pub fn frontier(&self) -> &[ID] {
+        &self.frontier
+    }
+
     /// this method would not get the container and apply op
     pub fn append_local_ops(&mut self, ops: Vec<Op>) {
         let lamport = self.next_lamport();
@@ -160,6 +165,16 @@ impl LogStore {
             }
         }
 
+        let change = self.push_change(change);
+
+        // Apply ops.
+        // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
+        let mut offset = 0;
+        for op in change.ops.iter() {
+            self.apply_remote_op(change, op, offset);
+            offset += op.len() as u32;
+        }
+
         self.frontier = self
             .frontier
             .iter()
@@ -176,27 +191,25 @@ impl LogStore {
             self.latest_timestamp = change.timestamp;
         }
 
-        for op in change.ops.iter() {
-            self.apply_remote_op(&change, op);
-        }
-
-        self.push_change(change);
+        todo!("update vv");
     }
 
     #[inline]
-    fn push_change(&mut self, change: Change) {
-        self.changes
+    fn push_change(&mut self, change: Change) -> &Change {
+        let v = self
+            .changes
             .entry(change.id.client_id)
-            .or_insert_with(RleVec::new)
-            .push(change);
+            .or_insert_with(RleVec::new);
+        v.push(change);
+        v.vec().last().unwrap()
     }
 
     /// this function assume op is not included in the log, and its deps are included.
     #[inline]
-    fn apply_remote_op(&mut self, change: &Change, op: &Op) {
+    fn apply_remote_op(&mut self, change: &Change, op: &Op, offset: u32) {
         let mut container = self.container.write().unwrap();
         let container = container.get_or_create(op.container());
-        container.apply(&OpProxy::new(change, op, None));
+        container.apply(&OpProxy::new(change, op, offset, None), self);
     }
 
     #[inline]
