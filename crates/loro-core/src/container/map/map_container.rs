@@ -1,5 +1,3 @@
-
-
 use fxhash::FxHashMap;
 
 use crate::{
@@ -8,9 +6,10 @@ use crate::{
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op},
     op::{OpContent, OpProxy},
+    span::HasId,
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
-    InternalString,
+    InternalString, LogStore,
 };
 
 use super::MapSet;
@@ -100,14 +99,14 @@ impl Container for MapContainer {
         ContainerType::Map
     }
 
-    fn apply(&mut self, op: &OpProxy) {
+    fn apply(&mut self, op: &OpProxy, log: &LogStore) {
         debug_assert_eq!(&op.op().container, self.id());
         match op.content() {
             OpContent::Normal { content } => {
                 let v: &MapSet = content.as_map().unwrap();
                 let order = TotalOrderStamp {
                     lamport: op.lamport(),
-                    client_id: op.id().client_id,
+                    client_id: op.id_start().client_id,
                 };
                 if let Some(slot) = self.state.get_mut(&v.key) {
                     if slot.order < order {
@@ -121,7 +120,7 @@ impl Container for MapContainer {
                         ValueSlot {
                             value: v.value.clone(),
                             order,
-                            counter: op.id().counter,
+                            counter: op.id_start().counter,
                         },
                     );
 

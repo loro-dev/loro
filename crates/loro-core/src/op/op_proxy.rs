@@ -1,15 +1,21 @@
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use rle::{HasLength, Sliceable};
 
 use crate::{
-    container::ContainerID, id::Counter, Change, Lamport, Op, OpContent, OpType, Timestamp, ID,
+    container::ContainerID,
+    id::Counter,
+    span::{HasId, HasIdSpan, HasLamport},
+    Change, Lamport, Op, OpContent, OpType, Timestamp, ID,
 };
 
 /// OpProxy represents a slice of an Op
 pub struct OpProxy<'a> {
     change: &'a Change,
     op: &'a Op,
+    /// offset of op in change.
+    /// i.e. change.id.inc(op_offset) == op.start
+    op_offset: u32,
     /// slice range of the op, op[slice_range]
     slice_range: Range<Counter>,
 }
@@ -17,6 +23,27 @@ pub struct OpProxy<'a> {
 impl PartialEq for OpProxy<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.op.id == other.op.id && self.slice_range == other.slice_range
+    }
+}
+
+impl<'a> HasId for OpProxy<'a> {
+    fn id_start(&self) -> ID {
+        ID::new(
+            self.op.id.client_id,
+            self.op.id.counter + self.slice_range.start,
+        )
+    }
+}
+
+impl<'a> HasLength for OpProxy<'a> {
+    fn len(&self) -> usize {
+        self.slice_range.content_len()
+    }
+}
+
+impl<'a> HasLamport for OpProxy<'a> {
+    fn lamport(&self) -> Lamport {
+        self.change.lamport + self.op_offset + self.slice_range.start as u32
     }
 }
 
@@ -45,7 +72,12 @@ impl Ord for OpProxy<'_> {
 }
 
 impl<'a> OpProxy<'a> {
-    pub fn new(change: &'a Change, op: &'a Op, range: Option<Range<Counter>>) -> Self {
+    pub fn new(
+        change: &'a Change,
+        op: &'a Op,
+        op_offset: u32,
+        range: Option<Range<Counter>>,
+    ) -> Self {
         OpProxy {
             change,
             op,
@@ -54,19 +86,17 @@ impl<'a> OpProxy<'a> {
             } else {
                 0..op.len() as Counter
             },
+            op_offset,
         }
+    }
+
+    pub fn offset(&self) -> u32 {
+        self.op_offset
     }
 
     pub fn lamport(&self) -> Lamport {
         self.change.lamport + self.op.id.counter as Lamport - self.change.id.counter as Lamport
             + self.slice_range.start as Lamport
-    }
-
-    pub fn id(&self) -> ID {
-        ID::new(
-            self.op.id.client_id,
-            self.op.id.counter + self.slice_range.start,
-        )
     }
 
     pub fn timestamp(&self) -> Timestamp {
@@ -85,11 +115,17 @@ impl<'a> OpProxy<'a> {
         &self.op.content
     }
 
-    pub(crate) fn content_sliced(&self) -> OpContent {
-        self.op.content.slice(
-            self.slice_range.start as usize,
-            self.slice_range.end as usize,
-        )
+    pub(crate) fn content_sliced(&self) -> Cow<'_, OpContent> {
+        if self.slice_range.start == self.op.id.counter
+            && self.slice_range.end == self.op.id_end().counter
+        {
+            Cow::Borrowed(&self.op.content)
+        } else {
+            Cow::Owned(self.op.content.slice(
+                self.slice_range.start as usize,
+                self.slice_range.end as usize,
+            ))
+        }
     }
 
     pub fn op_type(&self) -> OpType {

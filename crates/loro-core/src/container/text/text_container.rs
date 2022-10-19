@@ -3,11 +3,13 @@ use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
+    dag::{Dag, DagUtils},
     id::ID,
     log_store::LogStoreRef,
     op::{InsertContent, Op, OpContent, OpProxy},
-    span::IdSpan,
+    span::{HasIdSpan, IdSpan},
     value::LoroValue,
+    LogStore,
 };
 
 use super::{
@@ -84,9 +86,37 @@ impl Container for TextContainer {
         ContainerType::Text
     }
 
-    fn apply(&mut self, op: &OpProxy) {
-        let _content = op.content_sliced();
-        todo!()
+    // TODO: move main logic to tracker module
+    fn apply(&mut self, op: &OpProxy, store: &LogStore) {
+        let new_op_id = op.id_last();
+        let content = op.content_sliced();
+        // TODO: may reduce following two into one op
+        let common = store.find_common_ancestor(&[new_op_id], store.frontier());
+        let path_to_store_head = store.find_path(&common, store.frontier());
+        let mut common_vv = store.vv();
+        common_vv.retreat(&path_to_store_head.right);
+
+        let mut latest_head: SmallVec<[ID; 2]> = store.frontier().into();
+        latest_head.push(new_op_id);
+        if common.len() == 0 || !common.iter().all(|x| self.tracker.contains(new_op_id)) {
+            // stage 1
+            self.tracker = Tracker::new(common.clone(), common_vv);
+            let path = store.find_path(&common, &latest_head);
+            for iter in store.iter_partial(&common, path.right) {
+                self.tracker.retreat(&iter.retreat);
+                self.tracker.forward(&iter.forward);
+                for op in iter.data.ops.iter() {
+                    if op.container == self.id {
+                        self.tracker.apply(op.id, &op.content)
+                    }
+                }
+            }
+        }
+
+        // stage 2
+        let path = store.find_path(&latest_head, &store.frontier());
+        self.tracker.retreat(&path.left);
+        todo!("turn on tracker and calculate effects")
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {

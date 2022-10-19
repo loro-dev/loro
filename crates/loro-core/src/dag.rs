@@ -63,7 +63,7 @@ pub(crate) trait Dag {
 }
 
 pub(crate) trait DagUtils: Dag {
-    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]>;
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>;
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
@@ -94,8 +94,8 @@ impl<T: Dag + ?Sized> DagUtils for T {
     /// But that is a rare case.
     ///
     #[inline]
-    fn find_common_ancestor(&self, a_id: ID, b_id: ID) -> SmallVec<[ID; 2]> {
-        find_common_ancestor(&|id| self.get(id), &[a_id], &[b_id])
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]> {
+        find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
 
     #[inline]

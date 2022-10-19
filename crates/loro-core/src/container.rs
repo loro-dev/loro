@@ -4,7 +4,7 @@
 //!
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
-use crate::{op::OpProxy, version::VersionVector, InternalString, LoroValue, ID};
+use crate::{op::OpProxy, version::VersionVector, InternalString, LogStore, LoroValue, ID};
 
 use serde::Serialize;
 use std::{any::Any, fmt::Debug};
@@ -20,7 +20,8 @@ pub use container_content::*;
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
-    fn apply(&mut self, op: &OpProxy);
+    /// NOTE: this method expect that log_store has store the Change, but has not updated its vv yet
+    fn apply(&mut self, op: &OpProxy, log: &LogStore);
     fn checkout_version(&mut self, vv: &VersionVector);
     fn get_value(&mut self) -> &LoroValue;
     // TODO: need a custom serializer

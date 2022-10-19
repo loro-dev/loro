@@ -32,6 +32,8 @@ pub struct Change {
     /// Whether this change can be merged with the next change
     /// - Only the last change in a chain can be merged with the next change
     /// - Imported changes should be freezed
+    ///
+    /// TODO: maybe we can remove this field?
     pub(crate) freezed: bool,
     /// if other changes dep on the middle of this change, we need to record a break point here.
     /// So that we can iter the ops in the correct order.

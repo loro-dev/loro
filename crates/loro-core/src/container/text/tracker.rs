@@ -1,10 +1,12 @@
 use rle::HasLength;
+use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     id::{Counter, ID},
-    op::Op,
+    op::{Op, OpContent},
     span::IdSpan,
+    version::IdSpanVector,
     VersionVector,
 };
 
@@ -33,10 +35,14 @@ pub mod yata_impl;
 pub struct Tracker {
     // #[cfg(feature = "fuzzing")]
     client_id: u64,
+    // FIXME: vv state is not up to date
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
+    /// latest applied ops version vector
+    all_vv: VersionVector,
     /// current content version vector
     head_vv: VersionVector,
+    start_head: SmallVec<[ID; 2]>,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -48,7 +54,7 @@ impl From<ID> for u128 {
 }
 
 impl Tracker {
-    pub fn new() -> Self {
+    pub fn new(head: SmallVec<[ID; 2]>, start_vv: VersionVector) -> Self {
         let min = ID::unknown(0);
         let max = ID::unknown(Counter::MAX / 2);
         let len = (max.counter - min.counter) as usize;
@@ -69,10 +75,26 @@ impl Tracker {
         Tracker {
             content,
             id_to_cursor,
+            start_vv,
+            start_head: head,
             client_id: 0,
             head_vv: Default::default(),
-            start_vv: Default::default(),
+            all_vv: Default::default(),
         }
+    }
+
+    #[inline]
+    pub fn start_vv(&self) -> &VersionVector {
+        &self.start_vv
+    }
+
+    #[inline]
+    pub fn head_vv(&self) -> &VersionVector {
+        &self.head_vv
+    }
+
+    pub fn contains(&self, id: ID) -> bool {
+        !self.start_vv.includes_id(id) && self.all_vv.includes_id(id)
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
@@ -102,26 +124,32 @@ impl Tracker {
     }
 
     fn checkout(&mut self, vv: VersionVector) {
-        let diff = self.head_vv.diff(&vv);
-        self.retreat(&diff.get_id_spans_left().collect::<Vec<_>>());
-        self.forward(&diff.get_id_spans_right().collect::<Vec<_>>());
-        self.head_vv = vv;
+        todo!();
+        // let diff = self.head_vv.diff(&vv);
+        // self.retreat(&diff.get_id_spans_left().collect::<Vec<_>>());
+        // self.forward(&diff.get_id_spans_right().collect::<Vec<_>>());
+        // self.head_vv = vv;
     }
 
-    fn forward(&mut self, spans: &[IdSpan]) {
+    pub fn forward(&mut self, spans: &IdSpanVector) {
+        todo!("update vvs");
         let mut to_set_as_applied = Vec::with_capacity(spans.len());
         let mut to_delete = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let IdSpanQueryResult {
                 mut inserts,
                 deletes,
-            } = self.id_to_cursor.get_cursor_at_id_span(*span);
+            } = self.id_to_cursor.get_cursors_at_id_span(IdSpan::new(
+                *span.0,
+                span.1.start,
+                span.1.end,
+            ));
             for delete in deletes {
                 for deleted_span in delete.iter() {
                     to_delete.append(
                         &mut self
                             .id_to_cursor
-                            .get_cursor_at_id_span(*deleted_span)
+                            .get_cursors_at_id_span(*deleted_span)
                             .inserts,
                     );
                 }
@@ -142,20 +170,25 @@ impl Tracker {
         )
     }
 
-    fn retreat(&mut self, spans: &[IdSpan]) {
+    pub fn retreat(&mut self, spans: &IdSpanVector) {
+        todo!("update vvs");
         let mut to_set_as_future = Vec::with_capacity(spans.len());
         let mut to_undo_delete = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let IdSpanQueryResult {
                 mut inserts,
                 deletes,
-            } = self.id_to_cursor.get_cursor_at_id_span(*span);
+            } = self.id_to_cursor.get_cursors_at_id_span(IdSpan::new(
+                *span.0,
+                span.1.start,
+                span.1.end,
+            ));
             for delete in deletes {
                 for deleted_span in delete.iter() {
                     to_undo_delete.append(
                         &mut self
                             .id_to_cursor
-                            .get_cursor_at_id_span(*deleted_span)
+                            .get_cursors_at_id_span(*deleted_span)
                             .inserts,
                     );
                 }
@@ -177,14 +210,10 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    fn apply(&mut self, op: &Op) {
-        assert_eq!(
-            *self.head_vv.get(&op.id.client_id).unwrap_or(&0),
-            op.id.counter
-        );
-        self.head_vv.set_end(op.id.inc(op.len() as i32));
-        let id = op.id;
-        match &op.content {
+    pub fn apply(&mut self, id: ID, content: &OpContent) {
+        assert_eq!(*self.head_vv.get(&id.client_id).unwrap_or(&0), id.counter);
+        self.head_vv.set_end(id.inc(content.len() as i32));
+        match &content {
             crate::op::OpContent::Normal { content } => {
                 let text_content = content.as_list().expect("Content is not for list");
                 match text_content {
@@ -209,7 +238,7 @@ impl Tracker {
     fn update_spans(&mut self, spans: &[IdSpan], change: StatusChange) {
         let mut cursors = Vec::new();
         for span in spans.iter() {
-            let mut inserts = self.id_to_cursor.get_cursor_at_id_span(*span).inserts;
+            let mut inserts = self.id_to_cursor.get_cursors_at_id_span(*span).inserts;
             cursors.append(&mut inserts);
         }
 
@@ -220,22 +249,5 @@ impl Tracker {
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
-    }
-}
-
-impl Default for Tracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_turn_off() {
-        let _tracker = Tracker::new();
-        // tracker.turn_off(IdSpan::new(1, 1, 2));
     }
 }
