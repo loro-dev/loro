@@ -4,7 +4,6 @@
 mod iter;
 use std::{
     marker::PhantomPinned,
-    ptr::NonNull,
     sync::{Arc, RwLock, Weak},
 };
 
@@ -16,7 +15,7 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{manager::ContainerManager, text::string_pool::StringPool},
+    container::{manager::ContainerManager, text::string_pool::StringPool, Container},
     id::{ClientID, Counter},
     op::OpProxy,
     Lamport, Op, Timestamp, ID,
@@ -59,14 +58,18 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: ContainerManager,
     pub(crate) raw_str: StringPool,
+    pub container: Arc<RwLock<ContainerManager>>,
 
     _pin: PhantomPinned,
 }
 
 impl LogStore {
-    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
+    pub fn new(
+        mut cfg: Configure,
+        client_id: Option<ClientID>,
+        container: Arc<RwLock<ContainerManager>>,
+    ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         let mut this = Arc::new(RwLock::new(Self {
             cfg,
@@ -74,12 +77,9 @@ impl LogStore {
             changes: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
-            container: ContainerManager {
-                containers: Default::default(),
-                store: NonNull::dangling(),
-            },
             frontier: Default::default(),
             raw_str: StringPool::default(),
+            container,
             _pin: PhantomPinned,
         }));
 
@@ -194,7 +194,8 @@ impl LogStore {
     /// this function assume op is not included in the log, and its deps are included.
     #[inline]
     fn apply_remote_op(&mut self, change: &Change, op: &Op) {
-        let container = self.container.get_or_create(op.container());
+        let mut container = self.container.write().unwrap();
+        let container = container.get_or_create(op.container());
         container.apply(&OpProxy::new(change, op, None));
     }
 
