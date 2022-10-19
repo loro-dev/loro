@@ -36,16 +36,6 @@ pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];
 
     #[inline]
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    fn get_offset(&self, c: Counter) -> Counter {
-        c - self.id_start().counter
-    }
-
-    #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
         self.lamport() + c as Lamport - self.id_start().counter as Lamport
     }
@@ -69,8 +59,7 @@ pub(crate) trait Dag {
     fn get(&self, id: ID) -> Option<&Self::Node>;
 
     fn frontier(&self) -> &[ID];
-    fn roots(&self) -> Vec<&Self::Node>;
-    fn vv(&self) -> &VersionVector;
+    fn vv(&self) -> VersionVector;
 }
 
 pub(crate) trait DagUtils: Dag {

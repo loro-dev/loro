@@ -105,12 +105,8 @@ impl Dag for TestDag {
         &self.frontier
     }
 
-    fn roots(&self) -> Vec<&Self::Node> {
-        self.nodes.values().map(|v| &v[0]).collect()
-    }
-
-    fn vv(&self) -> &VersionVector {
-        &self.version_vec
+    fn vv(&self) -> VersionVector {
+        self.version_vec.clone()
     }
 }
 
