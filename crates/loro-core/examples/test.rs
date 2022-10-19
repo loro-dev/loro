@@ -5,7 +5,7 @@ fn main() {}
 fn main() {
     use crdt_list::test;
     use crdt_list::test::Action::*;
-    use loro_core::container::text::tracker::yata::YataImpl;
+    use loro_core::container::text::tracker::yata_impl::YataImpl;
     let mut actions = vec![];
     for i in 0..500_usize {
         actions.push(if i % 2 == 0 {
