@@ -14,6 +14,8 @@ use crate::{HasLength, Mergable, Slice, Sliceable};
 /// - len() returns the number of atom elements in the array.
 /// - get(index) returns the atom element at the index.
 /// - slice(from, to) returns a slice of atom elements from the index from to the index to.
+///
+/// TODO: remove index and _len
 #[derive(Debug, Clone)]
 pub struct RleVec<T, Cfg = ()> {
     vec: Vec<T>,

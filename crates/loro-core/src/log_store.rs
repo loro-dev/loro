@@ -58,7 +58,6 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) raw_str: StringPool,
     pub container: Arc<RwLock<ContainerManager>>,
 
     _pin: PhantomPinned,
@@ -78,7 +77,6 @@ impl LogStore {
             latest_lamport: 0,
             latest_timestamp: 0,
             frontier: Default::default(),
-            raw_str: StringPool::default(),
             container,
             _pin: PhantomPinned,
         }));
@@ -119,6 +117,7 @@ impl LogStore {
         self.this_client_id
     }
 
+    /// this method would not get the container and apply op
     pub fn append_local_ops(&mut self, ops: Vec<Op>) {
         let lamport = self.next_lamport();
         let timestamp = (self.cfg.get_time)();

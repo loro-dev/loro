@@ -8,7 +8,7 @@ use smartstring::LazyCompact;
 use smartstring::SmartString;
 
 #[repr(transparent)]
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Clone, Default)]
 pub struct SmString(pub(crate) SmartString<LazyCompact>);
 
 impl Deref for SmString {
@@ -21,6 +21,12 @@ impl Deref for SmString {
 impl DerefMut for SmString {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl SmString {
+    pub fn new() -> Self {
+        SmString(SmartString::new())
     }
 }
 
