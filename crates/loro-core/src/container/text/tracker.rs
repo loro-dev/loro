@@ -33,8 +33,8 @@ pub mod yata_impl;
 pub struct Tracker {
     // #[cfg(feature = "fuzzing")]
     client_id: u64,
-    /// all applied operations version vector
-    all_vv: VersionVector,
+    /// from start_vv to latest vv are applied
+    start_vv: VersionVector,
     /// current content version vector
     head_vv: VersionVector,
     content: ContentMap,
@@ -71,7 +71,7 @@ impl Tracker {
             id_to_cursor,
             client_id: 0,
             head_vv: Default::default(),
-            all_vv: Default::default(),
+            start_vv: Default::default(),
         }
     }
 
@@ -178,7 +178,6 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, op: &Op) {
-        if self.all_vv.includes_id(op.id.inc(op.len() as i32 - 1)) {}
         assert_eq!(
             *self.head_vv.get(&op.id.client_id).unwrap_or(&0),
             op.id.counter

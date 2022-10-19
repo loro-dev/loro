@@ -1,19 +1,20 @@
-use fxhash::FxHashMap;
-use rle::RleVec;
-
+use rle::RleTree;
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     id::ID,
-    log_store::LogStoreWeakRef,
+    log_store::LogStoreRef,
     op::{InsertContent, Op, OpContent, OpProxy},
     span::IdSpan,
     value::LoroValue,
-    ClientID,
 };
 
-use super::text_content::ListSlice;
+use super::{
+    string_pool::StringPool,
+    text_content::{ListSlice, ListSliceTreeTrait},
+    tracker::Tracker,
+};
 
 #[derive(Clone, Debug)]
 struct DagNode {
@@ -21,20 +22,21 @@ struct DagNode {
     deps: SmallVec<[ID; 2]>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    sub_dag: FxHashMap<ClientID, RleVec<DagNode, ()>>,
-    log_store: LogStoreWeakRef,
-    raw: String,
+    log_store: LogStoreRef,
+    state: RleTree<ListSlice, ListSliceTreeTrait>,
+    raw_str: StringPool,
+    tracker: Tracker,
 }
 
 impl TextContainer {
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
-        let upgraded = self.log_store.upgrade()?;
-        let id = if let Ok(mut store) = upgraded.write() {
+        let id = if let Ok(mut store) = self.log_store.write() {
             let id = store.next_id();
-            let slice = ListSlice::new(store.raw_str.alloc(text));
+            let slice = ListSlice::from_range(self.raw_str.alloc(text));
+            self.state.insert(pos, slice.clone());
             let op = Op::new(
                 id,
                 OpContent::Normal {
@@ -43,7 +45,6 @@ impl TextContainer {
                 self.id.clone(),
             );
             store.append_local_ops(vec![op]);
-
             id
         } else {
             unimplemented!()
@@ -52,7 +53,26 @@ impl TextContainer {
         Some(id)
     }
 
-    pub fn delete(&mut self, _pos: usize, _len: usize) {}
+    pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
+        let id = if let Ok(mut store) = self.log_store.write() {
+            let id = store.next_id();
+            let op = Op::new(
+                id,
+                OpContent::Normal {
+                    content: InsertContent::List(ListOp::Delete { len, pos }),
+                },
+                self.id.clone(),
+            );
+
+            store.append_local_ops(vec![op]);
+            self.state.delete_range(Some(pos), Some(pos + len));
+            id
+        } else {
+            unimplemented!()
+        };
+
+        Some(id)
+    }
 }
 
 impl Container for TextContainer {
@@ -64,7 +84,8 @@ impl Container for TextContainer {
         ContainerType::Text
     }
 
-    fn apply(&mut self, _op: &OpProxy) {
+    fn apply(&mut self, op: &OpProxy) {
+        let content = op.content_sliced();
         todo!()
     }
 
