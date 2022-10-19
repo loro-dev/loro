@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{change::ChangeMergeCfg, log_store::GcConfig, Timestamp};
 use ring::rand::{SecureRandom, SystemRandom};
 
@@ -6,6 +8,16 @@ pub struct Configure {
     pub gc: GcConfig,
     pub(crate) get_time: fn() -> Timestamp,
     pub(crate) rand: Box<dyn SecureRandomGenerator>,
+}
+
+impl Debug for Configure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Configure")
+            .field("change", &self.change)
+            .field("gc", &self.gc)
+            .field("get_time", &self.get_time)
+            .finish()
+    }
 }
 
 pub trait SecureRandomGenerator {

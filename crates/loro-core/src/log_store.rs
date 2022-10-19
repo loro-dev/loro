@@ -7,7 +7,7 @@ use std::{
     marker::PhantomPinned,
     pin::Pin,
     ptr::NonNull,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -27,6 +27,7 @@ use crate::{
 const _YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
 
+#[derive(Debug)]
 pub struct GcConfig {
     pub gc: bool,
     pub interval: u64,
@@ -41,6 +42,10 @@ impl Default for GcConfig {
     }
 }
 
+pub type LogStoreRef = Arc<RwLock<LogStore>>;
+pub type LogStoreWeakRef = Weak<RwLock<LogStore>>;
+
+#[derive(Debug)]
 /// LogStore stores the full history of Loro
 ///
 /// This is a self-referential structure. So it need to be pinned.
@@ -48,7 +53,6 @@ impl Default for GcConfig {
 /// `frontier`s are the Changes without children in the DAG (there is no dep pointing to them)
 ///
 /// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
-#[pin_project]
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
     cfg: Configure,
@@ -56,22 +60,16 @@ pub struct LogStore {
     latest_timestamp: Timestamp,
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
-    accessor: Option<Arc<LogAccessor>>,
-
     /// CRDT container manager
     pub(crate) container: ContainerManager,
 
     _pin: PhantomPinned,
 }
 
-pub struct LogAccessor {
-    store: RwLock<NonNull<LogStore>>,
-}
-
 impl LogStore {
-    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Pin<Box<Self>> {
+    pub fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        let mut this = Box::pin(Self {
+        let mut this = Arc::new(RwLock::new(Self {
             cfg,
             this_client_id,
             changes: FxHashMap::default(),
@@ -81,31 +79,11 @@ impl LogStore {
                 containers: Default::default(),
                 store: NonNull::dangling(),
             },
-            accessor: None,
             frontier: Default::default(),
             _pin: PhantomPinned,
-        });
+        }));
 
-        let p = this.as_ref().get_ref();
-        let p = p as *const _ as *mut LogStore;
-        // SAFETY: we just created this
-        this.container.store = unsafe { NonNull::new_unchecked(p) };
         this
-    }
-
-    pub fn get_accessor(&mut self) -> Arc<LogAccessor> {
-        if let Some(accessor) = self.accessor.as_ref() {
-            return accessor.clone();
-        }
-
-        let p = self as *const _ as *mut LogStore;
-        // SAFETY: this is self, which is non-null fore sure
-        let p = unsafe { NonNull::new_unchecked(p) };
-        let accessor = Arc::new(LogAccessor {
-            store: RwLock::new(p),
-        });
-        self.accessor = Some(accessor.clone());
-        accessor
     }
 
     #[inline]
@@ -235,25 +213,5 @@ impl LogStore {
     #[inline]
     pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
         iter::OpIter::new(&self.changes)
-    }
-}
-
-impl LogAccessor {
-    pub fn with_ref<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&LogStore) -> R,
-    {
-        let store = self.store.read().unwrap();
-        // SAFETY: //FIXME: this is not guaranteed to be correct
-        f(unsafe { store.as_ref() })
-    }
-
-    pub fn with_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut LogStore) -> R,
-    {
-        let mut store = self.store.write().unwrap();
-        // SAFETY: //FIXME: this is not guaranteed to be correct
-        f(unsafe { store.as_mut() })
     }
 }

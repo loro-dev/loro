@@ -1,4 +1,4 @@
-use std::{pin::Pin};
+use std::sync::{Arc, RwLock};
 
 use crate::{
     configure::Configure,
@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct LoroCore {
-    pub store: Pin<Box<LogStore>>,
+    pub store: Arc<RwLock<LogStore>>,
 }
 
 impl Default for LoroCore {
@@ -29,9 +29,13 @@ impl LoroCore {
         name: InternalString,
         container: ContainerType,
     ) -> &mut dyn Container {
-        self.store
-            .container
-            .get_or_create(&ContainerID::new_root(name, container))
+        if let Ok(store) = self.store.get_mut() {
+            store
+                .container
+                .get_or_create(&ContainerID::new_root(name, container))
+        } else {
+            todo!()
+        }
     }
 
     pub fn get_map_container(&mut self, name: InternalString) -> Option<&mut MapContainer> {
