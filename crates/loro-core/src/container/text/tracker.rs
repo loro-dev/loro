@@ -1,7 +1,7 @@
 use rle::HasLength;
 
 use crate::{
-    container::{list::list_op::ListOp, text::tracker::yata::YataImpl},
+    container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     id::{Counter, ID},
     op::Op,
     span::IdSpan,
@@ -18,9 +18,9 @@ mod content_map;
 mod cursor_map;
 mod y_span;
 #[cfg(not(feature = "fuzzing"))]
-mod yata;
+mod yata_impl;
 #[cfg(feature = "fuzzing")]
-pub mod yata;
+pub mod yata_impl;
 
 /// A tracker for a single text, we can use it to calculate the effect of an operation on a text.
 ///
