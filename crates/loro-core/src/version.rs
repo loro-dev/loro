@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    ops::{Deref, DerefMut, Sub},
+    ops::{Deref, DerefMut},
 };
 
 use fxhash::FxHashMap;

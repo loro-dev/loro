@@ -85,7 +85,7 @@ impl Container for TextContainer {
     }
 
     fn apply(&mut self, op: &OpProxy) {
-        let content = op.content_sliced();
+        let _content = op.content_sliced();
         todo!()
     }
 
