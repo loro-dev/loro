@@ -25,3 +25,7 @@ name = "yata"
 path = "fuzz_targets/yata.rs"
 test = false
 doc = false
+
+[profile.dev]
+lto = true
+opt-level = 3

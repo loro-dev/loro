@@ -370,7 +370,6 @@ dependencies = [
  "enum-as-inner",
  "fxhash",
  "im",
- "moveit",
  "num",
  "pin-project",
  "proptest",
@@ -412,12 +411,6 @@ checksum = "96590ba8f175222643a85693f33d26e9c8a015f599c216509b1a6894af675d34"
 dependencies = [
  "adler",
 ]
-
-[[package]]
-name = "moveit"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d756ffe4e38013507d35bf726a93fcdae2cae043ab5ce477f13857a335030d"
 
 [[package]]
 name = "new_debug_unreachable"

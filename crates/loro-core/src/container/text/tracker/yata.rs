@@ -169,7 +169,6 @@ pub mod fuzz {
         test::{Action, TestFramework},
         yata::Yata,
     };
-    use moveit::New;
     use rle::RleVec;
 
     use crate::{

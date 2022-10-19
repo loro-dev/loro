@@ -156,10 +156,6 @@ criteria = "safe-to-run"
 version = "0.5.4"
 criteria = "safe-to-run"
 
-[[exemptions.moveit]]
-version = "0.5.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.new_debug_unreachable]]
 version = "1.0.4"
 criteria = "safe-to-deploy"
@@ -471,4 +467,3 @@ criteria = "safe-to-deploy"
 [[exemptions.windows_x86_64_msvc]]
 version = "0.36.1"
 criteria = "safe-to-deploy"
-
