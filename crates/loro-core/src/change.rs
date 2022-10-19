@@ -78,6 +78,7 @@ impl HasLength for Change {
     }
 }
 
+#[derive(Debug)]
 pub struct ChangeMergeCfg {
     pub max_change_length: usize,
     pub max_change_interval: usize,

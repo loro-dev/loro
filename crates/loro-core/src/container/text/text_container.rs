@@ -1,5 +1,3 @@
-use std::ptr::NonNull;
-
 use fxhash::FxHashMap;
 use rle::RleVec;
 
@@ -8,10 +6,11 @@ use smallvec::SmallVec;
 use crate::{
     container::{Container, ContainerID, ContainerType},
     id::ID,
+    log_store::LogStoreWeakRef,
     op::OpProxy,
     span::IdSpan,
     value::LoroValue,
-    ClientID, LogStore,
+    ClientID,
 };
 
 #[derive(Clone, Debug)]
@@ -24,7 +23,7 @@ struct DagNode {
 pub struct TextContainer {
     id: ContainerID,
     sub_dag: FxHashMap<ClientID, RleVec<DagNode, ()>>,
-    log_store: NonNull<LogStore>,
+    log_store: LogStoreWeakRef,
 }
 
 impl TextContainer {
