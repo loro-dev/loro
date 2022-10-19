@@ -11,6 +11,13 @@ pub(crate) enum ListSlice {
     Unknown(usize),
 }
 
+impl ListSlice {
+    #[inline(always)]
+    pub fn new(range: Range<usize>) -> ListSlice {
+        Self::Slice(range)
+    }
+}
+
 #[derive(Debug, EnumAsInner)]
 pub(super) enum TextOpContent {
     Insert { id: ID, text: ListSlice, pos: usize },

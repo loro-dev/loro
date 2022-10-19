@@ -38,7 +38,7 @@ impl ContainerManager {
         self.containers.insert(id, container);
     }
 
-    pub fn get_or_create(&mut self, id: &ContainerID) -> &mut dyn Container {
+    pub fn get_or_create(&mut self, id: &ContainerID) -> &mut (dyn Container + 'static) {
         if !self.containers.contains_key(id) {
             let container = self.create(id.clone(), id.container_type());
             self.insert(id.clone(), container);
