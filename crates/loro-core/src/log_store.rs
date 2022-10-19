@@ -16,8 +16,10 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{manager::ContainerManager, Container},
+    dag::Dag,
     id::{ClientID, Counter},
     op::OpProxy,
+    span::HasIdSpan,
     Lamport, Op, Timestamp, ID,
 };
 
@@ -70,7 +72,6 @@ impl LogStore {
         container: Arc<RwLock<ContainerManager>>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        
 
         Arc::new(RwLock::new(Self {
             cfg,
@@ -226,5 +227,32 @@ impl LogStore {
     #[inline]
     pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
         iter::OpIter::new(&self.changes)
+    }
+}
+
+impl Dag for LogStore {
+    type Node = Change;
+
+    fn get(&self, id: ID) -> Option<&Self::Node> {
+        self.changes
+            .get(&id.client_id)
+            .and_then(|x| x.get(id.counter as usize).map(|x| x.element))
+    }
+
+    fn frontier(&self) -> &[ID] {
+        &self.frontier
+    }
+
+    fn vv(&self) -> crate::VersionVector {
+        self.changes
+            .iter()
+            .map(|(client, changes)| {
+                changes
+                    .vec()
+                    .last()
+                    .map(|x| x.id_last())
+                    .unwrap_or_else(|| ID::new(*client, 0))
+            })
+            .collect()
     }
 }

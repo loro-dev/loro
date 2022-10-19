@@ -6,11 +6,12 @@
 //! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
 
 use crate::{
+    dag::DagNode,
     id::{Counter, ID},
     op::Op,
-    span::HasId,
+    span::{HasId, HasLamport},
 };
-use rle::{HasLength, Mergable, RleVec};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -126,5 +127,36 @@ impl Mergable<ChangeMergeCfg> for Change {
 impl HasId for Change {
     fn id_start(&self) -> ID {
         self.id
+    }
+}
+
+impl HasLamport for Change {
+    fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+}
+
+impl Sliceable for Change {
+    // TODO: feels slow, need to confirm whether this affects performance
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self {
+            ops: self.ops.slice(from, to),
+            deps: if from > 0 {
+                smallvec::smallvec![self.id.inc(from as Counter - 1)]
+            } else {
+                self.deps.clone()
+            },
+            id: self.id.inc(from as Counter),
+            lamport: self.lamport + from as Lamport,
+            timestamp: self.timestamp,
+            freezed: self.freezed,
+            break_points: self.break_points.clone(),
+        }
+    }
+}
+
+impl DagNode for Change {
+    fn deps(&self) -> &[ID] {
+        &self.deps
     }
 }
