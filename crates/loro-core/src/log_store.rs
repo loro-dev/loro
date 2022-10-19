@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{manager::ContainerManager, text::string_pool::StringPool, Container},
+    container::{manager::ContainerManager, Container},
     id::{ClientID, Counter},
     op::OpProxy,
     Lamport, Op, Timestamp, ID,
@@ -70,7 +70,9 @@ impl LogStore {
         container: Arc<RwLock<ContainerManager>>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        let mut this = Arc::new(RwLock::new(Self {
+        
+
+        Arc::new(RwLock::new(Self {
             cfg,
             this_client_id,
             changes: FxHashMap::default(),
@@ -79,9 +81,7 @@ impl LogStore {
             frontier: Default::default(),
             container,
             _pin: PhantomPinned,
-        }));
-
-        this
+        }))
     }
 
     #[inline]

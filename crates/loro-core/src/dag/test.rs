@@ -200,7 +200,7 @@ impl TestDag {
         }
         update_frontier(&mut self.frontier, node.id_last(), &node.deps);
         let contains_start = self.contains(node.id_start());
-        let mut arr = self.nodes.entry(client_id).or_default();
+        let arr = self.nodes.entry(client_id).or_default();
         if contains_start {
             arr.pop();
             arr.push(node.clone());
@@ -542,7 +542,7 @@ mod find_path {
         }
 
         // println!("{}", a.mermaid());
-        let mut vec: Vec<_> = nodes.iter().enumerate().collect();
+        let vec: Vec<_> = nodes.iter().enumerate().collect();
         for &(i, (node, vv)) in vec.iter() {
             if i > 3 {
                 break;
@@ -1059,7 +1059,7 @@ mod dag_partial_iter {
                 break;
             }
 
-            for &(j, (other_node, other_vv)) in vec.iter() {
+            for &(j, (_other_node, other_vv)) in vec.iter() {
                 if i >= j {
                     continue;
                 }
