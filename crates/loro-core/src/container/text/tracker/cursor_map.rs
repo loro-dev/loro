@@ -6,7 +6,6 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 
-use moveit::DerefMove;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
