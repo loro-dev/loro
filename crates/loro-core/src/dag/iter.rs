@@ -27,7 +27,6 @@ pub(crate) fn iter_dag_with_vv<T, D: Dag<Node = T>>(dag: &D) -> DagIteratorVV<'_
     DagIteratorVV {
         dag,
         vv_map: Default::default(),
-        visited: VersionVector::new(),
         heap: BinaryHeap::new(),
     }
 }
@@ -102,7 +101,6 @@ pub(crate) struct DagIteratorVV<'a, T> {
     ///
     /// The ids in this heap are start ids of nodes. It won't be a id pointing to the middle of a node.
     heap: BinaryHeap<IdHeapItem>,
-    visited: VersionVector,
 }
 
 // TODO: Need benchmark on memory
@@ -127,8 +125,6 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                         lamport: node.lamport(),
                     });
                 }
-
-                self.visited.insert(client_id, 0);
             }
         }
 
@@ -158,7 +154,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             };
 
             vv.try_update_last(id);
-            self.vv_map.insert(node.id_start(), vv.clone());
+            self.vv_map.insert(id, vv.clone());
 
             // push next node from the same client to the heap
             let next_id = id.inc(node.len() as i32);
@@ -185,6 +181,7 @@ pub(crate) struct DagPartialIter<'a, Dag> {
     heap: BinaryHeap<Reverse<IdHeapItem>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct IterReturn<'a, T> {
     pub retreat: IdSpanVector,
     pub forward: IdSpanVector,
@@ -242,6 +239,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
             target_span
         );
 
+        // node_id may points into the middle of the node, we need to slice
         let node = self.dag.get(node_id).unwrap();
         // node start_id may be smaller than node_id
         let counter = node.id_span().counter;
@@ -266,8 +264,13 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
             }));
         }
 
-        let path = self.dag.find_path(&self.frontier, &[node_id]);
-        self.frontier = smallvec::smallvec![node_id];
+        let deps = if slice_from == 0 {
+            node.deps().iter().copied().collect()
+        } else {
+            smallvec::smallvec![node.id_start().inc(slice_from - 1)]
+        };
+        let path = self.dag.find_path(&self.frontier, &deps);
+        self.frontier = deps;
         Some(IterReturn {
             retreat: path.left,
             forward: path.right,

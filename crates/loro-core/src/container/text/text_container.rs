@@ -133,6 +133,7 @@ impl Container for TextContainer {
         let path = store.find_path(&latest_head, store.frontier());
         self.tracker.retreat(&path.left);
         for effect in self.tracker.iter_effects(path.left) {
+            dbg!(&effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {

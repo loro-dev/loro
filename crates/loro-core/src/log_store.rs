@@ -184,7 +184,7 @@ impl LogStore {
             client_id: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         };
-        let mut change = Change {
+        let change = Change {
             id,
             ops: ops.into(),
             deps: std::mem::take(&mut self.frontier),
@@ -194,7 +194,7 @@ impl LogStore {
             break_points: Default::default(),
         };
 
-        change.deps.push(ID::new(
+        self.frontier.push(ID::new(
             self.this_client_id,
             id.counter + change.len() as Counter - 1,
         ));
