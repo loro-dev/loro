@@ -153,4 +153,6 @@ impl Container for MapContainer {
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {
         todo!()
     }
+
+    fn to_export(&self, _op: &mut Op) {}
 }

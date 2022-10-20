@@ -561,11 +561,11 @@ mod find_path {
                     other_node.id
                 );
 
-                for k in j + 1..nodes.len() {
+                for iter in nodes[j + 1..].iter() {
                     let mut vv = vv.clone();
                     vv.merge(other_vv);
-                    let actual = a.find_path(&[node.id, other_node.id], &[vec[k].1 .0.id]);
-                    let expected = vv.diff(&vec[k].1 .1);
+                    let actual = a.find_path(&[node.id, other_node.id], &[iter.0.id]);
+                    let expected = vv.diff(&iter.1);
                     prop_assert_eq!(actual, expected);
                 }
             }

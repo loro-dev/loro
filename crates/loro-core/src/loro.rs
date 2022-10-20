@@ -6,6 +6,7 @@ use std::{
 use owning_ref::OwningRefMut;
 
 use crate::{
+    change::Change,
     configure::Configure,
     container::{
         manager::{ContainerInstance, ContainerManager},
@@ -13,7 +14,7 @@ use crate::{
         ContainerID, ContainerType,
     },
     id::ClientID,
-    InternalString, LogStore,
+    InternalString, LogStore, VersionVector,
 };
 
 pub struct LoroCore {
@@ -58,5 +59,15 @@ impl LoroCore {
                 .as_map_mut()
                 .unwrap()
         })
+    }
+
+    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change> {
+        let store = self.store.read().unwrap();
+        store.export(&remote_vv)
+    }
+
+    pub fn import(&mut self, changes: Vec<Change>) {
+        let mut store = self.store.write().unwrap();
+        store.import(changes)
     }
 }

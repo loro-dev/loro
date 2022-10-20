@@ -4,7 +4,11 @@
 //!
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
-use crate::{op::OpProxy, version::VersionVector, InternalString, LogStore, LoroValue, ID};
+use crate::{
+    op::{Op, OpProxy},
+    version::VersionVector,
+    InternalString, LogStore, LoroValue, ID,
+};
 
 use serde::Serialize;
 use std::{any::Any, fmt::Debug};
@@ -26,6 +30,9 @@ pub trait Container: Debug + Any + Unpin {
     fn get_value(&mut self) -> &LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;
+
+    /// convert an op to export format. for example [ListSlice] should be convert to str before export
+    fn to_export(&self, op: &mut Op);
 }
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]

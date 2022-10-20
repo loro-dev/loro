@@ -56,6 +56,14 @@ impl Container for ContainerInstance {
             ContainerInstance::Dyn(x) => x.get_value(),
         }
     }
+
+    fn to_export(&self, op: &mut crate::op::Op) {
+        match self {
+            ContainerInstance::Map(x) => x.to_export(op),
+            ContainerInstance::Text(x) => x.to_export(op),
+            ContainerInstance::Dyn(x) => x.to_export(op),
+        }
+    }
 }
 
 // TODO: containers snapshot: we need to resolve each container's parent even
