@@ -56,22 +56,6 @@ impl Container for ContainerInstance {
             ContainerInstance::Dyn(x) => x.get_value(),
         }
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        match self {
-            ContainerInstance::Map(x) => x.as_any(),
-            ContainerInstance::Text(x) => x.as_any(),
-            ContainerInstance::Dyn(x) => x.as_any(),
-        }
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        match self {
-            ContainerInstance::Map(x) => x.as_any_mut(),
-            ContainerInstance::Text(x) => x.as_any_mut(),
-            ContainerInstance::Dyn(x) => x.as_any_mut(),
-        }
-    }
 }
 
 // TODO: containers snapshot: we need to resolve each container's parent even
