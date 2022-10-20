@@ -1,10 +1,10 @@
-use rle::HasLength;
+use rle::{rle_tree::UnsafeCursor, HasLength};
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     id::{Counter, ID},
-    op::{Op, OpContent},
+    op::OpContent,
     span::IdSpan,
     version::IdSpanVector,
     VersionVector,
@@ -13,11 +13,14 @@ use crate::{
 use self::{
     content_map::ContentMap,
     cursor_map::{make_notify, CursorMap, IdSpanQueryResult},
-    y_span::{Status, StatusChange, YSpan},
+    effects_iter::EffectIter,
+    y_span::{Status, StatusChange, YSpan, YSpanTreeTrait},
 };
 
+pub use effects_iter::Effect;
 mod content_map;
 mod cursor_map;
+mod effects_iter;
 mod y_span;
 #[cfg(not(feature = "fuzzing"))]
 mod yata_impl;
@@ -42,7 +45,6 @@ pub struct Tracker {
     all_vv: VersionVector,
     /// current content version vector
     head_vv: VersionVector,
-    start_head: SmallVec<[ID; 2]>,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -54,7 +56,7 @@ impl From<ID> for u128 {
 }
 
 impl Tracker {
-    pub fn new(head: SmallVec<[ID; 2]>, start_vv: VersionVector) -> Self {
+    pub fn new(start_vv: VersionVector) -> Self {
         let min = ID::unknown(0);
         let max = ID::unknown(Counter::MAX / 2);
         let len = (max.counter - min.counter) as usize;
@@ -76,7 +78,6 @@ impl Tracker {
             content,
             id_to_cursor,
             start_vv,
-            start_head: head,
             client_id: 0,
             head_vv: Default::default(),
             all_vv: Default::default(),
@@ -144,18 +145,22 @@ impl Tracker {
                 span.1.start,
                 span.1.end,
             ));
-            for delete in deletes {
+            for (id, delete) in deletes {
                 for deleted_span in delete.iter() {
                     to_delete.append(
                         &mut self
                             .id_to_cursor
                             .get_cursors_at_id_span(*deleted_span)
-                            .inserts,
+                            .inserts
+                            .iter()
+                            .map(|x| x.1)
+                            .collect(),
                     );
                 }
             }
 
-            to_set_as_applied.append(&mut inserts);
+            // TODO: maybe we can skip this collect
+            to_set_as_applied.append(&mut inserts.iter().map(|x| x.1).collect());
         }
 
         self.content.update_at_cursors_twice(
@@ -183,18 +188,22 @@ impl Tracker {
                 span.1.start,
                 span.1.end,
             ));
-            for delete in deletes {
+            for (id, delete) in deletes {
                 for deleted_span in delete.iter() {
                     to_undo_delete.append(
                         &mut self
                             .id_to_cursor
                             .get_cursors_at_id_span(*deleted_span)
-                            .inserts,
+                            .inserts
+                            .iter()
+                            .map(|x| x.1)
+                            .collect(),
                     );
                 }
             }
 
-            to_set_as_future.append(&mut inserts);
+            // TODO: maybe we can skip this collect
+            to_set_as_future.append(&mut inserts.iter().map(|x| x.1).collect());
         }
 
         self.content.update_at_cursors_twice(
@@ -210,7 +219,7 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    pub fn apply(&mut self, id: ID, content: &OpContent) {
+    pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
         assert_eq!(*self.head_vv.get(&id.client_id).unwrap_or(&0), id.counter);
         self.head_vv.set_end(id.inc(content.len() as i32));
         match &content {
@@ -235,19 +244,48 @@ impl Tracker {
         }
     }
 
+    fn update_cursors(
+        &mut self,
+        mut cursors: SmallVec<[UnsafeCursor<'_, YSpan, YSpanTreeTrait>; 2]>,
+        change: StatusChange,
+    ) -> i32 {
+        let mut changed: i32 = 0;
+        self.content.update_at_cursors(
+            &mut cursors,
+            &mut |v| {
+                let before = v.len() as i32;
+                v.status.apply(change);
+                let after = v.len() as i32;
+                changed += after - before;
+            },
+            &mut make_notify(&mut self.id_to_cursor),
+        );
+
+        changed
+    }
+
     fn update_spans(&mut self, spans: &[IdSpan], change: StatusChange) {
-        let mut cursors = Vec::new();
+        let mut cursors: SmallVec<
+            [UnsafeCursor<YSpan, rle::rle_tree::tree_trait::CumulateTreeTrait<YSpan, 4>>; 2],
+        > = SmallVec::with_capacity(spans.len());
         for span in spans.iter() {
-            let mut inserts = self.id_to_cursor.get_cursors_at_id_span(*span).inserts;
-            cursors.append(&mut inserts);
+            let inserts = self.id_to_cursor.get_cursors_at_id_span(*span).inserts;
+            // TODO: maybe we can skip this collect
+            for x in inserts.iter() {
+                cursors.push(x.1);
+            }
         }
 
         self.content.update_at_cursors(
-            cursors,
+            &mut cursors,
             &mut |v| {
                 v.status.apply(change);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
+    }
+
+    pub fn iter_effects(&mut self, target: IdSpanVector) -> EffectIter<'_> {
+        EffectIter::new(self, target)
     }
 }

@@ -1,6 +1,7 @@
 use std::{hash::Hash, marker::PhantomData, ptr::NonNull};
 
 use crdt_list::crdt::GetOp;
+use num::FromPrimitive;
 
 use crate::{HasLength, Rle, RleTreeTrait};
 
@@ -173,6 +174,14 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
                 0,
             )
         })
+    }
+
+    /// # Safety
+    ///
+    /// we need to make sure that the leaf is still valid
+    pub unsafe fn get_index(&self) -> A::Int {
+        let index = A::get_index(self.leaf.as_ref(), self.index);
+        index + A::Int::from_usize(self.offset).unwrap()
     }
 
     /// move cursor forward

@@ -165,14 +165,13 @@ impl LogStore {
             }
         }
 
-        let change = self.push_change(change);
+        // TODO: find a way to remove this clone?
+        let change = self.push_change(change).clone();
 
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
-        let mut offset = 0;
         for op in change.ops.iter() {
-            self.apply_remote_op(change, op, offset);
-            offset += op.len() as u32;
+            self.apply_remote_op(&change, op);
         }
 
         self.frontier = self
@@ -206,10 +205,10 @@ impl LogStore {
 
     /// this function assume op is not included in the log, and its deps are included.
     #[inline]
-    fn apply_remote_op(&mut self, change: &Change, op: &Op, offset: u32) {
+    fn apply_remote_op(&mut self, change: &Change, op: &Op) {
         let mut container = self.container.write().unwrap();
         let container = container.get_or_create(op.container());
-        container.apply(&OpProxy::new(change, op, offset, None), self);
+        container.apply(&OpProxy::new(change, op, None), self);
     }
 
     #[inline]

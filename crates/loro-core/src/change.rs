@@ -18,7 +18,7 @@ pub type Timestamp = i64;
 pub type Lamport = u32;
 
 /// A `Change` contains a list of [Op]s.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Change {
     pub(crate) ops: RleVec<Op>,
     pub(crate) deps: SmallVec<[ID; 2]>,

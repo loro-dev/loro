@@ -91,7 +91,8 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// - If index is at the end of an element, `found` should be true
     /// - If target index is after last child, then `child_index`  = children.len().wrapping_sub(1), `offset` = children.last().unwrap().len()
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize>;
-
+    /// calculate the index of the child element of a leaf node
+    fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int;
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int;
     fn len_internal(node: &InternalNode<'_, T, Self>) -> Self::Int;
     fn check_cache_leaf(_node: &LeafNode<'_, T, Self>) {}
@@ -196,6 +197,33 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
 
     fn check_cache_leaf(node: &LeafNode<'_, T, Self>) {
         assert_eq!(node.cache, node.children().iter().map(|x| x.len()).sum());
+    }
+
+    fn get_index(node: &LeafNode<'_, T, Self>, mut child_index: usize) -> Self::Int {
+        debug_assert!(!node.is_deleted());
+        let mut index = 0;
+        for i in 0..child_index {
+            index += node.children[i].len();
+        }
+
+        child_index = node.get_index_in_parent().unwrap();
+        // SAFETY: parent is valid if node is valid
+        let mut node = unsafe { node.parent.as_ref() };
+        loop {
+            for i in 0..child_index {
+                index += node.children[i].len();
+            }
+
+            if let Some(parent) = node.parent {
+                child_index = node.get_index_in_parent().unwrap();
+                // SAFETY: parent is valid if node is valid
+                node = unsafe { parent.as_ref() };
+            } else {
+                break;
+            }
+        }
+
+        index
     }
 }
 
@@ -381,6 +409,10 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
                 .unwrap()
         );
         assert_eq!(node.cache.start, get_cache(node.children()[0]).start);
+    }
+
+    fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int {
+        node.children[child_index].get_global_start()
     }
 }
 

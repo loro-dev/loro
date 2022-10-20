@@ -237,7 +237,7 @@ pub mod fuzz {
         }
 
         fn new_container(client_id: usize) -> Self::Container {
-            let mut tracker = Tracker::new();
+            let mut tracker = Tracker::new(Default::default());
             #[cfg(feature = "fuzzing")]
             {
                 tracker.client_id = client_id as ClientID;
