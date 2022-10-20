@@ -5,7 +5,7 @@ use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     dag::{Dag, DagUtils},
     id::ID,
-    log_store::LogStoreRef,
+    log_store::LogStoreWeakRef,
     op::{InsertContent, Op, OpContent, OpProxy},
     smstring::SmString,
     span::{HasIdSpan, IdSpan},
@@ -28,7 +28,7 @@ struct DagNode {
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    log_store: LogStoreRef,
+    log_store: LogStoreWeakRef,
     state: RleTree<ListSlice, ListSliceTreeTrait>,
     raw_str: StringPool,
     tracker: Tracker,
@@ -36,7 +36,7 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub fn new(id: ContainerID, log_store: LogStoreRef) -> Self {
+    pub fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
         Self {
             id,
             log_store,
@@ -48,7 +48,7 @@ impl TextContainer {
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
-        let id = if let Ok(mut store) = self.log_store.write() {
+        let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
             let slice = ListSlice::from_range(self.raw_str.alloc(text));
             self.state.insert(pos, slice.clone());
@@ -69,7 +69,7 @@ impl TextContainer {
     }
 
     pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
-        let id = if let Ok(mut store) = self.log_store.write() {
+        let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
             let op = Op::new(
                 id,

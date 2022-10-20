@@ -87,22 +87,19 @@ impl Actionable for String {
                 }
             }
             Action::Del { pos, len } => {
-                if self.len() == 0 {
+                if self.is_empty() {
                     *len = 0;
+                    *pos = 0;
                     return;
                 }
 
-                let mut changed = false;
                 while !self.is_char_boundary(*pos) {
                     *pos = (*pos + 1) % self.len();
-                    changed = true;
                 }
 
-                if changed {
-                    *len = 1;
-                    while !self.is_char_boundary(*pos + *len) {
-                        *len += 1;
-                    }
+                *len = (*len).min(self.len() - (*pos));
+                while !self.is_char_boundary(*pos + *len) {
+                    *len += 1;
                 }
             }
         }
@@ -131,7 +128,7 @@ impl Actionable for TextContainer {
 }
 
 pub fn test_single_client(mut actions: Vec<Action>) {
-    let mut store = LoroCore::new(Default::default(), None);
+    let mut store = LoroCore::new(Default::default(), Some(1));
     let mut text_container = store.get_text_container("haha".into());
     let mut ground_truth = String::new();
     let mut applied = Vec::new();
@@ -159,30 +156,238 @@ mod test {
 
     #[test]
     fn test() {
-        test_single_client(vec![
+        test_single_client(vec! [
             Ins {
-                content: "璤\u{13}\u{13}\u{13}".into(),
-                pos: 243,
+                content: "\u{16}\u{16}\u{16}\u{16}\u{16}#####BBBBSSSSSSSSS".into(),
+                pos: 60797853338129363,
             },
             Ins {
-                content: "\0\0\0\0?\0\0\0".into(),
-                pos: 11240984669950312448,
+                content: "\u{13}T0\u{18}5\u{13}".into(),
+                pos: 1369375761697341439,
             },
             Ins {
-                content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0".into(),
-                pos: 129,
+                content: "\0\0\0SS".into(),
+                pos: 280733345338323,
+            },
+            Ins {
+                content: "**".into(),
+                pos: 5444570,
+            },
+            Ins {
+                content: "\u{13}".into(),
+                pos: 5692550972993381338,
+            },
+            Ins {
+                content: "OOOOOOOOOOOOOOBBBBBBBBBBBBBBBBB#\0\0####".into(),
+                pos: 138028458976,
             },
             Ins {
                 content: "".into(),
-                pos: 91344728162323,
+                pos: 267263250998051,
             },
             Ins {
                 content: "".into(),
-                pos: 6148914691236517150,
+                pos: 4774378554966147091,
             },
-            Del {
-                pos: 12460594852558187539,
-                len: 1430476722683303114,
+            Ins {
+                content: "BBBBB#\0\0######## \0\0\0######".into(),
+                pos: 3038287259207217298,
+            },
+            Ins {
+                content: "".into(),
+                pos: 16645325113485036074,
+            },
+            Ins {
+                content: "".into(),
+                pos: 23362835702677503,
+            },
+            Ins {
+                content: "S".into(),
+                pos: 280733345338323,
+            },
+            Ins {
+                content: "*UUU".into(),
+                pos: 2761092332,
+            },
+            Ins {
+                content: "\u{5ec}".into(),
+                pos: 15332975680940594378,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038287259199214554,
+            },
+            Ins {
+                content: "PPPPPPPPPPPPP\u{13}".into(),
+                pos: 6004374254117322995,
+            },
+            Ins {
+                content: "SSSSSS".into(),
+                pos: 48379484722131,
+            },
+            Ins {
+                content: ",\0\0\0UUUU".into(),
+                pos: 2761092332,
+            },
+            Ins {
+                content: "\u{5ec}".into(),
+                pos: 15332975680940594378,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038287259199214554,
+            },
+            Ins {
+                content: "".into(),
+                pos: 5787213827046133840,
+            },
+            Ins {
+                content: "PPPPPPPPPPPPPPPP*****".into(),
+                pos: 2762368,
+            },
+            Ins {
+                content: "".into(),
+                pos: 0,
+            },
+            Ins {
+                content: "".into(),
+                pos: 0,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038287259199220266,
+            },
+            Ins {
+                content: "*\0\u{13}EEEEEEEEEEEEEEEEEEEEEEEE".into(),
+                pos: 4179340455027348442,
+            },
+            Ins {
+                content: "\0UUUU".into(),
+                pos: 2761092332,
+            },
+            Ins {
+                content: "\u{5ec}".into(),
+                pos: 15332976539934053578,
+            },
+            Ins {
+                content: "ڨ\0\0\0*******************".into(),
+                pos: 3038287259199220352,
+            },
+            Ins {
+                content: "*&*****".into(),
+                pos: 6004234345560396434,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038287259199220307,
+            },
+            Ins {
+                content: "******".into(),
+                pos: 3038287259889816210,
+            },
+            Ins {
+                content: "*****".into(),
+                pos: 11350616413819538,
+            },
+            Ins {
+                content: "".into(),
+                pos: 6004234345560363859,
+            },
+            Ins {
+                content: "S".into(),
+                pos: 60797853338129363,
+            },
+            Ins {
+                content: "\u{13}T3\u{18}5\u{13}".into(),
+                pos: 1369375761697341439,
+            },
+            Ins {
+                content: "\0\0\0SS".into(),
+                pos: 280733345338323,
+            },
+            Ins {
+                content: "*UUU".into(),
+                pos: 2761092332,
+            },
+            Ins {
+                content: "\u{5ec}".into(),
+                pos: 15332975680940594378,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038287259199214554,
+            },
+            Ins {
+                content: "".into(),
+                pos: 5787213827046133840,
+            },
+            Ins {
+                content: "".into(),
+                pos: 5787213827046133840,
+            },
+            Ins {
+                content: "PPPP*****".into(),
+                pos: 2762368,
+            },
+            Ins {
+                content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0******".into(),
+                pos: 3038287259199220266,
+            },
+            Ins {
+                content: "EEEEEEEEEEEEEEEEEEEEEEE".into(),
+                pos: 4179340455027348442,
+            },
+            Ins {
+                content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0 ,\0\0\0UUUU".into(),
+                pos: 2761092332,
+            },
+            Ins {
+                content: "\u{5ec}".into(),
+                pos: 14483766535198004426,
+            },
+            Ins {
+                content: "".into(),
+                pos: 3038240898625886739,
+            },
+            Ins {
+                content: "*************".into(),
+                pos: 3038287259199220352,
+            },
+            Ins {
+                content: "*&*****".into(),
+                pos: 6004234345560396434,
+            },
+            Ins {
+                content: "S*********\0*******".into(),
+                pos: 3038287259889816210,
+            },
+            Ins {
+                content: "*****".into(),
+                pos: 11350616413819538,
+            },
+            Ins {
+                content: "SSSSSSSSSSSSS".into(),
+                pos: 60797853338129363,
+            },
+            Ins {
+                content: "\u{13}T4\u{18}5\u{13}".into(),
+                pos: 1369375761697341439,
+            },
+            Ins {
+                content: "\0\0\0SS".into(),
+                pos: 3834029289772372947,
+            },
+            Ins {
+                content: "55555555555555555555555555555555555555555555555555555555555555555555555555555555555".into(),
+                pos: 280603991029045,
+            },
+            Ins {
+                content: "".into(),
+                pos: 356815350314,
+            },
+            Ins {
+                content: "\u{13}\0\u{13}".into(),
+                pos: 1369095330717705178,
             },
         ])
     }

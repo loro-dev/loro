@@ -50,7 +50,7 @@ impl LoroCore {
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, container),
-                self.log_store.clone(),
+                Arc::downgrade(&self.log_store),
             )
         })
     }
@@ -63,7 +63,7 @@ impl LoroCore {
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, ContainerType::Map),
-                self.log_store.clone(),
+                Arc::downgrade(&self.log_store),
             )
             .as_map_mut()
             .unwrap()
@@ -78,7 +78,7 @@ impl LoroCore {
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, ContainerType::Text),
-                self.log_store.clone(),
+                Arc::downgrade(&self.log_store),
             )
             .as_text_mut()
             .unwrap()
