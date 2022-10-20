@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
-use crate::LogStore;
+use crate::{log_store::LogStoreRef, LogStore};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -76,9 +76,17 @@ pub struct ContainerManager {
 
 impl ContainerManager {
     #[inline]
-    pub fn create(&mut self, id: ContainerID, container_type: ContainerType) -> ContainerInstance {
+    pub fn create(
+        &mut self,
+        id: ContainerID,
+        container_type: ContainerType,
+        log_store: LogStoreRef,
+    ) -> ContainerInstance {
         match container_type {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
+            ContainerType::Text => {
+                ContainerInstance::Text(Box::new(TextContainer::new(id, log_store)))
+            }
             _ => unimplemented!(),
         }
     }
@@ -98,9 +106,13 @@ impl ContainerManager {
         self.containers.insert(id, container);
     }
 
-    pub fn get_or_create(&mut self, id: &ContainerID) -> &mut ContainerInstance {
+    pub fn get_or_create(
+        &mut self,
+        id: &ContainerID,
+        log_store: LogStoreRef,
+    ) -> &mut ContainerInstance {
         if !self.containers.contains_key(id) {
-            let container = self.create(id.clone(), id.container_type());
+            let container = self.create(id.clone(), id.container_type(), log_store);
             self.insert(id.clone(), container);
         }
 

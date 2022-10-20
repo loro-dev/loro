@@ -24,6 +24,7 @@ pub struct RleVec<T, Cfg = ()> {
     cfg: Cfg,
 }
 
+#[derive(Clone)]
 pub struct SearchResult<'a, T> {
     pub element: &'a T,
     pub merged_index: usize,
@@ -86,7 +87,8 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
                     });
                 }
             }
-            unreachable!();
+
+            return None;
         }
 
         let mut start = 0;
@@ -120,13 +122,23 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
     /// get a slice from `from` to `to` with atom indexes
     pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
         let from_result = self.get(from).unwrap();
-        let to_result = self.get(to).unwrap();
-        SliceIterator {
-            vec: &self.vec,
-            cur_index: from_result.merged_index,
-            cur_offset: from_result.offset,
-            end_index: to_result.merged_index,
-            end_offset: to_result.offset,
+        let to_result = self.get(to);
+        if let Some(to_result) = to_result {
+            SliceIterator {
+                vec: &self.vec,
+                cur_index: from_result.merged_index,
+                cur_offset: from_result.offset,
+                end_index: Some(to_result.merged_index),
+                end_offset: Some(to_result.offset),
+            }
+        } else {
+            SliceIterator {
+                vec: &self.vec,
+                cur_index: from_result.merged_index,
+                cur_offset: from_result.offset,
+                end_index: None,
+                end_offset: None,
+            }
         }
     }
 
@@ -227,25 +239,28 @@ pub struct SliceIterator<'a, T> {
     vec: &'a Vec<T>,
     cur_index: usize,
     cur_offset: usize,
-    end_index: usize,
-    end_offset: usize,
+    end_index: Option<usize>,
+    end_offset: Option<usize>,
 }
 
 impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
     type Item = Slice<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cur_index == self.end_index {
-            if self.cur_offset == self.end_offset {
+        let end_index = self.end_index.unwrap_or(self.vec.len() - 1);
+        if self.cur_index == end_index {
+            let elem = &self.vec[self.cur_index];
+            let end = self.end_offset.unwrap_or(elem.len());
+            if self.cur_offset == end {
                 return None;
             }
 
             let ans = Slice {
-                value: &self.vec[self.cur_index],
+                value: elem,
                 start: self.cur_offset,
-                end: self.end_offset,
+                end,
             };
-            self.cur_offset = self.end_offset;
+            self.cur_offset = end;
             return Some(ans);
         }
 

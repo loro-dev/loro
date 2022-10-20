@@ -1,9 +1,10 @@
+use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
 use crate::{container::ContainerID, smstring::SmString, InternalString};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
-#[derive(Debug, PartialEq, Clone, serde::Serialize)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, EnumAsInner)]
 pub enum LoroValue {
     Null,
     Bool(bool),
@@ -48,166 +49,6 @@ impl From<LoroValue> for InsertValue {
     }
 }
 
-// stupid getter and is_xxx
-impl LoroValue {
-    #[inline]
-    pub fn is_null(&self) -> bool {
-        matches!(self, LoroValue::Null)
-    }
-
-    #[inline]
-    pub fn is_bool(&self) -> bool {
-        matches!(self, LoroValue::Bool(_))
-    }
-
-    #[inline]
-    pub fn is_double(&self) -> bool {
-        matches!(self, LoroValue::Double(_))
-    }
-
-    #[inline]
-    pub fn is_integer(&self) -> bool {
-        matches!(self, LoroValue::Integer(_))
-    }
-
-    #[inline]
-    pub fn is_string(&self) -> bool {
-        matches!(self, LoroValue::String(_))
-    }
-
-    #[inline]
-    pub fn is_list(&self) -> bool {
-        matches!(self, LoroValue::List(_))
-    }
-
-    #[inline]
-    pub fn is_map(&self) -> bool {
-        matches!(self, LoroValue::Map(_))
-    }
-
-    #[inline]
-    pub fn is_unresolved(&self) -> bool {
-        matches!(self, LoroValue::Unresolved(_))
-    }
-
-    #[inline]
-    pub fn is_resolved(&self) -> bool {
-        !self.is_unresolved()
-    }
-
-    #[inline]
-    pub fn as_map(&self) -> Option<&FxHashMap<InternalString, LoroValue>> {
-        match self {
-            LoroValue::Map(m) => Some(m),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_list(&self) -> Option<&Vec<LoroValue>> {
-        match self {
-            LoroValue::List(l) => Some(l),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_string(&self) -> Option<&SmString> {
-        match self {
-            LoroValue::String(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_integer(&self) -> Option<i32> {
-        match self {
-            LoroValue::Integer(i) => Some(*i),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_double(&self) -> Option<f64> {
-        match self {
-            LoroValue::Double(d) => Some(*d),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            LoroValue::Bool(b) => Some(*b),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_container(&self) -> Option<&ContainerID> {
-        match self {
-            LoroValue::Unresolved(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_map_mut(&mut self) -> Option<&mut FxHashMap<InternalString, LoroValue>> {
-        match self {
-            LoroValue::Map(m) => Some(m),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_list_mut(&mut self) -> Option<&mut Vec<LoroValue>> {
-        match self {
-            LoroValue::List(l) => Some(l),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_string_mut(&mut self) -> Option<&mut SmString> {
-        match self {
-            LoroValue::String(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_integer_mut(&mut self) -> Option<&mut i32> {
-        match self {
-            LoroValue::Integer(i) => Some(i),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_double_mut(&mut self) -> Option<&mut f64> {
-        match self {
-            LoroValue::Double(d) => Some(d),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_bool_mut(&mut self) -> Option<&mut bool> {
-        match self {
-            LoroValue::Bool(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn as_container_mut(&mut self) -> Option<&mut ContainerID> {
-        match self {
-            LoroValue::Unresolved(c) => Some(c),
-            _ => None,
-        }
-    }
-}
-
 /// [InsertValue] can be inserted to Map or List
 #[derive(Debug, PartialEq, Clone)]
 pub enum InsertValue {
@@ -222,10 +63,7 @@ pub enum InsertValue {
 #[cfg(test)]
 pub(crate) mod proptest {
     use proptest::prelude::*;
-    use proptest::{prop_oneof};
-
-    
-    
+    use proptest::prop_oneof;
 
     use super::InsertValue;
 
