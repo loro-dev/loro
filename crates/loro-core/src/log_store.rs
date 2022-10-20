@@ -10,7 +10,7 @@ use std::{
 use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, Sliceable};
-use serde::__private::de::Content;
+
 use smallvec::SmallVec;
 
 use crate::{

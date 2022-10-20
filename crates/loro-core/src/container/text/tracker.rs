@@ -36,9 +36,8 @@ pub mod yata_impl;
 ///
 #[derive(Debug)]
 pub struct Tracker {
-    // #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "fuzzing")]
     client_id: u64,
-    // FIXME: vv state is not up to date
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
     /// latest applied ops version vector
@@ -78,6 +77,7 @@ impl Tracker {
             content,
             id_to_cursor,
             start_vv,
+            #[cfg(feature = "fuzzing")]
             client_id: 0,
             head_vv: Default::default(),
             all_vv: Default::default(),
@@ -125,27 +125,21 @@ impl Tracker {
     }
 
     fn checkout(&mut self, vv: VersionVector) {
-        todo!();
-        // let diff = self.head_vv.diff(&vv);
-        // self.retreat(&diff.get_id_spans_left().collect::<Vec<_>>());
-        // self.forward(&diff.get_id_spans_right().collect::<Vec<_>>());
-        // self.head_vv = vv;
+        let diff = self.head_vv.diff(&vv);
+        self.retreat(&diff.left);
+        self.forward(&diff.right);
+        self.head_vv = vv;
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
-        todo!("update vvs");
         let mut to_set_as_applied = Vec::with_capacity(spans.len());
         let mut to_delete = Vec::with_capacity(spans.len());
         for span in spans.iter() {
-            let IdSpanQueryResult {
-                mut inserts,
-                deletes,
-            } = self.id_to_cursor.get_cursors_at_id_span(IdSpan::new(
-                *span.0,
-                span.1.start,
-                span.1.end,
-            ));
-            for (id, delete) in deletes {
+            self.head_vv.set_end(ID::new(*span.0, span.1.end));
+            let IdSpanQueryResult { inserts, deletes } = self
+                .id_to_cursor
+                .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
+            for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
                     to_delete.append(
                         &mut self
@@ -176,19 +170,14 @@ impl Tracker {
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
-        todo!("update vvs");
         let mut to_set_as_future = Vec::with_capacity(spans.len());
         let mut to_undo_delete = Vec::with_capacity(spans.len());
         for span in spans.iter() {
-            let IdSpanQueryResult {
-                mut inserts,
-                deletes,
-            } = self.id_to_cursor.get_cursors_at_id_span(IdSpan::new(
-                *span.0,
-                span.1.start,
-                span.1.end,
-            ));
-            for (id, delete) in deletes {
+            self.head_vv.set_end(ID::new(*span.0, span.1.start));
+            let IdSpanQueryResult { inserts, deletes } = self
+                .id_to_cursor
+                .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
+            for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
                     to_undo_delete.append(
                         &mut self
@@ -221,7 +210,9 @@ impl Tracker {
     /// apply an operation directly to the current tracker
     pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
         assert_eq!(*self.head_vv.get(&id.client_id).unwrap_or(&0), id.counter);
+        assert_eq!(*self.all_vv.get(&id.client_id).unwrap_or(&0), id.counter);
         self.head_vv.set_end(id.inc(content.len() as i32));
+        self.all_vv.set_end(id.inc(content.len() as i32));
         match &content {
             crate::op::OpContent::Normal { content } => {
                 let text_content = content.as_list().expect("Content is not for list");
