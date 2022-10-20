@@ -5,7 +5,7 @@ use rle::{
     HasLength, RleTree, RleVec,
 };
 
-use crate::{id::ID, span::IdSpan};
+use crate::{container::text::text_content::ListSlice, id::ID, span::IdSpan};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
@@ -18,7 +18,13 @@ pub(super) struct ContentMap(RleTree<YSpan, YSpanTreeTrait>);
 
 impl ContentMap {
     #[inline]
-    pub(super) fn get_yspan_at_pos(&self, id: ID, pos: usize, len: usize) -> YSpan {
+    pub(super) fn get_yspan_at_pos(
+        &self,
+        id: ID,
+        pos: usize,
+        len: usize,
+        slice: ListSlice,
+    ) -> YSpan {
         let (left, right) = self.get_sibling_at(pos);
         YSpan {
             origin_left: left,
@@ -26,6 +32,7 @@ impl ContentMap {
             id,
             len,
             status: Default::default(),
+            slice,
         }
     }
 

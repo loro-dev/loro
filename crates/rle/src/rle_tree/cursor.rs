@@ -178,6 +178,13 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
 
     /// # Safety
     ///
+    /// we need to make sure that the cursor is still valid
+    pub unsafe fn get_sliced(&self) -> T {
+        self.as_ref().slice(self.offset, self.offset + self.len)
+    }
+
+    /// # Safety
+    ///
     /// we need to make sure that the leaf is still valid
     pub unsafe fn get_index(&self) -> A::Int {
         let leaf = self.leaf.as_ref();

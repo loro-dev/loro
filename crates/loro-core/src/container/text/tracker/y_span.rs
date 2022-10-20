@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{id::Counter, span::IdSpan, ContentType, InsertContentTrait, ID};
+use crate::{
+    container::text::text_content::ListSlice, id::Counter, span::IdSpan, ContentType,
+    InsertContentTrait, ID,
+};
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
@@ -57,13 +60,15 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YSpan {
     pub id: ID,
     pub len: usize,
     pub status: Status,
     pub origin_left: Option<ID>,
     pub origin_right: Option<ID>,
+    // TODO: remove this field when the system is stable
+    pub slice: ListSlice,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +148,7 @@ impl Sliceable for YSpan {
             id: self.id.inc(from as i32),
             len: to - from,
             status: self.status.clone(),
+            slice: self.slice.slice(from, to),
         }
     }
 }
@@ -217,6 +223,7 @@ mod test {
                 status: Status::new(),
                 origin_left: None,
                 origin_right: None,
+                slice: Default::default(),
             },
             YSpan {
                 id: ID::new(1, 1),
@@ -227,6 +234,7 @@ mod test {
                     counter: 2,
                 }),
                 origin_right: None,
+                slice: Default::default(),
             },
             YSpan {
                 id: ID::new(1, 2),
@@ -238,6 +246,7 @@ mod test {
                 },
                 origin_left: None,
                 origin_right: None,
+                slice: Default::default(),
             },
             YSpan {
                 id: ID::new(1, 3),
@@ -245,6 +254,7 @@ mod test {
                 status: Status::new(),
                 origin_left: None,
                 origin_right: None,
+                slice: Default::default(),
             },
             YSpan {
                 id: ID::new(1, 4),
@@ -252,6 +262,7 @@ mod test {
                 status: Status::new(),
                 origin_left: None,
                 origin_right: None,
+                slice: Default::default(),
             },
         ];
         let mut t = Table::new(y_spans);
@@ -281,6 +292,7 @@ mod test {
                     id: ID::new(0, 1),
                     len: 1,
                     status: Default::default(),
+                    slice: Default::default(),
                 })),
             },
             ContainerID::Normal {
@@ -297,6 +309,7 @@ mod test {
                     id: ID::new(0, 2),
                     len: 1,
                     status: Default::default(),
+                    slice: Default::default(),
                 })),
             },
             ContainerID::Normal {
@@ -323,6 +336,7 @@ mod test {
                     id: ID::new(0, 1),
                     len: 4,
                     status: Default::default(),
+                    slice: Default::default(),
                 })),
             },
             ContainerID::Normal {
@@ -339,6 +353,7 @@ mod test {
                     id: ID::new(0, 5),
                     len: 4,
                     status: Default::default(),
+                    slice: Default::default(),
                 })),
             },
             ContainerID::Normal {

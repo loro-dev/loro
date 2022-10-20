@@ -6,17 +6,27 @@ use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceabl
 use crate::{id::ID, smstring::SmString};
 
 #[derive(PartialEq, Eq, Debug, EnumAsInner, Clone)]
-pub(crate) enum ListSlice {
+pub enum ListSlice {
     RawStr(SmString),
     // TODO: Use small compact rle vec
     Slice(Range<usize>),
     Unknown(usize),
 }
 
+impl Default for ListSlice {
+    fn default() -> Self {
+        ListSlice::Unknown(0)
+    }
+}
+
 impl ListSlice {
     #[inline(always)]
     pub fn from_range(range: Range<usize>) -> ListSlice {
         Self::Slice(range)
+    }
+
+    pub fn from_raw(str: SmString) -> ListSlice {
+        Self::RawStr(str)
     }
 }
 
@@ -47,11 +57,7 @@ impl HasLength for ListSlice {
 impl Sliceable for ListSlice {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            ListSlice::RawStr(s) => {
-                let mut new_s = SmString::new();
-                new_s.push_str(&s[from..to]);
-                ListSlice::RawStr(new_s)
-            }
+            ListSlice::RawStr(s) => ListSlice::RawStr(s.0[from..to].into()),
             ListSlice::Slice(x) => ListSlice::Slice(x.slice(from, to)),
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
         }
