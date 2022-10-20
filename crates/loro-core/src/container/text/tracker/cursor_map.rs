@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::Debug,
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -11,8 +12,12 @@ use rle::{
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVec, Sliceable, ZeroElement,
 };
+use smallvec::SmallVec;
 
-use crate::{id::ID, span::IdSpan};
+use crate::{
+    id::ID,
+    span::{HasId, IdSpan},
+};
 
 use super::y_span::{YSpan, YSpanTreeTrait};
 
@@ -60,6 +65,16 @@ impl Marker {
             }
             Marker::Delete(_) => None,
         }
+    }
+
+    pub fn get_first_span(
+        &self,
+        id_span: IdSpan,
+    ) -> Option<UnsafeCursor<'static, YSpan, YSpanTreeTrait>> {
+        let mut ans = self.get_spans(id_span);
+        // SAFETY: inner invariants ensures that the cursor is valid
+        ans.sort_by_cached_key(|x| unsafe { x.as_ref() }.id.counter);
+        ans.into_iter().next()
     }
 
     pub fn get_spans(&self, id_span: IdSpan) -> Vec<UnsafeCursor<'static, YSpan, YSpanTreeTrait>> {
@@ -215,9 +230,10 @@ pub(super) struct IdSpanQueryResult<'a> {
 }
 
 #[derive(EnumAsInner)]
-pub enum FirstCursorResult<'a> {
+pub enum FirstCursorResult {
+    // TODO: REMOVE id field?
     Ins(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>),
-    Del(ID, &'a RleVec<IdSpan>),
+    Del(ID, RleVec<IdSpan>),
 }
 
 impl CursorMap {
@@ -249,16 +265,21 @@ impl CursorMap {
     }
 
     pub fn get_first_cursors_at_id_span(&self, span: IdSpan) -> Option<FirstCursorResult> {
+        // TODO: do we need this index
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
             let id: ID = id.into();
             match marker {
                 Marker::Insert { .. } => {
-                    let spans = marker.get_spans(span);
-                    if !spans.is_empty() {
-                        return Some(FirstCursorResult::Ins(id, spans[0]));
+                    if let Some(cursor) = marker.get_first_span(span) {
+                        return Some(FirstCursorResult::Ins(span.id_start(), cursor));
                     }
                 }
-                Marker::Delete(del) => return Some(FirstCursorResult::Del(id, del)),
+                Marker::Delete(del) => {
+                    return Some(FirstCursorResult::Del(
+                        span.id_start(),
+                        del.slice((span.id_start().counter - id.counter) as usize, del.len()),
+                    ))
+                }
             }
         }
 

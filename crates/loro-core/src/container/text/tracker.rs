@@ -160,10 +160,10 @@ impl Tracker {
         self.content.update_at_cursors_twice(
             &[&to_set_as_applied, &to_delete],
             &mut |v| {
-                v.status.apply(StatusChange::SetAsFuture);
+                v.status.apply(StatusChange::SetAsCurrent);
             },
             &mut |v: &mut YSpan| {
-                v.status.apply(StatusChange::UndoDelete);
+                v.status.apply(StatusChange::Delete);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )

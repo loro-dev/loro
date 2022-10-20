@@ -180,8 +180,14 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     ///
     /// we need to make sure that the leaf is still valid
     pub unsafe fn get_index(&self) -> A::Int {
-        let index = A::get_index(self.leaf.as_ref(), self.index);
-        index + A::Int::from_usize(self.offset).unwrap()
+        let leaf = self.leaf.as_ref();
+        let index = A::get_index(leaf, self.index);
+        let item = self.as_ref();
+        if item.len() == 0 {
+            index
+        } else {
+            index + A::Int::from_usize(self.offset).unwrap()
+        }
     }
 
     /// move cursor forward
