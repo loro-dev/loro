@@ -9,7 +9,8 @@ use std::{
 
 use fxhash::FxHashMap;
 
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RleVec, Sliceable};
+use serde::__private::de::Content;
 use smallvec::SmallVec;
 
 use crate::{
@@ -18,8 +19,8 @@ use crate::{
     container::{manager::ContainerManager, Container},
     dag::Dag,
     id::{ClientID, Counter},
-    op::OpProxy,
-    span::HasIdSpan,
+    op::{OpContent, OpProxy},
+    span::{HasIdSpan, IdSpan},
     Lamport, Op, Timestamp, ID,
 };
 
@@ -191,6 +192,13 @@ impl LogStore {
         }
 
         todo!("update vv");
+    }
+
+    pub(crate) fn get_op_content(&self, id_span: IdSpan) -> Option<OpContent> {
+        let changes = self.changes.get(&id_span.client_id)?;
+        let result = changes.get(id_span.counter.start as usize)?;
+        let result = result.element.ops.get(result.offset)?;
+        Some(result.element.content.slice(0, id_span.len()))
     }
 
     #[inline]
