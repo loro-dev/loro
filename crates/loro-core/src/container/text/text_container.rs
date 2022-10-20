@@ -135,4 +135,23 @@ impl Container for TextContainer {
     fn get_value(&mut self) -> &LoroValue {
         todo!()
     }
+
+    fn to_export(&self, op: &mut Op) {
+        if let Some((slice, _pos)) = op
+            .content
+            .as_normal_mut()
+            .and_then(|c| c.as_list_mut())
+            .and_then(|x| x.as_insert_mut())
+        {
+            let change = if let ListSlice::Slice(ranges) = slice {
+                Some(self.raw_str.get_str(ranges))
+            } else {
+                None
+            };
+
+            if let Some(change) = change {
+                *slice = ListSlice::RawStr(change);
+            }
+        }
+    }
 }

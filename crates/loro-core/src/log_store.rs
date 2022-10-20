@@ -21,7 +21,7 @@ use crate::{
     id::{ClientID, Counter},
     op::{OpContent, OpProxy},
     span::{HasIdSpan, IdSpan},
-    Lamport, Op, Timestamp, ID,
+    Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -91,6 +91,56 @@ impl LogStore {
         self.changes
             .get(&id.client_id)
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
+    }
+
+    pub fn import(&mut self, mut changes: Vec<Change>) {
+        let self_vv = self.vv();
+        changes.sort_by_cached_key(|x| x.lamport);
+        for change in changes
+            .into_iter()
+            .filter(|x| !self_vv.includes_id(x.last_id()))
+        {
+            // TODO: cache pending changes
+            assert!(change.deps.iter().all(|x| self_vv.includes_id(*x)));
+            self.apply_remote_change(change)
+        }
+    }
+
+    pub fn export(&self, remote_vv: &VersionVector) -> Vec<Change> {
+        let mut ans = Vec::default();
+        let self_vv = self.vv();
+        let diff = self_vv.diff(remote_vv);
+        for span in diff.left.iter() {
+            let mut changes = self.get_changes_slice(span.id_span());
+            ans.append(&mut changes);
+        }
+
+        ans
+    }
+
+    fn get_changes_slice(&self, id_span: IdSpan) -> Vec<Change> {
+        if let Some(changes) = self.changes.get(&id_span.client_id) {
+            let mut ans = Vec::new();
+            for change in changes.slice_iter(
+                id_span.counter.min() as usize,
+                id_span.counter.end() as usize,
+            ) {
+                let change = change.value.slice(change.start, change.end);
+                ans.push(change);
+            }
+
+            ans
+        } else {
+            vec![]
+        }
+    }
+
+    fn change_to_export_format(&self, mut change: Change) {
+        let container_manager = self.container.read().unwrap();
+        for op in change.ops.vec_mut().iter_mut() {
+            let container = container_manager.get(op.container.clone()).unwrap();
+            container.to_export(op);
+        }
     }
 
     #[inline(always)]

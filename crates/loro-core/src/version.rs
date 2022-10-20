@@ -61,6 +61,15 @@ impl HasId for (&ClientID, &CounterSpan) {
     }
 }
 
+impl HasId for (ClientID, CounterSpan) {
+    fn id_start(&self) -> ID {
+        ID {
+            client_id: self.0,
+            counter: self.1.min(),
+        }
+    }
+}
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct VersionVectorDiff {
     /// need to add these spans to move from right to left

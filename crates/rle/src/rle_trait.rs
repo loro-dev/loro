@@ -91,3 +91,10 @@ impl<A, T: HasLength> HasLength for (A, T) {
         self.1.len()
     }
 }
+
+/// this can make iter return type has len
+impl<T: HasLength> HasLength for &T {
+    fn len(&self) -> usize {
+        (*self).len()
+    }
+}
