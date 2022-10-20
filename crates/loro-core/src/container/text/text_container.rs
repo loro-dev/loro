@@ -1,4 +1,4 @@
-use rle::RleTree;
+use rle::{RleTree, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
@@ -104,6 +104,7 @@ impl Container for TextContainer {
     }
 
     // TODO: move main logic to tracker module
+    // TODO: we don't need op proxy, only ids are enough
     fn apply(&mut self, op: &OpProxy, store: &LogStore) {
         let new_op_id = op.id_last();
         // TODO: may reduce following two into one op
@@ -111,7 +112,6 @@ impl Container for TextContainer {
         let path_to_store_head = store.find_path(&common, store.frontier());
         let mut common_vv = store.vv();
         common_vv.retreat(&path_to_store_head.right);
-
         let mut latest_head: SmallVec<[ID; 2]> = store.frontier().into();
         latest_head.push(new_op_id);
         if common.is_empty() || !common.iter().all(|x| self.tracker.contains(*x)) {
@@ -121,8 +121,13 @@ impl Container for TextContainer {
             for iter in store.iter_partial(&common, path.right) {
                 self.tracker.retreat(&iter.retreat);
                 self.tracker.forward(&iter.forward);
-                for op in iter.data.ops.iter() {
+                // TODO: avoid this clone
+                let change = iter
+                    .data
+                    .slice(iter.slice.start as usize, iter.slice.end as usize);
+                for op in change.ops.iter() {
                     if op.container == self.id {
+                        // TODO: convert op to local
                         self.tracker.apply(op.id, &op.content)
                     }
                 }
@@ -133,7 +138,6 @@ impl Container for TextContainer {
         let path = store.find_path(&latest_head, store.frontier());
         self.tracker.retreat(&path.left);
         for effect in self.tracker.iter_effects(path.left) {
-            dbg!(&effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
@@ -156,6 +160,7 @@ impl Container for TextContainer {
             let content = v.as_ref();
             match content {
                 ListSlice::Slice(range) => ans_str.push_str(&self.raw_str.get_str(range)),
+                ListSlice::RawStr(raw) => ans_str.push_str(raw),
                 _ => unreachable!(),
             }
         }

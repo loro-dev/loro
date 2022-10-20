@@ -635,7 +635,7 @@ mod find_path {
 
         #[test]
         fn proptest_path_large(
-            interactions in prop::collection::vec(gen_interaction(10), 0..5 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
+            interactions in prop::collection::vec(gen_interaction(10), 0..2 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
         ) {
             test_find_path(10, interactions)?;
         }

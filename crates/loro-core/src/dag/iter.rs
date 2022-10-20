@@ -173,7 +173,9 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
     }
 }
 
-/// visit every span in the target IdSpanVector
+/// Visit every span in the target IdSpanVector.
+/// It's guaranteed that the spans are visited in causal order, and each span is visited only once.
+/// When visiting a span, we will checkout to the version where the span was created
 pub(crate) struct DagPartialIter<'a, Dag> {
     dag: &'a Dag,
     frontier: SmallVec<[ID; 2]>,
@@ -248,7 +250,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         } else {
             0
         };
-        let slice_end = if counter.end > target_span.end {
+        let slice_end = if counter.end < target_span.end {
             counter.end - counter.start
         } else {
             target_span.end - counter.start

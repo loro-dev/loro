@@ -55,6 +55,7 @@ pub type LogStoreWeakRef = Weak<RwLock<LogStore>>;
 /// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
 pub struct LogStore {
     changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+    vv: VersionVector,
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
@@ -83,6 +84,7 @@ impl LogStore {
                 frontier: Default::default(),
                 container,
                 to_self: x.clone(),
+                vv: Default::default(),
                 _pin: PhantomPinned,
             })
         })
@@ -102,6 +104,7 @@ impl LogStore {
             .into_iter()
             .filter(|x| !self_vv.includes_id(x.last_id()))
         {
+            check_import_change_valid(&change);
             // TODO: cache pending changes
             assert!(change.deps.iter().all(|x| self_vv.includes_id(*x)));
             self.apply_remote_change(change)
@@ -115,6 +118,9 @@ impl LogStore {
         for span in diff.left.iter() {
             let mut changes = self.get_changes_slice(span.id_span());
             ans.append(&mut changes);
+        }
+        for change in ans.iter_mut() {
+            self.change_to_export_format(change);
         }
 
         ans
@@ -137,7 +143,7 @@ impl LogStore {
         }
     }
 
-    fn change_to_export_format(&self, mut change: Change) {
+    fn change_to_export_format(&self, change: &mut Change) {
         let container_manager = self.container.read().unwrap();
         for op in change.ops.vec_mut().iter_mut() {
             let container = container_manager.get(op.container.clone()).unwrap();
@@ -200,6 +206,7 @@ impl LogStore {
         ));
         self.latest_lamport = lamport + change.len() as u32 - 1;
         self.latest_timestamp = timestamp;
+        self.vv.set_end(change.id_end());
         self.changes
             .entry(self.this_client_id)
             .or_insert_with(RleVec::new)
@@ -218,7 +225,7 @@ impl LogStore {
             }
         }
 
-        // TODO: find a way to remove this clone?
+        // TODO: find a way to remove this clone? we don't need change in apply method actually
         let change = self.push_change(change).clone();
 
         // Apply ops.
@@ -243,7 +250,7 @@ impl LogStore {
             self.latest_timestamp = change.timestamp;
         }
 
-        todo!("update vv");
+        self.vv.set_end(change.id_end());
     }
 
     pub(crate) fn get_op_content(&self, id_span: IdSpan) -> Option<OpContent> {
@@ -316,15 +323,19 @@ impl Dag for LogStore {
     }
 
     fn vv(&self) -> crate::VersionVector {
-        self.changes
-            .iter()
-            .map(|(client, changes)| {
-                changes
-                    .vec()
-                    .last()
-                    .map(|x| x.id_last())
-                    .unwrap_or_else(|| ID::new(*client, 0))
-            })
-            .collect()
+        self.vv.clone()
+    }
+}
+
+fn check_import_change_valid(change: &Change) {
+    for op in change.ops.iter() {
+        if let Some((slice, _)) = op
+            .content
+            .as_normal()
+            .and_then(|x| x.as_list())
+            .and_then(|x| x.as_insert())
+        {
+            assert!(slice.as_raw_str().is_some())
+        }
     }
 }
