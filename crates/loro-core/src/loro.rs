@@ -11,6 +11,7 @@ use crate::{
     container::{
         manager::{ContainerInstance, ContainerManager},
         map::MapContainer,
+        text::text_container::TextContainer,
         ContainerID, ContainerType,
     },
     id::ClientID,
@@ -18,7 +19,7 @@ use crate::{
 };
 
 pub struct LoroCore {
-    pub store: Arc<RwLock<LogStore>>,
+    pub log_store: Arc<RwLock<LogStore>>,
     pub container: Arc<RwLock<ContainerManager>>,
 }
 
@@ -35,7 +36,7 @@ impl LoroCore {
             store: NonNull::dangling(),
         }));
         Self {
-            store: LogStore::new(cfg, client_id, container.clone()),
+            log_store: LogStore::new(cfg, client_id, container.clone()),
             container,
         }
     }
@@ -46,7 +47,12 @@ impl LoroCore {
         container: ContainerType,
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, ContainerInstance> {
         let a = OwningRefMut::new(self.container.write().unwrap());
-        a.map_mut(|x| x.get_or_create(&ContainerID::new_root(name, container)))
+        a.map_mut(|x| {
+            x.get_or_create(
+                &ContainerID::new_root(name, container),
+                self.log_store.clone(),
+            )
+        })
     }
 
     pub fn get_map_container(
@@ -55,19 +61,37 @@ impl LoroCore {
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<MapContainer>> {
         let a = OwningRefMut::new(self.container.write().unwrap());
         a.map_mut(|x| {
-            x.get_or_create(&ContainerID::new_root(name, ContainerType::Map))
-                .as_map_mut()
-                .unwrap()
+            x.get_or_create(
+                &ContainerID::new_root(name, ContainerType::Map),
+                self.log_store.clone(),
+            )
+            .as_map_mut()
+            .unwrap()
+        })
+    }
+
+    pub fn get_text_container(
+        &mut self,
+        name: InternalString,
+    ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
+        let a = OwningRefMut::new(self.container.write().unwrap());
+        a.map_mut(|x| {
+            x.get_or_create(
+                &ContainerID::new_root(name, ContainerType::Text),
+                self.log_store.clone(),
+            )
+            .as_text_mut()
+            .unwrap()
         })
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change> {
-        let store = self.store.read().unwrap();
+        let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
     pub fn import(&mut self, changes: Vec<Change>) {
-        let mut store = self.store.write().unwrap();
+        let mut store = self.log_store.write().unwrap();
         store.import(changes)
     }
 }

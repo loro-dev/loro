@@ -7,6 +7,7 @@ use crate::{
     id::ID,
     log_store::LogStoreRef,
     op::{InsertContent, Op, OpContent, OpProxy},
+    smstring::SmString,
     span::{HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore,
@@ -31,9 +32,21 @@ pub struct TextContainer {
     state: RleTree<ListSlice, ListSliceTreeTrait>,
     raw_str: StringPool,
     tracker: Tracker,
+    state_cache: LoroValue,
 }
 
 impl TextContainer {
+    pub fn new(id: ContainerID, log_store: LogStoreRef) -> Self {
+        Self {
+            id,
+            log_store,
+            raw_str: StringPool::default(),
+            tracker: Tracker::new(Default::default()),
+            state_cache: LoroValue::Null,
+            state: Default::default(),
+        }
+    }
+
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
         let id = if let Ok(mut store) = self.log_store.write() {
             let id = store.next_id();
@@ -133,7 +146,17 @@ impl Container for TextContainer {
     }
 
     fn get_value(&mut self) -> &LoroValue {
-        todo!()
+        let mut ans_str = SmString::new();
+        for v in self.state.iter() {
+            let content = v.as_ref();
+            match content {
+                ListSlice::Slice(ranges) => ans_str.push_str(&self.raw_str.get_str(ranges)),
+                _ => unreachable!(),
+            }
+        }
+
+        self.state_cache = LoroValue::String(ans_str);
+        &self.state_cache
     }
 
     fn to_export(&self, op: &mut Op) {

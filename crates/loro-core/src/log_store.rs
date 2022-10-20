@@ -61,8 +61,8 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub container: Arc<RwLock<ContainerManager>>,
-
+    pub(crate) container: Arc<RwLock<ContainerManager>>,
+    to_self: Weak<RwLock<LogStore>>,
     _pin: PhantomPinned,
 }
 
@@ -73,17 +73,19 @@ impl LogStore {
         container: Arc<RwLock<ContainerManager>>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-
-        Arc::new(RwLock::new(Self {
-            cfg,
-            this_client_id,
-            changes: FxHashMap::default(),
-            latest_lamport: 0,
-            latest_timestamp: 0,
-            frontier: Default::default(),
-            container,
-            _pin: PhantomPinned,
-        }))
+        Arc::new_cyclic(|x| {
+            RwLock::new(Self {
+                cfg,
+                this_client_id,
+                changes: FxHashMap::default(),
+                latest_lamport: 0,
+                latest_timestamp: 0,
+                frontier: Default::default(),
+                container,
+                to_self: x.clone(),
+                _pin: PhantomPinned,
+            })
+        })
     }
 
     #[inline]
@@ -265,7 +267,7 @@ impl LogStore {
     #[inline]
     fn apply_remote_op(&mut self, change: &Change, op: &Op) {
         let mut container = self.container.write().unwrap();
-        let container = container.get_or_create(op.container());
+        let container = container.get_or_create(op.container(), self.to_self.upgrade().unwrap());
         container.apply(&OpProxy::new(change, op, None), self);
     }
 

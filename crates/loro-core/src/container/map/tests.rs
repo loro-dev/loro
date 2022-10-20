@@ -15,7 +15,7 @@ use crate::{fx_map, value::InsertValue, LoroCore, LoroValue};
 #[test]
 fn basic() {
     let mut loro = LoroCore::default();
-    let weak = Arc::downgrade(&loro.store);
+    let weak = Arc::downgrade(&loro.log_store);
     let mut a = loro.get_map_container("map".into());
     let container = a.as_mut();
     container.insert("haha".into(), InsertValue::Int32(1), weak);
@@ -38,7 +38,7 @@ mod map_proptest {
             value in prop::collection::vec(gen_insert_value(), 0..10 * PROPTEST_FACTOR_10)
         ) {
             let mut loro = LoroCore::default();
-            let weak = Arc::downgrade(&loro.store);
+            let weak = Arc::downgrade(&loro.log_store);
             let mut a = loro.get_map_container("map".into());
             let container = a.as_mut();
             let mut map: HashMap<String, InsertValue> = HashMap::new();

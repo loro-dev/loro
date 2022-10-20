@@ -366,7 +366,9 @@ dependencies = [
 name = "loro-core"
 version = "0.1.0"
 dependencies = [
+ "color-backtrace",
  "crdt-list",
+ "ctor",
  "enum-as-inner",
  "fxhash",
  "im",
