@@ -252,7 +252,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn update_at_cursors<U, F>(
         &mut self,
-        cursors: Vec<UnsafeCursor<T, A>>,
+        cursors: &mut [UnsafeCursor<T, A>],
         update_fn: &mut U,
         notify: &mut F,
     ) where
@@ -387,7 +387,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
 
         // SAFETY: it's perfectly safe here because we know what we are doing in the update_at_cursors
-        self.update_at_cursors(unsafe { std::mem::transmute(cursors) }, update_fn, notify);
+        let mut cursors: Vec<_> = unsafe { std::mem::transmute(cursors) };
+        self.update_at_cursors(&mut cursors, update_fn, notify);
     }
 
     pub fn debug_check(&mut self) {

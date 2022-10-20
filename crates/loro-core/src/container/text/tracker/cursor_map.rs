@@ -210,29 +210,58 @@ pub(super) fn make_notify(
 }
 
 pub(super) struct IdSpanQueryResult<'a> {
-    pub inserts: Vec<UnsafeCursor<'static, YSpan, YSpanTreeTrait>>,
-    pub deletes: Vec<&'a RleVec<IdSpan>>,
+    pub inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)>,
+    pub deletes: Vec<(ID, &'a RleVec<IdSpan>)>,
+}
+
+#[derive(EnumAsInner)]
+pub enum FirstCursorResult<'a> {
+    Ins(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>),
+    Del(ID, &'a RleVec<IdSpan>),
 }
 
 impl CursorMap {
     pub fn get_cursors_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
-        let mut inserts = Vec::new();
+        let mut inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)> = Vec::new();
         let mut deletes = Vec::new();
-        for marker in self.get_range(span.min_id().into(), span.end_id().into()) {
+        let mut inserted_set = fxhash::FxHashSet::default();
+        for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
+            let id: ID = id.into();
             match marker {
                 Marker::Insert { .. } => {
+                    let mut offset = 0;
                     for cursor in marker.get_spans(span) {
-                        if !inserts.contains(&cursor) {
-                            inserts.push(cursor);
+                        let new_id = id.inc(offset);
+                        if !inserted_set.contains(&cursor) {
+                            inserted_set.insert(cursor);
+                            offset += cursor.len as i32;
+                            inserts.push((new_id, cursor));
                         }
                     }
                 }
                 Marker::Delete(del) => {
-                    deletes.push(del);
+                    deletes.push((id, del));
                 }
             }
         }
 
         IdSpanQueryResult { inserts, deletes }
+    }
+
+    pub fn get_first_cursors_at_id_span(&self, span: IdSpan) -> Option<FirstCursorResult> {
+        for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
+            let id: ID = id.into();
+            match marker {
+                Marker::Insert { .. } => {
+                    let spans = marker.get_spans(span);
+                    if !spans.is_empty() {
+                        return Some(FirstCursorResult::Ins(id, spans[0]));
+                    }
+                }
+                Marker::Delete(del) => return Some(FirstCursorResult::Del(id, del)),
+            }
+        }
+
+        None
     }
 }

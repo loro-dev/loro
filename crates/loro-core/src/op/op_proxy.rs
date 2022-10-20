@@ -13,9 +13,6 @@ use crate::{
 pub struct OpProxy<'a> {
     change: &'a Change,
     op: &'a Op,
-    /// offset of op in change.
-    /// i.e. change.id.inc(op_offset) == op.start
-    op_offset: u32,
     /// slice range of the op, op[slice_range]
     slice_range: Range<Counter>,
 }
@@ -43,7 +40,7 @@ impl<'a> HasLength for OpProxy<'a> {
 
 impl<'a> HasLamport for OpProxy<'a> {
     fn lamport(&self) -> Lamport {
-        self.change.lamport + self.op_offset + self.slice_range.start as u32
+        self.change.lamport + self.offset() as u32 + self.slice_range.start as u32
     }
 }
 
@@ -72,12 +69,7 @@ impl Ord for OpProxy<'_> {
 }
 
 impl<'a> OpProxy<'a> {
-    pub fn new(
-        change: &'a Change,
-        op: &'a Op,
-        op_offset: u32,
-        range: Option<Range<Counter>>,
-    ) -> Self {
+    pub fn new(change: &'a Change, op: &'a Op, range: Option<Range<Counter>>) -> Self {
         OpProxy {
             change,
             op,
@@ -86,12 +78,11 @@ impl<'a> OpProxy<'a> {
             } else {
                 0..op.len() as Counter
             },
-            op_offset,
         }
     }
 
-    pub fn offset(&self) -> u32 {
-        self.op_offset
+    pub fn offset(&self) -> i32 {
+        self.op.id.counter - self.change.id.counter
     }
 
     pub fn lamport(&self) -> Lamport {

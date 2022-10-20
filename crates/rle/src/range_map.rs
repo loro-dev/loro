@@ -98,6 +98,17 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
     }
 
     #[inline]
+    pub fn get_range_with_index(&self, start: Index, end: Index) -> Vec<(Index, &Value)> {
+        let mut ans = Vec::new();
+        for value in self.tree.iter_range(start, Some(end)) {
+            let value = value.as_tree_ref();
+            ans.push((value.index, &value.value));
+        }
+
+        ans
+    }
+
+    #[inline]
     pub fn get(&self, index: Index) -> Option<&Value> {
         let cursor = self.tree.get(index);
         if let Some(cursor) = cursor {

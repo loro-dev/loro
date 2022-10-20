@@ -15,7 +15,7 @@ use crate::{
 use super::{
     string_pool::StringPool,
     text_content::{ListSlice, ListSliceTreeTrait},
-    tracker::Tracker,
+    tracker::{Effect, Tracker},
 };
 
 #[derive(Clone, Debug)]
@@ -98,9 +98,9 @@ impl Container for TextContainer {
 
         let mut latest_head: SmallVec<[ID; 2]> = store.frontier().into();
         latest_head.push(new_op_id);
-        if common.len() == 0 || !common.iter().all(|x| self.tracker.contains(new_op_id)) {
+        if common.len() == 0 || !common.iter().all(|x| self.tracker.contains(*x)) {
             // stage 1
-            self.tracker = Tracker::new(common.clone(), common_vv);
+            self.tracker = Tracker::new(common_vv);
             let path = store.find_path(&common, &latest_head);
             for iter in store.iter_partial(&common, path.right) {
                 self.tracker.retreat(&iter.retreat);
@@ -114,9 +114,16 @@ impl Container for TextContainer {
         }
 
         // stage 2
-        let path = store.find_path(&latest_head, &store.frontier());
+        let path = store.find_path(&latest_head, store.frontier());
         self.tracker.retreat(&path.left);
-        todo!("turn on tracker and calculate effects")
+        for effect in self.tracker.iter_effects(path.left) {
+            match effect {
+                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
+                Effect::Ins { pos, content } => {
+                    todo!("need to find the span from store / keep the list slice in the tracker");
+                }
+            }
+        }
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {
