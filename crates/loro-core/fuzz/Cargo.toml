@@ -26,6 +26,12 @@ path = "fuzz_targets/yata.rs"
 test = false
 doc = false
 
-[profile.dev]
-lto = true
-opt-level = 3
+# [profile.dev]
+# lto = true
+# opt-level = 3
+
+[[bin]]
+name = "single_client_text"
+path = "fuzz_targets/single_client_text.rs"
+test = false
+doc = false

@@ -16,12 +16,15 @@ pub mod op;
 pub mod version;
 
 mod error;
+#[cfg(feature = "fuzzing")]
+pub mod fuzz;
 mod loro;
 mod smstring;
 mod snapshot;
 mod span;
 #[cfg(test)]
 pub mod tests;
+
 mod value;
 
 pub(crate) mod macros;
