@@ -109,7 +109,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
 
 fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
     let mut break_points = BreakPoints {
-        vv: dag.vv().clone(),
+        vv: dag.vv(),
         break_points: FxHashMap::default(),
         links: FxHashMap::default(),
     };

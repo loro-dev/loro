@@ -99,7 +99,7 @@ impl Container for MapContainer {
         ContainerType::Map
     }
 
-    fn apply(&mut self, op: &OpProxy, log: &LogStore) {
+    fn apply(&mut self, op: &OpProxy, _log: &LogStore) {
         debug_assert_eq!(&op.op().container, self.id());
         match op.content() {
             OpContent::Normal { content } => {

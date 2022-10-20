@@ -7,11 +7,7 @@ use crate::{
     version::IdSpanVector,
 };
 
-use super::{
-    cursor_map::{FirstCursorResult, IdSpanQueryResult},
-    y_span::StatusChange,
-    Tracker,
-};
+use super::{cursor_map::FirstCursorResult, y_span::StatusChange, Tracker};
 
 pub struct EffectIter<'a> {
     tracker: &'a mut Tracker,
@@ -32,33 +28,6 @@ impl<'a> EffectIter<'a> {
             left_spans: spans,
             current_span: None,
             current_delete_targets: None,
-        }
-    }
-
-    fn run(tracker: &mut Tracker, spans: &IdSpanVector) {
-        let mut to_set_as_applied = Vec::with_capacity(spans.len());
-        let mut to_delete = Vec::with_capacity(spans.len());
-        for span in spans.iter() {
-            let IdSpanQueryResult {
-                mut inserts,
-                deletes,
-            } = tracker.id_to_cursor.get_cursors_at_id_span(IdSpan::new(
-                *span.0,
-                span.1.start,
-                span.1.end,
-            ));
-            for (id, delete) in deletes {
-                for deleted_span in delete.iter() {
-                    to_delete.append(
-                        &mut tracker
-                            .id_to_cursor
-                            .get_cursors_at_id_span(*deleted_span)
-                            .inserts,
-                    );
-                }
-            }
-
-            to_set_as_applied.append(&mut inserts);
         }
     }
 }
