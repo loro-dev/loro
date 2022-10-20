@@ -89,7 +89,6 @@ impl Container for TextContainer {
     // TODO: move main logic to tracker module
     fn apply(&mut self, op: &OpProxy, store: &LogStore) {
         let new_op_id = op.id_last();
-        let content = op.content_sliced();
         // TODO: may reduce following two into one op
         let common = store.find_common_ancestor(&[new_op_id], store.frontier());
         let path_to_store_head = store.find_path(&common, store.frontier());
@@ -98,7 +97,7 @@ impl Container for TextContainer {
 
         let mut latest_head: SmallVec<[ID; 2]> = store.frontier().into();
         latest_head.push(new_op_id);
-        if common.len() == 0 || !common.iter().all(|x| self.tracker.contains(*x)) {
+        if common.is_empty() || !common.iter().all(|x| self.tracker.contains(*x)) {
             // stage 1
             self.tracker = Tracker::new(common_vv);
             let path = store.find_path(&common, &latest_head);
@@ -120,7 +119,10 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    todo!("need to find the span from store / keep the list slice in the tracker");
+                    let content = store.get_op_content(content).unwrap();
+                    let list_content = content.as_normal().unwrap().as_list().unwrap();
+                    let insert_content = list_content.as_insert().unwrap().0;
+                    self.state.insert(pos, insert_content.clone());
                 }
             }
         }
