@@ -18,11 +18,9 @@ impl StringPool {
         &self.0[range]
     }
 
-    pub fn get_str(&self, ranges: &[Range<usize>]) -> SmString {
+    pub fn get_str(&self, range: &Range<usize>) -> SmString {
         let mut ans = SmString::default();
-        for range in ranges {
-            ans.push_str(&self.0[range.clone()]);
-        }
+        ans.push_str(&self.0[range.clone()]);
 
         ans
     }

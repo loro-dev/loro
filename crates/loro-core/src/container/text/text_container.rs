@@ -88,6 +88,10 @@ impl TextContainer {
 
         Some(id)
     }
+
+    pub fn text_len(&self) -> usize {
+        self.state.len()
+    }
 }
 
 impl Container for TextContainer {
@@ -150,7 +154,7 @@ impl Container for TextContainer {
         for v in self.state.iter() {
             let content = v.as_ref();
             match content {
-                ListSlice::Slice(ranges) => ans_str.push_str(&self.raw_str.get_str(ranges)),
+                ListSlice::Slice(range) => ans_str.push_str(&self.raw_str.get_str(range)),
                 _ => unreachable!(),
             }
         }

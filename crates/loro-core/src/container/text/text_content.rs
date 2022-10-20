@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use enum_as_inner::EnumAsInner;
-use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, RleVec, Sliceable};
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
 use crate::{id::ID, smstring::SmString};
 
@@ -9,16 +9,14 @@ use crate::{id::ID, smstring::SmString};
 pub(crate) enum ListSlice {
     RawStr(SmString),
     // TODO: Use small compact rle vec
-    Slice(RleVec<Range<usize>>),
+    Slice(Range<usize>),
     Unknown(usize),
 }
 
 impl ListSlice {
     #[inline(always)]
     pub fn from_range(range: Range<usize>) -> ListSlice {
-        let mut v = RleVec::new();
-        v.push(range);
-        Self::Slice(v)
+        Self::Slice(range)
     }
 }
 
@@ -40,7 +38,7 @@ impl HasLength for ListSlice {
     fn len(&self) -> usize {
         match self {
             ListSlice::RawStr(s) => s.len(),
-            ListSlice::Slice(x) => x.len(),
+            ListSlice::Slice(x) => rle::HasLength::len(&x),
             ListSlice::Unknown(x) => *x,
         }
     }
