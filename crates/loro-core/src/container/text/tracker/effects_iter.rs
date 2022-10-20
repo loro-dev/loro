@@ -32,6 +32,7 @@ impl<'a> EffectIter<'a> {
     }
 }
 
+#[derive(Debug)]
 pub enum Effect {
     Del { pos: usize, len: usize },
     Ins { pos: usize, content: IdSpan },

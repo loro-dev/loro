@@ -109,7 +109,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
         get_version_vector(&|id| self.get(id), id)
     }
 
-    #[inline(always)]
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
         _find_common_ancestor(

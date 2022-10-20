@@ -1015,7 +1015,7 @@ mod find_common_ancestors_proptest {
 
 #[cfg(test)]
 mod dag_partial_iter {
-    use crate::{dag::iter::IterReturn, tests::PROPTEST_FACTOR_10};
+    use crate::{dag::iter::IterReturn, span::CounterSpan, tests::PROPTEST_FACTOR_10};
 
     use super::*;
 
@@ -1049,23 +1049,28 @@ mod dag_partial_iter {
             map.insert(node.id, vv.clone());
         }
         let vec: Vec<_> = nodes.iter().enumerate().collect();
-        // println!("{}", a.mermaid());
+        {
+            // println!("{}", a.mermaid());
+        }
         for &(i, (node, vv)) in vec.iter() {
             if i > 3 {
                 break;
             }
 
-            for &(j, (_other_node, other_vv)) in vec.iter() {
+            for &(j, (other_node, other_vv)) in vec.iter() {
                 if i >= j {
                     continue;
                 }
 
                 let diff_spans = other_vv.diff(vv).left;
-                // println!("TARGET IS TO GO FROM {} TO {}", node.id, other_node.id);
-                // dbg!(&diff_spans);
+                {
+                    // println!("TARGET IS TO GO FROM {} TO {}", node.id, other_node.id);
+                    // dbg!(&other_vv, &vv, &diff_spans);
+                }
                 let mut target_vv = vv.clone();
                 target_vv.forward(&diff_spans);
                 let mut vv = vv.clone();
+
                 for IterReturn {
                     data,
                     forward,
@@ -1074,8 +1079,10 @@ mod dag_partial_iter {
                 } in a.iter_partial(&[node.id], diff_spans.clone())
                 {
                     let sliced = data.slice(slice.start as usize, slice.end as usize);
-                    // println!("-----------------------------------");
-                    // dbg!(&sliced, &forward, &retreat, slice);
+                    {
+                        // println!("-----------------------------------");
+                        // dbg!(&sliced, &forward, &retreat, slice);
+                    }
                     assert!(diff_spans
                         .get(&data.id.client_id)
                         .unwrap()
@@ -1088,7 +1095,12 @@ mod dag_partial_iter {
                         sliced.id.counter,
                         sliced.id.counter + 1,
                     ));
-                    assert_eq!(vv, data_vv);
+                    data_vv.shrink_to_exclude(IdSpan::new(
+                        sliced.id.client_id,
+                        sliced.id.counter,
+                        sliced.id_end().counter,
+                    ));
+                    assert_eq!(vv, data_vv, "{} {}", data.id, sliced.id);
                 }
             }
         }
@@ -1102,13 +1114,23 @@ mod dag_partial_iter {
             5,
             vec![
                 Interaction {
-                    dag_idx: 3,
+                    dag_idx: 0,
                     merge_with: None,
                     len: 2,
                 },
                 Interaction {
+                    dag_idx: 1,
+                    merge_with: Some(0),
+                    len: 1,
+                },
+                Interaction {
                     dag_idx: 0,
-                    merge_with: Some(3),
+                    merge_with: None,
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 0,
+                    merge_with: Some(1),
                     len: 1,
                 },
             ],

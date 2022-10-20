@@ -243,8 +243,8 @@ impl VersionVector {
         self.0.insert(id.client_id, id.counter);
     }
 
-    /// update the end counter of the given client, if the end is greater
-    /// return whether updated
+    /// Update the end counter of the given client if the end is greater.
+    /// Return whether updated
     #[inline]
     pub fn try_update_last(&mut self, id: ID) -> bool {
         if let Some(end) = self.0.get_mut(&id.client_id) {
