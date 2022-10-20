@@ -2,6 +2,7 @@ use rle::HasLength;
 use smallvec::smallvec;
 
 use crate::{
+    container::text::text_content::ListSlice,
     id::Counter,
     span::{CounterSpan, HasId, IdSpan},
     version::IdSpanVector,
@@ -35,7 +36,7 @@ impl<'a> EffectIter<'a> {
 #[derive(Debug)]
 pub enum Effect {
     Del { pos: usize, len: usize },
-    Ins { pos: usize, content: IdSpan },
+    Ins { pos: usize, content: ListSlice },
 }
 
 impl<'a> Iterator for EffectIter<'a> {
@@ -97,7 +98,8 @@ impl<'a> Iterator for EffectIter<'a> {
                             assert_eq!(changed as usize, span.len());
                             return Some(Effect::Ins {
                                 pos: index,
-                                content: span,
+                                // SAFETY: cursor is valid
+                                content: unsafe { cursor.get_sliced().slice },
                             });
                         }
                         FirstCursorResult::Del(id, del) => {

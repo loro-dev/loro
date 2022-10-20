@@ -42,6 +42,12 @@ impl From<String> for SmString {
     }
 }
 
+impl From<&str> for SmString {
+    fn from(s: &str) -> Self {
+        SmString(s.into())
+    }
+}
+
 impl Serialize for SmString {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

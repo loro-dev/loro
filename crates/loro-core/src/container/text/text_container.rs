@@ -1,5 +1,5 @@
 use rle::{RleTree, Sliceable};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
@@ -10,7 +10,7 @@ use crate::{
     smstring::SmString,
     span::{HasIdSpan, IdSpan},
     value::LoroValue,
-    LogStore,
+    LogStore, VersionVector,
 };
 
 use super::{
@@ -33,6 +33,9 @@ pub struct TextContainer {
     raw_str: StringPool,
     tracker: Tracker,
     state_cache: LoroValue,
+
+    head: SmallVec<[ID; 2]>,
+    vv: VersionVector,
 }
 
 impl TextContainer {
@@ -44,13 +47,17 @@ impl TextContainer {
             tracker: Tracker::new(Default::default()),
             state_cache: LoroValue::Null,
             state: Default::default(),
+            // TODO: should be eq to log_store frontier?
+            head: Default::default(),
+            vv: Default::default(),
         }
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
         let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
-            let slice = ListSlice::from_range(self.raw_str.alloc(text));
+            // let slice = ListSlice::from_range(self.raw_str.alloc(text));
+            let slice = ListSlice::from_raw(SmString::from(text));
             self.state.insert(pos, slice.clone());
             let op = Op::new(
                 id,
@@ -60,6 +67,8 @@ impl TextContainer {
                 self.id.clone(),
             );
             store.append_local_ops(vec![op]);
+            self.head = smallvec![id];
+            self.vv.set_last(id);
             id
         } else {
             unimplemented!()
@@ -92,6 +101,10 @@ impl TextContainer {
     pub fn text_len(&self) -> usize {
         self.state.len()
     }
+
+    pub fn check(&mut self) {
+        self.tracker.check();
+    }
 }
 
 impl Container for TextContainer {
@@ -108,46 +121,48 @@ impl Container for TextContainer {
     fn apply(&mut self, op: &OpProxy, store: &LogStore) {
         let new_op_id = op.id_last();
         // TODO: may reduce following two into one op
-        let common = store.find_common_ancestor(&[new_op_id], store.frontier());
-        let path_to_store_head = store.find_path(&common, store.frontier());
-        let mut common_vv = store.vv();
+        let common = store.find_common_ancestor(&[new_op_id], &self.head);
+        let path_to_store_head = store.find_path(&common, &self.head);
+        let mut common_vv = self.vv.clone();
         common_vv.retreat(&path_to_store_head.right);
-        let mut latest_head: SmallVec<[ID; 2]> = store.frontier().into();
+        let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
         if common.is_empty() || !common.iter().all(|x| self.tracker.contains(*x)) {
-            // stage 1
             self.tracker = Tracker::new(common_vv);
-            let path = store.find_path(&common, &latest_head);
-            for iter in store.iter_partial(&common, path.right) {
-                self.tracker.retreat(&iter.retreat);
-                self.tracker.forward(&iter.forward);
-                // TODO: avoid this clone
-                let change = iter
-                    .data
-                    .slice(iter.slice.start as usize, iter.slice.end as usize);
-                for op in change.ops.iter() {
-                    if op.container == self.id {
-                        // TODO: convert op to local
-                        self.tracker.apply(op.id, &op.content)
-                    }
+        }
+
+        // stage 1
+        self.tracker.checkout(&self.vv);
+        let path = store.find_path(&common, &latest_head);
+        for iter in store.iter_partial(&common, path.right) {
+            self.tracker.retreat(&iter.retreat);
+            self.tracker.forward(&iter.forward);
+            // TODO: avoid this clone
+            let change = iter
+                .data
+                .slice(iter.slice.start as usize, iter.slice.end as usize);
+            for op in change.ops.iter() {
+                if op.container == self.id {
+                    // TODO: convert op to local
+                    self.tracker.apply(op.id, &op.content)
                 }
             }
         }
 
         // stage 2
-        let path = store.find_path(&latest_head, store.frontier());
+        let path = store.find_path(&latest_head, &self.head);
         self.tracker.retreat(&path.left);
         for effect in self.tracker.iter_effects(path.left) {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    let content = store.get_op_content(content).unwrap();
-                    let list_content = content.as_normal().unwrap().as_list().unwrap();
-                    let insert_content = list_content.as_insert().unwrap().0;
-                    self.state.insert(pos, insert_content.clone());
+                    self.state.insert(pos, content);
                 }
             }
         }
+
+        self.head.push(new_op_id);
+        self.vv.set_last(new_op_id);
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {

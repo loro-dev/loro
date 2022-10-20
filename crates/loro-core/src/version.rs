@@ -233,7 +233,7 @@ impl VersionVector {
 
     /// set the inclusive ending point. target id will be included by self
     #[inline]
-    pub fn set_max(&mut self, id: ID) {
+    pub fn set_last(&mut self, id: ID) {
         self.0.insert(id.client_id, id.counter + 1);
     }
 
@@ -367,7 +367,7 @@ impl From<Vec<ID>> for VersionVector {
     fn from(vec: Vec<ID>) -> Self {
         let mut vv = VersionVector::new();
         for id in vec {
-            vv.set_max(id);
+            vv.set_last(id);
         }
 
         vv
@@ -378,7 +378,7 @@ impl FromIterator<ID> for VersionVector {
     fn from_iter<T: IntoIterator<Item = ID>>(iter: T) -> Self {
         let mut vv = VersionVector::new();
         for id in iter {
-            vv.set_max(id);
+            vv.set_last(id);
         }
 
         vv
@@ -419,8 +419,8 @@ mod tests {
     #[test]
     fn im() {
         let mut a = VersionVector::new();
-        a.set_max(ID::new(1, 1));
-        a.set_max(ID::new(2, 1));
+        a.set_last(ID::new(1, 1));
+        a.set_last(ID::new(2, 1));
         let mut b = a.clone();
         b.merge(&vec![ID::new(1, 2), ID::new(2, 2)].into());
         assert!(a != b);

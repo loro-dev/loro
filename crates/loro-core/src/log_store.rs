@@ -232,6 +232,7 @@ impl LogStore {
         // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
         for op in change.ops.iter() {
             self.apply_remote_op(&change, op);
+            self.vv.set_end(op.id_end());
         }
 
         self.frontier = self
@@ -249,15 +250,6 @@ impl LogStore {
         if change.timestamp > self.latest_timestamp {
             self.latest_timestamp = change.timestamp;
         }
-
-        self.vv.set_end(change.id_end());
-    }
-
-    pub(crate) fn get_op_content(&self, id_span: IdSpan) -> Option<OpContent> {
-        let changes = self.changes.get(&id_span.client_id)?;
-        let result = changes.get(id_span.counter.start as usize)?;
-        let result = result.element.ops.get(result.offset)?;
-        Some(result.element.content.slice(0, id_span.len()))
     }
 
     #[inline]

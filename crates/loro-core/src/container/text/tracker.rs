@@ -17,7 +17,7 @@ use self::{
     y_span::{Status, StatusChange, YSpan, YSpanTreeTrait},
 };
 
-pub use effects_iter::Effect;
+pub(crate) use effects_iter::Effect;
 mod content_map;
 mod cursor_map;
 mod effects_iter;
@@ -69,6 +69,7 @@ impl Tracker {
                 id: min,
                 status: Status::new(),
                 len,
+                slice: Default::default(),
             },
             &mut make_notify(&mut id_to_cursor),
         );
@@ -124,11 +125,11 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    fn checkout(&mut self, vv: VersionVector) {
-        let diff = self.head_vv.diff(&vv);
+    pub fn checkout(&mut self, vv: &VersionVector) {
+        let diff = self.head_vv.diff(vv);
         self.retreat(&diff.left);
         self.forward(&diff.right);
-        self.head_vv = vv;
+        self.head_vv = vv.clone();
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
@@ -218,7 +219,9 @@ impl Tracker {
                 let text_content = content.as_list().expect("Content is not for list");
                 match text_content {
                     ListOp::Insert { slice, pos } => {
-                        let yspan = self.content.get_yspan_at_pos(id, *pos, slice.len());
+                        let yspan =
+                            self.content
+                                .get_yspan_at_pos(id, *pos, slice.len(), slice.clone());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }
@@ -278,5 +281,9 @@ impl Tracker {
 
     pub fn iter_effects(&mut self, target: IdSpanVector) -> EffectIter<'_> {
         EffectIter::new(self, target)
+    }
+
+    pub fn check(&mut self) {
+        self.check_consistency();
     }
 }
