@@ -1,6 +1,11 @@
-use crate::rle_tree::{
-    cursor::SafeCursorMut,
-    tree_trait::{FindPosResult, Position},
+use smallvec::SmallVec;
+
+use crate::{
+    rle_tree::{
+        cursor::SafeCursorMut,
+        tree_trait::{FindPosResult, Position},
+    },
+    Sliceable,
 };
 use std::fmt::{Debug, Error, Formatter};
 
@@ -402,6 +407,42 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             if !merged {
                 ans.push(right);
             }
+        }
+
+        Some(ans)
+    }
+
+    pub(crate) fn pure_updates_at_same_index<U, Arg>(
+        &self,
+        child_index: usize,
+        offsets: &[usize],
+        lens: &[usize],
+        args: &[&Arg],
+        update_fn: &mut U,
+    ) -> Option<SmallVec<[T; 2]>>
+    where
+        U: FnMut(&mut T, &Arg),
+    {
+        if offsets.is_empty() {
+            return None;
+        }
+
+        let mut ans = SmallVec::new();
+        ans.push(self.children[child_index].clone());
+        for i in 0..offsets.len() {
+            let offset = offsets[i];
+            let len = lens[i];
+            let arg = &args[i];
+            // TODO: can be optimized if needed
+            let mut target_spans = ans.slice(offset, offset + len);
+            for span in target_spans.iter_mut() {
+                update_fn(span, arg);
+            }
+
+            let mut end = ans.slice(offset + len, ans.len());
+            ans = ans.slice(0, offset);
+            ans.append(&mut target_spans);
+            ans.append(&mut end);
         }
 
         Some(ans)

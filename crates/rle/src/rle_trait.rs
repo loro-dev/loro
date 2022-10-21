@@ -1,6 +1,7 @@
 use std::{fmt::Debug, ops::Range};
 
 use num::{cast, Integer, NumCast};
+use smallvec::{Array, SmallVec};
 
 pub trait Mergable<Cfg = ()> {
     fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool
@@ -96,5 +97,23 @@ impl<A, T: HasLength> HasLength for (A, T) {
 impl<T: HasLength> HasLength for &T {
     fn len(&self) -> usize {
         (*self).len()
+    }
+}
+
+impl<T: HasLength + Sliceable, A: Array<Item = T>> Sliceable for SmallVec<A> {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        let mut index = 0;
+        let mut ans = smallvec::smallvec![];
+        for item in self.iter() {
+            if index < to && from < index + item.content_len() {
+                let start = if index < from { from - index } else { 0 };
+                let len = item.content_len().min(to - index);
+                ans.push(item.slice(start, from + len));
+            }
+
+            index += item.content_len();
+        }
+
+        ans
     }
 }

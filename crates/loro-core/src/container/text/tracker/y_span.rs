@@ -275,8 +275,8 @@ mod test {
     use crate::{
         container::{ContainerID, ContainerType},
         id::ROOT_ID,
-        op::InsertContent,
-        ContentType, Op, OpContent, ID,
+        op::{InsertContent, OpContent},
+        ContentType, Op, ID,
     };
     use rle::{HasLength, RleVec};
 

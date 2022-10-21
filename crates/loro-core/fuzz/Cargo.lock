@@ -558,6 +558,7 @@ dependencies = [
  "fxhash",
  "num",
  "ouroboros",
+ "smallvec",
 ]
 
 [[package]]

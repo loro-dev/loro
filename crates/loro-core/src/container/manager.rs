@@ -92,8 +92,8 @@ impl ContainerManager {
     }
 
     #[inline]
-    pub fn get(&self, id: ContainerID) -> Option<&ContainerInstance> {
-        self.containers.get(&id)
+    pub fn get(&self, id: &ContainerID) -> Option<&ContainerInstance> {
+        self.containers.get(id)
     }
 
     #[inline]
