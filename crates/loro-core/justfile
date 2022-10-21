@@ -21,7 +21,7 @@ fuzz-yata-long:
   cargo fuzz run yata -- -max_total_time=300 -max_len=4000 -jobs=2
 
 quick-fuzz:
-  cargo fuzz run single_client_text -- -max_total_time=3 -max_len=1000 & cargo fuzz run yata -- -max_total_time=3 -max_len=1000
+  cargo fuzz run single_client_text -- -max_total_time=10 -max_len=1000 & cargo fuzz run yata -- -max_total_time=10 -max_len=1000
 
 flame:
   cargo flamegraph --example test --features=fuzzing --root

@@ -4,13 +4,12 @@ build:
 test *FLAGS:
   RUST_BACKTRACE=full cargo nextest run {{FLAGS}}
 
-# test with proptest
-test-prop *FLAGS:
-  RUST_BACKTRACE=full RUSTFLAGS='--cfg proptest' cargo nextest run {{FLAGS}}
-
-# test with slower proptest
-test-slowprop *FLAGS:
-  RUST_BACKTRACE=full RUSTFLAGS='--cfg slow_proptest' cargo nextest run {{FLAGS}}
+test-all:
+  cargo nextest run &
+  just quickfuzz
+  
+quickfuzz:
+  cd crates/loro-core && just quick-fuzz
 
 check:
   cargo clippy
