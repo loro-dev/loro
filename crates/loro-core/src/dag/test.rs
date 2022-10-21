@@ -209,6 +209,17 @@ impl TestDag {
     }
 }
 
+/// ```mermaid /// flowchart RL
+/// subgraph client0
+/// 0-1("c0: [1, 3)") --> 0-0("c0: [0, 1)")
+/// end
+///
+/// subgraph client1
+/// 1-0("c1: [0, 2)")
+/// end
+///
+/// 0-1 --> 1-0
+/// ```
 #[test]
 fn test_dag() {
     let mut a = TestDag::new(0);
@@ -242,11 +253,12 @@ fn test_dag() {
     b.merge(&a);
     assert_eq!(b.next_lamport, 3);
     assert_eq!(b.frontier().len(), 2);
+    // println!("{}", b.mermaid());
     assert_eq!(
         b.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(1, 1)])
             .first()
             .copied(),
-        Some(ID::new(1, 0))
+        None,
     );
 }
 
@@ -643,6 +655,8 @@ mod find_path {
 }
 
 mod find_common_ancestors {
+    use smallvec::smallvec;
+
     use super::*;
 
     #[test]
@@ -685,6 +699,25 @@ mod find_common_ancestors {
     }
 
     #[test]
+    fn no_common_ancestors_when_there_is_an_redundant_node() {
+        let mut a = TestDag::new(0);
+        let mut b = TestDag::new(1);
+        a.push(5);
+        b.push(1);
+        a.merge(&b);
+        let actual = a
+            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 0)])
+            .first()
+            .copied();
+        assert_eq!(actual, None);
+        let actual = a
+            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 0), ID::new(0, 1)])
+            .first()
+            .copied();
+        assert_eq!(actual, None);
+    }
+
+    #[test]
     fn dep_in_middle() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
@@ -695,6 +728,7 @@ mod find_common_ancestors {
         b.frontier.retain(|x| x.client_id == 1);
         let k = b.nodes.get_mut(&1).unwrap();
         k[0].deps.push(ID::new(0, 2));
+        // println!("{}", b.mermaid());
         assert_eq!(
             b.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 8)])
                 .first()
@@ -730,11 +764,21 @@ mod find_common_ancestors {
         a0.push(1);
         a1.merge(&a2);
         a1.merge(&a0);
+        // println!("{}", a1.mermaid());
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
                 .first()
                 .copied(),
-            Some(ID::new(0, 2))
+            None
+        );
+        assert_eq!(
+            a1.find_common_ancestor(
+                &[ID::new(0, 3), ID::new(1, 2), ID::new(2, 2)],
+                &[ID::new(1, 4)]
+            )
+            .into_iter()
+            .collect::<Vec<_>>(),
+            vec![ID::new(1, 2), ID::new(2, 2)]
         );
     }
 }
@@ -801,15 +845,26 @@ mod find_common_ancestors_proptest {
     }
 
     #[test]
-    fn issue() {
-        if let Err(err) = test_single_common_ancestor(
-            4,
+    fn issue_0() {
+        if let Err(err) = test_mul_ancestors::<3>(
+            10,
+            vec![
+                Interaction {
+                    dag_idx: 1,
+                    merge_with: None,
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 8,
+                    merge_with: None,
+                    len: 2,
+                },
+            ],
             vec![Interaction {
-                dag_idx: 0,
+                dag_idx: 1,
                 merge_with: None,
                 len: 1,
             }],
-            vec![],
         ) {
             println!("{}", err);
             panic!();
@@ -912,8 +967,13 @@ mod find_common_ancestors_proptest {
             for i in N..dags.len() {
                 let (target, dag): (&mut TestDag, &mut TestDag) =
                     unsafe_array_mut_ref!(dags, [target, i]);
-                dag.merge(target);
                 target.merge(dag);
+                target.push(1);
+            }
+            for i in N..dags.len() {
+                let (target, dag): (&mut TestDag, &mut TestDag) =
+                    unsafe_array_mut_ref!(dags, [target, i]);
+                dag.merge(target);
             }
         }
 

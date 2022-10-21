@@ -409,6 +409,10 @@ where
             && b_count == 0
             && (!deep || min.is_none() || &node <= min.as_ref().unwrap())
         {
+            if node_type != NodeType::Shared {
+                ans.clear();
+            }
+
             break;
         }
 
@@ -416,8 +420,33 @@ where
             queue.push((OrdIdSpan::from_dag_node(dep_id, get).unwrap(), node_type));
         }
 
-        if node_type != NodeType::Shared && queue.is_empty() {
-            ans.clear();
+        if node_type != NodeType::Shared {
+            if queue.is_empty() {
+                ans.clear();
+                break;
+            }
+            if node.deps.is_empty() && !deep {
+                if node.len == 1 {
+                    ans.clear();
+                    break;
+                }
+
+                match node_type {
+                    NodeType::A => a_count += 1,
+                    NodeType::B => b_count += 1,
+                    NodeType::Shared => {}
+                }
+
+                queue.push((
+                    OrdIdSpan {
+                        deps: &[],
+                        id: node.id,
+                        len: node.len - 1,
+                        lamport: node.lamport,
+                    },
+                    node_type,
+                ));
+            }
         }
     }
 

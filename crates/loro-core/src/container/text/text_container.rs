@@ -136,27 +136,35 @@ impl Container for TextContainer {
         debug_log!("APPLY ENTRY client={}", store.this_client_id);
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
+        debug_log!("FROM {} {:?}", new_op_id, &self.head);
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
         let path_to_head = store.find_path(&common_ancestors, &self.head);
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
-        debug_log!("START FROM {:?}", &common_ancestors_vv);
-        if common_ancestors.is_empty()
-            || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
-        {
+        debug_log!(
+            "START FROM {:?} {} {:?}",
+            &common_ancestors,
+            new_op_id,
+            &self.head
+        );
+        // let head = if common_ancestors.is_empty() || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
+        let head = if true {
             debug_log!("NewTracker");
             self.tracker = Tracker::new(common_ancestors_vv);
+            common_ancestors
         } else {
             debug_log!("OldTracker");
-            self.tracker.checkout(&common_ancestors_vv);
-        }
+            let vv = self.tracker.all_vv().clone();
+            self.tracker.checkout(vv);
+            self.tracker.all_vv().get_head()
+        };
 
         // stage 1
-        let path = store.find_path(&common_ancestors, &latest_head);
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
-        for iter in store.iter_partial(&common_ancestors, path.right) {
+        let path = store.find_path(&head, &latest_head);
+        for iter in store.iter_partial(&head, path.right) {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             // TODO: avoid this clone
@@ -180,13 +188,14 @@ impl Container for TextContainer {
         // stage 2
         // TODO: reduce computations
         let path = store.find_path(&self.head, &latest_head);
-        self.tracker.checkout(&self.vv);
+        self.tracker.checkout(self.vv.clone());
         debug_log!(
             "Iterate path: {} from {} => {}",
             format!("{:?}", path.right).red(),
             format!("{:?}", self.head).red(),
             format!("{:?}", latest_head).red(),
         );
+        dbg!(&self.tracker);
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
             match effect {

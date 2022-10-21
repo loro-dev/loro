@@ -92,6 +92,10 @@ impl Tracker {
         &self.start_vv
     }
 
+    pub fn all_vv(&self) -> &VersionVector {
+        &self.all_vv
+    }
+
     #[inline]
     pub fn head_vv(&self) -> &VersionVector {
         &self.head_vv
@@ -127,11 +131,11 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    pub fn checkout(&mut self, vv: &VersionVector) {
-        let diff = self.head_vv.diff(vv);
+    pub fn checkout(&mut self, vv: VersionVector) {
+        let diff = self.head_vv.diff(&vv);
         self.retreat(&diff.left);
         self.forward(&diff.right);
-        self.head_vv = vv.clone();
+        self.head_vv = vv;
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {

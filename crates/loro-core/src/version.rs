@@ -5,6 +5,7 @@ use std::{
 
 use fxhash::FxHashMap;
 use im::hashmap::HashMap as ImHashMap;
+use smallvec::SmallVec;
 
 use crate::{
     change::Lamport,
@@ -228,6 +229,22 @@ impl VersionVector {
         }
 
         ans
+    }
+
+    #[inline]
+    pub fn get_head(&self) -> SmallVec<[ID; 2]> {
+        self.iter()
+            .filter_map(|(client_id, &counter)| {
+                if counter > 0 {
+                    Some(ID {
+                        client_id: *client_id,
+                        counter: counter - 1,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     #[inline]
