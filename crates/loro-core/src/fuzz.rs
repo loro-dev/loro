@@ -318,20 +318,19 @@ mod test {
             2,
             vec![
                 Ins {
-                    content: "a".into(),
-                    pos: 14072811359363267,
+                    content: "12345".into(),
+                    pos: 6447834,
                     site: 0,
                 },
-                Sync { from: 186, to: 187 },
                 Ins {
-                    content: "b".into(),
-                    pos: 1374464008290728467,
-                    site: 19,
+                    content: "x".into(),
+                    pos: 17753860855744831232,
+                    site: 115,
                 },
-                Ins {
-                    content: "c".into(),
-                    pos: 3175903134871683258,
-                    site: 186,
+                Del {
+                    pos: 18335269204214833762,
+                    len: 52354349510255359,
+                    site: 0,
                 },
             ],
         )
