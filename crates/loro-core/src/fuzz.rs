@@ -3,53 +3,90 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
+    array_mut_ref,
     container::{text::text_container::TextContainer, Container},
     LoroCore,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
-    Ins { content: String, pos: usize },
-    Del { pos: usize, len: usize },
+    Ins {
+        content: String,
+        pos: usize,
+        site: u8,
+    },
+    Del {
+        pos: usize,
+        len: usize,
+        site: u8,
+    },
+    Sync {
+        from: u8,
+        to: u8,
+    },
+    SyncAll,
 }
 
 impl Tabled for Action {
-    const LENGTH: usize = 4;
+    const LENGTH: usize = 5;
 
     fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
         match self {
-            Action::Ins { content, pos } => vec![
+            Action::Ins { content, pos, site } => vec![
                 "ins".into(),
                 pos.to_string().into(),
                 content.len().to_string().into(),
                 content.into(),
+                site.to_string().into(),
             ],
-            Action::Del { pos, len } => vec![
+            Action::Del { pos, len, site } => vec![
                 "del".into(),
                 pos.to_string().into(),
                 len.to_string().into(),
+                "".into(),
+                site.to_string().into(),
+            ],
+            Action::Sync { from, to } => vec![
+                "sync".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+                format!("{} {}", from, to).into(),
+            ],
+            Action::SyncAll => vec![
+                "sync all".into(),
+                "".into(),
+                "".into(),
+                "".into(),
                 "".into(),
             ],
         }
     }
 
     fn headers() -> Vec<std::borrow::Cow<'static, str>> {
-        vec!["type".into(), "pos".into(), "len".into(), "content".into()]
+        vec![
+            "type".into(),
+            "pos".into(),
+            "len".into(),
+            "content".into(),
+            "site".into(),
+        ]
     }
 }
 
 trait Actionable {
     fn apply_action(&mut self, action: &Action);
-    fn preprocess(&self, action: &mut Action);
+    fn preprocess(&mut self, action: &mut Action);
 }
 
 impl Action {
-    pub fn preprocess(&mut self, max_len: usize) {
+    pub fn preprocess(&mut self, max_len: usize, max_users: u8) {
         match self {
-            Action::Ins { pos, .. } => {
+            Action::Ins { pos, site, .. } => {
                 *pos %= max_len + 1;
+                *site %= max_users;
             }
-            Action::Del { pos, len, .. } => {
+            Action::Del { pos, len, site } => {
                 if max_len == 0 {
                     *pos = 0;
                     *len = 0;
@@ -57,7 +94,13 @@ impl Action {
                     *pos %= max_len;
                     *len = (*len).min(max_len - (*pos));
                 }
+                *site %= max_users;
             }
+            Action::Sync { from, to } => {
+                *from %= max_users;
+                *to %= max_users;
+            }
+            Action::SyncAll => {}
         }
     }
 }
@@ -65,28 +108,29 @@ impl Action {
 impl Actionable for String {
     fn apply_action(&mut self, action: &Action) {
         match action {
-            Action::Ins { content, pos } => {
+            Action::Ins { content, pos, .. } => {
                 self.insert_str(*pos, content);
             }
-            &Action::Del { pos, len } => {
-                if self.len() == 0 {
+            &Action::Del { pos, len, .. } => {
+                if self.is_empty() {
                     return;
                 }
 
                 self.drain(pos..pos + len);
             }
+            _ => {}
         }
     }
 
-    fn preprocess(&self, action: &mut Action) {
-        action.preprocess(self.len());
+    fn preprocess(&mut self, action: &mut Action) {
+        action.preprocess(self.len(), 1);
         match action {
             Action::Ins { pos, .. } => {
                 while !self.is_char_boundary(*pos) {
                     *pos = (*pos + 1) % (self.len() + 1)
                 }
             }
-            Action::Del { pos, len } => {
+            Action::Del { pos, len, .. } => {
                 if self.is_empty() {
                     *len = 0;
                     *pos = 0;
@@ -102,6 +146,7 @@ impl Actionable for String {
                     *len += 1;
                 }
             }
+            _ => {}
         }
     }
 }
@@ -109,30 +154,115 @@ impl Actionable for String {
 impl Actionable for TextContainer {
     fn apply_action(&mut self, action: &Action) {
         match action {
-            Action::Ins { content, pos } => {
+            Action::Ins { content, pos, .. } => {
                 self.insert(*pos, content);
             }
-            &Action::Del { pos, len } => {
+            &Action::Del { pos, len, .. } => {
                 if self.text_len() == 0 {
                     return;
                 }
 
                 self.delete(pos, len);
             }
+            _ => {}
         }
     }
 
-    fn preprocess(&self, _action: &mut Action) {
+    fn preprocess(&mut self, _action: &mut Action) {
         unreachable!();
+    }
+}
+
+impl Actionable for Vec<LoroCore> {
+    fn apply_action(&mut self, action: &Action) {
+        match action {
+            Action::Ins { content, pos, site } => {
+                self[*site as usize]
+                    .get_or_create_text_container_mut("text".into())
+                    .insert(*pos, content);
+            }
+            Action::Del { pos, len, site } => {
+                self[*site as usize]
+                    .get_or_create_text_container_mut("text".into())
+                    .delete(*pos, *len);
+            }
+            Action::Sync { from, to } => {
+                let to_vv = self[*to as usize].vv();
+                let from_exported = self[*from as usize].export(to_vv);
+                self[*to as usize].import(from_exported);
+            }
+            Action::SyncAll => {}
+        }
+    }
+
+    fn preprocess(&mut self, action: &mut Action) {
+        match action {
+            Action::Ins { content, pos, site } => {
+                *site %= self.len() as u8;
+                let mut text = self[*site as usize].get_or_create_text_container_mut("text".into());
+                let value = text.get_value().as_string().unwrap();
+                *pos %= value.len() + 1;
+                while !value.is_char_boundary(*pos) {
+                    *pos = (*pos + 1) % (value.len() + 1)
+                }
+            }
+            Action::Del { pos, len, site } => {
+                *site %= self.len() as u8;
+                let mut text = self[*site as usize].get_or_create_text_container_mut("text".into());
+                if text.text_len() == 0 {
+                    *len = 0;
+                    *pos = 0;
+                    return;
+                }
+
+                let str = text.get_value().as_string().unwrap();
+                *pos %= str.len() + 1;
+                while !str.is_char_boundary(*pos) {
+                    *pos = (*pos + 1) % str.len();
+                }
+
+                *len = (*len).min(str.len() - (*pos));
+                while !str.is_char_boundary(*pos + *len) {
+                    *len += 1;
+                }
+            }
+            Action::Sync { from, to } => {
+                *from %= self.len() as u8;
+                *to %= self.len() as u8;
+            }
+            Action::SyncAll => {}
+        }
+    }
+}
+
+fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
+    let mut a = site_a.get_or_create_text_container_mut("text".into());
+    let mut b = site_b.get_or_create_text_container_mut("text".into());
+    let value_a = a.get_value();
+    let value_b = b.get_value();
+    assert_eq!(value_a.as_string().unwrap(), value_b.as_string().unwrap());
+}
+
+fn check_synced(sites: &mut [LoroCore]) {
+    for i in 0..sites.len() - 1 {
+        for j in i + 1..sites.len() {
+            let (a, b) = array_mut_ref!(sites, [i, j]);
+            b.import(a.export(b.vv()));
+            a.import(b.export(a.vv()));
+            check_eq(a, b)
+        }
     }
 }
 
 pub fn test_single_client(mut actions: Vec<Action>) {
     let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut text_container = store.get_text_container("haha".into());
+    let mut text_container = store.get_or_create_text_container_mut("haha".into());
     let mut ground_truth = String::new();
     let mut applied = Vec::new();
-    for action in actions.iter_mut() {
+    for action in actions
+        .iter_mut()
+        .filter(|x| x.as_del().is_some() || x.as_ins().is_some())
+    {
         ground_truth.preprocess(action);
         applied.push(action.clone());
         // println!("{}", (&applied).table());
@@ -147,6 +277,25 @@ pub fn test_single_client(mut actions: Vec<Action>) {
     }
 }
 
+pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        sites.push(LoroCore::new(Default::default(), Some(i as u64)));
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        println!("{}", (&applied).table());
+        sites.apply_action(action);
+    }
+
+    println!("SYNC");
+    // println!("{}", actions.table());
+    check_synced(&mut sites);
+}
+
 #[cfg(test)]
 mod test {
     use ctor::ctor;
@@ -156,240 +305,26 @@ mod test {
 
     #[test]
     fn test() {
-        test_single_client(vec! [
-            Ins {
-                content: "\u{16}\u{16}\u{16}\u{16}\u{16}#####BBBBSSSSSSSSS".into(),
-                pos: 60797853338129363,
-            },
-            Ins {
-                content: "\u{13}T0\u{18}5\u{13}".into(),
-                pos: 1369375761697341439,
-            },
-            Ins {
-                content: "\0\0\0SS".into(),
-                pos: 280733345338323,
-            },
-            Ins {
-                content: "**".into(),
-                pos: 5444570,
-            },
-            Ins {
-                content: "\u{13}".into(),
-                pos: 5692550972993381338,
-            },
-            Ins {
-                content: "OOOOOOOOOOOOOOBBBBBBBBBBBBBBBBB#\0\0####".into(),
-                pos: 138028458976,
-            },
-            Ins {
-                content: "".into(),
-                pos: 267263250998051,
-            },
-            Ins {
-                content: "".into(),
-                pos: 4774378554966147091,
-            },
-            Ins {
-                content: "BBBBB#\0\0######## \0\0\0######".into(),
-                pos: 3038287259207217298,
-            },
-            Ins {
-                content: "".into(),
-                pos: 16645325113485036074,
-            },
-            Ins {
-                content: "".into(),
-                pos: 23362835702677503,
-            },
-            Ins {
-                content: "S".into(),
-                pos: 280733345338323,
-            },
-            Ins {
-                content: "*UUU".into(),
-                pos: 2761092332,
-            },
-            Ins {
-                content: "\u{5ec}".into(),
-                pos: 15332975680940594378,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038287259199214554,
-            },
-            Ins {
-                content: "PPPPPPPPPPPPP\u{13}".into(),
-                pos: 6004374254117322995,
-            },
-            Ins {
-                content: "SSSSSS".into(),
-                pos: 48379484722131,
-            },
-            Ins {
-                content: ",\0\0\0UUUU".into(),
-                pos: 2761092332,
-            },
-            Ins {
-                content: "\u{5ec}".into(),
-                pos: 15332975680940594378,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038287259199214554,
-            },
-            Ins {
-                content: "".into(),
-                pos: 5787213827046133840,
-            },
-            Ins {
-                content: "PPPPPPPPPPPPPPPP*****".into(),
-                pos: 2762368,
-            },
-            Ins {
-                content: "".into(),
-                pos: 0,
-            },
-            Ins {
-                content: "".into(),
-                pos: 0,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038287259199220266,
-            },
-            Ins {
-                content: "*\0\u{13}EEEEEEEEEEEEEEEEEEEEEEEE".into(),
-                pos: 4179340455027348442,
-            },
-            Ins {
-                content: "\0UUUU".into(),
-                pos: 2761092332,
-            },
-            Ins {
-                content: "\u{5ec}".into(),
-                pos: 15332976539934053578,
-            },
-            Ins {
-                content: "ڨ\0\0\0*******************".into(),
-                pos: 3038287259199220352,
-            },
-            Ins {
-                content: "*&*****".into(),
-                pos: 6004234345560396434,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038287259199220307,
-            },
-            Ins {
-                content: "******".into(),
-                pos: 3038287259889816210,
-            },
-            Ins {
-                content: "*****".into(),
-                pos: 11350616413819538,
-            },
-            Ins {
-                content: "".into(),
-                pos: 6004234345560363859,
-            },
-            Ins {
-                content: "S".into(),
-                pos: 60797853338129363,
-            },
-            Ins {
-                content: "\u{13}T3\u{18}5\u{13}".into(),
-                pos: 1369375761697341439,
-            },
-            Ins {
-                content: "\0\0\0SS".into(),
-                pos: 280733345338323,
-            },
-            Ins {
-                content: "*UUU".into(),
-                pos: 2761092332,
-            },
-            Ins {
-                content: "\u{5ec}".into(),
-                pos: 15332975680940594378,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038287259199214554,
-            },
-            Ins {
-                content: "".into(),
-                pos: 5787213827046133840,
-            },
-            Ins {
-                content: "".into(),
-                pos: 5787213827046133840,
-            },
-            Ins {
-                content: "PPPP*****".into(),
-                pos: 2762368,
-            },
-            Ins {
-                content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0******".into(),
-                pos: 3038287259199220266,
-            },
-            Ins {
-                content: "EEEEEEEEEEEEEEEEEEEEEEE".into(),
-                pos: 4179340455027348442,
-            },
-            Ins {
-                content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0 ,\0\0\0UUUU".into(),
-                pos: 2761092332,
-            },
-            Ins {
-                content: "\u{5ec}".into(),
-                pos: 14483766535198004426,
-            },
-            Ins {
-                content: "".into(),
-                pos: 3038240898625886739,
-            },
-            Ins {
-                content: "*************".into(),
-                pos: 3038287259199220352,
-            },
-            Ins {
-                content: "*&*****".into(),
-                pos: 6004234345560396434,
-            },
-            Ins {
-                content: "S*********\0*******".into(),
-                pos: 3038287259889816210,
-            },
-            Ins {
-                content: "*****".into(),
-                pos: 11350616413819538,
-            },
-            Ins {
-                content: "SSSSSSSSSSSSS".into(),
-                pos: 60797853338129363,
-            },
-            Ins {
-                content: "\u{13}T4\u{18}5\u{13}".into(),
-                pos: 1369375761697341439,
-            },
-            Ins {
-                content: "\0\0\0SS".into(),
-                pos: 3834029289772372947,
-            },
-            Ins {
-                content: "55555555555555555555555555555555555555555555555555555555555555555555555555555555555".into(),
-                pos: 280603991029045,
-            },
-            Ins {
-                content: "".into(),
-                pos: 356815350314,
-            },
-            Ins {
-                content: "\u{13}\0\u{13}".into(),
-                pos: 1369095330717705178,
-            },
-        ])
+        test_single_client(vec![])
+    }
+
+    #[test]
+    fn test_two() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "\0\u{1}\u{1}".into(),
+                    pos: 2170205186765623551,
+                    site: 0,
+                },
+                Del {
+                    pos: 108084720300767744,
+                    len: 485,
+                    site: 0,
+                },
+            ],
+        )
     }
 
     #[ctor]

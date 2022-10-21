@@ -819,6 +819,7 @@ dependencies = [
  "ouroboros",
  "proptest",
  "rand",
+ "smallvec",
  "smartstring",
  "static_assertions",
 ]

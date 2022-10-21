@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock, RwLockWriteGuard},
 };
 
-use owning_ref::OwningRefMut;
+use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
     change::Change,
@@ -74,7 +74,7 @@ impl LoroCore {
         })
     }
 
-    pub fn get_text_container(
+    pub fn get_or_create_text_container_mut(
         &mut self,
         name: InternalString,
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
@@ -86,6 +86,19 @@ impl LoroCore {
             )
             .as_text_mut()
             .unwrap()
+        })
+    }
+
+    pub fn get_text_container(
+        &self,
+        name: InternalString,
+    ) -> OwningRef<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
+        let a = OwningRef::new(self.container.write().unwrap());
+        a.map(|x| {
+            x.get(&ContainerID::new_root(name, ContainerType::Text))
+                .unwrap()
+                .as_text()
+                .unwrap()
         })
     }
 

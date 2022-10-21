@@ -54,6 +54,10 @@ impl TextContainer {
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
+        if text.is_empty() {
+            return None;
+        }
+
         let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
             // let slice = ListSlice::from_range(self.raw_str.alloc(text));
@@ -79,6 +83,10 @@ impl TextContainer {
     }
 
     pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
+        if len == 0 {
+            return None;
+        }
+
         let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
             let op = Op::new(
@@ -159,10 +167,10 @@ impl Container for TextContainer {
         // stage 2
         let path = store.find_path(&latest_head, &self.head);
         self.tracker.retreat(&path.left);
-        // println!(
-        //     "Iterate path: {:?} from {:?} => {:?}",
-        //     path.left, &self.head, &latest_head
-        // );
+        println!(
+            "Iterate path: {:?} from {:?} => {:?}",
+            path.left, &self.head, &latest_head
+        );
         for effect in self.tracker.iter_effects(path.left) {
             // println!("{:?}", &effect);
             match effect {
@@ -175,13 +183,14 @@ impl Container for TextContainer {
 
         self.head.push(new_op_id);
         self.vv.set_last(new_op_id);
-        // println!("------------------------------------------------------------------------");
+        println!("------------------------------------------------------------------------");
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {
         todo!()
     }
 
+    // TODO: maybe we need to let this return Cow
     fn get_value(&mut self) -> &LoroValue {
         let mut ans_str = SmString::new();
         for v in self.state.iter() {

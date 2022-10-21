@@ -103,6 +103,7 @@ impl LogStore {
             .into_iter()
             .filter(|x| !self_vv.includes_id(x.last_id()))
         {
+            println!("APPLY {:?} to {}", change, self.this_client_id);
             check_import_change_valid(&change);
             // TODO: cache pending changes
             assert!(change.deps.iter().all(|x| self_vv.includes_id(*x)));
@@ -145,7 +146,7 @@ impl LogStore {
     fn change_to_export_format(&self, change: &mut Change) {
         let container_manager = self.container.read().unwrap();
         for op in change.ops.vec_mut().iter_mut() {
-            let container = container_manager.get(op.container.clone()).unwrap();
+            let container = container_manager.get(&op.container).unwrap();
             container.to_export(op);
         }
     }

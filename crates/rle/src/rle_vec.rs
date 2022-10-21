@@ -121,6 +121,16 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
 
     /// get a slice from `from` to `to` with atom indexes
     pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
+        if from == to {
+            return SliceIterator {
+                vec: &self.vec,
+                cur_index: 0,
+                cur_offset: 0,
+                end_index: Some(0),
+                end_offset: Some(0),
+            };
+        }
+
         let from_result = self.get(from).unwrap();
         let to_result = self.get(to);
         if let Some(to_result) = to_result {

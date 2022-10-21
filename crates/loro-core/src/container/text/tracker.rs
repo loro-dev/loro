@@ -133,8 +133,8 @@ impl Tracker {
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
-        let mut to_set_as_applied = Vec::with_capacity(spans.len());
-        let mut to_delete = Vec::with_capacity(spans.len());
+        let mut cursors = Vec::with_capacity(spans.len());
+        let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             self.head_vv.set_end(ID::new(*span.0, span.1.end));
             let IdSpanQueryResult { inserts, deletes } = self
@@ -142,37 +142,38 @@ impl Tracker {
                 .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
             for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
-                    to_delete.append(
-                        &mut self
-                            .id_to_cursor
-                            .get_cursors_at_id_span(*deleted_span)
-                            .inserts
-                            .iter()
-                            .map(|x| x.1)
-                            .collect(),
-                    );
+                    for span in self
+                        .id_to_cursor
+                        .get_cursors_at_id_span(*deleted_span)
+                        .inserts
+                        .iter()
+                        .map(|x| x.1)
+                    {
+                        cursors.push(span);
+                        args.push(StatusChange::Delete);
+                    }
                 }
             }
 
-            // TODO: maybe we can skip this collect
-            to_set_as_applied.append(&mut inserts.iter().map(|x| x.1).collect());
+            for span in inserts.iter().map(|x| x.1) {
+                cursors.push(span);
+                args.push(StatusChange::SetAsCurrent);
+            }
         }
 
-        self.content.update_at_cursors_twice(
-            &[&to_set_as_applied, &to_delete],
-            &mut |v| {
-                v.status.apply(StatusChange::SetAsCurrent);
-            },
-            &mut |v: &mut YSpan| {
-                v.status.apply(StatusChange::Delete);
+        self.content.update_at_cursors_with_args(
+            &cursors,
+            &args,
+            &mut |v: &mut YSpan, arg| {
+                v.status.apply(*arg);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
-        let mut to_set_as_future = Vec::with_capacity(spans.len());
-        let mut to_undo_delete = Vec::with_capacity(spans.len());
+        let mut cursors = Vec::with_capacity(spans.len());
+        let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             self.head_vv.set_end(ID::new(*span.0, span.1.start));
             let IdSpanQueryResult { inserts, deletes } = self
@@ -180,29 +181,30 @@ impl Tracker {
                 .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
             for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
-                    to_undo_delete.append(
-                        &mut self
-                            .id_to_cursor
-                            .get_cursors_at_id_span(*deleted_span)
-                            .inserts
-                            .iter()
-                            .map(|x| x.1)
-                            .collect(),
-                    );
+                    for span in self
+                        .id_to_cursor
+                        .get_cursors_at_id_span(*deleted_span)
+                        .inserts
+                        .iter()
+                        .map(|x| x.1)
+                    {
+                        cursors.push(span);
+                        args.push(StatusChange::UndoDelete);
+                    }
                 }
             }
 
-            // TODO: maybe we can skip this collect
-            to_set_as_future.append(&mut inserts.iter().map(|x| x.1).collect());
+            for span in inserts.iter().map(|x| x.1) {
+                cursors.push(span);
+                args.push(StatusChange::SetAsFuture);
+            }
         }
 
-        self.content.update_at_cursors_twice(
-            &[&to_set_as_future, &to_undo_delete],
-            &mut |v| {
-                v.status.apply(StatusChange::SetAsFuture);
-            },
-            &mut |v: &mut YSpan| {
-                v.status.apply(StatusChange::UndoDelete);
+        self.content.update_at_cursors_with_args(
+            &cursors,
+            &args,
+            &mut |v: &mut YSpan, arg| {
+                v.status.apply(*arg);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )

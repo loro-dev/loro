@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+smallvec = "1.8.0"
 bumpalo = { version = "3.10.0", features = ["collections", "boxed"] }
 num = "0.4.0"
 enum-as-inner = "0.5.1"

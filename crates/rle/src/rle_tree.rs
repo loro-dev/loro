@@ -8,6 +8,7 @@ pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
 use fxhash::FxHashMap;
 use num::FromPrimitive;
 use ouroboros::self_referencing;
+use smallvec::SmallVec;
 pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
@@ -280,51 +281,52 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
-    pub fn update_at_cursors_twice<U, V, F>(
+    // TODO: perf, use smallvec
+    pub fn update_at_cursors_with_args<U, F, Arg>(
         &mut self,
-        cursor_groups: &[&[UnsafeCursor<T, A>]; 2],
-        update_fn_u: &mut U,
-        update_fn_v: &mut V,
+        cursor_groups: &[UnsafeCursor<T, A>],
+        args: &[Arg],
+        update_fn: &mut U,
         notify: &mut F,
     ) where
-        U: FnMut(&mut T),
-        V: FnMut(&mut T),
+        U: FnMut(&mut T, &Arg),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>, _> = FxHashMap::default();
-        for (i, cursors) in cursor_groups.iter().enumerate() {
-            for cursor in cursors.iter() {
-                // SAFETY: we has the exclusive reference to the tree and the cursor is valid
-                let updates = unsafe {
-                    if i == 0 {
-                        cursor.leaf.as_ref().pure_update(
-                            cursor.index,
-                            cursor.offset,
-                            cursor.len,
-                            update_fn_u,
-                        )
-                    } else {
-                        cursor.leaf.as_ref().pure_update(
-                            cursor.index,
-                            cursor.offset,
-                            cursor.len,
-                            update_fn_v,
-                        )
-                    }
-                };
+        let mut cursor_map: HashMap<(NonNull<_>, usize), Vec<(&UnsafeCursor<T, A>, &Arg)>, _> =
+            FxHashMap::default();
+        for (i, arg) in args.iter().enumerate() {
+            let cursor = &cursor_groups[i];
+            cursor_map
+                .entry((cursor.leaf, cursor.index))
+                .or_default()
+                .push((cursor, arg));
+        }
 
-                if let Some(update) = updates {
-                    updates_map
-                        .entry(cursor.leaf)
-                        .or_default()
-                        .push((cursor.index, update));
-                }
+        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<T>)>, _> = FxHashMap::default();
+        for ((mut leaf, index), args) in cursor_map.iter() {
+            // SAFETY: we has the exclusive reference to the tree and the cursor is valid
+            let leaf = unsafe { leaf.as_mut() };
+            let input_args = args.iter().map(|x| x.1).collect::<Vec<_>>();
+            let updates = leaf.pure_updates_at_same_index(
+                *index,
+                &args.iter().map(|x| x.0.offset).collect::<Vec<_>>(),
+                &args.iter().map(|x| x.0.len).collect::<Vec<_>>(),
+                &input_args,
+                update_fn,
+            );
+
+            if let Some(update) = updates {
+                updates_map
+                    .entry(leaf.into())
+                    .or_default()
+                    .push((*index, update.into_iter().collect()));
             }
         }
 
         self.update_with_gathered_map(updates_map, notify);
     }
 
+    // TODO: perf, use smallvec
     fn update_with_gathered_map<F, M>(
         &mut self,
         iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, Vec<T>)>, M>,
