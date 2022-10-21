@@ -69,6 +69,7 @@ impl Mergable for ListSlice {
         match (self, other) {
             (ListSlice::Slice(x), ListSlice::Slice(y)) => x.is_mergable(y, &()),
             (ListSlice::Unknown(_), ListSlice::Unknown(_)) => true,
+            (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.is_mergable(b, &()),
             _ => false,
         }
     }
@@ -79,6 +80,7 @@ impl Mergable for ListSlice {
             (ListSlice::Unknown(x), ListSlice::Unknown(y)) => {
                 *x += y;
             }
+            (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.merge(b, &()),
             _ => unreachable!(),
         }
     }
