@@ -266,13 +266,14 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
             }));
         }
 
-        let deps = if slice_from == 0 {
+        let deps: SmallVec<[_; 2]> = if slice_from == 0 {
             node.deps().iter().copied().collect()
         } else {
             smallvec::smallvec![node.id_start().inc(slice_from - 1)]
         };
         let path = self.dag.find_path(&self.frontier, &deps);
-        self.frontier = deps;
+        // NOTE: we expect user to update the tracker, to apply node, after visiting the node
+        self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
         Some(IterReturn {
             retreat: path.left,
             forward: path.right,

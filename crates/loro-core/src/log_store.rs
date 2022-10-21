@@ -17,7 +17,8 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{manager::ContainerManager, Container, ContainerID},
-    dag::Dag,
+    dag::{Dag, DagUtils},
+    debug_log,
     id::{ClientID, Counter},
     span::{HasIdSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
@@ -103,7 +104,6 @@ impl LogStore {
             .into_iter()
             .filter(|x| !self_vv.includes_id(x.last_id()))
         {
-            println!("APPLY {:?} to {}", change, self.this_client_id);
             check_import_change_valid(&change);
             // TODO: cache pending changes
             assert!(change.deps.iter().all(|x| self_vv.includes_id(*x)));

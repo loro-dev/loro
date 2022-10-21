@@ -23,6 +23,7 @@ owning_ref = "0.4.1"
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1.1.7", optional = true }
 tabled = { version = "0.10.0", optional = true }
+colored = "2.0.0"
 
 [dev-dependencies]
 rand = { version = "0.8.5" }
