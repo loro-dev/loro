@@ -165,20 +165,56 @@ mod test {
 
 #[cfg(feature = "fuzzing")]
 pub mod fuzz {
-    #![allow(unused_imports)]
-    use crdt_list::{
-        test::{Action, TestFramework},
-        yata::Yata,
-    };
+    use std::borrow::Cow;
+    use tabled::Tabled;
+    impl Tabled for YSpan {
+        const LENGTH: usize = 7;
+
+        fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
+            vec![
+                self.id.to_string().into(),
+                self.len.to_string().into(),
+                self.status.future.to_string().into(),
+                self.status.delete_times.to_string().into(),
+                self.status.undo_times.to_string().into(),
+                self.origin_left
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+                    .into(),
+                self.origin_right
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+                    .into(),
+            ]
+        }
+
+        fn headers() -> Vec<Cow<'static, str>> {
+            vec![
+                "id".into(),
+                "len".into(),
+                "future".into(),
+                "del".into(),
+                "undo".into(),
+                "origin\nleft".into(),
+                "origin\nright".into(),
+            ]
+        }
+    }
+
+    use crdt_list::test::{Action, TestFramework};
     use rle::RleVec;
+    use tabled::TableIteratorExt;
 
     use crate::{
         container::text::{
             text_content::ListSlice,
-            tracker::{y_span::StatusChange, Tracker},
+            tracker::{
+                y_span::{StatusChange, YSpan},
+                Tracker,
+            },
         },
         id::{ClientID, ID},
-        span::{self, IdSpan},
+        span::IdSpan,
     };
 
     use super::YataImpl;
@@ -230,8 +266,8 @@ pub mod fuzz {
             if aa != bb {
                 dbg!(a.client_id);
                 dbg!(b.client_id);
-                dbg!(aa.vec());
-                dbg!(bb.vec());
+                println!("{}", aa.vec().table());
+                println!("{}", bb.vec().table());
                 // dbg!(&a.content);
                 // dbg!(&b.content);
             }
@@ -300,52 +336,17 @@ pub mod fuzz {
             5,
             100,
             vec![
-                NewOp {
-                    client_id: 255,
-                    pos: 11,
-                },
-                NewOp {
-                    client_id: 255,
-                    pos: 252,
-                },
-                NewOp {
-                    client_id: 255,
-                    pos: 64,
-                },
-                NewOp {
-                    client_id: 151,
-                    pos: 151,
-                },
-                NewOp {
-                    client_id: 151,
-                    pos: 151,
-                },
-                NewOp {
-                    client_id: 255,
-                    pos: 252,
-                },
-                NewOp {
-                    client_id: 151,
-                    pos: 158,
-                },
-                NewOp {
-                    client_id: 254,
-                    pos: 121,
-                },
-                NewOp {
-                    client_id: 3,
-                    pos: 255,
-                },
-                NewOp {
-                    client_id: 0,
-                    pos: 144,
-                },
                 Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 134,
+                    client_id: 2,
+                    pos: 58,
+                    len: 177,
                 },
-                Sync { from: 29, to: 29 },
+                Sync { from: 2, to: 0 },
+                Delete {
+                    client_id: 0,
+                    pos: 255,
+                    len: 255,
+                },
             ],
         )
     }

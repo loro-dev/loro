@@ -278,9 +278,11 @@ impl Tracker {
             }
         }
 
-        self.content.update_at_cursors(
-            &mut cursors,
-            &mut |v| {
+        let len = cursors.len();
+        self.content.update_at_cursors_with_args(
+            &cursors,
+            &vec![(); len],
+            &mut |v, _| {
                 v.status.apply(change);
             },
             &mut make_notify(&mut self.id_to_cursor),

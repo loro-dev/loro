@@ -5,7 +5,7 @@ use crate::{
         cursor::SafeCursorMut,
         tree_trait::{FindPosResult, Position},
     },
-    Sliceable,
+    HasLength, Sliceable,
 };
 use std::fmt::{Debug, Error, Formatter};
 
@@ -427,8 +427,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             return None;
         }
 
-        let mut ans = SmallVec::new();
+        let mut ans: SmallVec<[T; 2]> = SmallVec::new();
         ans.push(self.children[child_index].clone());
+        let ans_len = self.children[child_index].content_len();
         for i in 0..offsets.len() {
             let offset = offsets[i];
             let len = lens[i];
@@ -439,12 +440,13 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 update_fn(span, arg);
             }
 
-            let mut end = ans.slice(offset + len, ans.len());
+            let mut end = ans.slice(offset + len, ans_len);
             ans = ans.slice(0, offset);
             ans.append(&mut target_spans);
             ans.append(&mut end);
         }
 
+        debug_assert_eq!(ans_len, ans.iter().map(|x| x.content_len()).sum());
         Some(ans)
     }
 
@@ -788,4 +790,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for LeafNode<'a, T, A> {
         debug_struct.field("children_num", &self.children.len());
         debug_struct.finish()
     }
+}
+
+fn slice<T: HasLength + Sliceable>(
+    vec: &[T],
+    beginning: usize,
+    from: usize,
+    to: usize,
+) -> SmallVec<[T; 2]> {
+    let mut index = beginning;
+    let mut ans = smallvec::smallvec![];
+    dbg!(from, to);
+    for item in vec.iter() {
+        if index < to && from < index + item.content_len() {
+            let start = if index < from { from - index } else { 0 };
+            let len = (item.content_len() - start).min(to - index);
+            ans.push(item.slice(start, start + len));
+        }
+
+        index += item.content_len();
+    }
+
+    ans
 }
