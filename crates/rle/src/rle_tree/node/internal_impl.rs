@@ -334,6 +334,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         };
 
         if result.is_err() && self.is_root() {
+            #[allow(clippy::unnecessary_unwrap)]
             let new_vec = result.unwrap_err();
             {
                 // create level

@@ -918,6 +918,7 @@ mod find_common_ancestors_proptest {
         }
 
         let mut expected = Vec::with_capacity(N);
+        #[allow(clippy::needless_range_loop)]
         for i in 0..N {
             dags[i].push(1);
             expected.push(dags[i].frontier[0]);
@@ -1015,7 +1016,7 @@ mod find_common_ancestors_proptest {
 
 #[cfg(test)]
 mod dag_partial_iter {
-    use crate::{dag::iter::IterReturn, span::CounterSpan, tests::PROPTEST_FACTOR_10};
+    use crate::{dag::iter::IterReturn, tests::PROPTEST_FACTOR_10};
 
     use super::*;
 
@@ -1057,7 +1058,7 @@ mod dag_partial_iter {
                 break;
             }
 
-            for &(j, (other_node, other_vv)) in vec.iter() {
+            for &(j, (_other_node, other_vv)) in vec.iter() {
                 if i >= j {
                     continue;
                 }

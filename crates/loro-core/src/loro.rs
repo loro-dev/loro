@@ -14,7 +14,6 @@ use crate::{
         text::text_container::TextContainer,
         ContainerID, ContainerType,
     },
-    dag::DagUtils,
     id::ClientID,
     InternalString, LogStore, VersionVector,
 };

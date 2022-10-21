@@ -250,7 +250,7 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         let end_index = self.end_index.unwrap_or(self.vec.len() - 1);
         if self.cur_index == end_index {
             let elem = &self.vec[self.cur_index];
-            let end = self.end_offset.unwrap_or(elem.len());
+            let end = self.end_offset.unwrap_or_else(|| elem.len());
             if self.cur_offset == end {
                 return None;
             }
