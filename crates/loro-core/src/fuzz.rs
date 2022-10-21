@@ -308,8 +308,28 @@ mod test {
     use super::*;
 
     #[test]
-    fn test() {
-        test_single_client(vec![])
+    fn test_two_1() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "1".into(),
+                    pos: 0,
+                    site: 0,
+                },
+                Sync { from: 0, to: 1 },
+                Del {
+                    pos: 0,
+                    len: 1,
+                    site: 1,
+                },
+                Ins {
+                    content: "2".into(),
+                    pos: 1,
+                    site: 0,
+                },
+            ],
+        )
     }
 
     #[test]

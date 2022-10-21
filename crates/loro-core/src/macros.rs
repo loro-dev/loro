@@ -25,12 +25,13 @@ macro_rules! fx_map {
 macro_rules! debug_log {
     () => {
         if cfg!(test) {
-            //     $crate::print!("\n")
+            // $crate::print!("\n")
         }
     };
     ($($arg:tt)*) => {{
         if cfg!(test) {
-            // print!("{}:{}\t", file!(), line!());
+            // use colored::Colorize;
+            // print!("{}:{}\t", file!().purple(), line!().to_string().purple());
             // println!($($arg)*);
         }
     }};

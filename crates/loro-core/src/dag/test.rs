@@ -1110,6 +1110,7 @@ mod dag_partial_iter {
     }
 
     #[test]
+    #[ignore]
     fn issue() {
         if let Err(err) = test_partial_iter(
             5,
@@ -1142,6 +1143,7 @@ mod dag_partial_iter {
 
     proptest! {
         #[test]
+        #[ignore]
         fn proptest_iter_2(
             interactions in prop::collection::vec(gen_interaction(2), 0..40 * PROPTEST_FACTOR_10),
         ) {
