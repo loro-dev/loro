@@ -134,6 +134,22 @@ impl ContentMap {
             }
         }
 
+        assert_eq!(len, ans.len());
+        ans
+    }
+
+    pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVec<IdSpan> {
+        let mut ans = RleVec::new();
+        for cursor in self.iter_range(pos, Some(pos + len)) {
+            let id = cursor.as_ref().id;
+            let cursor = cursor.unwrap();
+            ans.push(IdSpan::new(
+                id.client_id,
+                id.counter + (cursor.offset as i32),
+                id.counter + (cursor.offset + cursor.len) as i32,
+            ));
+        }
+
         ans
     }
 }
