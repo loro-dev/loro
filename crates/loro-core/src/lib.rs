@@ -28,7 +28,7 @@ pub mod tests;
 mod value;
 
 pub(crate) mod macros;
-pub(crate) use change::{Change, Lamport, Timestamp};
+pub(crate) use change::{Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
 pub(crate) use op::{ContentType, InsertContentTrait, Op, OpContent, OpType};
 

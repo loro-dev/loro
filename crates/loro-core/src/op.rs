@@ -1,4 +1,5 @@
 use crate::{
+    change::{Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
     span::{HasId, IdSpan},
@@ -6,10 +7,8 @@ use crate::{
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
-mod op_proxy;
 
 pub use insert_content::*;
-pub use op_proxy::*;
 
 pub(crate) use self::op_content::OpContent;
 
@@ -129,4 +128,10 @@ impl HasId for Op {
     fn id_start(&self) -> ID {
         self.id
     }
+}
+
+pub struct RichOp<'a> {
+    pub op: &'a Op,
+    pub lamport: Lamport,
+    pub timestamp: Timestamp,
 }

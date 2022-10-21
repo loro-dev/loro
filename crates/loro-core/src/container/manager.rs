@@ -5,6 +5,7 @@ use fxhash::FxHashMap;
 
 use crate::{
     log_store::{LogStoreRef, LogStoreWeakRef},
+    span::IdSpan,
     LogStore,
 };
 
@@ -36,11 +37,11 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply(&mut self, op: &crate::op::OpProxy, log: &LogStore) {
+    fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
         match self {
-            ContainerInstance::Map(x) => x.apply(op, log),
-            ContainerInstance::Text(x) => x.apply(op, log),
-            ContainerInstance::Dyn(x) => x.apply(op, log),
+            ContainerInstance::Map(x) => x.apply(id_span, log),
+            ContainerInstance::Text(x) => x.apply(id_span, log),
+            ContainerInstance::Dyn(x) => x.apply(id_span, log),
         }
     }
 

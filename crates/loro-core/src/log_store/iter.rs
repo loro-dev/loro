@@ -3,74 +3,21 @@ use std::collections::BinaryHeap;
 
 use crate::Op;
 
-use crate::id::Counter;
-
-
-use crate::op::OpProxy;
+use crate::change::Lamport;
+use crate::container::ContainerID;
 
 use crate::id::ClientID;
+use crate::op::RichOp;
+use crate::span::HasId;
+use crate::span::IdSpan;
 
 use fxhash::FxHashMap;
-use rle::HasLength;
 
 use crate::change::ChangeMergeCfg;
 
 use crate::change::Change;
 
 use rle::RleVec;
-
-// TODO: tests
-pub struct OpIter<'a> {
-    init: bool,
-    heap: BinaryHeap<Reverse<OpProxy<'a>>>,
-    changes: &'a FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
-}
-
-impl<'a> OpIter<'a> {
-    #[inline]
-    pub fn new(changes: &'a FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>) -> Self {
-        OpIter {
-            changes,
-            init: false,
-            heap: BinaryHeap::new(),
-        }
-    }
-}
-
-impl<'a> Iterator for OpIter<'a> {
-    type Item = OpProxy<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.init {
-            self.init = true;
-            for changes in self.changes.values() {
-                for change in changes.vec().iter() {
-                    let mut break_idx = 0;
-                    for op in change.ops.vec().iter() {
-                        let mut start = 0;
-                        while let Some(break_counter) = change.break_points.get(break_idx) {
-                            let op_end_counter = op.id.counter + op.len() as Counter - 1;
-                            if op_end_counter > *break_counter {
-                                let end = break_counter + 1 - op.id.counter;
-                                self.heap
-                                    .push(Reverse(OpProxy::new(change, op, Some(start..end))));
-                                start = end;
-                                break_idx += 1;
-                            }
-                        }
-
-                        self.heap.push(Reverse(OpProxy::new(
-                            change,
-                            op,
-                            Some(start..(op.len() as Counter)),
-                        )));
-                    }
-                }
-            }
-        }
-
-        Some(self.heap.pop()?.0)
-    }
-}
 
 pub struct ClientOpIter<'a> {
     pub(crate) change_index: usize,
@@ -93,6 +40,68 @@ impl<'a> Iterator for ClientOpIter<'a> {
                 }
             } else {
                 return None;
+            }
+        }
+    }
+}
+
+pub struct OpSpanIter<'a> {
+    changes: &'a [Change],
+    change_index: usize,
+    op_index: usize,
+    container: ContainerID,
+    span: IdSpan,
+}
+
+impl<'a> OpSpanIter<'a> {
+    pub fn new(
+        changes: &'a FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+        target_span: IdSpan,
+        container: ContainerID,
+    ) -> Self {
+        let rle_changes = changes.get(&target_span.client_id).unwrap();
+        let changes = rle_changes.vec();
+        let change_index = rle_changes
+            .get(target_span.id_start().counter as usize)
+            .map(|x| x.merged_index)
+            .unwrap_or(changes.len());
+
+        Self {
+            span: target_span,
+            container,
+            changes,
+            change_index,
+            op_index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for OpSpanIter<'a> {
+    type Item = RichOp<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.change_index == self.changes.len() {
+                return None;
+            }
+
+            let change = &self.changes[self.change_index];
+            let ops = change.ops.vec();
+            if let Some(op) = ops.get(self.op_index) {
+                if op.container != self.container {
+                    self.op_index += 1;
+                    continue;
+                }
+
+                return Some(RichOp {
+                    op,
+                    lamport: (op.id.counter - change.id.counter) as Lamport + change.lamport,
+                    timestamp: change.timestamp,
+                });
+            } else {
+                self.op_index = 0;
+                self.change_index += 1;
+                continue;
             }
         }
     }
