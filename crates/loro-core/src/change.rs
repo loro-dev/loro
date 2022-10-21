@@ -106,9 +106,7 @@ impl Mergable<ChangeMergeCfg> for Change {
             return false;
         }
 
-        if other.deps.is_empty()
-            || (other.deps.len() == 1 && self.id.is_connected_id(&other.deps[0], self.len()))
-        {
+        if other.deps.is_empty() || !(other.deps.len() == 1 && self.last_id() == other.deps[0]) {
             return false;
         }
 

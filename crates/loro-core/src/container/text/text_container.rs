@@ -167,7 +167,7 @@ impl Container for TextContainer {
                 "Stage1 retreat:{} forward:{}\n{}",
                 format!("{:?}", &iter.retreat).red(),
                 format!("{:?}", &iter.forward).red(),
-                // format!("{:#?}", &change).blue(),
+                format!("{:#?}", &change).blue(),
             );
             for op in change.ops.iter() {
                 if op.container == self.id {

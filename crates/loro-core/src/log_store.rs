@@ -106,7 +106,7 @@ impl LogStore {
         {
             check_import_change_valid(&change);
             // TODO: cache pending changes
-            assert!(change.deps.iter().all(|x| self_vv.includes_id(*x)));
+            assert!(change.deps.iter().all(|x| self.vv().includes_id(*x)));
             self.apply_remote_change(change)
         }
     }
@@ -182,28 +182,51 @@ impl LogStore {
         &self.frontier
     }
 
+    fn update_frontier(&mut self, clear: &[ID], new: &[ID]) {
+        self.frontier.retain(|x| {
+            !clear
+                .iter()
+                .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
+                && !new
+                    .iter()
+                    .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
+        });
+        for next in new.iter() {
+            if self
+                .frontier
+                .iter()
+                .any(|x| x.client_id == next.client_id && x.counter >= next.counter)
+            {
+                continue;
+            }
+
+            self.frontier.push(*next);
+        }
+    }
+
     /// this method would not get the container and apply op
     pub fn append_local_ops(&mut self, ops: Vec<Op>) {
+        if ops.is_empty() {
+            return;
+        }
+
         let lamport = self.next_lamport();
         let timestamp = (self.cfg.get_time)();
         let id = ID {
             client_id: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         };
+        let last_id = ops.last().unwrap().id_last();
         let change = Change {
             id,
+            deps: std::mem::replace(&mut self.frontier, smallvec::smallvec![last_id]),
             ops: ops.into(),
-            deps: std::mem::take(&mut self.frontier),
             lamport,
             timestamp,
             freezed: false,
             break_points: Default::default(),
         };
 
-        self.frontier.push(ID::new(
-            self.this_client_id,
-            id.counter + change.len() as Counter - 1,
-        ));
         self.latest_lamport = lamport + change.len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
@@ -211,6 +234,8 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(RleVec::new)
             .push(change);
+
+        debug_log!("CHANGES---------------- site {}", self.this_client_id);
     }
 
     pub fn apply_remote_change(&mut self, mut change: Change) {
@@ -239,14 +264,9 @@ impl LogStore {
             container.apply(change.id_span(), self);
         }
 
+        drop(container_manager);
         self.vv.set_end(change.id_end());
-        self.frontier = self
-            .frontier
-            .iter()
-            .filter(|x| !change.deps.contains(x))
-            .copied()
-            .collect();
-        self.frontier.push(change.last_id());
+        self.update_frontier(&change.deps, &[change.last_id()]);
 
         if change.last_lamport() > self.latest_lamport {
             self.latest_lamport = change.last_lamport();
