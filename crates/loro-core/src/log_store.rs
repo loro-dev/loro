@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 
 use rle::{HasLength, RleVec, Sliceable};
 
@@ -226,11 +226,15 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let change = self.push_change(change).clone();
-        let mut container = self.container.write().unwrap();
+        let mut container_manager = self.container.write().unwrap();
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
+        let mut set = FxHashSet::default();
         for op in change.ops.iter() {
-            let container = container.get_or_create(&op.container, self.to_self.clone());
+            set.insert(&op.container);
+        }
+        for container in set {
+            let container = container_manager.get_or_create(container, self.to_self.clone());
             container.apply(change.id_span(), self);
         }
 
