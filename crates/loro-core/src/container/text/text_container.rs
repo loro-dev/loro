@@ -3,10 +3,10 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
-    dag::{Dag, DagUtils},
+    dag::DagUtils,
     id::ID,
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, OpContent, OpProxy},
+    op::{InsertContent, Op, OpContent},
     smstring::SmString,
     span::{HasIdSpan, IdSpan},
     value::LoroValue,
@@ -122,8 +122,8 @@ impl Container for TextContainer {
 
     // TODO: move main logic to tracker module
     // TODO: we don't need op proxy, only ids are enough
-    fn apply(&mut self, op: &OpProxy, store: &LogStore) {
-        let new_op_id = op.id_last();
+    fn apply(&mut self, id_span: IdSpan, store: &LogStore) {
+        let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
         let path_to_head = store.find_path(&common_ancestors, &self.head);

@@ -5,9 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{Op, OpProxy},
-    version::VersionVector,
-    InternalString, LogStore, LoroValue, ID,
+    op::Op, span::IdSpan, version::VersionVector, InternalString, LogStore, LoroValue, ID,
 };
 
 use serde::Serialize;
@@ -24,8 +22,8 @@ pub use container_content::*;
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
-    /// NOTE: this method expect that log_store has store the Change, but has not updated its vv yet
-    fn apply(&mut self, op: &OpProxy, log: &LogStore);
+    /// NOTE: this method expect that [LogStore] has store the Change
+    fn apply(&mut self, id_span: IdSpan, log: &LogStore);
     fn checkout_version(&mut self, vv: &VersionVector);
     fn get_value(&mut self) -> &LoroValue;
     // TODO: need a custom serializer
@@ -35,6 +33,7 @@ pub trait Container: Debug + Any + Unpin {
     fn to_export(&self, op: &mut Op);
 }
 
+/// it's really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.

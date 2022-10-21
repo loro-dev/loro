@@ -16,10 +16,9 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{manager::ContainerManager, Container},
+    container::{manager::ContainerManager, Container, ContainerID},
     dag::Dag,
     id::{ClientID, Counter},
-    op::{OpContent, OpProxy},
     span::{HasIdSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
 };
@@ -227,14 +226,15 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let change = self.push_change(change).clone();
-
+        let mut container = self.container.write().unwrap();
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
         for op in change.ops.iter() {
-            self.apply_remote_op(&change, op);
-            self.vv.set_end(op.id_end());
+            let container = container.get_or_create(&op.container, self.to_self.clone());
+            container.apply(change.id_span(), self);
         }
 
+        self.vv.set_end(change.id_end());
         self.frontier = self
             .frontier
             .iter()
@@ -262,14 +262,6 @@ impl LogStore {
         v.vec().last().unwrap()
     }
 
-    /// this function assume op is not included in the log, and its deps are included.
-    #[inline]
-    fn apply_remote_op(&mut self, change: &Change, op: &Op) {
-        let mut container = self.container.write().unwrap();
-        let container = container.get_or_create(op.container(), self.to_self.clone());
-        container.apply(&OpProxy::new(change, op, None), self);
-    }
-
     #[inline]
     pub fn contains(&self, id: ID) -> bool {
         self.changes
@@ -295,9 +287,12 @@ impl LogStore {
         }
     }
 
-    #[inline]
-    pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
-        iter::OpIter::new(&self.changes)
+    pub(crate) fn iter_ops_at_id_span(
+        &self,
+        id_span: IdSpan,
+        container: ContainerID,
+    ) -> iter::OpSpanIter<'_> {
+        iter::OpSpanIter::new(&self.changes, id_span, container)
     }
 
     #[inline(always)]

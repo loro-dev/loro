@@ -4,9 +4,9 @@ use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op},
-    op::{OpContent, OpProxy},
-    span::HasId,
+    op::OpContent,
+    op::{InsertContent, Op, RichOp},
+    span::{HasId, IdSpan},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
     InternalString, LogStore,
@@ -99,42 +99,43 @@ impl Container for MapContainer {
         ContainerType::Map
     }
 
-    fn apply(&mut self, op: &OpProxy, _log: &LogStore) {
-        debug_assert_eq!(&op.op().container, self.id());
-        match op.content() {
-            OpContent::Normal { content } => {
-                let v: &MapSet = content.as_map().unwrap();
-                let order = TotalOrderStamp {
-                    lamport: op.lamport(),
-                    client_id: op.id_start().client_id,
-                };
-                if let Some(slot) = self.state.get_mut(&v.key) {
-                    if slot.order < order {
-                        // TODO: can avoid this clone
-                        slot.value = v.value.clone();
-                        slot.order = order;
-                    }
-                } else {
-                    self.state.insert(
-                        v.key.to_owned(),
-                        ValueSlot {
-                            value: v.value.clone(),
-                            order,
-                            counter: op.id_start().counter,
-                        },
-                    );
+    fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
+        for RichOp { op, lamport, .. } in log.iter_ops_at_id_span(id_span, self.id.clone()) {
+            match &op.content {
+                OpContent::Normal { content } => {
+                    let v: &MapSet = content.as_map().unwrap();
+                    let order = TotalOrderStamp {
+                        lamport,
+                        client_id: op.id_start().client_id,
+                    };
+                    if let Some(slot) = self.state.get_mut(&v.key) {
+                        if slot.order < order {
+                            // TODO: can avoid this clone
+                            slot.value = v.value.clone();
+                            slot.order = order;
+                        }
+                    } else {
+                        self.state.insert(
+                            v.key.to_owned(),
+                            ValueSlot {
+                                value: v.value.clone(),
+                                order,
+                                counter: op.id_start().counter,
+                            },
+                        );
 
-                    if self.value.is_some() {
-                        self.value
-                            .as_mut()
-                            .unwrap()
-                            .as_map_mut()
-                            .unwrap()
-                            .insert(v.key.clone(), v.value.clone().into());
+                        if self.value.is_some() {
+                            self.value
+                                .as_mut()
+                                .unwrap()
+                                .as_map_mut()
+                                .unwrap()
+                                .insert(v.key.clone(), v.value.clone().into());
+                        }
                     }
                 }
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
