@@ -186,7 +186,6 @@ impl Container for TextContainer {
             format!("{:?}", self.head).red(),
             format!("{:?}", latest_head).red(),
         );
-        dbg!(&self.tracker);
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
             match effect {
