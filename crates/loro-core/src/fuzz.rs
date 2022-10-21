@@ -291,7 +291,7 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        debug_log!("{}", (&applied).table());
+        debug_log!("\n{}", (&applied).table());
         sites.apply_action(action);
     }
 
@@ -306,6 +306,30 @@ mod test {
 
     use super::Action::*;
     use super::*;
+    #[test]
+    fn test_two_unknown() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "xy".into(),
+                    pos: 16212948762929070335,
+                    site: 224,
+                },
+                Ins {
+                    content: "ab".into(),
+                    pos: 18444492273993252863,
+                    site: 5,
+                },
+                Sync { from: 254, to: 255 },
+                Ins {
+                    content: "1234".into(),
+                    pos: 128512,
+                    site: 0,
+                },
+            ],
+        )
+    }
 
     #[test]
     fn test_two_change_deps_issue() {
