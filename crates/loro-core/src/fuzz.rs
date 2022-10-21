@@ -291,7 +291,7 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        println!("{}", (&applied).table());
+        debug_log!("{}", (&applied).table());
         sites.apply_action(action);
     }
 
@@ -308,24 +308,24 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_two_1() {
+    fn test_two_change_deps_issue() {
         test_multi_sites(
             2,
             vec![
                 Ins {
-                    content: "1".into(),
-                    pos: 0,
-                    site: 0,
-                },
-                Sync { from: 0, to: 1 },
-                Del {
-                    pos: 0,
-                    len: 1,
-                    site: 1,
+                    content: "12345".into(),
+                    pos: 281479272970938,
+                    site: 21,
                 },
                 Ins {
-                    content: "2".into(),
-                    pos: 1,
+                    content: "67890".into(),
+                    pos: 17870294359908942010,
+                    site: 248,
+                },
+                Sync { from: 1, to: 0 },
+                Ins {
+                    content: "abc".into(),
+                    pos: 186,
                     site: 0,
                 },
             ],
