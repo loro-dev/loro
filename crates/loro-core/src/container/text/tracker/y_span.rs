@@ -120,11 +120,13 @@ impl Mergable for YSpan {
             && self.id.counter + self.len as Counter == other.id.counter
             && self.origin_right == other.origin_right
             && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
+            && self.slice.is_mergable(&other.slice, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
         self.origin_right = other.origin_right;
         self.len += other.len;
+        self.slice.merge(&other.slice, &())
     }
 }
 

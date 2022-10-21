@@ -173,7 +173,10 @@ pub mod fuzz {
     use rle::RleVec;
 
     use crate::{
-        container::text::tracker::{y_span::StatusChange, Tracker},
+        container::text::{
+            text_content::ListSlice,
+            tracker::{y_span::StatusChange, Tracker},
+        },
         id::{ClientID, ID},
         span::{self, IdSpan},
     };
@@ -252,14 +255,15 @@ pub mod fuzz {
             container: &mut Self::Container,
             pos: usize,
         ) -> Self::OpUnit {
+            let len = pos % 10 + 1;
             let ans = container.content.get_yspan_at_pos(
                 ID::new(
                     container.client_id,
                     *container.head_vv.get(&container.client_id).unwrap_or(&0),
                 ),
                 pos % container.content.len(),
-                pos % 10 + 1,
-                Default::default(),
+                len,
+                ListSlice::Unknown(len),
             );
             ans
         }
@@ -296,295 +300,59 @@ pub mod fuzz {
             5,
             100,
             vec![
+                Delete {
+                    client_id: 252,
+                    pos: 58,
+                    len: 182,
+                },
+                Delete {
+                    client_id: 247,
+                    pos: 255,
+                    len: 134,
+                },
                 NewOp {
+                    client_id: 252,
+                    pos: 152,
+                },
+                NewOp {
+                    client_id: 2,
+                    pos: 158,
+                },
+                Delete {
+                    client_id: 2,
+                    pos: 0,
+                    len: 162,
+                },
+                Delete {
+                    client_id: 162,
+                    pos: 217,
+                    len: 176,
+                },
+                Delete {
                     client_id: 177,
-                    pos: 41,
+                    pos: 241,
+                    len: 177,
                 },
                 Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 229,
-                },
-                Delete {
-                    client_id: 150,
-                    pos: 227,
-                    len: 1,
-                },
-                NewOp {
-                    client_id: 255,
-                    pos: 255,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 0,
+                    client_id: 253,
+                    pos: 10,
+                    len: 2,
                 },
                 Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 48 },
-                Sync { from: 0, to: 0 },
-                NewOp {
-                    client_id: 150,
-                    pos: 150,
-                },
-                Delete {
-                    client_id: 63,
-                    pos: 229,
-                    len: 229,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 229,
-                    pos: 229,
-                    len: 229,
-                },
-                NewOp {
-                    client_id: 58,
-                    pos: 255,
-                },
+                Sync { from: 92, to: 255 },
                 Delete {
                     client_id: 255,
                     pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Sync { from: 48, to: 175 },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 229,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 229,
-                },
-                Delete {
-                    client_id: 229,
-                    pos: 114,
-                    len: 223,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 229,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 175,
-                    pos: 175,
-                    len: 175,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 237,
-                    pos: 237,
-                    len: 237,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 196,
-                    pos: 150,
-                    len: 150,
-                },
-                Sync { from: 162, to: 162 },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
+                    len: 134,
                 },
                 NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                Sync { from: 81, to: 162 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 162, to: 162 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 0 },
-                Sync { from: 0, to: 162 },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 233,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 150,
-                    pos: 150,
+                    client_id: 252,
+                    pos: 152,
                 },
                 Delete {
-                    client_id: 255,
-                    pos: 255,
-                    len: 255,
-                },
-                Sync { from: 0, to: 0 },
-                Delete {
-                    client_id: 175,
-                    pos: 255,
-                    len: 255,
-                },
-                Delete {
-                    client_id: 229,
-                    pos: 229,
-                    len: 196,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 1,
-                },
-                NewOp {
-                    client_id: 162,
-                    pos: 255,
-                },
-                Delete {
-                    client_id: 229,
-                    pos: 229,
-                    len: 229,
-                },
-                Sync { from: 255, to: 255 },
-                Sync { from: 255, to: 162 },
-                NewOp {
-                    client_id: 162,
-                    pos: 162,
+                    client_id: 0,
+                    pos: 144,
+                    len: 144,
                 },
             ],
         )

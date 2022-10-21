@@ -25,6 +25,7 @@ impl ContentMap {
         len: usize,
         slice: ListSlice,
     ) -> YSpan {
+        debug_assert!(slice.len() == len);
         let (left, right) = self.get_sibling_at(pos);
         YSpan {
             origin_left: left,

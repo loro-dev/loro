@@ -2,6 +2,7 @@ use std::ops::DerefMut;
 
 use std::ops::Deref;
 
+use rle::Mergable;
 use serde::Serialize;
 use smartstring::LazyCompact;
 
@@ -27,6 +28,26 @@ impl DerefMut for SmString {
 impl SmString {
     pub fn new() -> Self {
         SmString(SmartString::new())
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+}
+
+impl Mergable for SmString {
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        self.len() + other.len() < self.capacity()
+    }
+
+    fn merge(&mut self, other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        self.0.push_str(other)
     }
 }
 
