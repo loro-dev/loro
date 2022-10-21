@@ -1,9 +1,11 @@
+use colored::Colorize;
 use rle::{RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     dag::DagUtils,
+    debug_log,
     id::ID,
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op, OpContent},
@@ -131,24 +133,28 @@ impl Container for TextContainer {
     // TODO: move main logic to tracker module
     // TODO: we don't need op proxy, only ids are enough
     fn apply(&mut self, id_span: IdSpan, store: &LogStore) {
+        debug_log!("APPLY ENTRY client={}", store.this_client_id);
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
         let path_to_head = store.find_path(&common_ancestors, &self.head);
-        let mut ancestors_vv = self.vv.clone();
-        ancestors_vv.retreat(&path_to_head.right);
+        let mut common_ancestors_vv = self.vv.clone();
+        common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
         if common_ancestors.is_empty()
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
-            self.tracker = Tracker::new(ancestors_vv);
+            debug_log!("NewTracker");
+            self.tracker = Tracker::new(common_ancestors_vv);
         } else {
-            self.tracker.checkout(&self.vv);
+            debug_log!("OldTracker");
+            self.tracker.checkout(&common_ancestors_vv);
         }
 
         // stage 1
         let path = store.find_path(&common_ancestors, &latest_head);
+        // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         for iter in store.iter_partial(&common_ancestors, path.right) {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
@@ -156,6 +162,12 @@ impl Container for TextContainer {
             let change = iter
                 .data
                 .slice(iter.slice.start as usize, iter.slice.end as usize);
+            debug_log!(
+                "Stage1 retreat:{} forward:{}\n{}",
+                format!("{:?}", &iter.retreat).red(),
+                format!("{:?}", &iter.forward).red(),
+                format!("{:#?}", &change).blue(),
+            );
             for op in change.ops.iter() {
                 if op.container == self.id {
                     // TODO: convert op to local
@@ -165,14 +177,18 @@ impl Container for TextContainer {
         }
 
         // stage 2
-        let path = store.find_path(&latest_head, &self.head);
-        self.tracker.retreat(&path.left);
-        println!(
-            "Iterate path: {:?} from {:?} => {:?}",
-            path.left, &self.head, &latest_head
+        // TODO: reduce computations
+        let path = store.find_path(&self.head, &latest_head);
+        self.tracker.checkout(&self.vv);
+        debug_log!(
+            "Iterate path: {} from {} => {}",
+            format!("{:?}", path.left).red(),
+            format!("{:?}", self.head).red(),
+            format!("{:?}", latest_head).red(),
         );
-        for effect in self.tracker.iter_effects(path.left) {
-            // println!("{:?}", &effect);
+        dbg!(&self.tracker);
+        for effect in self.tracker.iter_effects(path.right) {
+            debug_log!("EFFECT: {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
@@ -183,7 +199,7 @@ impl Container for TextContainer {
 
         self.head.push(new_op_id);
         self.vv.set_last(new_op_id);
-        println!("------------------------------------------------------------------------");
+        debug_log!("--------------------------------");
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {

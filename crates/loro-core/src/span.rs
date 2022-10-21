@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
@@ -9,12 +11,18 @@ use rle::{HasLength, Mergable, Slice, Sliceable};
 ///
 /// But we should use it behavior conservatively.
 /// If it is not necessary to be reverse, it should not.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CounterSpan {
     // TODO: should be private. user should not be able to change start from smaller than end to be greater than end
     pub start: Counter,
     // TODO: should be private
     pub end: Counter,
+}
+
+impl Debug for CounterSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{}~{}", self.start, self.end).as_str())
+    }
 }
 
 impl CounterSpan {

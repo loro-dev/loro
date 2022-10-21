@@ -18,6 +18,8 @@ use self::{
 };
 
 pub(crate) use effects_iter::Effect;
+
+use super::text_content::ListSlice;
 mod content_map;
 mod cursor_map;
 mod effects_iter;
@@ -69,7 +71,7 @@ impl Tracker {
                 id: min,
                 status: Status::new(),
                 len,
-                slice: Default::default(),
+                slice: ListSlice::Unknown(len),
             },
             &mut make_notify(&mut id_to_cursor),
         );

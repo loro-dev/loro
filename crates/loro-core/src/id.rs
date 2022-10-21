@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use serde::Serialize;
 
@@ -6,10 +6,16 @@ pub type ClientID = u64;
 pub type Counter = i32;
 const UNKNOWN: ClientID = 404;
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy, Serialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize)]
 pub struct ID {
     pub client_id: ClientID,
     pub counter: Counter,
+}
+
+impl Debug for ID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("c{}:{}", self.client_id, self.counter).as_str())
+    }
 }
 
 impl Display for ID {

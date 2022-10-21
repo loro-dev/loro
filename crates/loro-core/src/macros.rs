@@ -22,6 +22,21 @@ macro_rules! fx_map {
 }
 
 #[macro_export]
+macro_rules! debug_log {
+    () => {
+        if cfg!(test) {
+            $crate::print!("\n")
+        }
+    };
+    ($($arg:tt)*) => {{
+        if cfg!(test) {
+            print!("{}:{}\t", file!(), line!());
+            println!($($arg)*);
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! unsafe_array_mut_ref {
     ($arr:expr, [$($idx:expr),*]) => {
         {

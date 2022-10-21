@@ -5,7 +5,7 @@ use tabled::{TableIteratorExt, Tabled};
 use crate::{
     array_mut_ref,
     container::{text::text_container::TextContainer, Container},
-    LoroCore,
+    debug_log, LoroCore,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -51,7 +51,7 @@ impl Tabled for Action {
                 "".into(),
                 "".into(),
                 "".into(),
-                format!("{} {}", from, to).into(),
+                format!("{} to {}", from, to).into(),
             ],
             Action::SyncAll => vec![
                 "sync all".into(),
@@ -246,9 +246,13 @@ fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
 fn check_synced(sites: &mut [LoroCore]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
+            debug_log!("-------------------------------");
+            debug_log!("checking {} with {}", i, j);
+            debug_log!("-------------------------------");
+
             let (a, b) = array_mut_ref!(sites, [i, j]);
-            b.import(a.export(b.vv()));
             a.import(b.export(a.vv()));
+            b.import(a.export(b.vv()));
             check_eq(a, b)
         }
     }
@@ -291,7 +295,7 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
         sites.apply_action(action);
     }
 
-    println!("SYNC");
+    debug_log!("=================================");
     // println!("{}", actions.table());
     check_synced(&mut sites);
 }
@@ -314,14 +318,20 @@ mod test {
             2,
             vec![
                 Ins {
-                    content: "\0\u{1}\u{1}".into(),
-                    pos: 2170205186765623551,
+                    content: "a".into(),
+                    pos: 14072811359363267,
                     site: 0,
                 },
-                Del {
-                    pos: 108084720300767744,
-                    len: 485,
-                    site: 0,
+                Sync { from: 186, to: 187 },
+                Ins {
+                    content: "b".into(),
+                    pos: 1374464008290728467,
+                    site: 19,
+                },
+                Ins {
+                    content: "c".into(),
+                    pos: 3175903134871683258,
+                    site: 186,
                 },
             ],
         )
