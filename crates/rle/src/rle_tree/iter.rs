@@ -1,5 +1,3 @@
-
-
 use crate::Rle;
 
 use super::{
@@ -104,16 +102,10 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iter<'tree, T, A> {
     #[inline]
     pub fn from_cursor(
         mut start: SafeCursor<'tree, T, A>,
-        mut end: Option<SafeCursor<'tree, T, A>>,
+        end: Option<SafeCursor<'tree, T, A>>,
     ) -> Option<Self> {
         if start.0.pos == Position::After {
             start = start.next_elem_start()?
-        }
-
-        if let Some(end_inner) = end {
-            if end_inner.0.pos == Position::End || end_inner.0.pos == Position::After {
-                end = end_inner.next_elem_start();
-            }
         }
 
         Some(Self {

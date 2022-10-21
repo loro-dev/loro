@@ -230,7 +230,7 @@ impl Tracker {
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }
                     ListOp::Delete { pos, len } => {
-                        let spans = self.content.get_id_spans(*pos, *len);
+                        let spans = self.content.get_active_id_spans(*pos, *len);
                         self.update_spans(&spans, StatusChange::Delete);
                         self.id_to_cursor
                             .set((id).into(), cursor_map::Marker::Delete(spans));

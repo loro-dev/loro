@@ -142,6 +142,7 @@ impl Container for TextContainer {
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
+        debug_log!("START FROM {:?}", &common_ancestors_vv);
         if common_ancestors.is_empty()
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
@@ -166,7 +167,7 @@ impl Container for TextContainer {
                 "Stage1 retreat:{} forward:{}\n{}",
                 format!("{:?}", &iter.retreat).red(),
                 format!("{:?}", &iter.forward).red(),
-                format!("{:#?}", &change).blue(),
+                // format!("{:#?}", &change).blue(),
             );
             for op in change.ops.iter() {
                 if op.container == self.id {
@@ -182,7 +183,7 @@ impl Container for TextContainer {
         self.tracker.checkout(&self.vv);
         debug_log!(
             "Iterate path: {} from {} => {}",
-            format!("{:?}", path.left).red(),
+            format!("{:?}", path.right).red(),
             format!("{:?}", self.head).red(),
             format!("{:?}", latest_head).red(),
         );

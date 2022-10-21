@@ -285,7 +285,7 @@ pub mod fuzz {
                 return RleVec::new();
             }
 
-            container.content.get_id_spans(pos, len)
+            container.content.get_active_id_spans(pos, len)
         }
 
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
