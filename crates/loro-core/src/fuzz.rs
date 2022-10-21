@@ -81,7 +81,7 @@ impl Actionable for String {
     fn preprocess(&self, action: &mut Action) {
         action.preprocess(self.len());
         match action {
-            Action::Ins { content, pos } => {
+            Action::Ins { pos, .. } => {
                 while !self.is_char_boundary(*pos) {
                     *pos = (*pos + 1) % (self.len() + 1)
                 }
@@ -122,7 +122,7 @@ impl Actionable for TextContainer {
         }
     }
 
-    fn preprocess(&self, action: &mut Action) {
+    fn preprocess(&self, _action: &mut Action) {
         unreachable!();
     }
 }

@@ -3,11 +3,7 @@ use std::ptr::NonNull;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
-use crate::{
-    log_store::{LogStoreRef, LogStoreWeakRef},
-    span::IdSpan,
-    LogStore,
-};
+use crate::{log_store::LogStoreWeakRef, span::IdSpan, LogStore};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,

@@ -184,22 +184,26 @@ impl VersionVector {
         let mut ans: VersionVectorDiff = Default::default();
         for (client_id, &counter) in self.iter() {
             if let Some(&rhs_counter) = rhs.get(client_id) {
-                if counter > rhs_counter {
-                    ans.left.insert(
-                        *client_id,
-                        CounterSpan {
-                            start: rhs_counter,
-                            end: counter,
-                        },
-                    );
-                } else if counter < rhs_counter {
-                    ans.right.insert(
-                        *client_id,
-                        CounterSpan {
-                            start: counter,
-                            end: rhs_counter,
-                        },
-                    );
+                match counter.cmp(&rhs_counter) {
+                    Ordering::Less => {
+                        ans.right.insert(
+                            *client_id,
+                            CounterSpan {
+                                start: counter,
+                                end: rhs_counter,
+                            },
+                        );
+                    }
+                    Ordering::Greater => {
+                        ans.left.insert(
+                            *client_id,
+                            CounterSpan {
+                                start: rhs_counter,
+                                end: counter,
+                            },
+                        );
+                    }
+                    Ordering::Equal => {}
                 }
             } else {
                 ans.left.insert(

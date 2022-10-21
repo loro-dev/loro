@@ -300,60 +300,52 @@ pub mod fuzz {
             5,
             100,
             vec![
-                Delete {
-                    client_id: 252,
-                    pos: 58,
-                    len: 182,
-                },
-                Delete {
-                    client_id: 247,
-                    pos: 255,
-                    len: 134,
+                NewOp {
+                    client_id: 255,
+                    pos: 11,
                 },
                 NewOp {
-                    client_id: 252,
-                    pos: 152,
+                    client_id: 255,
+                    pos: 252,
                 },
                 NewOp {
-                    client_id: 2,
+                    client_id: 255,
+                    pos: 64,
+                },
+                NewOp {
+                    client_id: 151,
+                    pos: 151,
+                },
+                NewOp {
+                    client_id: 151,
+                    pos: 151,
+                },
+                NewOp {
+                    client_id: 255,
+                    pos: 252,
+                },
+                NewOp {
+                    client_id: 151,
                     pos: 158,
                 },
-                Delete {
-                    client_id: 2,
-                    pos: 0,
-                    len: 162,
+                NewOp {
+                    client_id: 254,
+                    pos: 121,
                 },
-                Delete {
-                    client_id: 162,
-                    pos: 217,
-                    len: 176,
+                NewOp {
+                    client_id: 3,
+                    pos: 255,
                 },
-                Delete {
-                    client_id: 177,
-                    pos: 241,
-                    len: 177,
+                NewOp {
+                    client_id: 0,
+                    pos: 144,
                 },
-                Delete {
-                    client_id: 253,
-                    pos: 10,
-                    len: 2,
-                },
-                Sync { from: 0, to: 0 },
-                Sync { from: 92, to: 255 },
                 Delete {
                     client_id: 255,
                     pos: 255,
                     len: 134,
                 },
-                NewOp {
-                    client_id: 252,
-                    pos: 152,
-                },
-                Delete {
-                    client_id: 0,
-                    pos: 144,
-                    len: 144,
-                },
+                Sync { from: 29, to: 29 },
             ],
         )
     }

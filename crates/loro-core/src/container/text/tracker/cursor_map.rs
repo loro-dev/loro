@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     fmt::Debug,
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -12,7 +11,7 @@ use rle::{
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVec, Sliceable, ZeroElement,
 };
-use smallvec::SmallVec;
+
 
 use crate::{
     id::ID,

@@ -1,6 +1,3 @@
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-
 use crate::Op;
 
 use crate::change::Lamport;
