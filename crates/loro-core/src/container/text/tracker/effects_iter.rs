@@ -45,33 +45,37 @@ impl<'a> Iterator for EffectIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(ref mut delete_targets) = self.current_delete_targets {
-                let target = delete_targets.pop().unwrap();
-                let result = self
-                    .tracker
-                    .id_to_cursor
-                    .get_first_cursors_at_id_span(target)
-                    .unwrap();
-                let (id, cursor) = result.as_ins().unwrap();
-                assert_eq!(*id, target.id_start());
-                if cursor.len != target.len() {
-                    delete_targets.push(IdSpan {
-                        client_id: target.client_id,
-                        counter: CounterSpan::new(
-                            id.counter + cursor.len as Counter,
-                            target.counter.end,
-                        ),
+                if let Some(target) = delete_targets.pop() {
+                    let result = self
+                        .tracker
+                        .id_to_cursor
+                        .get_first_cursors_at_id_span(target)
+                        .unwrap();
+                    let (id, cursor) = result.as_ins().unwrap();
+                    assert_eq!(*id, target.id_start());
+                    if cursor.len != target.len() {
+                        let new_target = IdSpan {
+                            client_id: target.client_id,
+                            counter: CounterSpan::new(
+                                id.counter + cursor.len as Counter,
+                                target.counter.end,
+                            ),
+                        };
+                        if new_target.len() > 0 {
+                            delete_targets.push(new_target);
+                        }
+                    }
+
+                    // SAFETY: we know that the cursor is valid here
+                    let pos = unsafe { cursor.get_index() };
+                    let changed_len = self
+                        .tracker
+                        .update_cursors(smallvec![*cursor], StatusChange::Delete);
+                    return Some(Effect::Del {
+                        pos,
+                        len: (-changed_len) as usize,
                     });
                 }
-
-                // SAFETY: we know that the cursor is valid here
-                let pos = unsafe { cursor.get_index() };
-                let changed_len = self
-                    .tracker
-                    .update_cursors(smallvec![*cursor], StatusChange::Delete);
-                return Some(Effect::Del {
-                    pos,
-                    len: (-changed_len) as usize,
-                });
             }
 
             if let Some(ref mut current) = self.current_span {

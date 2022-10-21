@@ -66,9 +66,10 @@ impl TextContainer {
                 },
                 self.id.clone(),
             );
+            let last_id = op.id_last();
             store.append_local_ops(vec![op]);
-            self.head = smallvec![id];
-            self.vv.set_last(id);
+            self.head = smallvec![last_id];
+            self.vv.set_last(last_id);
             id
         } else {
             unimplemented!()
@@ -88,8 +89,11 @@ impl TextContainer {
                 self.id.clone(),
             );
 
+            let last_id = op.id_last();
             store.append_local_ops(vec![op]);
             self.state.delete_range(Some(pos), Some(pos + len));
+            self.head = smallvec![last_id];
+            self.vv.set_last(last_id);
             id
         } else {
             unimplemented!()
@@ -121,20 +125,23 @@ impl Container for TextContainer {
     fn apply(&mut self, op: &OpProxy, store: &LogStore) {
         let new_op_id = op.id_last();
         // TODO: may reduce following two into one op
-        let common = store.find_common_ancestor(&[new_op_id], &self.head);
-        let path_to_store_head = store.find_path(&common, &self.head);
-        let mut common_vv = self.vv.clone();
-        common_vv.retreat(&path_to_store_head.right);
+        let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
+        let path_to_head = store.find_path(&common_ancestors, &self.head);
+        let mut ancestors_vv = self.vv.clone();
+        ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
-        if common.is_empty() || !common.iter().all(|x| self.tracker.contains(*x)) {
-            self.tracker = Tracker::new(common_vv);
+        if common_ancestors.is_empty()
+            || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
+        {
+            self.tracker = Tracker::new(ancestors_vv);
+        } else {
+            self.tracker.checkout(&self.vv);
         }
 
         // stage 1
-        self.tracker.checkout(&self.vv);
-        let path = store.find_path(&common, &latest_head);
-        for iter in store.iter_partial(&common, path.right) {
+        let path = store.find_path(&common_ancestors, &latest_head);
+        for iter in store.iter_partial(&common_ancestors, path.right) {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             // TODO: avoid this clone
@@ -152,7 +159,12 @@ impl Container for TextContainer {
         // stage 2
         let path = store.find_path(&latest_head, &self.head);
         self.tracker.retreat(&path.left);
+        // println!(
+        //     "Iterate path: {:?} from {:?} => {:?}",
+        //     path.left, &self.head, &latest_head
+        // );
         for effect in self.tracker.iter_effects(path.left) {
+            // println!("{:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
@@ -163,6 +175,7 @@ impl Container for TextContainer {
 
         self.head.push(new_op_id);
         self.vv.set_last(new_op_id);
+        // println!("------------------------------------------------------------------------");
     }
 
     fn checkout_version(&mut self, _vv: &crate::VersionVector) {
