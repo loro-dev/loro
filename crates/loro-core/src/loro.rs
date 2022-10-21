@@ -14,6 +14,7 @@ use crate::{
         text::text_container::TextContainer,
         ContainerID, ContainerType,
     },
+    dag::DagUtils,
     id::ClientID,
     InternalString, LogStore, VersionVector,
 };
@@ -39,6 +40,10 @@ impl LoroCore {
             log_store: LogStore::new(cfg, client_id, container.clone()),
             container,
         }
+    }
+
+    pub fn vv(&self) -> VersionVector {
+        self.log_store.read().unwrap().get_vv().clone()
     }
 
     pub fn get_container(

@@ -177,7 +177,7 @@ impl LogStore {
         self.this_client_id
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn frontier(&self) -> &[ID] {
         &self.frontier
     }
@@ -298,6 +298,11 @@ impl LogStore {
     #[inline]
     pub(crate) fn iter_op(&self) -> iter::OpIter<'_> {
         iter::OpIter::new(&self.changes)
+    }
+
+    #[inline(always)]
+    pub fn get_vv(&self) -> &VersionVector {
+        &self.vv
     }
 }
 

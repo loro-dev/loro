@@ -77,11 +77,11 @@ impl Tracker {
         Tracker {
             content,
             id_to_cursor,
-            start_vv,
             #[cfg(feature = "fuzzing")]
             client_id: 0,
-            head_vv: Default::default(),
-            all_vv: Default::default(),
+            head_vv: start_vv.clone(),
+            all_vv: start_vv.clone(),
+            start_vv,
         }
     }
 
