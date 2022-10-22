@@ -92,7 +92,7 @@ impl ContentMap {
                 let mut next_cursor = cursor.next_elem_start();
                 let mut ans = None;
                 while let Some(next_inner) = next_cursor {
-                    if next_inner.as_ref().status.future {
+                    if !next_inner.as_ref().status.future {
                         let mut cursor = next_inner.unwrap();
                         cursor.offset = 0;
                         cursor.pos = Position::Start;
