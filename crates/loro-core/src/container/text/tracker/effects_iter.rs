@@ -44,7 +44,7 @@ impl<'a> Iterator for EffectIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(ref mut delete_targets) = self.current_delete_targets {
+            while let Some(ref mut delete_targets) = self.current_delete_targets {
                 if let Some(target) = delete_targets.pop() {
                     let result = self
                         .tracker
@@ -53,6 +53,11 @@ impl<'a> Iterator for EffectIter<'a> {
                         .unwrap();
                     let (id, cursor) = result.as_ins().unwrap();
                     assert_eq!(*id, target.id_start());
+                    if cfg!(test) {
+                        // SAFETY: for test
+                        assert_eq!(unsafe { cursor.get_sliced() }.id, target.id_start());
+                    }
+
                     if cursor.len != target.len() {
                         let new_target = IdSpan {
                             client_id: target.client_id,
@@ -69,6 +74,7 @@ impl<'a> Iterator for EffectIter<'a> {
                     // SAFETY: we know that the cursor is valid here
                     let pos = unsafe { cursor.get_index() };
                     let length = -self.tracker.update_cursors(*cursor, StatusChange::Delete);
+                    assert!(length >= 0);
                     if length > 0 {
                         assert_eq!(length as usize, cursor.len);
                         return Some(Effect::Del {
@@ -76,6 +82,8 @@ impl<'a> Iterator for EffectIter<'a> {
                             len: cursor.len,
                         });
                     }
+                } else {
+                    break;
                 }
             }
 
