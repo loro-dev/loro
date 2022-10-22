@@ -23,7 +23,7 @@ impl Mergable for ListOp {
                 _ => false,
             },
             ListOp::Delete { pos, len } => match _other {
-                ListOp::Delete { pos: other_pos, .. } => pos + len == *other_pos,
+                ListOp::Delete { pos: other_pos, .. } => *pos == *other_pos,
                 _ => false,
             },
         }
