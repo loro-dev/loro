@@ -184,6 +184,7 @@ impl Tracker {
             let IdSpanQueryResult { inserts, deletes } = self
                 .id_to_cursor
                 .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
+
             for (id, delete) in deletes {
                 assert!(span.contains_id(id));
                 for deleted_span in delete.iter() {

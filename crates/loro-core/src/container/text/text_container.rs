@@ -192,11 +192,7 @@ impl Container for TextContainer {
         // stage 2
         // TODO: reduce computations
         let path = store.find_path(&self.head, &latest_head);
-        debug_log!("BEFORE CHECKOUT");
-        dbg!(&self.tracker);
         self.tracker.checkout(self.vv.clone());
-        debug_log!("AFTER CHECKOUT");
-        dbg!(&self.tracker);
         debug_log!(
             "[Stage 2]: Iterate path: {} from {} => {}",
             format!("{:?}", path.right).red(),
