@@ -22,6 +22,7 @@ impl Mergable for ListOp {
                 } => pos + slice.len() == *other_pos && slice.is_mergable(other_slice, &()),
                 _ => false,
             },
+            // TODO: add support for reverse merge
             ListOp::Delete { pos, len } => match _other {
                 ListOp::Delete { pos: other_pos, .. } => *pos == *other_pos,
                 _ => false,
