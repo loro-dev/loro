@@ -702,16 +702,20 @@ mod find_common_ancestors {
     fn no_common_ancestors_when_there_is_an_redundant_node() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
-        a.push(5);
+        a.push(1);
         b.push(1);
+        b.merge(&a);
+        b.push(1);
+        a.push(4);
         a.merge(&b);
+        println!("{}", a.mermaid());
         let actual = a
-            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 0)])
+            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 1)])
             .first()
             .copied();
         assert_eq!(actual, None);
         let actual = a
-            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 0), ID::new(0, 1)])
+            .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 1)])
             .first()
             .copied();
         assert_eq!(actual, None);

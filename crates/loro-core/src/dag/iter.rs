@@ -180,7 +180,7 @@ pub(crate) struct DagPartialIter<'a, Dag> {
     dag: &'a Dag,
     frontier: SmallVec<[ID; 2]>,
     target: IdSpanVector,
-    heap: BinaryHeap<Reverse<IdHeapItem>>,
+    heap: BinaryHeap<IdHeapItem>,
 }
 
 #[derive(Debug)]
@@ -205,10 +205,10 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
                 let id = id.id_start();
                 let node = dag.get(id).unwrap();
                 let diff = id.counter - node.id_start().counter;
-                heap.push(Reverse(IdHeapItem {
+                heap.push(IdHeapItem {
                     id,
                     lamport: node.lamport() + diff as Lamport,
-                }));
+                });
             }
         }
 
@@ -231,7 +231,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         }
 
         let node_id = self.heap.pop().unwrap();
-        let node_id = node_id.0.id;
+        let node_id = node_id.id;
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
         debug_assert_eq!(
             node_id.counter,
@@ -260,10 +260,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         target_span.set_start(last_counter + 1);
         if target_span.len() > 0 {
             let next_id = ID::new(node_id.client_id, last_counter + 1);
-            self.heap.push(Reverse(IdHeapItem {
+            self.heap.push(IdHeapItem {
                 id: next_id,
                 lamport: node.lamport(),
-            }));
+            });
         }
 
         let deps: SmallVec<[_; 2]> = if slice_from == 0 {

@@ -441,7 +441,7 @@ where
                     OrdIdSpan {
                         deps: &[],
                         id: node.id,
-                        len: node.len - 1,
+                        len: 1,
                         lamport: node.lamport,
                     },
                     node_type,
