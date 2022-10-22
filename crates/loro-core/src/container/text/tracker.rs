@@ -212,14 +212,11 @@ impl Tracker {
             }
         }
 
-        dbg!(&cursors, &args);
         self.content.update_at_cursors_with_args(
             &cursors,
             &args,
             &mut |v: &mut YSpan, arg| {
-                dbg!(&v);
                 v.status.apply(*arg);
-                dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
