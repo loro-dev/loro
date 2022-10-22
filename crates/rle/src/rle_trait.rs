@@ -19,6 +19,9 @@ pub trait Mergable<Cfg = ()> {
     }
 }
 
+/// NOTE: [Sliceable] implementation should be coherent with [Mergable]:
+///
+/// - For all k, a.slice(0,k).merge(a.slice(k, a.len())) == a
 pub trait Sliceable {
     fn slice(&self, from: usize, to: usize) -> Self;
 }
