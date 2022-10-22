@@ -219,6 +219,20 @@ pub trait HasId {
 }
 
 pub trait HasIdSpan: HasId + HasLength {
+    fn intersect<T: HasIdSpan>(&self, other: &T) -> bool {
+        let self_start = self.id_start();
+        let other_start = self.id_start();
+        if self_start.client_id != other_start.client_id {
+            false
+        } else {
+            let self_start = self_start.counter;
+            let other_start = other_start.counter;
+            let self_end = self.id_end().counter;
+            let other_end = other.id_end().counter;
+            self_start < other_end && other_start < self_end
+        }
+    }
+
     fn id_span(&self) -> IdSpan {
         let id = self.id_start();
         IdSpan::new(id.client_id, id.counter, id.counter + self.len() as Counter)

@@ -5,7 +5,7 @@ use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     id::{Counter, ID},
     op::OpContent,
-    span::IdSpan,
+    span::{HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
 };
@@ -133,13 +133,14 @@ impl Tracker {
         let diff = self.head_vv.diff(&vv);
         self.retreat(&diff.left);
         self.forward(&diff.right);
-        self.head_vv = vv;
+        assert_eq!(self.head_vv, vv);
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
+            assert!(self.all_vv.includes_id(ID::new(*span.0, span.1.end - 1)));
             self.head_vv.set_end(ID::new(*span.0, span.1.end));
             let IdSpanQueryResult { inserts, deletes } = self
                 .id_to_cursor
@@ -183,18 +184,24 @@ impl Tracker {
             let IdSpanQueryResult { inserts, deletes } = self
                 .id_to_cursor
                 .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
-            for (_, delete) in deletes {
+            for (id, delete) in deletes {
+                assert!(span.contains_id(id));
                 for deleted_span in delete.iter() {
-                    for span in self
+                    let mut len = 0;
+                    for cursor in self
                         .id_to_cursor
                         .get_cursors_at_id_span(*deleted_span)
                         .inserts
                         .iter()
                         .map(|x| x.1)
                     {
-                        cursors.push(span);
+                        assert!(cursor.len > 0);
+                        cursors.push(cursor);
+                        len += cursor.len;
                         args.push(StatusChange::UndoDelete);
                     }
+
+                    assert_eq!(len, deleted_span.len());
                 }
             }
 
@@ -204,11 +211,14 @@ impl Tracker {
             }
         }
 
+        dbg!(&cursors, &args);
         self.content.update_at_cursors_with_args(
             &cursors,
             &args,
             &mut |v: &mut YSpan, arg| {
+                dbg!(&v);
                 v.status.apply(*arg);
+                dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
@@ -246,12 +256,12 @@ impl Tracker {
 
     fn update_cursors(
         &mut self,
-        mut cursors: SmallVec<[UnsafeCursor<'_, YSpan, YSpanTreeTrait>; 2]>,
+        cursor: UnsafeCursor<'_, YSpan, YSpanTreeTrait>,
         change: StatusChange,
     ) -> i32 {
         let mut changed: i32 = 0;
         self.content.update_at_cursors(
-            &mut cursors,
+            &mut [cursor],
             &mut |v| {
                 let before = v.len() as i32;
                 v.status.apply(change);

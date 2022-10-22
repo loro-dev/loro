@@ -13,8 +13,8 @@ use rle::{
 };
 
 use crate::{
-    id::ID,
-    span::{HasId, IdSpan},
+    id::{Counter, ID},
+    span::{HasId, HasIdSpan, IdSpan},
 };
 
 use super::y_span::{YSpan, YSpanTreeTrait};
@@ -222,9 +222,9 @@ pub(super) fn make_notify(
     }
 }
 
-pub(super) struct IdSpanQueryResult<'a> {
+pub(super) struct IdSpanQueryResult {
     pub inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)>,
-    pub deletes: Vec<(ID, &'a RleVec<IdSpan>)>,
+    pub deletes: Vec<(ID, RleVec<IdSpan>)>,
 }
 
 #[derive(EnumAsInner)]
@@ -235,26 +235,36 @@ pub enum FirstCursorResult {
 }
 
 impl CursorMap {
+    // FIXME:
     pub fn get_cursors_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
         let mut inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)> = Vec::new();
-        let mut deletes = Vec::new();
+        let mut deletes: Vec<(ID, RleVec<IdSpan>)> = Vec::new();
         let mut inserted_set = fxhash::FxHashSet::default();
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
             let id: ID = id.into();
             match marker {
                 Marker::Insert { .. } => {
-                    let mut offset = 0;
                     for cursor in marker.get_spans(span) {
-                        let new_id = id.inc(offset);
+                        // SAFETY: invariants
+                        let sliced = unsafe { cursor.get_sliced() };
+                        if cfg!(test) {
+                            assert!(span.contains_id(sliced.id));
+                            assert!(span.contains_id(sliced.last_id()));
+                        }
                         if !inserted_set.contains(&cursor) {
                             inserted_set.insert(cursor);
-                            offset += cursor.len as i32;
-                            inserts.push((new_id, cursor));
+                            inserts.push((sliced.id, cursor));
                         }
                     }
                 }
                 Marker::Delete(del) => {
-                    deletes.push((id, del));
+                    if span.intersect(&id.to_span(del.len())) {
+                        let from = (span.counter.min() - id.counter).max(0);
+                        let to = (span.counter.max() - id.counter).min(del.len() as Counter);
+                        if to - from > 0 {
+                            deletes.push((id.inc(from), del.slice(from as usize, to as usize)));
+                        }
+                    }
                 }
             }
         }

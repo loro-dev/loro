@@ -4,7 +4,7 @@ use smallvec::smallvec;
 use crate::{
     container::text::text_content::ListSlice,
     id::Counter,
-    span::{CounterSpan, HasId, IdSpan},
+    span::{CounterSpan, HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
 };
 
@@ -68,13 +68,14 @@ impl<'a> Iterator for EffectIter<'a> {
 
                     // SAFETY: we know that the cursor is valid here
                     let pos = unsafe { cursor.get_index() };
-                    let changed_len = self
-                        .tracker
-                        .update_cursors(smallvec![*cursor], StatusChange::Delete);
-                    return Some(Effect::Del {
-                        pos,
-                        len: (-changed_len) as usize,
-                    });
+                    let length = -self.tracker.update_cursors(*cursor, StatusChange::Delete);
+                    if length > 0 {
+                        assert_eq!(length as usize, cursor.len);
+                        return Some(Effect::Del {
+                            pos,
+                            len: cursor.len,
+                        });
+                    }
                 }
             }
 
@@ -86,28 +87,30 @@ impl<'a> Iterator for EffectIter<'a> {
                 if let Some(cursor) = cursor {
                     match cursor {
                         FirstCursorResult::Ins(id, cursor) => {
+                            assert!(current.contains_id(id));
+                            assert!(current.contains_id(id.inc(cursor.len as Counter - 1)));
                             current
                                 .counter
                                 .set_start(id.counter + cursor.len as Counter);
                             // SAFETY: we know that the cursor is valid here
                             let index = unsafe { cursor.get_index() };
-                            let span = IdSpan::new(
-                                id.client_id,
-                                id.counter,
-                                id.counter + cursor.len as Counter,
-                            );
                             // SAFETY: cursor is valid here
                             let content = unsafe { cursor.get_sliced().slice };
-                            let changed = self
+                            let length_diff = self
                                 .tracker
-                                .update_cursors(smallvec![cursor], StatusChange::SetAsCurrent);
-                            assert_eq!(changed as usize, span.len());
-                            return Some(Effect::Ins {
-                                pos: index,
-                                content,
-                            });
+                                .update_cursors(cursor, StatusChange::SetAsCurrent);
+
+                            if length_diff > 0 {
+                                assert_eq!(length_diff, cursor.len as i32);
+                                return Some(Effect::Ins {
+                                    pos: index,
+                                    content,
+                                });
+                            }
                         }
                         FirstCursorResult::Del(id, del) => {
+                            assert!(current.contains_id(id));
+                            assert!(current.contains_id(id.inc(del.len() as Counter - 1)));
                             current.counter.set_start(id.counter + del.len() as Counter);
                             self.current_delete_targets = Some(del.iter().cloned().collect());
                         }
