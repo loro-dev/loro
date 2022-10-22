@@ -29,11 +29,11 @@ macro_rules! debug_log {
         }
     };
     ($($arg:tt)*) => {{
-        // if cfg!(test) {
-        use colored::Colorize;
-        // print!("{}:{}\t", file!().purple(), line!().to_string().purple());
-        // println!($($arg)*);
-        // }
+        if cfg!(test) {
+            use colored::Colorize;
+            print!("{}:{}\t", file!().purple(), line!().to_string().purple());
+            println!($($arg)*);
+        }
     }};
 }
 

@@ -97,6 +97,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
         ans
     }
 
+    /// TODO: need double check this method
     #[inline]
     pub fn get_range_with_index(&self, start: Index, end: Index) -> Vec<(Index, &Value)> {
         let mut ans = Vec::new();

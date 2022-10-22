@@ -142,6 +142,7 @@ impl Container for TextContainer {
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
+        println!("{}", store.mermaid());
         debug_log!(
             "START FROM {:?} new_op_id={} self.head={:?}",
             &common_ancestors,
@@ -191,12 +192,20 @@ impl Container for TextContainer {
         // stage 2
         // TODO: reduce computations
         let path = store.find_path(&self.head, &latest_head);
+        debug_log!("BEFORE CHECKOUT");
+        dbg!(&self.tracker);
         self.tracker.checkout(self.vv.clone());
+        debug_log!("AFTER CHECKOUT");
+        dbg!(&self.tracker);
         debug_log!(
-            "Iterate path: {} from {} => {}",
+            "[Stage 2]: Iterate path: {} from {} => {}",
             format!("{:?}", path.right).red(),
             format!("{:?}", self.head).red(),
             format!("{:?}", latest_head).red(),
+        );
+        debug_log!(
+            "BEFORE EFFECT STATE={}",
+            self.get_value().as_string().unwrap().as_str()
         );
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
@@ -207,6 +216,10 @@ impl Container for TextContainer {
                 }
             }
         }
+        debug_log!(
+            "AFTER EFFECT STATE={}",
+            self.get_value().as_string().unwrap().as_str()
+        );
 
         self.head.push(new_op_id);
         self.vv.set_last(new_op_id);

@@ -2,6 +2,8 @@ use std::fmt::{Debug, Display};
 
 use serde::Serialize;
 
+use crate::span::{CounterSpan, IdSpan};
+
 pub type ClientID = u64;
 pub type Counter = i32;
 const UNKNOWN: ClientID = 404;
@@ -71,6 +73,14 @@ impl ID {
     #[inline]
     pub fn is_null(&self) -> bool {
         self.client_id == u64::MAX
+    }
+
+    #[inline]
+    pub fn to_span(&self, len: usize) -> IdSpan {
+        IdSpan {
+            client_id: self.client_id,
+            counter: CounterSpan::new(self.counter, self.counter + len as Counter),
+        }
     }
 
     #[inline]
