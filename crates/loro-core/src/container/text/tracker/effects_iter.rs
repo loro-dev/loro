@@ -96,14 +96,15 @@ impl<'a> Iterator for EffectIter<'a> {
                                 id.counter,
                                 id.counter + cursor.len as Counter,
                             );
+                            // SAFETY: cursor is valid here
+                            let content = unsafe { cursor.get_sliced().slice };
                             let changed = self
                                 .tracker
                                 .update_cursors(smallvec![cursor], StatusChange::SetAsCurrent);
                             assert_eq!(changed as usize, span.len());
                             return Some(Effect::Ins {
                                 pos: index,
-                                // SAFETY: cursor is valid
-                                content: unsafe { cursor.get_sliced().slice },
+                                content,
                             });
                         }
                         FirstCursorResult::Del(id, del) => {
