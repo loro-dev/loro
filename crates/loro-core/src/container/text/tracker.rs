@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
+    debug_log,
     id::{Counter, ID},
     op::OpContent,
     span::{HasIdSpan, IdSpan},
@@ -236,11 +237,13 @@ impl Tracker {
                         let yspan =
                             self.content
                                 .get_yspan_at_pos(id, *pos, slice.len(), slice.clone());
+                        debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }
                     ListOp::Delete { pos, len } => {
                         let spans = self.content.get_active_id_spans(*pos, *len);
+                        debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
                         self.update_spans(&spans, StatusChange::Delete);
                         self.id_to_cursor
                             .set((id).into(), cursor_map::Marker::Delete(spans));
