@@ -41,3 +41,9 @@ name = "two_client_text"
 path = "fuzz_targets/two_client_text.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "text"
+path = "fuzz_targets/text.rs"
+test = false
+doc = false
