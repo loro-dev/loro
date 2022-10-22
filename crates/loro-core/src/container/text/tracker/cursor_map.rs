@@ -260,13 +260,19 @@ impl CursorMap {
                 Marker::Delete(del) => {
                     if span.intersect(&id.to_span(del.len())) {
                         let from = (span.counter.min() - id.counter).max(0);
-                        let to = (span.counter.max() - id.counter).min(del.len() as Counter);
+                        let to = (span.counter.end() - id.counter).min(del.len() as Counter);
                         if to - from > 0 {
                             deletes.push((id.inc(from), del.slice(from as usize, to as usize)));
                         }
                     }
                 }
             }
+        }
+
+        if cfg!(test) {
+            let insert_len: usize = inserts.iter().map(|x| x.1.len).sum();
+            let del_len: usize = deletes.iter().map(|x| x.1.len()).sum();
+            assert_eq!(insert_len + del_len, span.len());
         }
 
         IdSpanQueryResult { inserts, deletes }
