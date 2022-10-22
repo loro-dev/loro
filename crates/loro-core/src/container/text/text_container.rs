@@ -46,7 +46,7 @@ impl TextContainer {
             id,
             log_store,
             raw_str: StringPool::default(),
-            tracker: Tracker::new(Default::default()),
+            tracker: Tracker::new(Default::default(), 0),
             state_cache: LoroValue::Null,
             state: Default::default(),
             // TODO: should be eq to log_store frontier?
@@ -136,7 +136,6 @@ impl Container for TextContainer {
         debug_log!("APPLY ENTRY client={}", store.this_client_id);
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
-        debug_log!("FROM {} {:?}", new_op_id, &self.head);
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
         let path_to_head = store.find_path(&common_ancestors, &self.head);
         let mut common_ancestors_vv = self.vv.clone();
@@ -144,16 +143,20 @@ impl Container for TextContainer {
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
         debug_log!(
-            "START FROM {:?} {} {:?}",
+            "START FROM {:?} new_op_id={} self.head={:?}",
             &common_ancestors,
             new_op_id,
             &self.head
         );
+        // TODO: reuse tracker
         // let head = if common_ancestors.is_empty() || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         let head = if true {
             debug_log!("NewTracker");
-            self.tracker = Tracker::new(common_ancestors_vv);
-            common_ancestors
+            // FIXME use common ancestors
+            // self.tracker = Tracker::new(common_ancestors_vv);
+            // common_ancestors
+            self.tracker = Tracker::new(Default::default(), 0);
+            smallvec![]
         } else {
             debug_log!("OldTracker");
             let vv = self.tracker.all_vv().clone();
@@ -195,7 +198,6 @@ impl Container for TextContainer {
             format!("{:?}", self.head).red(),
             format!("{:?}", latest_head).red(),
         );
-        dbg!(&self.tracker);
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
             match effect {

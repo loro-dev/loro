@@ -57,25 +57,23 @@ impl From<ID> for u128 {
 }
 
 impl Tracker {
-    pub fn new(start_vv: VersionVector) -> Self {
-        let min = ID::unknown(0);
-        let max = ID::unknown(Counter::MAX / 2);
-        let len = (max.counter - min.counter) as usize;
+    pub fn new(start_vv: VersionVector, init_len: Counter) -> Self {
         let mut content: ContentMap = Default::default();
         let mut id_to_cursor: CursorMap = Default::default();
-        content.insert_notify(
-            0,
-            YSpan {
-                origin_left: None,
-                origin_right: None,
-                id: min,
-                status: Status::new(),
-                len,
-                slice: ListSlice::Unknown(len),
-            },
-            &mut make_notify(&mut id_to_cursor),
-        );
-
+        if init_len > 0 {
+            content.insert_notify(
+                0,
+                YSpan {
+                    origin_left: None,
+                    origin_right: None,
+                    id: ID::unknown(0),
+                    status: Status::new(),
+                    len: init_len as usize,
+                    slice: ListSlice::Unknown(init_len as usize),
+                },
+                &mut make_notify(&mut id_to_cursor),
+            );
+        }
         Tracker {
             content,
             id_to_cursor,
