@@ -12,7 +12,6 @@ use rle::{
     HasLength, Mergable, RleVec, Sliceable, ZeroElement,
 };
 
-
 use crate::{
     id::ID,
     span::{HasId, IdSpan},

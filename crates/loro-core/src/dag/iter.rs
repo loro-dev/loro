@@ -260,9 +260,11 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         target_span.set_start(last_counter + 1);
         if target_span.len() > 0 {
             let next_id = ID::new(node_id.client_id, last_counter + 1);
+            let next_node = self.dag.get(next_id).unwrap();
             self.heap.push(IdHeapItem {
                 id: next_id,
-                lamport: node.lamport(),
+                lamport: next_node.lamport()
+                    + (next_id.counter - next_node.id_start().counter) as Lamport,
             });
         }
 

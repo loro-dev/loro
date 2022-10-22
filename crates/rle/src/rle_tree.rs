@@ -189,7 +189,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         start: Option<SafeCursor<'_, T, A>>,
         end: Option<SafeCursor<'_, T, A>>,
     ) -> iter::IterMut<'_, T, A> {
-        if self.empty() || (start.is_none() && end.is_none()) {
+        if start.is_none() && end.is_none() {
             self.iter_mut()
         } else {
             // SAFETY: the cursor cannot outlive self, so we are safe here

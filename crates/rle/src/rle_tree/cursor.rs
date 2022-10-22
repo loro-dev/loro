@@ -56,7 +56,9 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, T, A> {
 }
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, T, A> {}
+#[derive(Debug)]
 pub struct Im;
+#[derive(Debug)]
 pub struct Mut;
 
 #[derive(Debug)]

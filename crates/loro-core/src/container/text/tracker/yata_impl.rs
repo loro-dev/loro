@@ -76,7 +76,6 @@ impl ListCrdt for YataImpl {
                 .and_then(|m| m.as_cursor(x))
         });
 
-        // dbg!(&from, &to);
         // dbg!(&container.content);
         // SAFETY: loosen lifetime requirement here. It's safe because the function
         // signature can limit the lifetime of the returned iterator
@@ -213,7 +212,7 @@ pub mod fuzz {
                 Tracker,
             },
         },
-        id::{ClientID, ID},
+        id::{ClientID, Counter, ID},
         span::IdSpan,
     };
 
@@ -277,7 +276,7 @@ pub mod fuzz {
         }
 
         fn new_container(client_id: usize) -> Self::Container {
-            let mut tracker = Tracker::new(Default::default());
+            let mut tracker = Tracker::new(Default::default(), Counter::MAX / 2);
             #[cfg(feature = "fuzzing")]
             {
                 tracker.client_id = client_id as ClientID;
@@ -335,19 +334,10 @@ pub mod fuzz {
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
             100,
-            vec![
-                Delete {
-                    client_id: 2,
-                    pos: 58,
-                    len: 177,
-                },
-                Sync { from: 2, to: 0 },
-                Delete {
-                    client_id: 0,
-                    pos: 255,
-                    len: 255,
-                },
-            ],
+            vec![NewOp {
+                client_id: 153,
+                pos: 153,
+            }],
         )
     }
 
@@ -383,6 +373,5 @@ pub mod fuzz {
         ];
 
         crdt_list::test::normalize_actions(&mut actions, 5, 100);
-        dbg!(actions);
     }
 }

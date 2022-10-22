@@ -201,9 +201,8 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
     type Item = SafeCursorMut<'tree, T, A>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(ref mut cursor) = self.cursor {
+        while let Some(ref mut start) = self.cursor {
             if let Some(end) = self.end_cursor {
-                let start = &cursor;
                 if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset
                 {
                     return None;
@@ -211,39 +210,39 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
             }
 
             // SAFETY: we are sure that the cursor is valid
-            let node = unsafe { cursor.leaf.as_ref() };
-            match node.children.get(cursor.index) {
+            let node = unsafe { start.leaf.as_ref() };
+            match node.children.get(start.index) {
                 Some(_) => {
                     if let Some(end) = self.end_cursor {
-                        if cursor.leaf == end.leaf && end.index == cursor.index {
-                            if cursor.offset == end.offset {
+                        if start.leaf == end.leaf && end.index == start.index {
+                            if start.offset == end.offset {
                                 return None;
                             } else {
                                 // SAFETY: we just checked that the child exists
                                 let ans = Some(unsafe {
                                     SafeCursorMut::new(
                                         node.into(),
-                                        cursor.index,
-                                        cursor.offset,
+                                        start.index,
+                                        start.offset,
                                         Position::from_offset(
-                                            cursor.offset as isize,
-                                            node.children[cursor.index].content_len(),
+                                            start.offset as isize,
+                                            node.children[start.index].content_len(),
                                         ),
-                                        end.offset - cursor.offset,
+                                        end.offset - start.offset,
                                     )
                                 });
-                                cursor.offset = end.offset;
+                                start.offset = end.offset;
                                 self.cursor = None;
                                 return ans;
                             }
                         }
                     }
 
-                    let child_len = node.children[cursor.index].content_len();
-                    if child_len - cursor.offset == 0 {
-                        cursor.index += 1;
-                        cursor.offset = 0;
-                        cursor.pos = Position::Start;
+                    let child_len = node.children[start.index].content_len();
+                    if child_len - start.offset == 0 {
+                        start.index += 1;
+                        start.offset = 0;
+                        start.pos = Position::Start;
                         continue;
                     }
 
@@ -251,24 +250,24 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                     let ans = Some(unsafe {
                         SafeCursorMut::new(
                             node.into(),
-                            cursor.index,
-                            cursor.offset,
-                            Position::from_offset(cursor.offset as isize, child_len),
-                            child_len - cursor.offset,
+                            start.index,
+                            start.offset,
+                            Position::from_offset(start.offset as isize, child_len),
+                            child_len - start.offset,
                         )
                     });
 
-                    cursor.index += 1;
-                    cursor.offset = 0;
-                    cursor.pos = Position::Start;
+                    start.index += 1;
+                    start.offset = 0;
+                    start.pos = Position::Start;
                     return ans;
                 }
                 None => match node.next() {
                     Some(next) => {
-                        cursor.leaf = next.into();
-                        cursor.index = 0;
-                        cursor.offset = 0;
-                        cursor.pos = Position::Start;
+                        start.leaf = next.into();
+                        start.index = 0;
+                        start.offset = 0;
+                        start.pos = Position::Start;
                         continue;
                     }
                     None => return None,
