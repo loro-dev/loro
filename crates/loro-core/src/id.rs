@@ -20,7 +20,7 @@ impl Debug for ID {
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.client_id, self.counter)
+        f.write_str(format!("c{}:{}", self.client_id, self.counter).as_str())
     }
 }
 

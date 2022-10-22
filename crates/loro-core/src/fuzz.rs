@@ -34,24 +34,24 @@ impl Tabled for Action {
         match self {
             Action::Ins { content, pos, site } => vec![
                 "ins".into(),
+                site.to_string().into(),
                 pos.to_string().into(),
                 content.len().to_string().into(),
                 content.into(),
-                site.to_string().into(),
             ],
             Action::Del { pos, len, site } => vec![
                 "del".into(),
+                site.to_string().into(),
                 pos.to_string().into(),
                 len.to_string().into(),
                 "".into(),
-                site.to_string().into(),
             ],
             Action::Sync { from, to } => vec![
                 "sync".into(),
-                "".into(),
-                "".into(),
-                "".into(),
                 format!("{} to {}", from, to).into(),
+                "".into(),
+                "".into(),
+                "".into(),
             ],
             Action::SyncAll => vec![
                 "sync all".into(),
@@ -66,10 +66,10 @@ impl Tabled for Action {
     fn headers() -> Vec<std::borrow::Cow<'static, str>> {
         vec![
             "type".into(),
+            "site".into(),
             "pos".into(),
             "len".into(),
             "content".into(),
-            "site".into(),
         ]
     }
 }
@@ -307,7 +307,105 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn test_6() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "a".into(),
+                    pos: 2718485539284123587,
+                    site: 0,
+                },
+                Sync { from: 186, to: 187 },
+                Ins {
+                    content: "b".into(),
+                    pos: 2148733715,
+                    site: 0,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn test_5() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "1".into(),
+                    pos: 72066424675961795,
+                    site: 195,
+                },
+                Ins {
+                    content: "0".into(),
+                    pos: 2718485543579090699,
+                    site: 0,
+                },
+                Sync { from: 255, to: 122 },
+                Ins {
+                    content: "abcd".into(),
+                    pos: 14051512346867337995,
+                    site: 16,
+                },
+                Ins {
+                    content: "xy".into(),
+                    pos: 13402753207529835459,
+                    site: 255,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn test_k() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "123".into(),
+                    pos: 9621242987464197630,
+                    site: 133,
+                },
+                Sync { from: 255, to: 18 },
+                Ins {
+                    content: "ab".into(),
+                    pos: 33,
+                    site: 0,
+                },
+            ],
+        );
+    }
     fn test_two_unknown() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "0".into(),
+                    pos: 3665948784267561747,
+                    site: 0,
+                },
+                Ins {
+                    content: "1".into(),
+                    pos: 847522254572686275,
+                    site: 1,
+                },
+                Sync { from: 255, to: 122 },
+                Ins {
+                    content: "2345".into(),
+                    pos: 13402768428993809163,
+                    site: 37,
+                },
+                Del {
+                    pos: 1374463206306314938,
+                    len: 799603422227,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn test_two_common_ancestors() {
         test_multi_sites(
             2,
             vec![

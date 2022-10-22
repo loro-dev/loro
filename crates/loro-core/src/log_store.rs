@@ -254,7 +254,7 @@ impl LogStore {
         let change = self.push_change(change).clone();
         let mut container_manager = self.container.write().unwrap();
         // Apply ops.
-        // NOTE: applying expects that log_store has store the Change, but has not updated its vv yet
+        // NOTE: applying expects that log_store has store the Change, and updated self vv
         let mut set = FxHashSet::default();
         for op in change.ops.iter() {
             set.insert(&op.container);
