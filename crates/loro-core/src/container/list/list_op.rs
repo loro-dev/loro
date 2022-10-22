@@ -70,7 +70,10 @@ impl Sliceable for ListOp {
                 pos: *pos + from,
             },
             ListOp::Delete { pos, .. } => ListOp::Delete {
-                pos: *pos + from,
+                // this looks weird but it's correct
+                // because right now two adjacent delete can be merge
+                // only when they delete at the same position.
+                pos: *pos,
                 len: to - from,
             },
         }
