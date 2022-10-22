@@ -132,7 +132,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVec<T, Cfg> {
         }
 
         let from_result = self.get(from).unwrap();
-        let to_result = self.get(to);
+        let to_result = if to == self.len() { None } else { self.get(to) };
         if let Some(to_result) = to_result {
             SliceIterator {
                 vec: &self.vec,
