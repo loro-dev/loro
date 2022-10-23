@@ -1,4 +1,4 @@
-use colored::Colorize;
+
 use rle::{RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 

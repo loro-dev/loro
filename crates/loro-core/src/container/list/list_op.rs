@@ -23,7 +23,7 @@ impl Mergable for ListOp {
                 _ => false,
             },
             // TODO: add support for reverse merge
-            ListOp::Delete { pos, len } => match _other {
+            ListOp::Delete { pos, len: _ } => match _other {
                 ListOp::Delete { pos: other_pos, .. } => *pos == *other_pos,
                 _ => false,
             },
