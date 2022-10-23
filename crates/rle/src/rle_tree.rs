@@ -8,7 +8,7 @@ pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
 use fxhash::FxHashMap;
 use num::FromPrimitive;
 use ouroboros::self_referencing;
-use smallvec::SmallVec;
+
 pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 

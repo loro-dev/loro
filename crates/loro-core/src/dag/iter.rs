@@ -1,5 +1,5 @@
 use super::DagUtils;
-use std::{cmp::Reverse, ops::Range};
+use std::{ops::Range};
 
 use crate::version::IdSpanVector;
 

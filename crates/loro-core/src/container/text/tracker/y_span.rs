@@ -187,7 +187,7 @@ pub mod test {
     };
     use rle::{HasLength, RleVec};
 
-    use super::{Status, YSpan};
+    use super::{YSpan};
 
     #[test]
     fn test_merge() {
