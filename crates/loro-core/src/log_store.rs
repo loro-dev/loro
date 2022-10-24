@@ -9,7 +9,7 @@ use std::{
 
 use fxhash::{FxHashMap, FxHashSet};
 
-use rle::{HasLength, RleVec, Sliceable};
+use rle::{HasLength, RleVecWithIndex, Sliceable};
 
 use smallvec::SmallVec;
 
@@ -54,7 +54,7 @@ pub type LogStoreWeakRef = Weak<RwLock<LogStore>>;
 ///
 /// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
 pub struct LogStore {
-    changes: FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+    changes: FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
     vv: VersionVector,
     cfg: Configure,
     latest_lamport: Lamport,
@@ -243,7 +243,7 @@ impl LogStore {
         self.vv.set_end(change.id_end());
         self.changes
             .entry(self.this_client_id)
-            .or_insert_with(RleVec::new)
+            .or_insert_with(RleVecWithIndex::new)
             .push(change);
 
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
@@ -268,7 +268,7 @@ impl LogStore {
         let v = self
             .changes
             .entry(change.id.client_id)
-            .or_insert_with(RleVec::new);
+            .or_insert_with(RleVecWithIndex::new);
         v.push(change);
         let change = v.vec().last().unwrap().clone();
 

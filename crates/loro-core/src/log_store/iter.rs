@@ -14,12 +14,12 @@ use crate::change::ChangeMergeCfg;
 
 use crate::change::Change;
 
-use rle::RleVec;
+use rle::RleVecWithIndex;
 
 pub struct ClientOpIter<'a> {
     pub(crate) change_index: usize,
     pub(crate) op_index: usize,
-    pub(crate) changes: Option<&'a RleVec<Change, ChangeMergeCfg>>,
+    pub(crate) changes: Option<&'a RleVecWithIndex<Change, ChangeMergeCfg>>,
 }
 
 impl<'a> Iterator for ClientOpIter<'a> {
@@ -52,7 +52,7 @@ pub struct OpSpanIter<'a> {
 
 impl<'a> OpSpanIter<'a> {
     pub fn new(
-        changes: &'a FxHashMap<ClientID, RleVec<Change, ChangeMergeCfg>>,
+        changes: &'a FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
         target_span: IdSpan,
         container: ContainerID,
     ) -> Self {

@@ -201,7 +201,7 @@ pub mod fuzz {
     }
 
     use crdt_list::test::{Action, TestFramework};
-    use rle::RleVec;
+    use rle::RleVecWithIndex;
     use tabled::TableIteratorExt;
 
     use crate::{
@@ -248,14 +248,14 @@ pub mod fuzz {
 
         fn is_content_eq(a: &Self::Container, b: &Self::Container) -> bool {
             let aa = {
-                let mut ans = RleVec::new();
+                let mut ans = RleVecWithIndex::new();
                 for iter in a.content.iter() {
                     ans.push(iter.as_ref().clone());
                 }
                 ans
             };
             let bb = {
-                let mut ans = RleVec::new();
+                let mut ans = RleVecWithIndex::new();
                 for iter in b.content.iter() {
                     ans.push(iter.as_ref().clone());
                 }
@@ -303,7 +303,7 @@ pub mod fuzz {
             ans
         }
 
-        type DeleteOp = RleVec<IdSpan>;
+        type DeleteOp = RleVecWithIndex<IdSpan>;
 
         fn new_del_op(
             container: &Self::Container,
@@ -311,13 +311,13 @@ pub mod fuzz {
             mut len: usize,
         ) -> Self::DeleteOp {
             if container.content.len() == 0 {
-                return RleVec::new();
+                return RleVecWithIndex::new();
             }
 
             pos %= container.content.len();
             len = std::cmp::min(len % 10, container.content.len() - pos);
             if len == 0 {
-                return RleVec::new();
+                return RleVecWithIndex::new();
             }
 
             container.content.get_active_id_spans(pos, len)

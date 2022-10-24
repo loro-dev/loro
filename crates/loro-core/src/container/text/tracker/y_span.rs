@@ -185,13 +185,13 @@ pub mod test {
         op::{InsertContent, OpContent},
         ContentType, Op, ID,
     };
-    use rle::{HasLength, RleVec};
+    use rle::{HasLength, RleVecWithIndex};
 
-    use super::{YSpan};
+    use super::YSpan;
 
     #[test]
     fn test_merge() {
-        let mut vec: RleVec<Op> = RleVec::new();
+        let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
@@ -235,7 +235,7 @@ pub mod test {
 
     #[test]
     fn slice() {
-        let mut vec: RleVec<Op> = RleVec::new();
+        let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {

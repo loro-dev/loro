@@ -281,14 +281,14 @@ impl HasId for IdSpan {
 
 #[cfg(test)]
 mod test_id_span {
-    use rle::RleVec;
+    use rle::RleVecWithIndex;
 
     use super::*;
 
     macro_rules! id_spans {
         ($([$client_id:expr, $from:expr, $to:expr]),*) => {
             {
-                let mut id_spans = RleVec::new();
+                let mut id_spans = RleVecWithIndex::new();
                 $(
                     id_spans.push(IdSpan {
                         client_id: $client_id,
@@ -302,7 +302,7 @@ mod test_id_span {
 
     #[test]
     fn test_id_span_rle_vec() {
-        let mut id_span_vec = RleVec::new();
+        let mut id_span_vec = RleVecWithIndex::new();
         id_span_vec.push(IdSpan {
             client_id: 0,
             counter: CounterSpan::new(0, 2),
