@@ -725,8 +725,7 @@ mod find_common_ancestors {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
         a.push(4);
-        b.push(4);
-        b.push(5);
+        b.push(9);
         b.merge(&a);
         b.frontier.retain(|x| x.client_id == 1);
         let k = b.nodes.get_mut(&1).unwrap();
@@ -767,7 +766,7 @@ mod find_common_ancestors {
         a0.push(1);
         a1.merge(&a2);
         a1.merge(&a0);
-        // println!("{}", a1.mermaid());
+        println!("{}", a1.mermaid());
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
                 .first()
@@ -775,13 +774,10 @@ mod find_common_ancestors {
             None
         );
         assert_eq!(
-            a1.find_common_ancestor(
-                &[ID::new(0, 3), ID::new(1, 2), ID::new(2, 2)],
-                &[ID::new(1, 4)]
-            )
-            .into_iter()
-            .collect::<Vec<_>>(),
-            vec![ID::new(1, 2), ID::new(2, 2)]
+            a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![ID::new(2, 2)]
         );
     }
 }
@@ -971,20 +967,21 @@ mod find_common_ancestors_proptest {
                 let (target, dag): (&mut TestDag, &mut TestDag) =
                     unsafe_array_mut_ref!(dags, [target, i]);
                 target.merge(dag);
-                target.push(1);
             }
+        }
+
+        let mut expected = Vec::with_capacity(N);
+        for i in 0..N {
+            dags[i].push(1);
+            expected.push(dags[i].frontier[0]);
+        }
+
+        for target in 0..N {
             for i in N..dags.len() {
                 let (target, dag): (&mut TestDag, &mut TestDag) =
                     unsafe_array_mut_ref!(dags, [target, i]);
                 dag.merge(target);
             }
-        }
-
-        let mut expected = Vec::with_capacity(N);
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..N {
-            dags[i].push(1);
-            expected.push(dags[i].frontier[0]);
         }
 
         let mut merged_to_even = [false; N];
@@ -1069,7 +1066,7 @@ mod find_common_ancestors_proptest {
         actual.sort();
         let actual = actual.iter().copied().collect::<Vec<_>>();
         if actual != expected {
-            println!("{}", dag_to_mermaid(dag_a));
+            println!("{}", dag_a.mermaid());
         }
 
         prop_assert_eq!(actual, expected);
