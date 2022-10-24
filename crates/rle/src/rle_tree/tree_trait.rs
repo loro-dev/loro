@@ -246,13 +246,13 @@ pub trait GlobalIndex:
 
 impl<T: Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>> GlobalIndex for T {}
 
-pub trait HasGlobalIndex: HasLength {
+pub trait HasIndex: HasLength {
     type Int: GlobalIndex;
-    fn get_global_start(&self) -> Self::Int;
+    fn get_start_index(&self) -> Self::Int;
 
     #[inline]
-    fn get_global_end(&self) -> Self::Int {
-        self.get_global_start() + Self::Int::from_usize(self.len()).unwrap()
+    fn get_end_index(&self) -> Self::Int {
+        self.get_start_index() + Self::Int::from_usize(self.len()).unwrap()
     }
 }
 
@@ -263,7 +263,7 @@ pub struct Cache<I> {
 }
 
 #[inline]
-fn get_cache<T: Rle + HasGlobalIndex, const MAX_CHILD: usize>(
+fn get_cache<T: Rle + HasIndex, const MAX_CHILD: usize>(
     node: &Node<'_, T, GlobalTreeTrait<T, MAX_CHILD>>,
 ) -> Cache<T::Int> {
     match node {
@@ -272,9 +272,7 @@ fn get_cache<T: Rle + HasGlobalIndex, const MAX_CHILD: usize>(
     }
 }
 
-impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
-    for GlobalTreeTrait<T, MAX_CHILD>
-{
+impl<T: Rle + HasIndex, const MAX_CHILD: usize> RleTreeTrait<T> for GlobalTreeTrait<T, MAX_CHILD> {
     const MAX_CHILDREN_NUM: usize = MAX_CHILD;
 
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
@@ -294,10 +292,10 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
         node.cache.end = node
             .children()
             .iter()
-            .map(|x| x.get_global_end())
+            .map(|x| x.get_end_index())
             .max()
             .unwrap();
-        node.cache.start = node.children()[0].get_global_start();
+        node.cache.start = node.children()[0].get_start_index();
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) {
@@ -347,8 +345,8 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize> {
         for (i, child) in node.children().iter().enumerate() {
             let cache = Cache {
-                start: child.get_global_start(),
-                end: child.get_global_end(),
+                start: child.get_start_index(),
+                end: child.get_end_index(),
             };
 
             if index <= cache.end {
@@ -359,7 +357,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
                 // prefer Start than End
                 if index == cache.end
                     && i + 1 < node.children.len()
-                    && index == node.children[i + 1].get_global_start()
+                    && index == node.children[i + 1].get_start_index()
                 {
                     return FindPosResult::new(i + 1, 0, Position::Start);
                 }
@@ -392,11 +390,11 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
             node.cache.end,
             node.children()
                 .iter()
-                .map(|x| x.get_global_end())
+                .map(|x| x.get_end_index())
                 .max()
                 .unwrap()
         );
-        assert_eq!(node.cache.start, node.children()[0].get_global_start());
+        assert_eq!(node.cache.start, node.children()[0].get_start_index());
     }
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
@@ -412,7 +410,7 @@ impl<T: Rle + HasGlobalIndex, const MAX_CHILD: usize> RleTreeTrait<T>
     }
 
     fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int {
-        node.children[child_index].get_global_start()
+        node.children[child_index].get_start_index()
     }
 }
 
