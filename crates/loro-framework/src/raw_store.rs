@@ -3,14 +3,14 @@ use loro_core::{
     id::{ClientID, Counter},
     version::VersionVector,
 };
-use rle::RleVec;
+use rle::RleVecWithIndex;
 
 use crate::raw_change::{ChangeData, ChangeHash};
 
 pub type Mac = [u8; 32];
 
 pub struct RawStore {
-    changes: FxHashMap<ClientID, RleVec<ChangeData>>,
+    changes: FxHashMap<ClientID, RleVecWithIndex<ChangeData>>,
     macs: Option<FxHashMap<ClientID, Mac>>,
 }
 
