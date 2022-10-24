@@ -118,7 +118,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
         let id = node.id_start();
         let set = break_points.break_points.entry(id.client_id).or_default();
         set.insert(id.counter);
-        set.insert(id.counter + node.len() as Counter);
+        set.insert(id.counter + node.content_len() as Counter);
         for dep in node.deps() {
             if dep.client_id == id.client_id {
                 continue;

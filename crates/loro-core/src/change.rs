@@ -67,16 +67,16 @@ impl Change {
     }
 
     pub fn last_id(&self) -> ID {
-        self.id.inc(self.len() as Counter - 1)
+        self.id.inc(self.content_len() as Counter - 1)
     }
 
     pub fn last_lamport(&self) -> Lamport {
-        self.lamport + self.len() as Lamport - 1
+        self.lamport + self.content_len() as Lamport - 1
     }
 }
 
 impl HasLength for Change {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.ops.len()
     }
 }
@@ -110,7 +110,7 @@ impl Mergable<ChangeMergeCfg> for Change {
             return false;
         }
 
-        if self.len() > cfg.max_change_length {
+        if self.content_len() > cfg.max_change_length {
             return false;
         }
 
@@ -119,8 +119,8 @@ impl Mergable<ChangeMergeCfg> for Change {
         }
 
         self.id.client_id == other.id.client_id
-            && self.id.counter + self.len() as Counter == other.id.counter
-            && self.lamport + self.len() as Lamport == other.lamport
+            && self.id.counter + self.content_len() as Counter == other.id.counter
+            && self.lamport + self.content_len() as Lamport == other.lamport
     }
 }
 

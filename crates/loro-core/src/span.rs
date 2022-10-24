@@ -101,7 +101,7 @@ impl CounterSpan {
 
 impl HasLength for CounterSpan {
     #[inline]
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         if self.end > self.start {
             (self.end - self.start) as usize
         } else {
@@ -114,7 +114,7 @@ impl Sliceable for CounterSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(from <= to);
         let len = to - from;
-        assert!(len <= self.len());
+        assert!(len <= self.content_len());
         if self.start < self.end {
             CounterSpan {
                 start: self.start + from as Counter,
@@ -189,8 +189,8 @@ impl IdSpan {
 
 impl HasLength for IdSpan {
     #[inline]
-    fn len(&self) -> usize {
-        self.counter.len()
+    fn content_len(&self) -> usize {
+        self.counter.content_len()
     }
 }
 
@@ -235,15 +235,19 @@ pub trait HasIdSpan: HasId + HasLength {
 
     fn id_span(&self) -> IdSpan {
         let id = self.id_start();
-        IdSpan::new(id.client_id, id.counter, id.counter + self.len() as Counter)
+        IdSpan::new(
+            id.client_id,
+            id.counter,
+            id.counter + self.content_len() as Counter,
+        )
     }
 
     fn id_end(&self) -> ID {
-        self.id_start().inc(self.len() as i32)
+        self.id_start().inc(self.content_len() as i32)
     }
 
     fn id_last(&self) -> ID {
-        self.id_start().inc(self.len() as i32 - 1)
+        self.id_start().inc(self.content_len() as i32 - 1)
     }
 
     fn contains_id(&self, id: ID) -> bool {
@@ -252,7 +256,8 @@ pub trait HasIdSpan: HasId + HasLength {
             return false;
         }
 
-        id_start.counter <= id.counter && id.counter < id_start.counter + self.len() as Counter
+        id_start.counter <= id.counter
+            && id.counter < id_start.counter + self.content_len() as Counter
     }
 }
 impl<T: HasId + HasLength> HasIdSpan for T {}
@@ -263,11 +268,11 @@ pub trait HasLamport {
 
 pub trait HasLamportSpan: HasLamport + HasLength {
     fn lamport_end(&self) -> Lamport {
-        self.lamport() + self.len() as Lamport
+        self.lamport() + self.content_len() as Lamport
     }
 
     fn lamport_last(&self) -> Lamport {
-        self.lamport() + self.len() as Lamport - 1
+        self.lamport() + self.content_len() as Lamport - 1
     }
 }
 impl<T: HasLamport + HasLength> HasLamportSpan for T {}

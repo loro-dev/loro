@@ -1,5 +1,5 @@
 use super::DagUtils;
-use std::{ops::Range};
+use std::ops::Range;
 
 use crate::version::IdSpanVector;
 
@@ -76,7 +76,7 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
             let id = item.id;
             let node = self.dag.get(id).unwrap();
             // push next node from the same client to the heap
-            let next_id = id.inc(node.len() as i32);
+            let next_id = id.inc(node.content_len() as i32);
             if self.dag.contains(next_id) {
                 let next_node = self.dag.get(next_id).unwrap();
                 self.heap.push(IdHeapItem {
@@ -157,7 +157,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             self.vv_map.insert(id, vv.clone());
 
             // push next node from the same client to the heap
-            let next_id = id.inc(node.len() as i32);
+            let next_id = id.inc(node.content_len() as i32);
             if self.dag.contains(next_id) {
                 let next_node = self.dag.get(next_id).unwrap();
                 self.heap.push(IdHeapItem {
@@ -201,7 +201,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
 
         let mut heap = BinaryHeap::new();
         for id in target.iter() {
-            if id.1.len() > 0 {
+            if id.1.content_len() > 0 {
                 let id = id.id_start();
                 let node = dag.get(id).unwrap();
                 let diff = id.counter - node.id_start().counter;
@@ -226,7 +226,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.heap.is_empty() {
-            debug_assert_eq!(0, self.target.iter().map(|x| x.1.len() as i32).sum());
+            debug_assert_eq!(
+                0,
+                self.target.iter().map(|x| x.1.content_len() as i32).sum()
+            );
             return None;
         }
 
@@ -258,7 +261,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         assert!(slice_end > slice_from);
         let last_counter = node.id_last().counter;
         target_span.set_start(last_counter + 1);
-        if target_span.len() > 0 {
+        if target_span.content_len() > 0 {
             let next_id = ID::new(node_id.client_id, last_counter + 1);
             let next_node = self.dag.get(next_id).unwrap();
             self.heap.push(IdHeapItem {

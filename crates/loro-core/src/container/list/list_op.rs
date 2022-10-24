@@ -19,7 +19,7 @@ impl Mergable for ListOp {
                 ListOp::Insert {
                     pos: other_pos,
                     slice: other_slice,
-                } => pos + slice.len() == *other_pos && slice.is_mergable(other_slice, &()),
+                } => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
                 _ => false,
             },
             // TODO: add support for reverse merge
@@ -54,9 +54,9 @@ impl Mergable for ListOp {
 }
 
 impl HasLength for ListOp {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         match self {
-            ListOp::Insert { slice, .. } => slice.len(),
+            ListOp::Insert { slice, .. } => slice.content_len(),
             ListOp::Delete { len, .. } => *len,
         }
     }

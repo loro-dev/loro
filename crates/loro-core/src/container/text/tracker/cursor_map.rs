@@ -56,7 +56,7 @@ impl Marker {
                         *ptr,
                         position,
                         offset as usize,
-                        Position::from_offset(offset as isize, child.content_len()),
+                        Position::from_offset(offset as isize, child.atom_len()),
                         0,
                     )
                 })
@@ -131,7 +131,7 @@ impl Marker {
                     *ptr,
                     position,
                     offset as usize,
-                    Position::from_offset(offset as isize, child.content_len()),
+                    Position::from_offset(offset as isize, child.atom_len()),
                     0,
                 ))
             }
@@ -153,7 +153,7 @@ impl Sliceable for Marker {
 }
 
 impl HasLength for Marker {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         match self {
             Marker::Insert { ptr: _, len } => *len,
             Marker::Delete(span) => span.len(),
@@ -216,7 +216,7 @@ pub(super) fn make_notify(
                 ptr: unsafe {
                     NonNull::new_unchecked(leaf as usize as *mut LeafNode<'static, _, _>)
                 },
-                len: span.content_len(),
+                len: span.atom_len(),
             },
         )
     }
@@ -272,7 +272,7 @@ impl CursorMap {
         if cfg!(test) {
             let insert_len: usize = inserts.iter().map(|x| x.1.len).sum();
             let del_len: usize = deletes.iter().map(|x| x.1.len()).sum();
-            assert_eq!(insert_len + del_len, span.len());
+            assert_eq!(insert_len + del_len, span.content_len());
         }
 
         IdSpanQueryResult { inserts, deletes }

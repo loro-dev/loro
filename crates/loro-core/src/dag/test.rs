@@ -64,7 +64,7 @@ impl HasId for TestNode {
 }
 
 impl HasLength for TestNode {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.len
     }
 }
@@ -655,7 +655,6 @@ mod find_path {
 }
 
 mod find_common_ancestors {
-    
 
     use super::*;
 

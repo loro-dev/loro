@@ -238,7 +238,7 @@ impl LogStore {
             break_points: Default::default(),
         };
 
-        self.latest_lamport = lamport + change.len() as u32 - 1;
+        self.latest_lamport = lamport + change.content_len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
         self.changes

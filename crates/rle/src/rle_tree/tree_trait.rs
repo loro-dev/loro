@@ -121,7 +121,11 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
     type LeafCache = usize;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {
-        node.cache = node.children().iter().map(|x| HasLength::len(&**x)).sum();
+        node.cache = node
+            .children()
+            .iter()
+            .map(|x| HasLength::content_len(&**x))
+            .sum();
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) {
@@ -169,16 +173,16 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
         }
 
         for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::len(&**child) {
-                return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
+            if index < HasLength::content_len(&**child) {
+                return FindPosResult::new(i, index, Position::get_pos(index, child.content_len()));
             }
 
-            index -= HasLength::len(&**child);
+            index -= HasLength::content_len(&**child);
         }
 
         FindPosResult::new(
             node.children().len() - 1,
-            HasLength::content_len(&**node.children().last().unwrap()),
+            HasLength::atom_len(&**node.children().last().unwrap()),
             Position::End,
         )
     }
@@ -196,14 +200,17 @@ impl<T: Rle, const MAX_CHILD: usize> RleTreeTrait<T> for CumulateTreeTrait<T, MA
     }
 
     fn check_cache_leaf(node: &LeafNode<'_, T, Self>) {
-        assert_eq!(node.cache, node.children().iter().map(|x| x.len()).sum());
+        assert_eq!(
+            node.cache,
+            node.children().iter().map(|x| x.content_len()).sum()
+        );
     }
 
     fn get_index(node: &LeafNode<'_, T, Self>, mut child_index: usize) -> Self::Int {
         debug_assert!(!node.is_deleted());
         let mut index = 0;
         for i in 0..child_index {
-            index += node.children[i].len();
+            index += node.children[i].content_len();
         }
 
         child_index = node.get_index_in_parent().unwrap();
@@ -355,7 +362,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize> RleTreeTrait<T> for GlobalTreeTr
 
         FindPosResult::new_not_found(
             node.children.len().saturating_sub(1),
-            node.children().last().unwrap().content_len(),
+            node.children().last().unwrap().atom_len(),
             Position::After,
         )
     }

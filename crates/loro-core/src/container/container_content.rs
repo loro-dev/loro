@@ -25,7 +25,7 @@ pub struct ContainerContent {
 }
 
 impl HasLength for ContainerContent {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         1
     }
 }

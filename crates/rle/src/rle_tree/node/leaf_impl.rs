@@ -266,7 +266,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             return Ok(());
         }
 
-        if offset == 0 && self.children[child_index].content_len() == len {
+        if offset == 0 && self.children[child_index].atom_len() == len {
             update_fn(self.children[child_index]);
             return Ok(());
         }
@@ -277,12 +277,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             Some(self.children[child_index].slice(0, offset))
         };
 
-        let right = if self.children[child_index].content_len() == offset + len {
+        let right = if self.children[child_index].atom_len() == offset + len {
             None
         } else {
             Some(
                 self.children[child_index]
-                    .slice(offset + len, self.children[child_index].content_len()),
+                    .slice(offset + len, self.children[child_index].atom_len()),
             )
         };
 
@@ -372,7 +372,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
 
         let child = &self.children[child_index];
-        if offset == 0 && child.content_len() == len {
+        if offset == 0 && child.atom_len() == len {
             let mut element = (**child).clone();
             update_fn(&mut element);
             ans.push(element);
@@ -394,8 +394,8 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             ans.push(target);
         }
 
-        if offset + len < child.content_len() {
-            let right = child.slice(offset + len, child.content_len());
+        if offset + len < child.atom_len() {
+            let right = child.slice(offset + len, child.atom_len());
             let mut merged = false;
             if let Some(last) = ans.last_mut() {
                 if last.is_mergable(&right, &()) {
@@ -429,7 +429,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
         let mut ans: SmallVec<[T; 2]> = SmallVec::new();
         ans.push(self.children[child_index].clone());
-        let ans_len = self.children[child_index].content_len();
+        let ans_len = self.children[child_index].atom_len();
         for i in 0..offsets.len() {
             let offset = offsets[i];
             let len = lens[i];
@@ -446,7 +446,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             ans.append(&mut end);
         }
 
-        debug_assert_eq!(ans_len, ans.iter().map(|x| x.content_len()).sum());
+        debug_assert_eq!(ans_len, ans.iter().map(|x| x.atom_len()).sum());
         Some(ans)
     }
 
@@ -610,7 +610,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
         // need to split child
         let a = self.children[child_index].slice(0, offset);
-        let b = self.children[child_index].slice(offset, self.children[child_index].content_len());
+        let b = self.children[child_index].slice(offset, self.children[child_index].atom_len());
         self.children[child_index] = self.bump.alloc(a);
         if self.children.len() >= A::MAX_CHILDREN_NUM - 1 {
             let next_node = self._split(notify);
@@ -705,7 +705,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 let end = &mut self.children[del_end];
                 let (left, right) = (
                     end.slice(0, del_relative_from),
-                    end.slice(del_relative_to, end.content_len()),
+                    end.slice(del_relative_to, end.atom_len()),
                 );
 
                 *end = self.bump.alloc(left);
@@ -723,9 +723,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             if let Some(del_relative_to) = del_relative_to {
                 let self_ptr = self as *mut _;
                 let end = &mut self.children[del_end];
-                *end = self
-                    .bump
-                    .alloc(end.slice(del_relative_to, end.content_len()));
+                *end = self.bump.alloc(end.slice(del_relative_to, end.atom_len()));
                 notify(end, self_ptr);
             }
         }
@@ -802,13 +800,13 @@ fn slice<T: HasLength + Sliceable>(
     let mut ans = smallvec::smallvec![];
     dbg!(from, to);
     for item in vec.iter() {
-        if index < to && from < index + item.content_len() {
+        if index < to && from < index + item.atom_len() {
             let start = if index < from { from - index } else { 0 };
-            let len = (item.content_len() - start).min(to - index);
+            let len = (item.atom_len() - start).min(to - index);
             ans.push(item.slice(start, start + len));
         }
 
-        index += item.content_len();
+        index += item.atom_len();
     }
 
     ans

@@ -132,7 +132,7 @@ impl Mergable for YSpan {
 
 impl Sliceable for YSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
-        if from == 0 && to == self.content_len() {
+        if from == 0 && to == self.atom_len() {
             return self.clone();
         }
 
@@ -163,7 +163,7 @@ impl InsertContentTrait for YSpan {
 
 impl HasLength for YSpan {
     #[inline]
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         if self.status.is_activated() {
             self.len
         } else {
@@ -172,7 +172,7 @@ impl HasLength for YSpan {
     }
 
     #[inline]
-    fn content_len(&self) -> usize {
+    fn atom_len(&self) -> usize {
         self.len
     }
 }
@@ -230,7 +230,7 @@ pub mod test {
         let merged = vec.get_merged(0).unwrap();
         assert_eq!(merged.content.as_normal().unwrap().id(), ContentType::Text);
         let text_content = merged.content.as_normal().unwrap().as_dyn().unwrap();
-        assert_eq!(text_content.len(), 2);
+        assert_eq!(text_content.content_len(), 2);
     }
 
     #[test]
@@ -273,7 +273,7 @@ pub mod test {
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(
             vec.slice_iter(2, 6)
-                .map(|x| x.into_inner().content.len())
+                .map(|x| x.into_inner().content.content_len())
                 .collect::<Vec<usize>>(),
             vec![2, 2]
         )

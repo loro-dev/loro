@@ -144,7 +144,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                                         cursor.offset,
                                         Position::from_offset(
                                             cursor.offset as isize,
-                                            node.children[cursor.index].content_len(),
+                                            node.children[cursor.index].atom_len(),
                                         ),
                                         end.offset - cursor.offset,
                                     )
@@ -156,7 +156,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                         }
                     }
 
-                    let child_len = node.children[cursor.index].content_len();
+                    let child_len = node.children[cursor.index].atom_len();
                     if child_len - cursor.offset == 0 {
                         cursor.index += 1;
                         cursor.offset = 0;
@@ -226,7 +226,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                                         start.offset,
                                         Position::from_offset(
                                             start.offset as isize,
-                                            node.children[start.index].content_len(),
+                                            node.children[start.index].atom_len(),
                                         ),
                                         end.offset - start.offset,
                                     )
@@ -238,7 +238,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                         }
                     }
 
-                    let child_len = node.children[start.index].content_len();
+                    let child_len = node.children[start.index].atom_len();
                     if child_len - start.offset == 0 {
                         start.index += 1;
                         start.offset = 0;

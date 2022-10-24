@@ -93,11 +93,11 @@ impl<T: Mergable + Any> MergeableContent for T {
 }
 
 impl HasLength for InsertContent {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         match self {
-            InsertContent::Map(x) => x.len(),
-            InsertContent::Dyn(x) => x.len(),
-            InsertContent::List(x) => x.len(),
+            InsertContent::Map(x) => x.content_len(),
+            InsertContent::Dyn(x) => x.content_len(),
+            InsertContent::List(x) => x.content_len(),
         }
     }
 }

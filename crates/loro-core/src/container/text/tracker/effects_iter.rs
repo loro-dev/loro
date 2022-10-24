@@ -1,6 +1,5 @@
 use rle::HasLength;
 
-
 use crate::{
     container::text::text_content::ListSlice,
     id::Counter,
@@ -58,7 +57,7 @@ impl<'a> Iterator for EffectIter<'a> {
                         assert_eq!(unsafe { cursor.get_sliced() }.id, target.id_start());
                     }
 
-                    if cursor.len != target.len() {
+                    if cursor.len != target.content_len() {
                         let new_target = IdSpan {
                             client_id: target.client_id,
                             counter: CounterSpan::new(
@@ -66,7 +65,7 @@ impl<'a> Iterator for EffectIter<'a> {
                                 target.counter.end,
                             ),
                         };
-                        if new_target.len() > 0 {
+                        if new_target.content_len() > 0 {
                             delete_targets.push(new_target);
                         }
                     }

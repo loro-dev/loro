@@ -16,7 +16,7 @@ impl Sliceable for ListInsertContent {
     }
 }
 impl HasLength for ListInsertContent {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         1
     }
 }

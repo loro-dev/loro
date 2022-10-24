@@ -25,7 +25,7 @@ impl ContentMap {
         len: usize,
         slice: ListSlice,
     ) -> YSpan {
-        debug_assert!(slice.len() == len);
+        debug_assert!(slice.content_len() == len);
         let (left, right) = self.get_sibling_at(pos);
         YSpan {
             origin_left: left,
@@ -77,7 +77,7 @@ impl ContentMap {
                     cursor = prev_inner;
                     if prev_inner.as_ref().status.is_activated() {
                         let cursor = prev_inner;
-                        let offset = cursor.as_ref().content_len() - 1;
+                        let offset = cursor.as_ref().atom_len() - 1;
                         let mut cursor = cursor.unwrap();
                         cursor.offset = offset;
                         cursor.pos = Position::Middle;

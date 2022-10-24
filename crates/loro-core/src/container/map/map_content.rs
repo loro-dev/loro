@@ -16,7 +16,7 @@ impl Sliceable for MapSet {
     }
 }
 impl HasLength for MapSet {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         1
     }
 }
