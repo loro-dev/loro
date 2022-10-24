@@ -2,23 +2,23 @@ use std::fmt::Debug;
 
 use crate::{
     rle_trait::ZeroElement,
-    rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasGlobalIndex},
+    rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasIndex},
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct WithGlobalIndex<Value, Index: GlobalIndex> {
+pub(crate) struct WithIndex<Value, Index: GlobalIndex> {
     pub(crate) value: Value,
     pub(crate) index: Index,
 }
 
-impl<Value: Rle, Index: GlobalIndex> HasLength for WithGlobalIndex<Value, Index> {
+impl<Value: Rle, Index: GlobalIndex> HasLength for WithIndex<Value, Index> {
     fn len(&self) -> usize {
         self.value.len()
     }
 }
 
-impl<Value: Rle, Index: GlobalIndex> Sliceable for WithGlobalIndex<Value, Index> {
+impl<Value: Rle, Index: GlobalIndex> Sliceable for WithIndex<Value, Index> {
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
             value: self.value.slice(from, to),
@@ -27,7 +27,7 @@ impl<Value: Rle, Index: GlobalIndex> Sliceable for WithGlobalIndex<Value, Index>
     }
 }
 
-impl<Value: Rle, Index: GlobalIndex> Mergable for WithGlobalIndex<Value, Index> {
+impl<Value: Rle, Index: GlobalIndex> Mergable for WithIndex<Value, Index> {
     fn is_mergable(&self, other: &Self, conf: &()) -> bool {
         self.value.is_mergable(&other.value, conf)
             && self.index + Index::from_usize(self.value.len()).unwrap() == other.index
@@ -38,10 +38,10 @@ impl<Value: Rle, Index: GlobalIndex> Mergable for WithGlobalIndex<Value, Index> 
     }
 }
 
-impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, Index> {
+impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
     type Int = Index;
 
-    fn get_global_start(&self) -> Self::Int {
+    fn get_start_index(&self) -> Self::Int {
         self.index
     }
 }
@@ -49,8 +49,7 @@ impl<Value: Rle, Index: GlobalIndex> HasGlobalIndex for WithGlobalIndex<Value, I
 #[repr(transparent)]
 #[derive(Debug)]
 pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> {
-    pub(crate) tree:
-        RleTree<WithGlobalIndex<Value, Index>, GlobalTreeTrait<WithGlobalIndex<Value, Index>, 10>>,
+    pub(crate) tree: RleTree<WithIndex<Value, Index>, GlobalTreeTrait<WithIndex<Value, Index>, 10>>,
 }
 
 impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> Default
@@ -71,7 +70,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
         );
         self.tree.insert(
             start,
-            WithGlobalIndex {
+            WithIndex {
                 value,
                 index: start,
             },
