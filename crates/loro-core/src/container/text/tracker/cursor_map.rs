@@ -156,7 +156,7 @@ impl HasLength for Marker {
     fn content_len(&self) -> usize {
         match self {
             Marker::Insert { ptr: _, len } => *len,
-            Marker::Delete(span) => span.len(),
+            Marker::Delete(span) => span.atom_len(),
         }
     }
 }
@@ -258,9 +258,9 @@ impl CursorMap {
                     }
                 }
                 Marker::Delete(del) => {
-                    if span.intersect(&id.to_span(del.len())) {
+                    if span.intersect(&id.to_span(del.atom_len())) {
                         let from = (span.counter.min() - id.counter).max(0);
-                        let to = (span.counter.end() - id.counter).min(del.len() as Counter);
+                        let to = (span.counter.end() - id.counter).min(del.atom_len() as Counter);
                         if to - from > 0 {
                             deletes.push((id.inc(from), del.slice(from as usize, to as usize)));
                         }
@@ -271,7 +271,7 @@ impl CursorMap {
 
         if cfg!(test) {
             let insert_len: usize = inserts.iter().map(|x| x.1.len).sum();
-            let del_len: usize = deletes.iter().map(|x| x.1.len()).sum();
+            let del_len: usize = deletes.iter().map(|x| x.1.atom_len()).sum();
             assert_eq!(insert_len + del_len, span.content_len());
         }
 
@@ -291,7 +291,10 @@ impl CursorMap {
                 Marker::Delete(del) => {
                     return Some(FirstCursorResult::Del(
                         span.id_start(),
-                        del.slice((span.id_start().counter - id.counter) as usize, del.len()),
+                        del.slice(
+                            (span.id_start().counter - id.counter) as usize,
+                            del.atom_len(),
+                        ),
                     ))
                 }
             }

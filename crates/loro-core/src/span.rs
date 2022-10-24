@@ -313,19 +313,19 @@ mod test_id_span {
             counter: CounterSpan::new(0, 2),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
-        assert_eq!(id_span_vec.len(), 2);
+        assert_eq!(id_span_vec.atom_len(), 2);
         id_span_vec.push(IdSpan {
             client_id: 0,
             counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 1);
-        assert_eq!(id_span_vec.len(), 4);
+        assert_eq!(id_span_vec.atom_len(), 4);
         id_span_vec.push(IdSpan {
             client_id: 2,
             counter: CounterSpan::new(2, 4),
         });
         assert_eq!(id_span_vec.merged_len(), 2);
-        assert_eq!(id_span_vec.len(), 6);
+        assert_eq!(id_span_vec.atom_len(), 6);
     }
 
     #[test]

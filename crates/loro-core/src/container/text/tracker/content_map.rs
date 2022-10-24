@@ -134,7 +134,7 @@ impl ContentMap {
             }
         }
 
-        assert_eq!(len, ans.len());
+        assert_eq!(len, ans.atom_len());
         ans
     }
 

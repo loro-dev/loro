@@ -21,7 +21,7 @@ use crate::{HasLength, Mergable, Slice, Sliceable};
 #[derive(Debug, Clone)]
 pub struct RleVecWithIndex<T, Cfg = ()> {
     vec: Vec<T>,
-    _len: usize,
+    atom_len: usize,
     index: Vec<usize>,
     cfg: Cfg,
 }
@@ -44,37 +44,32 @@ impl<T: Eq + PartialEq> Eq for RleVecWithIndex<T> {}
 impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
     /// push a new element to the end of the array. It may be merged with last element.
     pub fn push(&mut self, value: T) {
-        self._len += value.content_len();
+        self.atom_len += value.content_len();
         if self.vec.is_empty() {
             self.vec.push(value);
             self.index.push(0);
-            self.index.push(self._len);
+            self.index.push(self.atom_len);
             return;
         }
 
         let last = self.vec.last_mut().unwrap();
         if last.is_mergable(&value, &self.cfg) {
             last.merge(&value, &self.cfg);
-            *self.index.last_mut().unwrap() = self._len;
+            *self.index.last_mut().unwrap() = self.atom_len;
             return;
         }
         self.vec.push(value);
-        self.index.push(self._len);
+        self.index.push(self.atom_len);
     }
 
     pub fn is_empty(&self) -> bool {
         self.vec.is_empty()
     }
 
-    /// number of atom elements in the array.
-    pub fn len(&self) -> usize {
-        self._len
-    }
-
     /// get the element at the given atom index.
     /// return: (element, merged_index, offset)
     pub fn get(&self, index: usize) -> Option<SearchResult<'_, T, usize>> {
-        if index > self.len() {
+        if index > self.atom_len {
             return None;
         }
 
@@ -133,7 +128,11 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
         }
 
         let from_result = from_result.unwrap();
-        let to_result = if to == self.len() { None } else { self.get(to) };
+        let to_result = if to == self.atom_len {
+            None
+        } else {
+            self.get(to)
+        };
         if let Some(to_result) = to_result {
             SliceIterator {
                 vec: &self.vec,
@@ -162,7 +161,7 @@ impl<T, Conf: Default> RleVecWithIndex<T, Conf> {
     pub fn new() -> Self {
         RleVecWithIndex {
             vec: Vec::new(),
-            _len: 0,
+            atom_len: 0,
             index: Vec::new(),
             cfg: Default::default(),
         }
@@ -193,7 +192,7 @@ impl<T, Conf> RleVecWithIndex<T, Conf> {
     pub fn new_cfg(cfg: Conf) -> Self {
         RleVecWithIndex {
             vec: Vec::new(),
-            _len: 0,
+            atom_len: 0,
             index: Vec::new(),
             cfg,
         }
@@ -321,13 +320,17 @@ impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVecWithIndex<
     }
 }
 
-impl<T> HasLength for RleVecWithIndex<T> {
+impl<T, Cfg> HasLength for RleVecWithIndex<T, Cfg> {
     fn content_len(&self) -> usize {
-        self._len
+        self.atom_len
+    }
+
+    fn atom_len(&self) -> usize {
+        self.atom_len
     }
 }
 
-impl<T> Deref for RleVecWithIndex<T> {
+impl<T, Cfg> Deref for RleVecWithIndex<T, Cfg> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {

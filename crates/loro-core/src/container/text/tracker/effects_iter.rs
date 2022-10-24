@@ -117,8 +117,10 @@ impl<'a> Iterator for EffectIter<'a> {
                         }
                         FirstCursorResult::Del(id, del) => {
                             assert!(current.contains_id(id));
-                            assert!(current.contains_id(id.inc(del.len() as Counter - 1)));
-                            current.counter.set_start(id.counter + del.len() as Counter);
+                            assert!(current.contains_id(id.inc(del.atom_len() as Counter - 1)));
+                            current
+                                .counter
+                                .set_start(id.counter + del.atom_len() as Counter);
                             self.current_delete_targets = Some(del.iter().cloned().collect());
                         }
                     }
