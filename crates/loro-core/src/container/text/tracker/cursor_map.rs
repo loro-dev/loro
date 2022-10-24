@@ -9,7 +9,7 @@ use enum_as_inner::EnumAsInner;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
-    HasLength, Mergable, RleVecWithIndex, Sliceable, ZeroElement,
+    HasLength, Mergable, RleVec, RleVecWithIndex, RleVecWithLen, Sliceable, ZeroElement,
 };
 
 use crate::{
@@ -27,7 +27,7 @@ pub(super) enum Marker {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
     },
-    Delete(RleVecWithIndex<IdSpan>),
+    Delete(RleVecWithLen<[IdSpan; 2]>),
     // FUTURE: REDO, UNDO
 }
 
@@ -224,21 +224,21 @@ pub(super) fn make_notify(
 
 pub(super) struct IdSpanQueryResult {
     pub inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)>,
-    pub deletes: Vec<(ID, RleVecWithIndex<IdSpan>)>,
+    pub deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)>,
 }
 
 #[derive(EnumAsInner)]
 pub enum FirstCursorResult {
     // TODO: REMOVE id field?
     Ins(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>),
-    Del(ID, RleVecWithIndex<IdSpan>),
+    Del(ID, RleVecWithLen<[IdSpan; 2]>),
 }
 
 impl CursorMap {
     // FIXME:
     pub fn get_cursors_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
         let mut inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)> = Vec::new();
-        let mut deletes: Vec<(ID, RleVecWithIndex<IdSpan>)> = Vec::new();
+        let mut deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)> = Vec::new();
         let mut inserted_set = fxhash::FxHashSet::default();
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
             let id: ID = id.into();

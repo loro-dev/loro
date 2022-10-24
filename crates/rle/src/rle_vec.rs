@@ -24,6 +24,81 @@ pub struct RleVec<A: Array> {
     vec: SmallVec<A>,
 }
 
+pub struct RleVecWithLen<A: Array> {
+    vec: RleVec<A>,
+    atom_len: usize,
+}
+
+impl<A: Array> RleVecWithLen<A>
+where
+    A::Item: HasLength + Mergable,
+{
+    pub fn push(&mut self, value: A::Item) {
+        self.atom_len += value.atom_len();
+        self.vec.push(value);
+    }
+
+    pub fn new() -> Self {
+        Self {
+            vec: Default::default(),
+            atom_len: 0,
+        }
+    }
+
+    pub fn with_capacity(size: usize) -> Self {
+        Self {
+            vec: RleVec::with_capacity(size),
+            atom_len: 0,
+        }
+    }
+
+    pub fn merged_len(&self) -> usize {
+        self.vec.merged_len()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, A::Item> {
+        self.vec.iter()
+    }
+}
+
+impl<A: Array> Default for RleVecWithLen<A>
+where
+    A::Item: HasLength + Mergable,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A: Array> RleVecWithLen<A>
+where
+    A::Item: HasLength + Mergable + HasIndex,
+{
+    pub fn get(
+        &self,
+        index: <A::Item as HasIndex>::Int,
+    ) -> Option<SearchResult<'_, A::Item, <A::Item as HasIndex>::Int>> {
+        self.vec.get(index)
+    }
+
+    pub fn iter_by_index(
+        &self,
+        from: <A::Item as HasIndex>::Int,
+        to: <A::Item as HasIndex>::Int,
+    ) -> SliceIterator<'_, A::Item> {
+        self.vec.iter_by_index(from, to)
+    }
+}
+
+impl<A: Array> HasLength for RleVecWithLen<A>
+where
+    A::Item: HasLength + Mergable,
+{
+    fn content_len(&self) -> usize {
+        self.atom_len
+    }
+}
+
 impl<A: Array> RleVec<A> {
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -54,6 +129,29 @@ impl<A: Array> RleVec<A> {
         self.vec.len()
     }
 }
+impl<A: Array> Debug for RleVecWithLen<A>
+where
+    A::Item: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RleVecWithLen")
+            .field("vec", &self.vec)
+            .field("atom_len", &self.atom_len)
+            .finish()
+    }
+}
+
+impl<A: Array> Clone for RleVecWithLen<A>
+where
+    A::Item: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            vec: self.vec.clone(),
+            atom_len: self.atom_len,
+        }
+    }
+}
 
 impl<A: Array> Clone for RleVec<A>
 where
@@ -82,6 +180,14 @@ impl<A: Array> Index<usize> for RleVec<A> {
     }
 }
 
+impl<A: Array> Index<usize> for RleVecWithLen<A> {
+    type Output = A::Item;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.vec[index]
+    }
+}
+
 impl<A: Array> PartialEq for RleVec<A>
 where
     A::Item: Eq + PartialEq,
@@ -92,6 +198,16 @@ where
 }
 
 impl<A: Array> Eq for RleVec<A> where A::Item: Eq + PartialEq {}
+impl<A: Array> PartialEq for RleVecWithLen<A>
+where
+    A::Item: Eq + PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.vec == other.vec
+    }
+}
+
+impl<A: Array> Eq for RleVecWithLen<A> where A::Item: Eq + PartialEq {}
 
 impl<A: Array> RleVec<A>
 where
@@ -359,11 +475,46 @@ where
     }
 }
 
+impl<A: Array> Mergable for RleVecWithLen<A>
+where
+    A::Item: Clone + Mergable + HasLength + Sliceable,
+{
+    fn is_mergable(&self, other: &Self, _: &()) -> bool {
+        self.vec.is_mergable(&other.vec, &())
+    }
+
+    fn merge(&mut self, other: &Self, _: &()) {
+        for item in other.vec.iter() {
+            self.push(item.clone());
+        }
+    }
+}
+
+impl<A: Array> Sliceable for RleVecWithLen<A>
+where
+    A::Item: Mergable + HasLength + Sliceable,
+{
+    fn slice(&self, start: usize, end: usize) -> Self {
+        Self {
+            vec: self.vec.slice(start, end),
+            atom_len: end - start,
+        }
+    }
+}
+
 impl<A: Array> Deref for RleVec<A> {
     type Target = [A::Item];
 
     fn deref(&self) -> &Self::Target {
         &self.vec
+    }
+}
+
+impl<A: Array> Deref for RleVecWithLen<A> {
+    type Target = [A::Item];
+
+    fn deref(&self) -> &Self::Target {
+        &self.vec.vec
     }
 }
 
