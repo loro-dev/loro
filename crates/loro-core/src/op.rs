@@ -1,10 +1,12 @@
+use std::mem::size_of;
+
 use crate::{
-    change::{Lamport, Timestamp},
+    change::{Change, Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
     span::{HasId, IdSpan},
 };
-use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, RleVec, RleVecWithIndex, Sliceable};
 mod insert_content;
 mod op_content;
 
@@ -134,4 +136,12 @@ pub struct RichOp<'a> {
     pub op: &'a Op,
     pub lamport: Lamport,
     pub timestamp: Timestamp,
+}
+
+impl HasIndex for Op {
+    type Int = Counter;
+
+    fn get_start_index(&self) -> Self::Int {
+        self.id.counter
+    }
 }

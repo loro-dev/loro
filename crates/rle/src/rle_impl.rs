@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-use crate::{HasLength, Mergable, Sliceable};
-use num::{cast, Integer, NumCast};
+use crate::{rle_trait::GlobalIndex, HasIndex, HasLength, Mergable, Sliceable};
+use num::{cast, Integer, Num, NumCast};
 use smallvec::{Array, SmallVec};
 
 impl Sliceable for bool {
@@ -32,6 +32,14 @@ impl<T: PartialOrd<T> + Copy> Mergable for Range<T> {
 impl<T: num::Integer + NumCast + Copy> HasLength for Range<T> {
     fn content_len(&self) -> usize {
         cast(self.end - self.start).unwrap()
+    }
+}
+
+impl<T: GlobalIndex + NumCast> HasIndex for Range<T> {
+    type Int = T;
+
+    fn get_start_index(&self) -> Self::Int {
+        self.start
     }
 }
 

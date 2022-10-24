@@ -6,9 +6,7 @@ use std::{
 use num::{traits::AsPrimitive, FromPrimitive};
 use smallvec::{Array, SmallVec};
 
-use crate::{
-    rle_trait::HasIndex, HasLength, Mergable, SearchResult, SliceIterator, Sliceable,
-};
+use crate::{rle_trait::HasIndex, HasLength, Mergable, SearchResult, SliceIterator, Sliceable};
 
 /// RleVec<T> is a vector that can be compressed using run-length encoding.
 ///
@@ -22,11 +20,8 @@ use crate::{
 /// - len() returns the number of atom elements in the array.
 /// - get(index) returns the atom element at the index.
 /// - slice(from, to) returns a slice of atom elements from the index from to the index to.
-///
-/// TODO: remove index and _len
 pub struct RleVec<A: Array> {
     vec: SmallVec<A>,
-    atom_len: usize,
 }
 
 impl<A: Array> Clone for RleVec<A>
@@ -36,7 +31,6 @@ where
     fn clone(&self) -> Self {
         Self {
             vec: self.vec.clone(),
-            atom_len: 0,
         }
     }
 }
@@ -74,7 +68,6 @@ where
 {
     /// push a new element to the end of the array. It may be merged with last element.
     pub fn push(&mut self, value: A::Item) {
-        self.atom_len += value.atom_len();
         if let Some(last) = self.vec.last_mut() {
             if last.is_mergable(&value, &()) {
                 last.merge(&value, &());
@@ -96,7 +89,6 @@ impl<A: Array> RleVec<A> {
     pub fn new() -> Self {
         RleVec {
             vec: SmallVec::new(),
-            atom_len: 0,
         }
     }
 
@@ -104,7 +96,6 @@ impl<A: Array> RleVec<A> {
     pub fn with_capacity(size: usize) -> Self {
         RleVec {
             vec: SmallVec::with_capacity(size),
-            atom_len: 0,
         }
     }
 
@@ -263,6 +254,12 @@ where
     }
 }
 
+impl<A: Array> From<SmallVec<A>> for RleVec<A> {
+    fn from(value: SmallVec<A>) -> Self {
+        RleVec { vec: value }
+    }
+}
+
 impl<A: Array> From<RleVec<A>> for SmallVec<A> {
     fn from(value: RleVec<A>) -> Self {
         value.vec
@@ -278,6 +275,11 @@ impl<A: Array> RleVec<A> {
     #[inline(always)]
     pub fn vec(&self) -> &SmallVec<A> {
         &self.vec
+    }
+
+    #[inline(always)]
+    pub fn vec_mut(&mut self) -> &mut SmallVec<A> {
+        &mut self.vec
     }
 
     #[inline(always)]
@@ -312,7 +314,7 @@ where
 
 impl<A: Array> Mergable for RleVec<A>
 where
-    A::Item: Clone + Mergable + HasLength + HasIndex,
+    A::Item: Clone + Mergable + HasLength + Sliceable,
 {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         self.vec.len() + other.vec.len() < self.capacity()
@@ -327,9 +329,13 @@ where
 
 impl<A: Array> Sliceable for RleVec<A>
 where
-    A::Item: Mergable + HasLength + Sliceable + HasIndex,
+    A::Item: Mergable + HasLength + Sliceable,
 {
     fn slice(&self, start: usize, end: usize) -> Self {
+        if start >= end {
+            return Self::new();
+        }
+
         let mut ans = SmallVec::new();
         let mut index = 0;
         for i in 0..self.vec.len() {
@@ -339,22 +345,13 @@ where
 
             let len = self[i].atom_len();
             if start < index + len {
-                ans.push(self[i].slice((start - index).max(0), (end - index).min(len)))
+                ans.push(self[i].slice(start.saturating_sub(index), (end - index).min(len)))
             }
 
             index += len;
         }
 
-        Self {
-            vec: ans,
-            atom_len: end - start,
-        }
-    }
-}
-
-impl<A: Array> HasLength for RleVec<A> {
-    fn content_len(&self) -> usize {
-        self.atom_len
+        Self { vec: ans }
     }
 }
 
@@ -363,5 +360,30 @@ impl<A: Array> Deref for RleVec<A> {
 
     fn deref(&self) -> &Self::Target {
         &self.vec
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn slice() {
+        let mut a: RleVec<[Range<usize>; 4]> = RleVec::new();
+        a.push(0..5);
+        a.push(5..8);
+        a.push(10..13);
+        assert_eq!(&*a.slice(0, 5), &vec![0..5]);
+        assert_eq!(&*a.slice(5, 10), &vec![5..8, 10..12]);
+        assert_eq!(&*a.slice(5, 5), &vec![]);
+
+        let ans = a.slice_by_index(3, 11);
+        assert_eq!(&*ans, &vec![3..8, 10..11]);
+        let ans = a.slice_by_index(3, 100);
+        assert_eq!(&*ans, &vec![3..8, 10..13]);
+        assert_eq!(*a.last().unwrap(), 10..13);
+        for k in a.iter() {
+            println!("{:?}", k);
+        }
     }
 }
