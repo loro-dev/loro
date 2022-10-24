@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use crate::{
-    rle_trait::ZeroElement,
-    rle_tree::tree_trait::{GlobalIndex, GlobalTreeTrait, HasIndex},
+    rle_trait::{GlobalIndex, HasIndex, ZeroElement},
+    rle_tree::tree_trait::GlobalTreeTrait,
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
 

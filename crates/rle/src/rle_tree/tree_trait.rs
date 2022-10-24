@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
 
-use crate::{HasLength, Rle};
+use crate::{rle_trait::HasIndex, HasLength, Rle};
 
 use super::node::{InternalNode, LeafNode, Node};
 
@@ -236,23 +236,6 @@ impl Position {
         } else {
             Position::Middle
         }
-    }
-}
-
-pub trait GlobalIndex:
-    Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>
-{
-}
-
-impl<T: Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>> GlobalIndex for T {}
-
-pub trait HasIndex: HasLength {
-    type Int: GlobalIndex;
-    fn get_start_index(&self) -> Self::Int;
-
-    #[inline]
-    fn get_end_index(&self) -> Self::Int {
-        self.get_start_index() + Self::Int::from_usize(self.len()).unwrap()
     }
 }
 
