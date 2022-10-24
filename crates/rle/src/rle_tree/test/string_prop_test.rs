@@ -22,7 +22,7 @@ impl DerefMut for CustomString {
 }
 
 impl HasLength for CustomString {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.0.len()
     }
 }
@@ -32,7 +32,7 @@ impl Mergable for CustomString {
     where
         Self: Sized,
     {
-        self.len() + other.len() < 64
+        self.content_len() + other.content_len() < 64
     }
 
     fn merge(&mut self, other: &Self, _conf: &())

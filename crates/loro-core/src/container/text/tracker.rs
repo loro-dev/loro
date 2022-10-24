@@ -203,7 +203,7 @@ impl Tracker {
                         args.push(StatusChange::UndoDelete);
                     }
 
-                    assert_eq!(len, deleted_span.len());
+                    assert_eq!(len, deleted_span.content_len());
                 }
             }
 
@@ -227,16 +227,19 @@ impl Tracker {
     pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
         assert_eq!(*self.head_vv.get(&id.client_id).unwrap_or(&0), id.counter);
         assert_eq!(*self.all_vv.get(&id.client_id).unwrap_or(&0), id.counter);
-        self.head_vv.set_end(id.inc(content.len() as i32));
-        self.all_vv.set_end(id.inc(content.len() as i32));
+        self.head_vv.set_end(id.inc(content.content_len() as i32));
+        self.all_vv.set_end(id.inc(content.content_len() as i32));
         match &content {
             crate::op::OpContent::Normal { content } => {
                 let text_content = content.as_list().expect("Content is not for list");
                 match text_content {
                     ListOp::Insert { slice, pos } => {
-                        let yspan =
-                            self.content
-                                .get_yspan_at_pos(id, *pos, slice.len(), slice.clone());
+                        let yspan = self.content.get_yspan_at_pos(
+                            id,
+                            *pos,
+                            slice.content_len(),
+                            slice.clone(),
+                        );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
@@ -264,9 +267,9 @@ impl Tracker {
         self.content.update_at_cursors(
             &mut [cursor],
             &mut |v| {
-                let before = v.len() as i32;
+                let before = v.content_len() as i32;
                 v.status.apply(change);
-                let after = v.len() as i32;
+                let after = v.content_len() as i32;
                 changed += after - before;
             },
             &mut make_notify(&mut self.id_to_cursor),

@@ -24,9 +24,9 @@ impl OpContent {
 }
 
 impl HasLength for OpContent {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         match self {
-            OpContent::Normal { content, .. } => content.len(),
+            OpContent::Normal { content, .. } => content.content_len(),
             OpContent::Undo { target, .. } => target.len(),
             OpContent::Redo { target, .. } => target.len(),
         }

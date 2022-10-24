@@ -213,7 +213,7 @@ struct OrdIdSpan<'a> {
 }
 
 impl<'a> HasLength for OrdIdSpan<'a> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.len
     }
 }

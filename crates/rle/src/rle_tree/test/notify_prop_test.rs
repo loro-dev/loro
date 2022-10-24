@@ -158,7 +158,7 @@ impl<T> Mergable for MyNonNull<T> {
 }
 
 impl<T> HasLength for MyNonNull<T> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.1
     }
 }
@@ -174,7 +174,11 @@ fn test(interactions: &[Interaction]) {
             let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
             range_map.set(
                 value.value,
-                WithStartEnd::new(value.value, value.value + value.len() as u64, ptr.into()),
+                WithStartEnd::new(
+                    value.value,
+                    value.value + value.content_len() as u64,
+                    ptr.into(),
+                ),
             );
             _println!("notify Value: {:?}, Ptr: {:#016x}", value, node as usize);
         };
@@ -195,9 +199,11 @@ fn test(interactions: &[Interaction]) {
             let range_map_out = range_map_output.unwrap();
             let range = range_map_out.start..range_map_out.end;
             assert!(
-                (origin_value.len() == 0 && origin_value.value == range.start)
+                (origin_value.content_len() == 0 && origin_value.value == range.start)
                     || (range.contains(&id)
-                        && range.contains(&(origin_value.value + origin_value.len() as u64 - 1))),
+                        && range.contains(
+                            &(origin_value.value + origin_value.content_len() as u64 - 1)
+                        )),
                 "origin={:#?}, range={:#?}",
                 origin_value,
                 range

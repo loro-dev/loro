@@ -27,8 +27,8 @@ impl CustomString {
 }
 
 impl HasLength for CustomString {
-    fn len(&self) -> usize {
-        rle::HasLength::len(&self.slice)
+    fn content_len(&self) -> usize {
+        rle::HasLength::content_len(&self.slice)
     }
 }
 
@@ -39,7 +39,7 @@ impl Mergable for CustomString {
     {
         self.slice.start == 0
             && self.slice.end == self.str().len()
-            && self.str().capacity() > other.len() + self.str().len()
+            && self.str().capacity() > other.content_len() + self.str().len()
             && Rc::strong_count(&self.str) == 1
     }
 

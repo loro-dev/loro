@@ -192,7 +192,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         let leaf = self.leaf.as_ref();
         let index = A::get_index(leaf, self.index);
         let item = self.as_ref();
-        if item.len() == 0 {
+        if item.content_len() == 0 {
             index
         } else {
             index + A::Int::from_usize(self.offset).unwrap()
@@ -217,7 +217,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         }
 
         while shift > 0 {
-            let diff = leaf.children[self.index].content_len() - self.offset;
+            let diff = leaf.children[self.index].atom_len() - self.offset;
             match shift.cmp(&diff) {
                 std::cmp::Ordering::Less => {
                     self.offset += shift;
@@ -225,7 +225,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
                     return Some(self);
                 }
                 std::cmp::Ordering::Equal => {
-                    self.offset = leaf.children[self.index].content_len();
+                    self.offset = leaf.children[self.index].atom_len();
                     self.pos = Position::End;
                     return Some(self);
                 }
@@ -372,12 +372,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> GetOp for RawSafeCursor<'tree, T, A, 
 
     fn get_op(&self) -> Self::Target {
         self.as_ref()
-            .slice(self.offset(), self.offset() + self.len())
+            .slice(self.offset(), self.offset() + self.content_len())
     }
 }
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>, M> HasLength for RawSafeCursor<'tree, T, A, M> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.0.len
     }
 }

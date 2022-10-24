@@ -30,22 +30,22 @@ impl<T: PartialOrd<T> + Copy> Mergable for Range<T> {
 }
 
 impl<T: num::Integer + NumCast + Copy> HasLength for Range<T> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         cast(self.end - self.start).unwrap()
     }
 }
 
 /// this can make iter return type has len
 impl<A, T: HasLength> HasLength for (A, T) {
-    fn len(&self) -> usize {
-        self.1.len()
+    fn content_len(&self) -> usize {
+        self.1.content_len()
     }
 }
 
 /// this can make iter return type has len
 impl<T: HasLength> HasLength for &T {
-    fn len(&self) -> usize {
-        (*self).len()
+    fn content_len(&self) -> usize {
+        (*self).content_len()
     }
 }
 
@@ -58,12 +58,12 @@ impl<T: HasLength + Sliceable, A: Array<Item = T>> Sliceable for SmallVec<A> {
         }
 
         for item in self.iter() {
-            if index < to && from < index + item.content_len() {
+            if index < to && from < index + item.atom_len() {
                 let start = if index < from { from - index } else { 0 };
-                ans.push(item.slice(start, item.content_len().min(to - index)));
+                ans.push(item.slice(start, item.atom_len().min(to - index)));
             }
 
-            index += item.content_len();
+            index += item.atom_len();
         }
 
         ans

@@ -70,7 +70,7 @@ impl Op {
 
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.id.is_connected_id(&other.id, self.len())
+        self.id.is_connected_id(&other.id, self.content_len())
             && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
     }
@@ -104,8 +104,8 @@ impl Mergable for Op {
 }
 
 impl HasLength for Op {
-    fn len(&self) -> usize {
-        self.content.len()
+    fn content_len(&self) -> usize {
+        self.content.content_len()
     }
 }
 

@@ -40,12 +40,17 @@ impl<T: Sliceable> Slice<'_, T> {
 
 #[allow(clippy::len_without_is_empty)]
 pub trait HasLength {
-    /// if the content is deleted, len should be zero
-    fn len(&self) -> usize;
+    /// It is the length of the content, i.e. the length when no [Mergable::merge] ever happen.
+    ///
+    /// However, when the content is deleted, [HasLength::content_len] is expected to be zero in some [crate::RleTree] use cases
+    fn content_len(&self) -> usize;
 
-    /// the actual length of the value, cannot be affected by delete state
-    fn content_len(&self) -> usize {
-        self.len()
+    /// It is the length of the atom element underneath, i.e. the length when no [Mergable::merge] ever happen.
+    ///
+    /// It is the same as [HasLength::atom_len] in the most of the cases.
+    /// However, oppose to [HasLength::atom_len], when the content is deleted, [HasLength::content_len] should not change
+    fn atom_len(&self) -> usize {
+        self.content_len()
     }
 }
 
@@ -69,7 +74,7 @@ pub trait HasIndex: HasLength {
 
     #[inline]
     fn get_end_index(&self) -> Self::Int {
-        self.get_start_index() + Self::Int::from_usize(self.len()).unwrap()
+        self.get_start_index() + Self::Int::from_usize(self.content_len()).unwrap()
     }
 }
 

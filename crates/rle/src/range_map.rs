@@ -13,8 +13,8 @@ pub(crate) struct WithIndex<Value, Index: GlobalIndex> {
 }
 
 impl<Value: Rle, Index: GlobalIndex> HasLength for WithIndex<Value, Index> {
-    fn len(&self) -> usize {
-        self.value.len()
+    fn content_len(&self) -> usize {
+        self.value.content_len()
     }
 }
 
@@ -30,7 +30,7 @@ impl<Value: Rle, Index: GlobalIndex> Sliceable for WithIndex<Value, Index> {
 impl<Value: Rle, Index: GlobalIndex> Mergable for WithIndex<Value, Index> {
     fn is_mergable(&self, other: &Self, conf: &()) -> bool {
         self.value.is_mergable(&other.value, conf)
-            && self.index + Index::from_usize(self.value.len()).unwrap() == other.index
+            && self.index + Index::from_usize(self.value.content_len()).unwrap() == other.index
     }
 
     fn merge(&mut self, other: &Self, conf: &()) {
@@ -66,7 +66,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
     pub fn set(&mut self, start: Index, value: Value) {
         self.tree.delete_range(
             Some(start),
-            Some(start + Index::from_usize(std::cmp::max(value.len(), 1)).unwrap()),
+            Some(start + Index::from_usize(std::cmp::max(value.content_len(), 1)).unwrap()),
         );
         self.tree.insert(
             start,
@@ -161,7 +161,7 @@ impl<Index: GlobalIndex, T: Sliceable> Sliceable for WithStartEnd<Index, T> {
 }
 
 impl<Index: GlobalIndex, T> HasLength for WithStartEnd<Index, T> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         Index::as_(self.end - self.start)
     }
 }
@@ -209,7 +209,7 @@ mod test {
         }
     }
     impl HasLength for V {
-        fn len(&self) -> usize {
+        fn content_len(&self) -> usize {
             self.to - self.from
         }
     }

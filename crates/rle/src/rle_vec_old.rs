@@ -1,5 +1,7 @@
 use std::ops::{Deref, Range};
 
+use num::Integer;
+
 use crate::{HasLength, Mergable, Slice, Sliceable};
 
 /// RleVec<T> is a vector that can be compressed using run-length encoding.
@@ -25,10 +27,10 @@ pub struct RleVecWithIndex<T, Cfg = ()> {
 }
 
 #[derive(Clone)]
-pub struct SearchResult<'a, T> {
+pub struct SearchResult<'a, T, I: Integer> {
     pub element: &'a T,
     pub merged_index: usize,
-    pub offset: usize,
+    pub offset: I,
 }
 
 impl<T: Eq + PartialEq> PartialEq for RleVecWithIndex<T> {
@@ -42,7 +44,7 @@ impl<T: Eq + PartialEq> Eq for RleVecWithIndex<T> {}
 impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
     /// push a new element to the end of the array. It may be merged with last element.
     pub fn push(&mut self, value: T) {
-        self._len += value.len();
+        self._len += value.content_len();
         if self.vec.is_empty() {
             self.vec.push(value);
             self.index.push(0);
@@ -71,7 +73,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
 
     /// get the element at the given atom index.
     /// return: (element, merged_index, offset)
-    pub fn get(&self, index: usize) -> Option<SearchResult<'_, T>> {
+    pub fn get(&self, index: usize) -> Option<SearchResult<'_, T, usize>> {
         if index > self.len() {
             return None;
         }
@@ -260,7 +262,7 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         let end_index = self.end_index.unwrap_or(self.vec.len() - 1);
         if self.cur_index == end_index {
             let elem = &self.vec[self.cur_index];
-            let end = self.end_offset.unwrap_or_else(|| elem.len());
+            let end = self.end_offset.unwrap_or_else(|| elem.content_len());
             if self.cur_offset == end {
                 return None;
             }
@@ -277,7 +279,7 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         let ans = Slice {
             value: &self.vec[self.cur_index],
             start: self.cur_offset,
-            end: self.vec[self.cur_index].len(),
+            end: self.vec[self.cur_index].content_len(),
         };
 
         self.cur_index += 1;
@@ -309,7 +311,7 @@ impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVecWithIndex<
 }
 
 impl<T> HasLength for RleVecWithIndex<T> {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self._len
     }
 }
@@ -328,7 +330,7 @@ mod test {
         use crate::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
         impl HasLength for String {
-            fn len(&self) -> usize {
+            fn content_len(&self) -> usize {
                 self.len()
             }
         }

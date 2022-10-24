@@ -39,7 +39,7 @@ impl ChangeData {
 }
 
 impl HasLength for ChangeData {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         self.len
     }
 }

@@ -45,10 +45,10 @@ pub(super) fn is_unknown_text(a: &ListSlice) -> bool {
 }
 
 impl HasLength for ListSlice {
-    fn len(&self) -> usize {
+    fn content_len(&self) -> usize {
         match self {
             ListSlice::RawStr(s) => s.len(),
-            ListSlice::Slice(x) => rle::HasLength::len(&x),
+            ListSlice::Slice(x) => rle::HasLength::content_len(&x),
             ListSlice::Unknown(x) => *x,
         }
     }
