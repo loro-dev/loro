@@ -24,6 +24,37 @@ pub struct RleVec<A: Array> {
     vec: SmallVec<A>,
 }
 
+impl<A: Array> RleVec<A> {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        RleVec {
+            vec: SmallVec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn with_capacity(size: usize) -> Self {
+        RleVec {
+            vec: SmallVec::with_capacity(size),
+        }
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.vec.capacity()
+    }
+
+    /// this is the length of merged elements
+    pub fn len(&self) -> usize {
+        self.vec.len()
+    }
+}
+
 impl<A: Array> Clone for RleVec<A>
 where
     A::Item: Clone,
@@ -78,33 +109,6 @@ where
         self.vec.push(value);
     }
 }
-
-impl<A: Array> RleVec<A> {
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.vec.is_empty()
-    }
-
-    #[inline]
-    pub fn new() -> Self {
-        RleVec {
-            vec: SmallVec::new(),
-        }
-    }
-
-    #[inline]
-    pub fn with_capacity(size: usize) -> Self {
-        RleVec {
-            vec: SmallVec::with_capacity(size),
-        }
-    }
-
-    #[inline]
-    pub fn capacity(&self) -> usize {
-        self.vec.capacity()
-    }
-}
-
 impl<A: Array> RleVec<A>
 where
     A::Item: Mergable + HasLength + HasIndex,
