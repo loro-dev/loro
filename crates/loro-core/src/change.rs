@@ -11,7 +11,7 @@ use crate::{
     op::Op,
     span::{HasId, HasLamport},
 };
-use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
+use rle::{HasLength, Mergable, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -20,7 +20,7 @@ pub type Lamport = u32;
 /// A `Change` contains a list of [Op]s.
 #[derive(Debug, Clone)]
 pub struct Change {
-    pub(crate) ops: RleVecWithIndex<Op>,
+    pub(crate) ops: RleVec<[Op; 2]>,
     pub(crate) deps: SmallVec<[ID; 2]>,
     /// id of the first op in the change
     pub(crate) id: ID,
@@ -48,7 +48,7 @@ pub struct Change {
 
 impl Change {
     pub fn new(
-        ops: RleVecWithIndex<Op>,
+        ops: RleVec<[Op; 2]>,
         deps: SmallVec<[ID; 2]>,
         id: ID,
         lamport: Lamport,
@@ -77,7 +77,7 @@ impl Change {
 
 impl HasLength for Change {
     fn content_len(&self) -> usize {
-        self.ops.len()
+        self.ops.span() as usize
     }
 }
 

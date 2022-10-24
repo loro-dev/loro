@@ -74,7 +74,7 @@ pub trait HasIndex: HasLength {
 
     #[inline]
     fn get_end_index(&self) -> Self::Int {
-        self.get_start_index() + Self::Int::from_usize(self.content_len()).unwrap()
+        self.get_start_index() + Self::Int::from_usize(self.atom_len()).unwrap()
     }
 }
 
