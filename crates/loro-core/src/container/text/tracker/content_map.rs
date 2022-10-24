@@ -39,17 +39,12 @@ impl ContentMap {
 
     fn get_sibling_at(&self, pos: usize) -> (Option<ID>, Option<ID>) {
         if let Some(cursor) = self.get(pos) {
-            let mut cursor: SafeCursor<'_, YSpan, YSpanTreeTrait> =
-                    // SAFETY: we only change the lifetime of the cursor; the returned lifetime is kinda wrong in this situation 
-                    // because Bumpalo's lifetime is static due to the self-referential structure limitation; Maybe there is a better way?
-                    unsafe { std::mem::transmute(cursor) };
+            let mut cursor: SafeCursor<'_, YSpan, YSpanTreeTrait> = cursor;
             let mut prev = match cursor.pos() {
                 Position::Start => None,
                 Position::Middle => {
                     let id = cursor.as_ref().id;
                     let offset = cursor.offset();
-                    let mut prev_offset_cursor = cursor.unwrap();
-                    prev_offset_cursor.offset -= 1;
                     if cursor.as_ref().can_be_origin() {
                         return (Some(id.inc(offset as i32 - 1)), Some(id.inc(offset as i32)));
                     } else {
@@ -58,9 +53,6 @@ impl ContentMap {
                 }
                 Position::End => {
                     if cursor.as_ref().can_be_origin() {
-                        let mut prev_offset_cursor = cursor.unwrap();
-                        prev_offset_cursor.offset -= 1;
-                        prev_offset_cursor.pos = Position::Middle;
                         Some(cursor.as_ref().last_id())
                     } else {
                         None
@@ -74,17 +66,13 @@ impl ContentMap {
             if prev.is_none() {
                 let mut prev_cursor = cursor.prev_elem();
                 while let Some(prev_inner) = prev_cursor {
-                    cursor = prev_inner;
                     if prev_inner.as_ref().status.is_activated() {
-                        let cursor = prev_inner;
-                        let offset = cursor.as_ref().atom_len() - 1;
-                        let mut cursor = cursor.unwrap();
-                        cursor.offset = offset;
-                        cursor.pos = Position::Middle;
                         prev = Some(prev_inner.as_ref().last_id());
+                        cursor = prev_inner;
                         break;
                     }
                     prev_cursor = prev_inner.prev_elem();
+                    cursor = prev_inner;
                 }
             }
 
@@ -93,9 +81,6 @@ impl ContentMap {
                 let mut ans = None;
                 while let Some(next_inner) = next_cursor {
                     if !next_inner.as_ref().status.future {
-                        let mut cursor = next_inner.unwrap();
-                        cursor.offset = 0;
-                        cursor.pos = Position::Start;
                         ans = Some(next_inner.as_ref().id);
                         break;
                     }

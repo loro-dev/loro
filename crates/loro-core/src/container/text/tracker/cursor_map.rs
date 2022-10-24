@@ -227,7 +227,7 @@ pub(super) struct IdSpanQueryResult {
     pub deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)>,
 }
 
-#[derive(EnumAsInner)]
+#[derive(EnumAsInner, Debug)]
 pub enum FirstCursorResult {
     // TODO: REMOVE id field?
     Ins(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>),
@@ -252,7 +252,7 @@ impl CursorMap {
                             assert!(span.contains_id(sliced.last_id()));
                         }
                         if !inserted_set.contains(&cursor) {
-                            inserted_set.insert(cursor);
+                            inserted_set.insert(cursor.clone());
                             inserts.push((sliced.id, cursor));
                         }
                     }

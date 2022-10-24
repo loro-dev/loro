@@ -50,8 +50,8 @@ impl<'a> Iterator for EffectIter<'a> {
                         .id_to_cursor
                         .get_first_cursors_at_id_span(target)
                         .unwrap();
-                    let (id, cursor) = result.as_ins().unwrap();
-                    assert_eq!(*id, target.id_start());
+                    let (id, cursor) = result.into_ins().unwrap();
+                    assert_eq!(id, target.id_start());
                     if cfg!(test) {
                         // SAFETY: for test
                         assert_eq!(unsafe { cursor.get_sliced() }.id, target.id_start());
@@ -72,14 +72,12 @@ impl<'a> Iterator for EffectIter<'a> {
 
                     // SAFETY: we know that the cursor is valid here
                     let pos = unsafe { cursor.get_index() };
-                    let length = -self.tracker.update_cursors(*cursor, StatusChange::Delete);
+                    let len = cursor.len;
+                    let length = -self.tracker.update_cursors(cursor, StatusChange::Delete);
                     assert!(length >= 0);
                     if length > 0 {
-                        assert_eq!(length as usize, cursor.len);
-                        return Some(Effect::Del {
-                            pos,
-                            len: cursor.len,
-                        });
+                        assert_eq!(length as usize, len);
+                        return Some(Effect::Del { pos, len });
                     }
                 } else {
                     break;
@@ -103,12 +101,13 @@ impl<'a> Iterator for EffectIter<'a> {
                             let index = unsafe { cursor.get_index() };
                             // SAFETY: cursor is valid here
                             let content = unsafe { cursor.get_sliced().slice };
+                            let len = cursor.len;
                             let length_diff = self
                                 .tracker
                                 .update_cursors(cursor, StatusChange::SetAsCurrent);
 
                             if length_diff > 0 {
-                                assert_eq!(length_diff, cursor.len as i32);
+                                debug_assert_eq!(length_diff, len as i32);
                                 return Some(Effect::Ins {
                                     pos: index,
                                     content,

@@ -120,7 +120,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(ref mut cursor) = self.cursor {
-            if let Some(end) = self.end_cursor {
+            if let Some(end) = &self.end_cursor {
                 let start = &cursor;
                 if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset
                 {
@@ -131,7 +131,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
             let node = unsafe { cursor.leaf.as_ref() };
             match node.children.get(cursor.index) {
                 Some(_) => {
-                    if let Some(end) = self.end_cursor {
+                    if let Some(end) = &self.end_cursor {
                         if cursor.leaf == end.leaf && end.index == cursor.index {
                             if cursor.offset == end.offset {
                                 return None;
@@ -202,7 +202,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(ref mut start) = self.cursor {
-            if let Some(end) = self.end_cursor {
+            if let Some(end) = &self.end_cursor {
                 if start.leaf == end.leaf && start.index == end.index && start.offset == end.offset
                 {
                     return None;
@@ -213,7 +213,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
             let node = unsafe { start.leaf.as_ref() };
             match node.children.get(start.index) {
                 Some(_) => {
-                    if let Some(end) = self.end_cursor {
+                    if let Some(end) = &self.end_cursor {
                         if start.leaf == end.leaf && end.index == start.index {
                             if start.offset == end.offset {
                                 return None;
