@@ -1,4 +1,3 @@
-
 use rle::{RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 
@@ -62,7 +61,9 @@ impl TextContainer {
 
         let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
             let id = store.next_id();
-            // let slice = ListSlice::from_range(self.raw_str.alloc(text));
+            #[cfg(feature = "slice")]
+            let slice = ListSlice::from_range(self.raw_str.alloc(text));
+            #[cfg(not(feature = "slice"))]
             let slice = ListSlice::from_raw(SmString::from(text));
             self.state.insert(pos, slice.clone());
             let op = Op::new(
@@ -253,14 +254,32 @@ impl Container for TextContainer {
             .and_then(|c| c.as_list_mut())
             .and_then(|x| x.as_insert_mut())
         {
-            let change = if let ListSlice::Slice(ranges) = slice {
+            if let Some(change) = if let ListSlice::Slice(ranges) = slice {
                 Some(self.raw_str.get_str(ranges))
             } else {
                 None
-            };
-
-            if let Some(change) = change {
+            } {
                 *slice = ListSlice::RawStr(change);
+            }
+        }
+    }
+
+    fn to_import(&mut self, op: &mut Op) {
+        if let Some((slice, _pos)) = op
+            .content
+            .as_normal_mut()
+            .and_then(|c| c.as_list_mut())
+            .and_then(|x| x.as_insert_mut())
+        {
+            if let Some(slice_range) = match slice {
+                ListSlice::RawStr(s) => {
+                    let range = self.raw_str.alloc(s);
+                    Some(range)
+                }
+                ListSlice::Slice(_) => unreachable!(),
+                ListSlice::Unknown(_) => unreachable!(),
+            } {
+                *slice = ListSlice::Slice(slice_range);
             }
         }
     }

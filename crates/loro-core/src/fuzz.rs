@@ -8,7 +8,7 @@ use crate::{
     debug_log, LoroCore,
 };
 
-#[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
+#[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
     Ins {
         content: String,
@@ -306,6 +306,17 @@ mod test {
 
     use super::Action::*;
     use super::*;
+    #[test]
+    fn test_10() {
+        test_multi_sites(
+            10,
+            vec![Ins {
+                content: "\0\0".into(),
+                pos: 0,
+                site: 0,
+            }],
+        )
+    }
     #[test]
     fn test_9() {
         test_multi_sites(

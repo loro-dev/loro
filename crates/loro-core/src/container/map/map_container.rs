@@ -156,4 +156,6 @@ impl Container for MapContainer {
     }
 
     fn to_export(&self, _op: &mut Op) {}
+
+    fn to_import(&mut self, op: &mut Op) {}
 }

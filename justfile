@@ -5,7 +5,7 @@ test *FLAGS:
   RUST_BACKTRACE=full cargo nextest run {{FLAGS}}
 
 test-all:
-  cargo nextest run &
+  cargo nextest run --features=fuzzing &
   just quickfuzz
   
 quickfuzz:

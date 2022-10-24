@@ -31,6 +31,7 @@ pub trait Container: Debug + Any + Unpin {
 
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
     fn to_export(&self, op: &mut Op);
+    fn to_import(&mut self, op: &mut Op);
 }
 
 /// it's really cheap to clone
