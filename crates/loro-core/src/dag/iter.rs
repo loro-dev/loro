@@ -276,6 +276,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         } else {
             smallvec::smallvec![node.id_start().inc(slice_from - 1)]
         };
+        dbg!(&self.frontier, &deps);
         let path = self.dag.find_path(&self.frontier, &deps);
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];

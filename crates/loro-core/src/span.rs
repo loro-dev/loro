@@ -250,6 +250,14 @@ pub trait HasIdSpan: HasId + HasLength {
         self.id_start().inc(self.content_len() as i32 - 1)
     }
 
+    fn ctr_last(&self) -> Counter {
+        self.id_start().counter + self.content_len() as i32 - 1
+    }
+
+    fn ctr_first(&self) -> Counter {
+        self.id_start().counter
+    }
+
     fn contains_id(&self, id: ID) -> bool {
         let id_start = self.id_start();
         if id.client_id != id_start.client_id {

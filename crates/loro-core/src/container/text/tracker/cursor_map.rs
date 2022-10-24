@@ -272,7 +272,14 @@ impl CursorMap {
         if cfg!(test) {
             let insert_len: usize = inserts.iter().map(|x| x.1.len).sum();
             let del_len: usize = deletes.iter().map(|x| x.1.atom_len()).sum();
-            assert_eq!(insert_len + del_len, span.content_len());
+            assert_eq!(
+                insert_len + del_len,
+                span.content_len(),
+                "inserts={:#?}\ndeletes={:#?}\nspan={:#?}",
+                &inserts,
+                &deletes,
+                span
+            );
         }
 
         IdSpanQueryResult { inserts, deletes }

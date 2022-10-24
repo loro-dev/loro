@@ -134,7 +134,13 @@ impl Tracker {
         let diff = self.head_vv.diff(&vv);
         self.retreat(&diff.left);
         self.forward(&diff.right);
-        assert_eq!(self.head_vv, vv);
+        debug_assert_eq!(self.head_vv, vv);
+    }
+
+    pub fn checkout_to_latest(&mut self) {
+        let diff = self.head_vv.diff(&self.all_vv);
+        self.forward(&diff.right);
+        debug_assert_eq!(self.head_vv, self.all_vv);
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
@@ -241,6 +247,7 @@ impl Tracker {
                             slice.clone(),
                         );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
+                        dbg!(&self.content);
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }

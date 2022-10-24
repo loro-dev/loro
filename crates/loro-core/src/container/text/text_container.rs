@@ -5,7 +5,7 @@ use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     dag::DagUtils,
     debug_log,
-    id::ID,
+    id::{Counter, ID},
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op, OpContent},
     smstring::SmString,
@@ -132,7 +132,6 @@ impl Container for TextContainer {
     }
 
     // TODO: move main logic to tracker module
-    // TODO: we don't need op proxy, only ids are enough
     fn apply(&mut self, id_span: IdSpan, store: &LogStore) {
         debug_log!("APPLY ENTRY client={}", store.this_client_id);
         let new_op_id = id_span.id_last();
@@ -145,7 +144,7 @@ impl Container for TextContainer {
         latest_head.push(new_op_id);
         // println!("{}", store.mermaid());
         debug_log!(
-            "START FROM {:?} new_op_id={} self.head={:?}",
+            "START FROM HEADS={:?} new_op_id={} self.head={:?}",
             &common_ancestors,
             new_op_id,
             &self.head
@@ -155,21 +154,22 @@ impl Container for TextContainer {
         let head = if true {
             debug_log!("NewTracker");
             // FIXME use common ancestors
-            // self.tracker = Tracker::new(common_ancestors_vv);
-            // common_ancestors
-            self.tracker = Tracker::new(Default::default(), 0);
-            smallvec![]
+            self.tracker = Tracker::new(common_ancestors_vv, Counter::MAX / 2);
+            common_ancestors
+            // self.tracker = Tracker::new(Default::default(), 0);
+            // smallvec![]
         } else {
             debug_log!("OldTracker");
-            let vv = self.tracker.all_vv().clone();
-            self.tracker.checkout(vv);
+            self.tracker.checkout_to_latest();
             self.tracker.all_vv().get_head()
         };
 
         // stage 1
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
+        dbg!(&path);
         for iter in store.iter_partial(&head, path.right) {
+            dbg!(&iter);
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             // TODO: avoid this clone

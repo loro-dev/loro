@@ -9,8 +9,10 @@
 use std::{
     collections::{BinaryHeap, HashMap},
     fmt::Debug,
+    time::Instant,
 };
 
+use bit_vec::BitVec;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
@@ -277,7 +279,7 @@ impl<'a> OrdIdSpan<'a> {
         OrdIdSpan {
             id: self.id,
             lamport: self.lamport,
-            deps: &self.deps[0..0],
+            deps: &[],
             len: 1,
         }
     }
@@ -289,7 +291,15 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
-    _find_common_ancestor(get, a_id, b_id, &mut |_, _| {}, false)
+    let mut ids = Vec::with_capacity(a_id.len() + b_id.len());
+    for id in a_id {
+        ids.push(*id);
+    }
+    for id in b_id {
+        ids.push(*id);
+    }
+
+    _find_common_ancestor_new(get, &ids)
         .into_iter()
         .map(|x| ID::new(x.0, x.1))
         .collect()
@@ -301,7 +311,7 @@ fn _find_common_ancestor<'a, F, D, G>(
     a_ids: &[ID],
     b_ids: &[ID],
     notify: &mut G,
-    deep: bool,
+    find_path: bool,
 ) -> FxHashMap<ClientID, Counter>
 where
     D: DagNode + 'a,
@@ -407,7 +417,7 @@ where
 
         if a_count == 0
             && b_count == 0
-            && (!deep || min.is_none() || &node <= min.as_ref().unwrap())
+            && (!find_path || min.is_none() || &node <= min.as_ref().unwrap())
         {
             if node_type != NodeType::Shared {
                 ans.clear();
@@ -425,7 +435,7 @@ where
                 ans.clear();
                 break;
             }
-            if node.deps.is_empty() && !deep {
+            if node.deps.is_empty() && !find_path {
                 if node.len == 1 {
                     ans.clear();
                     break;
@@ -453,135 +463,6 @@ where
     ans
 }
 
-fn find_common_ancestor_old<'a, F, G, D>(
-    get: &'a F,
-    a_id: ID,
-    b_id: ID,
-    mut on_found: G,
-) -> Option<ID>
-where
-    D: DagNode + 'a,
-    F: Fn(ID) -> Option<&'a D>,
-    G: FnMut(ID, &FxHashMap<ID, ID>, &FxHashMap<ID, ID>),
-{
-    if a_id.client_id == b_id.client_id {
-        if a_id.counter <= b_id.counter {
-            Some(a_id)
-        } else {
-            Some(b_id)
-        }
-    } else {
-        let mut _a_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
-        let mut _b_vv: HashMap<ClientID, Counter, _> = FxHashMap::default();
-        // Invariant: every op id inserted to the a_heap is a key in a_path map, except for a_id
-        let mut _a_heap: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
-        // Likewise
-        let mut _b_heap: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
-        // FxHashMap<To, From> is used to track the deps path of each node
-        let mut _a_path: FxHashMap<ID, ID> = FxHashMap::default();
-        let mut _b_path: FxHashMap<ID, ID> = FxHashMap::default();
-        {
-            let a = get(a_id).unwrap();
-            let b = get(b_id).unwrap();
-            _a_heap.push(OrdIdSpan {
-                id: a_id,
-                lamport: a.get_lamport_from_counter(a_id.counter),
-                deps: a.deps(),
-                len: 1,
-            });
-            _b_heap.push(OrdIdSpan {
-                id: b_id,
-                lamport: b.get_lamport_from_counter(b_id.counter),
-                deps: b.deps(),
-                len: 1,
-            });
-            _a_vv.insert(a_id.client_id, a_id.counter + 1);
-            _b_vv.insert(b_id.client_id, b_id.counter + 1);
-        }
-
-        while !_a_heap.is_empty() || !_b_heap.is_empty() {
-            let (a_heap, b_heap, a_vv, b_vv, a_path, b_path, _swapped) = if _a_heap.is_empty()
-                || (_a_heap.peek().map(|x| x.lamport).unwrap_or(0)
-                    < _b_heap.peek().map(|x| x.lamport).unwrap_or(0))
-            {
-                // swap
-                (
-                    &mut _b_heap,
-                    &mut _a_heap,
-                    &mut _b_vv,
-                    &mut _a_vv,
-                    &mut _b_path,
-                    &mut _a_path,
-                    true,
-                )
-            } else {
-                (
-                    &mut _a_heap,
-                    &mut _b_heap,
-                    &mut _a_vv,
-                    &mut _b_vv,
-                    &mut _a_path,
-                    &mut _b_path,
-                    false,
-                )
-            };
-
-            while !a_heap.is_empty()
-                && a_heap.peek().map(|x| x.lamport).unwrap_or(0)
-                    >= b_heap.peek().map(|x| x.lamport).unwrap_or(0)
-            {
-                let a = a_heap.pop().unwrap();
-                let id = a.id;
-                if let Some(counter_end) = b_vv.get(&id.client_id) {
-                    if id.counter < *counter_end {
-                        b_path
-                            .entry(id)
-                            .or_insert_with(|| ID::new(id.client_id, counter_end - 1));
-
-                        on_found(id, &_a_path, &_b_path);
-                        return Some(id);
-                    }
-                }
-
-                #[cfg(debug_assertions)]
-                {
-                    if let Some(v) = a_vv.get(&a.id.client_id) {
-                        assert!(*v > a.id.counter)
-                    }
-                }
-
-                for &dep_id in a.deps {
-                    if a_path.contains_key(&dep_id) {
-                        continue;
-                    }
-
-                    let dep = get(dep_id).unwrap();
-                    a_heap.push(OrdIdSpan {
-                        id: dep_id,
-                        lamport: dep.get_lamport_from_counter(dep_id.counter),
-                        deps: dep.deps(),
-                        len: 1,
-                    });
-                    a_path.insert(dep_id, a.id);
-                    if dep.id_start() != dep_id {
-                        a_path.insert(dep.id_start(), dep_id);
-                    }
-
-                    if let Some(v) = a_vv.get_mut(&dep_id.client_id) {
-                        if *v < dep_id.counter + 1 {
-                            *v = dep_id.counter + 1;
-                        }
-                    } else {
-                        a_vv.insert(dep_id.client_id, dep_id.counter + 1);
-                    }
-                }
-            }
-        }
-
-        None
-    }
-}
-
 fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
     frontier.retain(|x| {
         if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
@@ -601,4 +482,125 @@ fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]
     {
         frontier.push(new_node_id);
     }
+}
+
+// TODO: BitVec may be too slow here
+fn _find_common_ancestor_new<'a, F, D>(get: &'a F, ids: &[ID]) -> FxHashMap<ClientID, Counter>
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<&'a D>,
+{
+    let mut ans = FxHashMap::default();
+    if ids.len() <= 1 {
+        for id in ids {
+            ans.insert(id.client_id, id.counter);
+        }
+
+        return ans;
+    }
+
+    let mut queue: BinaryHeap<(OrdIdSpan, BitVec)> = BinaryHeap::new();
+    let mut shared_num = 0;
+    let mut min = None;
+    let mut visited: HashMap<ClientID, (Counter, BitVec), _> = FxHashMap::default();
+    for (i, id) in ids.iter().enumerate() {
+        let mut bitmap = BitVec::from_elem(ids.len(), false);
+        bitmap.set(i, true);
+        queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), bitmap));
+    }
+
+    while let Some((this_node, mut this_map)) = queue.pop() {
+        let is_shared_from_start = this_map.all();
+        let mut is_shared = is_shared_from_start;
+
+        if is_shared_from_start {
+            shared_num -= 1;
+        }
+
+        // pop the same node in the queue
+        while let Some((other_node, other_map)) = queue.peek() {
+            if this_node.id_span() == other_node.id_span() {
+                if other_map.all() {
+                    shared_num -= 1;
+                }
+
+                if !is_shared && this_map.or(other_map) && this_map.all() {
+                    is_shared = true;
+                    ans.insert(this_node.id.client_id, other_node.ctr_last());
+                }
+
+                queue.pop();
+            } else {
+                break;
+            }
+        }
+
+        // detect whether client is visited by other
+        if let Some((ctr, visited_map)) = visited.get_mut(&this_node.id.client_id) {
+            debug_assert!(*ctr >= this_node.id_last().counter);
+            if visited_map.all() {
+                is_shared = true;
+            } else if !is_shared && visited_map.or(&this_map) && visited_map.all() {
+                ans.insert(this_node.id.client_id, this_node.id_last().counter);
+                is_shared = true;
+            }
+        } else {
+            visited.insert(
+                this_node.id.client_id,
+                (this_node.id_last().counter, this_map.clone()),
+            );
+        }
+
+        if shared_num == queue.len() && (min.is_none() || &this_node <= min.as_ref().unwrap()) {
+            if !is_shared {
+                ans.clear();
+            }
+
+            break;
+        }
+
+        for &dep_id in this_node.deps {
+            let node = OrdIdSpan::from_dag_node(dep_id, get).unwrap();
+            if let Some(min) = &mut min {
+                let node_start = node.get_min();
+                if node_start < *min {
+                    *min = node_start;
+                }
+            } else {
+                min = Some(node.get_min())
+            }
+
+            queue.push((node, this_map.clone()));
+        }
+
+        if is_shared {
+            shared_num += this_node.deps.len()
+        }
+
+        if !is_shared {
+            if queue.is_empty() {
+                ans.clear();
+                break;
+            }
+
+            if this_node.deps.is_empty() {
+                if this_node.len == 1 {
+                    ans.clear();
+                    break;
+                }
+
+                queue.push((
+                    OrdIdSpan {
+                        deps: &[],
+                        id: this_node.id,
+                        len: this_node.len - 1,
+                        lamport: this_node.lamport,
+                    },
+                    this_map,
+                ));
+            }
+        }
+    }
+
+    ans
 }
