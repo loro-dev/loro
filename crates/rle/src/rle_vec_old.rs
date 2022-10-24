@@ -124,16 +124,15 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
     /// get a slice from `from` to `to` with atom indexes
     pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
         if from == to {
-            return SliceIterator {
-                vec: &self.vec,
-                cur_index: 0,
-                cur_offset: 0,
-                end_index: Some(0),
-                end_offset: Some(0),
-            };
+            return SliceIterator::new_empty();
         }
 
-        let from_result = self.get(from).unwrap();
+        let from_result = self.get(from);
+        if from_result.is_none() {
+            return SliceIterator::new_empty();
+        }
+
+        let from_result = from_result.unwrap();
         let to_result = if to == self.len() { None } else { self.get(to) };
         if let Some(to_result) = to_result {
             SliceIterator {
@@ -248,11 +247,23 @@ impl<T: Mergable + HasLength> FromIterator<T> for RleVecWithIndex<T> {
 }
 
 pub struct SliceIterator<'a, T> {
-    vec: &'a Vec<T>,
-    cur_index: usize,
-    cur_offset: usize,
-    end_index: Option<usize>,
-    end_offset: Option<usize>,
+    pub(super) vec: &'a [T],
+    pub(super) cur_index: usize,
+    pub(super) cur_offset: usize,
+    pub(super) end_index: Option<usize>,
+    pub(super) end_offset: Option<usize>,
+}
+
+impl<'a, T> SliceIterator<'a, T> {
+    pub(super) fn new_empty() -> Self {
+        Self {
+            vec: &[],
+            cur_index: 0,
+            cur_offset: 0,
+            end_index: None,
+            end_offset: None,
+        }
+    }
 }
 
 impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
@@ -262,7 +273,7 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         let end_index = self.end_index.unwrap_or(self.vec.len() - 1);
         if self.cur_index == end_index {
             let elem = &self.vec[self.cur_index];
-            let end = self.end_offset.unwrap_or_else(|| elem.content_len());
+            let end = self.end_offset.unwrap_or_else(|| elem.atom_len());
             if self.cur_offset == end {
                 return None;
             }
@@ -279,7 +290,7 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
         let ans = Slice {
             value: &self.vec[self.cur_index],
             start: self.cur_offset,
-            end: self.vec[self.cur_index].content_len(),
+            end: self.vec[self.cur_index].atom_len(),
         };
 
         self.cur_index += 1;
