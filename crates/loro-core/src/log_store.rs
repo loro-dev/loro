@@ -17,7 +17,7 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{manager::ContainerManager, Container, ContainerID},
-    dag::{Dag, DagUtils},
+    dag::Dag,
     debug_log,
     id::{ClientID, Counter},
     span::{HasIdSpan, IdSpan},
@@ -143,6 +143,17 @@ impl LogStore {
         }
     }
 
+    fn change_to_imported_format(
+        &self,
+        container_manager: &mut ContainerManager,
+        change: &mut Change,
+    ) {
+        for op in change.ops.vec_mut().iter_mut() {
+            let container = container_manager.get_or_create(&op.container, self.to_self.clone());
+            container.to_import(op);
+        }
+    }
+
     fn change_to_export_format(&self, change: &mut Change) {
         let container_manager = self.container.read().unwrap();
         for op in change.ops.vec_mut().iter_mut() {
@@ -251,14 +262,23 @@ impl LogStore {
         }
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let change = self.push_change(change).clone();
         let mut container_manager = self.container.write().unwrap();
+        #[cfg(feature = "slice")]
+        self.change_to_imported_format(&mut container_manager, &mut change);
+        let v = self
+            .changes
+            .entry(change.id.client_id)
+            .or_insert_with(RleVec::new);
+        v.push(change);
+        let change = v.vec().last().unwrap().clone();
+
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, and updated self vv
         let mut set = FxHashSet::default();
         for op in change.ops.iter() {
             set.insert(&op.container);
         }
+
         for container in set {
             let container = container_manager.get_or_create(container, self.to_self.clone());
             container.apply(change.id_span(), self);
@@ -275,16 +295,6 @@ impl LogStore {
         if change.timestamp > self.latest_timestamp {
             self.latest_timestamp = change.timestamp;
         }
-    }
-
-    #[inline]
-    fn push_change(&mut self, change: Change) -> &Change {
-        let v = self
-            .changes
-            .entry(change.id.client_id)
-            .or_insert_with(RleVec::new);
-        v.push(change);
-        v.vec().last().unwrap()
     }
 
     #[inline]
