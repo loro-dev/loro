@@ -301,7 +301,7 @@ impl LogStore {
     pub fn contains(&self, id: ID) -> bool {
         self.changes
             .get(&id.client_id)
-            .map_or(0, |changes| changes.len())
+            .map_or(0, |changes| changes.atom_len())
             > id.counter as usize
     }
 
@@ -309,7 +309,7 @@ impl LogStore {
     fn get_next_counter(&self, client_id: ClientID) -> Counter {
         self.changes
             .get(&client_id)
-            .map(|changes| changes.len())
+            .map(|changes| changes.atom_len())
             .unwrap_or(0) as Counter
     }
 

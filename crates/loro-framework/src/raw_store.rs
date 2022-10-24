@@ -3,7 +3,7 @@ use loro_core::{
     id::{ClientID, Counter},
     version::VersionVector,
 };
-use rle::RleVecWithIndex;
+use rle::{HasLength, RleVecWithIndex};
 
 use crate::raw_change::{ChangeData, ChangeHash};
 
@@ -77,7 +77,7 @@ impl RawStore {
     pub fn version_vector(&self) -> VersionVector {
         let mut version_vector = VersionVector::new();
         for (client_id, changes) in &self.changes {
-            version_vector.insert(*client_id, changes.len() as Counter);
+            version_vector.insert(*client_id, changes.atom_len() as Counter);
         }
 
         version_vector
