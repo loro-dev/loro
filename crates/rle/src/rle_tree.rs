@@ -240,7 +240,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         if let Some(ans) = {
             if let Some(end) = end {
                 let cursor_to = self.get_cursor_ge(end);
-                iter::Iter::from_cursor(cursor_from, cursor_to)
+                iter::Iter::from_cursor(cursor_from.clone(), cursor_to)
             } else {
                 None
             }

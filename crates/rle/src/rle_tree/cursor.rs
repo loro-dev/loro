@@ -55,7 +55,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, T, A> {
     }
 }
 
-impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for UnsafeCursor<'tree, T, A> {}
 #[derive(Debug)]
 pub struct Im;
 #[derive(Debug)]
@@ -73,11 +72,9 @@ pub type SafeCursorMut<'tree, T, A> = RawSafeCursor<'tree, T, A, Mut>;
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for SafeCursor<'tree, T, A> {
     fn clone(&self) -> Self {
-        Self(self.0, PhantomData)
+        Self(self.0.clone(), PhantomData)
     }
 }
-
-impl<'tree, T: Rle, A: RleTreeTrait<T>> Copy for SafeCursor<'tree, T, A> {}
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     #[inline]
@@ -419,13 +416,9 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        let len = self.0.len;
         // SAFETY: we know the cursor is a valid pointer
-        unsafe {
-            self.0
-                .shift(self.0.len)
-                .unwrap()
-                .insert_notify(value, notify)
-        }
+        unsafe { self.0.shift(len).unwrap().insert_notify(value, notify) }
     }
 
     /// insert to the cursor start position with shift in offset. `shift` is based on the content_len.

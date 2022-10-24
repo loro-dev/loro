@@ -152,7 +152,7 @@ impl Tracker {
                         .id_to_cursor
                         .get_cursors_at_id_span(*deleted_span)
                         .inserts
-                        .iter()
+                        .into_iter()
                         .map(|x| x.1)
                     {
                         cursors.push(span);
@@ -161,7 +161,7 @@ impl Tracker {
                 }
             }
 
-            for span in inserts.iter().map(|x| x.1) {
+            for span in inserts.into_iter().map(|x| x.1) {
                 cursors.push(span);
                 args.push(StatusChange::SetAsCurrent);
             }
@@ -194,12 +194,12 @@ impl Tracker {
                         .id_to_cursor
                         .get_cursors_at_id_span(*deleted_span)
                         .inserts
-                        .iter()
+                        .into_iter()
                         .map(|x| x.1)
                     {
                         assert!(cursor.len > 0);
-                        cursors.push(cursor);
                         len += cursor.len;
+                        cursors.push(cursor);
                         args.push(StatusChange::UndoDelete);
                     }
 
@@ -207,7 +207,7 @@ impl Tracker {
                 }
             }
 
-            for span in inserts.iter().map(|x| x.1) {
+            for span in inserts.into_iter().map(|x| x.1) {
                 cursors.push(span);
                 args.push(StatusChange::SetAsFuture);
             }
@@ -285,7 +285,7 @@ impl Tracker {
         for span in spans.iter() {
             let inserts = self.id_to_cursor.get_cursors_at_id_span(*span).inserts;
             // TODO: maybe we can skip this collect
-            for x in inserts.iter() {
+            for x in inserts.into_iter() {
                 cursors.push(x.1);
             }
         }

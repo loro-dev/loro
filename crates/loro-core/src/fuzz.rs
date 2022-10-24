@@ -197,7 +197,7 @@ impl Actionable for Vec<LoroCore> {
 
     fn preprocess(&mut self, action: &mut Action) {
         match action {
-            Action::Ins { content, pos, site } => {
+            Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
                 let mut text = self[*site as usize].get_or_create_text_container_mut("text".into());
                 let value = text.get_value().as_string().unwrap();
