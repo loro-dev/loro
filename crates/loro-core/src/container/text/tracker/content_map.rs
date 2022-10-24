@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use rle::{
     rle_tree::{Position, SafeCursor, SafeCursorMut},
-    HasLength, RleTree, RleVecWithIndex,
+    HasLength, RleTree, RleVecWithLen,
 };
 
 use crate::{container::text::text_content::ListSlice, id::ID, span::IdSpan};
@@ -120,8 +120,8 @@ impl ContentMap {
         }
     }
 
-    pub fn get_active_id_spans(&self, pos: usize, len: usize) -> RleVecWithIndex<IdSpan> {
-        let mut ans = RleVecWithIndex::new();
+    pub fn get_active_id_spans(&self, pos: usize, len: usize) -> RleVecWithLen<[IdSpan; 2]> {
+        let mut ans = RleVecWithLen::new();
         for cursor in self.iter_range(pos, Some(pos + len)) {
             let id = cursor.as_ref().id;
             if cursor.as_ref().status.is_activated() {
@@ -134,12 +134,11 @@ impl ContentMap {
             }
         }
 
-        assert_eq!(len, ans.atom_len());
         ans
     }
 
-    pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVecWithIndex<IdSpan> {
-        let mut ans = RleVecWithIndex::new();
+    pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVecWithLen<[IdSpan; 2]> {
+        let mut ans = RleVecWithLen::new();
         for cursor in self.iter_range(pos, Some(pos + len)) {
             let id = cursor.as_ref().id;
             let cursor = cursor.unwrap();

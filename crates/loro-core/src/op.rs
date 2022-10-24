@@ -1,12 +1,10 @@
-use std::mem::size_of;
-
 use crate::{
-    change::{Change, Lamport, Timestamp},
+    change::{Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
     span::{HasId, IdSpan},
 };
-use rle::{HasIndex, HasLength, Mergable, RleVec, RleVecWithIndex, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, RleVecWithIndex, Sliceable};
 mod insert_content;
 mod op_content;
 
@@ -50,11 +48,6 @@ impl Op {
     #[inline]
     pub(crate) fn new_insert_op(id: ID, container: ContainerID, content: InsertContent) -> Self {
         Op::new(id, OpContent::Normal { content }, container)
-    }
-
-    #[inline]
-    pub fn new_delete_op(id: ID, container: ContainerID, target: RleVecWithIndex<IdSpan>) -> Self {
-        Op::new(id, OpContent::Undo { target }, container)
     }
 
     pub fn op_type(&self) -> OpType {

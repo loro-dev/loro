@@ -201,7 +201,7 @@ pub mod fuzz {
     }
 
     use crdt_list::test::{Action, TestFramework};
-    use rle::RleVecWithIndex;
+    use rle::{RleVec, RleVecWithIndex, RleVecWithLen};
     use tabled::TableIteratorExt;
 
     use crate::{
@@ -303,7 +303,7 @@ pub mod fuzz {
             ans
         }
 
-        type DeleteOp = RleVecWithIndex<IdSpan>;
+        type DeleteOp = RleVecWithLen<[IdSpan; 2]>;
 
         fn new_del_op(
             container: &Self::Container,
@@ -311,13 +311,13 @@ pub mod fuzz {
             mut len: usize,
         ) -> Self::DeleteOp {
             if container.content.len() == 0 {
-                return RleVecWithIndex::new();
+                return RleVecWithLen::new();
             }
 
             pos %= container.content.len();
             len = std::cmp::min(len % 10, container.content.len() - pos);
             if len == 0 {
-                return RleVecWithIndex::new();
+                return RleVecWithLen::new();
             }
 
             container.content.get_active_id_spans(pos, len)

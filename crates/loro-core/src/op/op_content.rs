@@ -1,5 +1,5 @@
 use enum_as_inner::EnumAsInner;
-use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
+use rle::{HasLength, Mergable, Sliceable};
 
 use crate::{span::IdSpan, OpType};
 
@@ -8,8 +8,8 @@ use super::InsertContent;
 #[derive(Debug, EnumAsInner)]
 pub(crate) enum OpContent {
     Normal { content: InsertContent },
-    Undo { target: RleVecWithIndex<IdSpan> },
-    Redo { target: RleVecWithIndex<IdSpan> },
+    Undo { target: IdSpan },
+    Redo { target: IdSpan },
 }
 
 impl OpContent {

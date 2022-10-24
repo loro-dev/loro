@@ -11,7 +11,7 @@ use crate::{
     op::Op,
     span::{HasId, HasLamport},
 };
-use rle::{HasLength, Mergable, RleVec, RleVecWithIndex, Sliceable};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
