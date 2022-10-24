@@ -6,9 +6,9 @@ test *FLAGS:
 
 test-all:
   cargo nextest run --features=fuzzing &
-  just quickfuzz
+  just _quickfuzz
   
-quickfuzz:
+_quickfuzz:
   cd crates/loro-core && just quick-fuzz
 
 check:
