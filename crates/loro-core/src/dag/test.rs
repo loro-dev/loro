@@ -724,13 +724,12 @@ mod find_common_ancestors {
     fn dep_in_middle() {
         let mut a = TestDag::new(0);
         let mut b = TestDag::new(1);
-        a.push(4);
-        b.push(9);
+        a.push(3);
         b.merge(&a);
-        b.frontier.retain(|x| x.client_id == 1);
-        let k = b.nodes.get_mut(&1).unwrap();
-        k[0].deps.push(ID::new(0, 2));
-        // println!("{}", b.mermaid());
+        b.push(9);
+        a.push(2);
+        b.merge(&a);
+        println!("{}", b.mermaid());
         assert_eq!(
             b.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 8)])
                 .first()
