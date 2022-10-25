@@ -747,22 +747,16 @@ mod find_common_ancestors {
         let mut a2 = TestDag::new(2);
 
         a0.push(3);
+        a1.merge(&a0);
+        a2.merge(&a0);
         a1.push(3);
         a2.push(2);
-        a2.merge(&a0);
         a2.push(1);
         a1.merge(&a2);
         a2.push(1);
         a1.push(1);
         a1.merge(&a2);
         a1.push(1);
-        a1.nodes
-            .get_mut(&1)
-            .unwrap()
-            .last_mut()
-            .unwrap()
-            .deps
-            .push(ID::new(0, 1));
         a0.push(1);
         a1.merge(&a2);
         a1.merge(&a0);
@@ -771,7 +765,7 @@ mod find_common_ancestors {
             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
                 .first()
                 .copied(),
-            None
+            Some(ID::new(0, 2))
         );
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
@@ -870,6 +864,31 @@ mod find_common_ancestors_proptest {
         }
     }
 
+    #[test]
+    fn issue_1() {
+        test_single_common_ancestor(
+            2,
+            vec![
+                Interaction {
+                    dag_idx: 1,
+                    merge_with: None,
+                    len: 1,
+                },
+                Interaction {
+                    dag_idx: 0,
+                    merge_with: None,
+                    len: 1,
+                },
+            ],
+            vec![Interaction {
+                dag_idx: 0,
+                merge_with: None,
+                len: 1,
+            }],
+        )
+        .unwrap();
+    }
+
     fn test_single_common_ancestor(
         dag_num: i32,
         mut before_merge_insertion: Vec<Interaction>,
@@ -911,10 +930,11 @@ mod find_common_ancestors_proptest {
         let (dag0, dag1) = array_mut_ref!(&mut dags, [0, 1]);
         dag1.push(1);
         dag0.merge(dag1);
+        // println!("{}", dag0.mermaid());
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
         let actual = dags[0].find_common_ancestor(&[a], &[b]);
-        prop_assert_eq!(actual.first().copied().unwrap(), expected);
+        prop_assert_eq!(&*actual, &[expected]);
         Ok(())
     }
 

@@ -307,6 +307,47 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn test_11() {
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "?\0\u{1}\0\u{18}\0".into(),
+                    pos: 727894294070016698,
+                    site: 248,
+                },
+                Ins {
+                    content: "\u{10}".into(),
+                    pos: 16153481340371206368,
+                    site: 33,
+                },
+                Sync { from: 177, to: 0 },
+                Ins {
+                    content: "\n".into(),
+                    pos: 9189030930189130488,
+                    site: 0,
+                },
+                Ins {
+                    content: "\u{13}\u{b}\u{1}\0\n\0\n".into(),
+                    pos: 9655420767302589176,
+                    site: 127,
+                },
+                Sync { from: 10, to: 19 },
+                Ins {
+                    content: "\0".into(),
+                    pos: 1374708439171007232,
+                    site: 19,
+                },
+                Ins {
+                    content: "\0".into(),
+                    pos: 93,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn test_10() {
         test_multi_sites(
             10,

@@ -247,7 +247,6 @@ impl Tracker {
                             slice.clone(),
                         );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
-                        dbg!(&self.content);
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }
