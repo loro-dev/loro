@@ -167,11 +167,8 @@ impl Container for TextContainer {
         // stage 1
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
-        dbg!(&path);
+        debug_log!("path={:?}", &path.right);
         for iter in store.iter_partial(&head, path.right) {
-            dbg!(&iter);
-            self.tracker.retreat(&iter.retreat);
-            self.tracker.forward(&iter.forward);
             // TODO: avoid this clone
             let change = iter
                 .data
@@ -182,6 +179,8 @@ impl Container for TextContainer {
                 format!("{:?}", &iter.forward).red(),
                 format!("{:#?}", &change).blue(),
             );
+            self.tracker.retreat(&iter.retreat);
+            self.tracker.forward(&iter.forward);
             for op in change.ops.iter() {
                 if op.container == self.id {
                     // TODO: convert op to local

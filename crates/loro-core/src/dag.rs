@@ -8,11 +8,11 @@
 //!
 use std::{
     collections::{BinaryHeap, HashMap},
-    fmt::Debug,
-    time::Instant,
+    fmt::{format, Debug},
 };
 
 use bit_vec::BitVec;
+use colored::Colorize;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
@@ -23,6 +23,7 @@ mod test;
 
 use crate::{
     change::Lamport,
+    debug_log,
     id::{ClientID, Counter, ID},
     span::{HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{IdSpanVector, VersionVector, VersionVectorDiff},
@@ -113,12 +114,16 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
+        debug_log!(
+            "{}",
+            format!("FINDPATH from={:?} to={:?}", from, to).green()
+        );
         _find_common_ancestor(
             &|v| self.get(v),
             from,
             to,
             &mut |span, node_type| {
-                // dbg!(span, node_type);
+                dbg!(span, node_type);
                 match node_type {
                     NodeType::A => ans.merge_left(span),
                     NodeType::B => ans.merge_right(span),
@@ -131,6 +136,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
             true,
         );
 
+        // dbg!(from, to, &ans);
         ans
     }
 
@@ -291,6 +297,10 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
+    if a_id.is_empty() || b_id.is_empty() {
+        return smallvec::smallvec![];
+    }
+
     let mut ids = Vec::with_capacity(a_id.len() + b_id.len());
     for id in a_id {
         ids.push(*id);
@@ -484,7 +494,7 @@ fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]
     }
 }
 
-// TODO: BitVec may be too slow here
+// TODO: need bench, BitVec may be slow here
 fn _find_common_ancestor_new<'a, F, D>(get: &'a F, ids: &[ID]) -> FxHashMap<ClientID, Counter>
 where
     D: DagNode + 'a,
@@ -522,6 +532,7 @@ where
             if this_node.id_span() == other_node.id_span() {
                 if other_map.all() {
                     shared_num -= 1;
+                    is_shared = true;
                 }
 
                 if !is_shared && this_map.or(other_map) && this_map.all() {
@@ -542,6 +553,7 @@ where
                 is_shared = true;
             } else if !is_shared && visited_map.or(&this_map) && visited_map.all() {
                 ans.insert(this_node.id.client_id, this_node.id_last().counter);
+                this_map.set_all();
                 is_shared = true;
             }
         } else {
@@ -575,14 +587,13 @@ where
 
         if is_shared {
             shared_num += this_node.deps.len()
-        }
-
-        if !is_shared {
+        } else {
             if queue.is_empty() {
                 ans.clear();
                 break;
             }
 
+            // TODO: simplify this logic
             if this_node.deps.is_empty() {
                 if this_node.len == 1 {
                     ans.clear();
