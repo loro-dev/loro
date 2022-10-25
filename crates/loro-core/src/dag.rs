@@ -571,6 +571,19 @@ where
                 queue.push((node, node_type));
                 continue;
             }
+
+            if node[0].len > 1 {
+                if other.0[0].lamport_last() > node[0].lamport {
+                    node[0].len = (other.0[0].lamport_last() - node[0].lamport)
+                        .min(node[0].len as u32 - 1) as usize;
+                    queue.push((node, node_type));
+                    continue;
+                } else {
+                    node[0].len = 1;
+                    queue.push((node, node_type));
+                    continue;
+                }
+            }
         }
 
         if node[0].deps.len() > 0 {
