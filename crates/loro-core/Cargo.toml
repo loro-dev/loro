@@ -42,5 +42,5 @@ doctest = false
 [features]
 # whether to use list slice instead of raw str in text container
 slice = []
-fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled"]
+fuzzing = ["crdt-list/fuzzing", "slice", "rand", "arbitrary", "tabled"]
 proptest = ["fuzzing"]

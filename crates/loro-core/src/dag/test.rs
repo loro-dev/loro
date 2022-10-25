@@ -771,7 +771,7 @@ mod find_common_ancestors {
             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
                 .into_iter()
                 .collect::<Vec<_>>(),
-            vec![ID::new(2, 2)]
+            vec![ID::new(0, 2)]
         );
     }
 }
@@ -868,9 +868,10 @@ mod find_common_ancestors_proptest {
     fn issue_1() {
         test_single_common_ancestor(
             2,
+            vec![],
             vec![
                 Interaction {
-                    dag_idx: 1,
+                    dag_idx: 0,
                     merge_with: None,
                     len: 1,
                 },
@@ -880,11 +881,6 @@ mod find_common_ancestors_proptest {
                     len: 1,
                 },
             ],
-            vec![Interaction {
-                dag_idx: 0,
-                merge_with: None,
-                len: 1,
-            }],
         )
         .unwrap();
     }

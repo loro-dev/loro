@@ -142,7 +142,7 @@ impl Container for TextContainer {
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.push(new_op_id);
-        // println!("{}", store.mermaid());
+        println!("{}", store.mermaid());
         debug_log!(
             "START FROM HEADS={:?} new_op_id={} self.head={:?}",
             &common_ancestors,
