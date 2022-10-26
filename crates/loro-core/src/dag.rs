@@ -14,7 +14,7 @@ use std::{
 
 use colored::Colorize;
 use fxhash::{FxHashMap, FxHashSet};
-use rle::{rle_tree::node::Node, HasLength, Sliceable};
+use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;

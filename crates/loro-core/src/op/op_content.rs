@@ -40,10 +40,10 @@ impl Clone for OpContent {
                 content: content.clone(),
             },
             OpContent::Undo { target } => OpContent::Undo {
-                target: target.clone(),
+                target: *target,
             },
             OpContent::Redo { target } => OpContent::Redo {
-                target: target.clone(),
+                target: *target,
             },
         }
     }

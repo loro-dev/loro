@@ -2,9 +2,9 @@ use crate::{
     change::{Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
-    span::{HasId, IdSpan},
+    span::{HasId},
 };
-use rle::{HasIndex, HasLength, Mergable, RleVecWithIndex, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, Sliceable};
 mod insert_content;
 mod op_content;
 

@@ -617,7 +617,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 notify(&b, next_leaf);
                 next_leaf.children.insert(
                     child_index - self.children.len() + 2,
-                    (BumpBox::new_in(b, self.bump)),
+                    BumpBox::new_in(b, self.bump),
                 );
             }
 
@@ -626,9 +626,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         notify(&b, self);
         notify(&value, self);
         self.children
-            .insert(child_index + 1, (BumpBox::new_in(b, self.bump)));
+            .insert(child_index + 1, BumpBox::new_in(b, self.bump));
         self.children
-            .insert(child_index + 1, (BumpBox::new_in(value, self.bump)));
+            .insert(child_index + 1, BumpBox::new_in(value, self.bump));
         Ok(())
     }
 
@@ -693,7 +693,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                     end.slice(del_relative_to, end.atom_len()),
                 );
 
-                *end = (BumpBox::new_in(left, self.bump));
+                *end = BumpBox::new_in(left, self.bump);
                 result = self._insert_with_split(del_end + 1, right, notify);
                 handled = true;
             }
@@ -740,13 +740,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             if index <= self.children.len() {
                 notify(&value, self);
                 self.children
-                    .insert(index, (BumpBox::new_in(value, self.bump)));
+                    .insert(index, BumpBox::new_in(value, self.bump));
             } else {
                 let leaf = ans.as_leaf_mut().unwrap();
                 notify(&value, leaf);
                 leaf.children.insert(
                     index - self.children.len(),
-                    (BumpBox::new_in(value, self.bump)),
+                    BumpBox::new_in(value, self.bump),
                 );
             }
 
@@ -754,7 +754,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         } else {
             notify(&value, self);
             self.children
-                .insert(index, (BumpBox::new_in(value, self.bump)));
+                .insert(index, BumpBox::new_in(value, self.bump));
             Ok(())
         }
     }

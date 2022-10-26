@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{rle_trait::GlobalIndex, HasIndex, HasLength, Mergable, Sliceable};
-use num::{cast, Integer, Num, NumCast};
+use num::{cast, Integer, NumCast};
 use smallvec::{Array, SmallVec};
 
 impl Sliceable for bool {
