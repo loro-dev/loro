@@ -16,7 +16,6 @@ pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
     // TODO: considering remove this field, use a getter function instead
     pub pos: Position,
     pub len: usize,
-    _phantom: PhantomData<&'tree usize>,
 }
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>> Hash for UnsafeCursor<'tree, T, A> {
@@ -50,7 +49,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Clone for UnsafeCursor<'tree, T, A> {
             pos: self.pos,
             offset: self.offset,
             len: self.len,
-            _phantom: Default::default(),
         }
     }
 }
@@ -91,7 +89,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
             pos,
             offset,
             len,
-            _phantom: PhantomData,
         }
     }
 }
