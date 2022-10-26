@@ -104,8 +104,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
                         // SAFETY: result is valid
                         return Some(unsafe {
-                            std::mem::transmute(SafeCursor::new(
-                                leaf.into(),
+                            std::mem::transmute(SafeCursor::from_leaf(
+                                leaf,
                                 result.child_index,
                                 result.offset,
                                 result.pos,
@@ -194,10 +194,10 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         } else {
             // SAFETY: the cursor cannot outlive self, so we are safe here
             self.with_node_mut(|node| unsafe {
-                let leaf = node.get_first_leaf().unwrap().into();
+                let leaf = node.get_first_leaf().unwrap();
                 // SAFETY: this is safe because we know there are at least one element in the tree
                 let start = start.unwrap_or_else(|| {
-                    std::mem::transmute(SafeCursor::new(leaf, 0, 0, Position::Start, 0))
+                    std::mem::transmute(SafeCursor::from_leaf(leaf, 0, 0, Position::Start, 0))
                 });
                 let start: SafeCursorMut<'_, T, A> = SafeCursorMut::from(start.0);
                 std::mem::transmute::<_, iter::IterMut<'_, T, A>>(iter::IterMut::from_cursor(
