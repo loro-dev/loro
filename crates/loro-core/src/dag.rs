@@ -189,7 +189,7 @@ where
         return vv;
     }
 
-    let mut stack = Vec::new();
+    let mut stack = Vec::with_capacity(node.deps().len());
     for dep in node.deps() {
         stack.push(dep);
     }

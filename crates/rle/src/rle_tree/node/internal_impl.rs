@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
-use fxhash::FxHashSet;
+use fxhash::{FxBuildHasher, FxHashSet, FxHasher};
 
 use crate::rle_tree::{
     node::utils::distribute,
@@ -275,8 +275,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         updates.sort_by_key(|x| x.0);
-        let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::new();
-        let mut self_children = std::mem::replace(&mut self.children, BumpVec::new_in(self.bump));
+        let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::with_capacity(A::MAX_CHILDREN_NUM);
+        let mut self_children = std::mem::replace(
+            &mut self.children,
+            BumpVec::with_capacity_in(A::MAX_CHILDREN_NUM, self.bump),
+        );
         let mut saved_end = 0;
         for (index, replace) in updates {
             for child in self_children.drain(0..index + 1 - saved_end) {
@@ -518,7 +521,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         debug_assert!(self.is_root());
-        let mut zipper = Vec::new();
+        let mut zipper = Vec::with_capacity(8);
         match self._delete(start, end, &mut zipper, 1, notify) {
             Ok(_) => {
                 A::update_cache_internal(self);
@@ -533,8 +536,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let removed = self._root_shrink_levels_if_one_child();
 
         // filter the same
-        let mut visited: HashSet<NonNull<_>, _> = FxHashSet::default();
-        let mut should_skip: HashSet<NonNull<_>, _> = FxHashSet::default();
+        let mut visited: HashSet<NonNull<_>, _> =
+            HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
+        let mut should_skip: HashSet<NonNull<_>, _> =
+            HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
         let mut zipper: Vec<(usize, NonNull<Node<'a, T, A>>)> = zipper
             .into_iter()
             .filter(|(_, ptr)| {

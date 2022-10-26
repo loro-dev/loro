@@ -237,8 +237,10 @@ pub enum FirstCursorResult {
 impl CursorMap {
     // FIXME:
     pub fn get_cursors_at_id_span(&self, span: IdSpan) -> IdSpanQueryResult {
-        let mut inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)> = Vec::new();
-        let mut deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)> = Vec::new();
+        let mut inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)> =
+            Vec::with_capacity(span.atom_len() / 10);
+        let mut deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)> =
+            Vec::with_capacity(span.atom_len() / 10);
         let mut inserted_set = fxhash::FxHashSet::default();
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
             let id: ID = id.into();

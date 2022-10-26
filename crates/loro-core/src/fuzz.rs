@@ -1,4 +1,3 @@
-use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 
