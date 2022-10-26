@@ -15,7 +15,7 @@ version = "0.5.1"
 [[audits.crdt-list]]
 who = "Zixuan Chen <remch183@outlook.com>"
 criteria = "safe-to-deploy"
-version = "0.2.0"
+version = "0.3.0"
 notes = "I'm the author of this crate"
 
 [[audits.ctor]]
@@ -37,4 +37,3 @@ version = "0.4.0"
 who = "Zixuan Chen <remch183@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.15.5"
-
