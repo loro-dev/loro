@@ -9,7 +9,7 @@ use enum_as_inner::EnumAsInner;
 use rle::{
     range_map::RangeMap,
     rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
-    HasLength, Mergable, RleVec, RleVecWithIndex, RleVecWithLen, Sliceable, ZeroElement,
+    HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
 use crate::{

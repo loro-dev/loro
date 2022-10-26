@@ -2,7 +2,6 @@ use rle::HasLength;
 
 use crate::{
     container::text::text_content::ListSlice,
-    debug_log,
     id::{Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
