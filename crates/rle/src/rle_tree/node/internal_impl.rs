@@ -1,9 +1,10 @@
 use std::{
-    collections::HashSet,
+    collections::{BinaryHeap, HashMap, HashSet},
     fmt::{Debug, Error, Formatter},
 };
 
 use fxhash::{FxBuildHasher, FxHashSet, FxHasher};
+use smallvec::SmallVec;
 
 use crate::rle_tree::{
     node::utils::distribute,
@@ -540,79 +541,78 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
         let mut should_skip: HashSet<NonNull<_>, _> =
             HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
-        let mut zipper: Vec<(usize, NonNull<Node<'a, T, A>>)> = zipper
+        let mut depth_to_node: HashMap<isize, SmallVec<[NonNull<_>; 2]>, _> =
+            HashMap::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
+        let mut zipper: BinaryHeap<(isize, NonNull<Node<'a, T, A>>)> = zipper
             .into_iter()
-            .filter(|(_, ptr)| {
-                if visited.contains(ptr) {
-                    false
+            .filter_map(|(i, mut ptr)| {
+                // SAFETY: node_ptr points to a valid descendant of self
+                let node: &mut Node<'a, T, A> = unsafe { ptr.as_mut() };
+                if let Some(node) = node.as_internal() {
+                    let in_ptr = node as *const InternalNode<'a, T, A>;
+                    if removed.contains(&in_ptr) {
+                        return None;
+                    }
+                }
+
+                if visited.contains(&ptr) {
+                    None
                 } else {
-                    visited.insert(*ptr);
-                    true
+                    depth_to_node.entry(i as isize).or_default().push(ptr);
+                    visited.insert(ptr);
+                    Some((-(i as isize), ptr))
                 }
             })
             .collect();
         // visit in depth order, top to down (depth 0..inf)
-        zipper.sort();
-        let mut any_delete: bool;
-        loop {
-            any_delete = false;
-            for (_, mut node_ptr) in zipper.iter_mut() {
-                if should_skip.contains(&node_ptr) {
-                    continue;
-                }
-
-                // SAFETY: node_ptr points to a valid descendant of self
-                let node: &mut Node<'a, T, A> = unsafe { node_ptr.as_mut() };
-                if let Some(node) = node.as_internal() {
-                    let ptr = node as *const InternalNode<'a, T, A>;
-                    if removed.contains(&ptr) {
-                        should_skip.insert(node_ptr);
-                        continue;
-                    }
-                }
-
-                debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
-                if node.children_num() >= A::MIN_CHILDREN_NUM {
-                    continue;
-                }
-
-                let mut to_delete: bool = false;
-                if let Some((sibling, either)) = node.get_a_sibling() {
-                    // if has sibling, borrow or merge to it
-                    let sibling: &mut Node<'a, T, A> =
-                        // SAFETY: node's sibling points to a valid descendant of self
-                        unsafe { &mut *((sibling as *const _) as usize as *mut _) };
-                    if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
-                        node.merge_to_sibling(sibling, either, notify);
-                        to_delete = true;
-                    } else {
-                        node.borrow_from_sibling(sibling, either, notify);
-                    }
-                } else {
-                    if node.parent().unwrap().is_root() {
-                        continue;
-                    }
-
-                    unreachable!();
-                }
-
-                if to_delete {
-                    should_skip.insert(node_ptr);
-                    any_delete = true;
-                    node.remove();
-                }
+        while let Some((reverse_depth, mut node_ptr)) = zipper.pop() {
+            if should_skip.contains(&node_ptr) {
+                continue;
             }
 
-            if !any_delete {
-                break;
+            // SAFETY: node_ptr points to a valid descendant of self
+            let node: &mut Node<'a, T, A> = unsafe { node_ptr.as_mut() };
+            debug_assert!(node.children_num() <= A::MAX_CHILDREN_NUM);
+            if node.children_num() >= A::MIN_CHILDREN_NUM {
+                continue;
+            }
+
+            let mut to_delete: bool = false;
+            if let Some((sibling, either)) = node.get_a_sibling() {
+                // if has sibling, borrow or merge to it
+                let sibling: &mut Node<'a, T, A> =
+                        // SAFETY: node's sibling points to a valid descendant of self
+                        unsafe { &mut *((sibling as *const _) as usize as *mut _) };
+                if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
+                    node.merge_to_sibling(sibling, either, notify);
+                    to_delete = true;
+                } else {
+                    node.borrow_from_sibling(sibling, either, notify);
+                }
+            } else {
+                if node.parent().unwrap().is_root() {
+                    continue;
+                }
+
+                unreachable!();
+            }
+
+            if to_delete {
+                should_skip.insert(node_ptr);
+                if let Some(parent) = depth_to_node.get(&(-reverse_depth - 1)).as_ref() {
+                    for ptr in parent.iter() {
+                        zipper.push((reverse_depth + 1, *ptr));
+                    }
+                }
+                node.remove();
             }
         }
 
         self._root_shrink_levels_if_one_child();
     }
 
-    fn _root_shrink_levels_if_one_child(&mut self) -> HashSet<*const InternalNode<'a, T, A>> {
-        let mut ans: HashSet<_> = Default::default();
+    fn _root_shrink_levels_if_one_child(&mut self) -> FxHashSet<*const InternalNode<'a, T, A>> {
+        let mut ans: HashSet<_, _> = FxHashSet::default();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
             let child = self.children.pop().unwrap();
             let child_ptr = child.as_internal_mut().unwrap();
