@@ -2,7 +2,8 @@ use rle::HasLength;
 
 use crate::{
     container::text::text_content::ListSlice,
-    id::Counter,
+    debug_log,
+    id::{Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
 };
@@ -13,7 +14,7 @@ pub struct EffectIter<'a> {
     tracker: &'a mut Tracker,
     left_spans: Vec<IdSpan>,
     current_span: Option<IdSpan>,
-    current_delete_targets: Option<Vec<IdSpan>>,
+    current_delete_targets: Option<(ID, Vec<IdSpan>)>,
 }
 
 impl<'a> EffectIter<'a> {
@@ -43,7 +44,9 @@ impl<'a> Iterator for EffectIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            while let Some(ref mut delete_targets) = self.current_delete_targets {
+            while let Some((ref mut delete_op_id, ref mut delete_targets)) =
+                self.current_delete_targets
+            {
                 if let Some(target) = delete_targets.pop() {
                     let result = self
                         .tracker
@@ -73,6 +76,8 @@ impl<'a> Iterator for EffectIter<'a> {
                     // SAFETY: we know that the cursor is valid here
                     let pos = unsafe { cursor.get_index() };
                     let len = cursor.len;
+                    *delete_op_id = delete_op_id.inc(cursor.len as Counter);
+                    self.tracker.head_vv.set_end(*delete_op_id);
                     let length = -self.tracker.update_cursors(cursor, StatusChange::Delete);
                     assert!(length >= 0);
                     if length > 0 {
@@ -92,8 +97,8 @@ impl<'a> Iterator for EffectIter<'a> {
                 if let Some(cursor) = cursor {
                     match cursor {
                         FirstCursorResult::Ins(id, cursor) => {
-                            assert!(current.contains_id(id));
-                            assert!(current.contains_id(id.inc(cursor.len as Counter - 1)));
+                            debug_assert!(current.contains_id(id));
+                            debug_assert!(current.contains_id(id.inc(cursor.len as Counter - 1)));
                             current
                                 .counter
                                 .set_start(id.counter + cursor.len as Counter);
@@ -102,6 +107,7 @@ impl<'a> Iterator for EffectIter<'a> {
                             // SAFETY: cursor is valid here
                             let content = unsafe { cursor.get_sliced().slice };
                             let len = cursor.len;
+                            self.tracker.head_vv.set_end(id.inc(cursor.len as Counter));
                             let length_diff = self
                                 .tracker
                                 .update_cursors(cursor, StatusChange::SetAsCurrent);
@@ -115,12 +121,14 @@ impl<'a> Iterator for EffectIter<'a> {
                             }
                         }
                         FirstCursorResult::Del(id, del) => {
-                            assert!(current.contains_id(id));
-                            assert!(current.contains_id(id.inc(del.atom_len() as Counter - 1)));
+                            debug_assert!(current.contains_id(id));
+                            debug_assert!(
+                                current.contains_id(id.inc(del.atom_len() as Counter - 1))
+                            );
                             current
                                 .counter
                                 .set_start(id.counter + del.atom_len() as Counter);
-                            self.current_delete_targets = Some(del.iter().cloned().collect());
+                            self.current_delete_targets = Some((id, del.iter().cloned().collect()));
                         }
                     }
                 } else {

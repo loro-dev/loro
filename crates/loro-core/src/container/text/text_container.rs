@@ -150,8 +150,10 @@ impl Container for TextContainer {
             &self.head
         );
         // TODO: reuse tracker
-        // let head = if common_ancestors.is_empty() || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
-        let head = if true {
+        // let head = if true {
+        let head = if common_ancestors.is_empty()
+            || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
+        {
             debug_log!("NewTracker");
             // FIXME use common ancestors
             self.tracker = Tracker::new(common_ancestors_vv, Counter::MAX / 2);

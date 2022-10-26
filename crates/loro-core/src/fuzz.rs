@@ -307,6 +307,32 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn test_12() {
+        // retreat failed
+        test_multi_sites(
+            3,
+            vec![
+                Ins {
+                    content: "x".into(),
+                    pos: 0,
+                    site: 0,
+                },
+                Sync { from: 0, to: 1 },
+                Ins {
+                    content: "y".into(),
+                    pos: 1,
+                    site: 1,
+                },
+                Del {
+                    pos: 0,
+                    len: 1,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn test_11() {
         test_multi_sites(
             2,
