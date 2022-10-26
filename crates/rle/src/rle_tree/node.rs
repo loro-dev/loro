@@ -5,14 +5,15 @@ use std::{
 };
 
 use crate::Rle;
+use bumpalo::boxed::Box as BumpBox;
 
 use super::{cursor::SafeCursor, tree_trait::RleTreeTrait, BumpVec};
 use bumpalo::Bump;
 use enum_as_inner::EnumAsInner;
-mod utils;
 mod internal_impl;
 mod leaf_impl;
 pub(crate) mod node_trait;
+mod utils;
 
 #[derive(EnumAsInner)]
 pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
@@ -35,7 +36,7 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
     pub(super) parent: NonNull<InternalNode<'a, T, A>>,
-    pub(super) children: BumpVec<'a, &'a mut T>,
+    pub(super) children: BumpVec<'a, BumpBox<'a, T>>,
     pub(crate) prev: Option<NonNull<LeafNode<'a, T, A>>>,
     pub(crate) next: Option<NonNull<LeafNode<'a, T, A>>>,
     pub cache: A::LeafCache,
@@ -182,7 +183,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 Node::Leaf(sibling) => {
                     let self_node = self.as_leaf_mut().unwrap();
                     for child in self_node.children.drain(..) {
-                        notify(child, sibling);
+                        notify(&child, sibling);
                         sibling.children.push(child);
                     }
                 }
@@ -206,7 +207,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     sibling.children.splice(
                         0..0,
                         self_node.children.drain(0..).map(|x| {
-                            notify(x, sibling_ptr);
+                            notify(&x, sibling_ptr);
                             x
                         }),
                     );
@@ -241,7 +242,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let self_node = self.as_leaf_mut().unwrap();
                     let self_ptr = self_node as *mut _;
                     let sibling_drain = sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|x| {
-                        notify(x, self_ptr);
+                        notify(&x, self_ptr);
                         x
                     });
                     self_node.children.splice(0..0, sibling_drain);
@@ -276,7 +277,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                             .children
                             .drain(0..sibling_len - A::MIN_CHILDREN_NUM)
                             .map(|x| {
-                                notify(x, self_ptr);
+                                notify(&x, self_ptr);
                                 x
                             }),
                     );

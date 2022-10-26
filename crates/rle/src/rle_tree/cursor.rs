@@ -99,12 +99,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     /// we need to make sure that the cursor is still valid
     #[inline]
     pub unsafe fn as_ref(&self) -> &'tree T {
-        self.leaf.as_ref().children[self.index]
+        &self.leaf.as_ref().children[self.index]
     }
 
     #[inline]
     unsafe fn as_mut(&mut self) -> &'tree mut T {
-        self.leaf.as_mut().children[self.index]
+        &mut self.leaf.as_mut().children[self.index]
     }
 
     /// # Safety
