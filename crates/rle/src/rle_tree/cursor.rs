@@ -310,6 +310,20 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
             PhantomData,
         )
     }
+
+    #[inline]
+    pub fn from_leaf(
+        leaf: &LeafNode<'tree, T, A>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+        len: usize,
+    ) -> Self {
+        Self(
+            UnsafeCursor::new(leaf.into(), index, offset, pos, len),
+            PhantomData,
+        )
+    }
 }
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {

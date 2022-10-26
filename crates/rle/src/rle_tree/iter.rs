@@ -137,18 +137,16 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                                 return None;
                             } else {
                                 // SAFETY: we just checked that the child exists
-                                let ans = Some(unsafe {
-                                    SafeCursor::new(
-                                        node.into(),
-                                        cursor.index,
-                                        cursor.offset,
-                                        Position::from_offset(
-                                            cursor.offset as isize,
-                                            node.children[cursor.index].atom_len(),
-                                        ),
-                                        end.offset - cursor.offset,
-                                    )
-                                });
+                                let ans = Some(SafeCursor::from_leaf(
+                                    node,
+                                    cursor.index,
+                                    cursor.offset,
+                                    Position::from_offset(
+                                        cursor.offset as isize,
+                                        node.children[cursor.index].atom_len(),
+                                    ),
+                                    end.offset - cursor.offset,
+                                ));
                                 cursor.offset = end.offset;
                                 self.cursor = None;
                                 return ans;
@@ -164,16 +162,13 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for Iter<'tree, T, A> {
                         continue;
                     }
 
-                    // SAFETY: we just checked that the child exists
-                    let ans = Some(unsafe {
-                        SafeCursor::new(
-                            node.into(),
-                            cursor.index,
-                            cursor.offset,
-                            Position::from_offset(cursor.offset as isize, child_len),
-                            child_len - cursor.offset,
-                        )
-                    });
+                    let ans = Some(SafeCursor::from_leaf(
+                        node,
+                        cursor.index,
+                        cursor.offset,
+                        Position::from_offset(cursor.offset as isize, child_len),
+                        child_len - cursor.offset,
+                    ));
 
                     cursor.index += 1;
                     cursor.offset = 0;

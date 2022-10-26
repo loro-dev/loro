@@ -66,32 +66,14 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     pub fn get_cursor<'tree>(&'tree self, pos: A::Int) -> SafeCursor<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
-        // SAFETY: result.found is true
-        unsafe {
-            SafeCursor::new(
-                self.into(),
-                result.child_index,
-                result.offset,
-                result.pos,
-                0,
-            )
-        }
+        SafeCursor::from_leaf(self, result.child_index, result.offset, result.pos, 0)
     }
 
     #[inline]
     pub fn get_cursor_mut<'b>(&'b mut self, pos: A::Int) -> SafeCursorMut<'bump, T, A> {
         let result = A::find_pos_leaf(self, pos);
         assert!(result.found);
-        // SAFETY: result.found is true
-        unsafe {
-            SafeCursorMut::new(
-                self.into(),
-                result.child_index,
-                result.offset,
-                result.pos,
-                0,
-            )
-        }
+        SafeCursorMut::from_leaf(self, result.child_index, result.offset, result.pos, 0)
     }
 
     pub fn push_child<F>(
