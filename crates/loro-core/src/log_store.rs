@@ -128,7 +128,7 @@ impl LogStore {
 
     fn get_changes_slice(&self, id_span: IdSpan) -> Vec<Change> {
         if let Some(changes) = self.changes.get(&id_span.client_id) {
-            let mut ans = Vec::new();
+            let mut ans = Vec::with_capacity(id_span.atom_len() / 30);
             for change in changes.slice_iter(
                 id_span.counter.min() as usize,
                 id_span.counter.end() as usize,
