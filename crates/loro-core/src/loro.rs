@@ -36,7 +36,7 @@ impl LoroCore {
             store: NonNull::dangling(),
         }));
         Self {
-            log_store: LogStore::new(cfg, client_id, container.clone()),
+            log_store: LogStore::new(cfg, client_id, Arc::downgrade(&container)),
             container,
         }
     }

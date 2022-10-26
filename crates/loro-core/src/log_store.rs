@@ -62,7 +62,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: Arc<RwLock<ContainerManager>>,
+    pub(crate) container: Weak<RwLock<ContainerManager>>,
     to_self: Weak<RwLock<LogStore>>,
     _pin: PhantomPinned,
 }
@@ -71,7 +71,7 @@ impl LogStore {
     pub fn new(
         mut cfg: Configure,
         client_id: Option<ClientID>,
-        container: Arc<RwLock<ContainerManager>>,
+        container: Weak<RwLock<ContainerManager>>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Arc::new_cyclic(|x| {
@@ -155,7 +155,8 @@ impl LogStore {
     }
 
     fn change_to_export_format(&self, change: &mut Change) {
-        let container_manager = self.container.read().unwrap();
+        let upgraded = self.container.upgrade().unwrap();
+        let container_manager = upgraded.read().unwrap();
         for op in change.ops.vec_mut().iter_mut() {
             let container = container_manager.get(&op.container).unwrap();
             container.to_export(op);
@@ -262,7 +263,8 @@ impl LogStore {
         }
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let mut container_manager = self.container.write().unwrap();
+        let upgraded = self.container.upgrade().unwrap();
+        let mut container_manager = upgraded.write().unwrap();
         #[cfg(feature = "slice")]
         self.change_to_imported_format(&mut container_manager, &mut change);
         let v = self
