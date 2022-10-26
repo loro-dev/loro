@@ -2,11 +2,14 @@ build:
   cargo build
 
 test *FLAGS:
-  RUST_BACKTRACE=full cargo nextest run {{FLAGS}}
+  RUST_BACKTRACE=full cargo nextest run --features=fuzzing {{FLAGS}}
 
 test-all:
   cargo nextest run --features=fuzzing &
   just _quickfuzz
+
+test-prop:
+  cargo nextest run --features=proptest
   
 _quickfuzz:
   cd crates/loro-core && just quick-fuzz
