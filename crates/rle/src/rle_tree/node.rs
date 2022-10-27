@@ -23,7 +23,7 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 
 pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
-    pub(super) parent: Option<NonNull<InternalNode<'a, T, A>>>,
+    pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
     pub(super) children: BumpVec<'a, &'a mut Node<'a, T, A>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
@@ -35,8 +35,8 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
 // TODO: only one child?
 pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
     bump: &'a Bump,
-    pub(super) parent: NonNull<InternalNode<'a, T, A>>,
-    pub(super) children: BumpVec<'a, BumpBox<'a, T>>,
+    pub(crate) parent: NonNull<InternalNode<'a, T, A>>,
+    pub(crate) children: BumpVec<'a, BumpBox<'a, T>>,
     pub(crate) prev: Option<NonNull<LeafNode<'a, T, A>>>,
     pub(crate) next: Option<NonNull<LeafNode<'a, T, A>>>,
     pub cache: A::LeafCache,

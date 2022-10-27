@@ -672,6 +672,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             .iter()
             .position(|child| std::ptr::eq(child.as_internal().unwrap(), self))
     }
+
+    #[inline(always)]
+    pub(crate) fn update_cache(&mut self) {
+        A::update_cache_internal(self);
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for InternalNode<'a, T, A> {
