@@ -35,6 +35,7 @@ static_assertions = "1.1.0"
 tabled = "0.10.0"
 color-backtrace = { version = "0.5" }
 ctor = "0.1.23"
+criterion = "0.4.0"
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
@@ -45,3 +46,7 @@ doctest = false
 slice = []
 fuzzing = ["crdt-list/fuzzing", "rand", "slice", "arbitrary", "tabled"]
 proptest = ["fuzzing"]
+
+[[bench]]
+name = "text"
+harness = false
