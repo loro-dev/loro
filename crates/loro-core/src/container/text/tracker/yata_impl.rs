@@ -23,7 +23,7 @@ pub struct OpSpanSet {
 
 impl OpSet<YSpan, ID> for OpSpanSet {
     fn insert(&mut self, value: &YSpan) {
-        self.map.set_large_range(
+        self.map.set_small_range(
             value.id.into(),
             WithStartEnd {
                 start: value.id.into(),
