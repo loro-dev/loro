@@ -79,7 +79,7 @@ impl ListCrdt for YataImpl {
         // dbg!(&container.content);
         // SAFETY: loosen lifetime requirement here. It's safe because the function
         // signature can limit the lifetime of the returned iterator
-        unsafe { std::mem::transmute(container.content.iter_mut_in(from, to)) }
+        container.content.iter_mut_in(from, to)
     }
 
     fn id(op: &Self::OpUnit) -> Self::OpId {

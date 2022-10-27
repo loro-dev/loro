@@ -41,7 +41,10 @@ impl ZeroElement for Marker {
 }
 
 impl Marker {
-    pub fn as_cursor(&self, id: ID) -> Option<SafeCursor<'static, YSpan, YSpanTreeTrait>> {
+    pub(super) fn as_cursor<'a, 'b>(
+        &'a self,
+        id: ID,
+    ) -> Option<SafeCursor<'b, YSpan, YSpanTreeTrait>> {
         match self {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
@@ -50,16 +53,17 @@ impl Marker {
                 let child = &node.children()[position];
                 let start_counter = child.id.counter;
                 let offset = id.counter - start_counter;
-                // SAFETY: we just checked it is valid
-                Some(unsafe {
-                    SafeCursor::new(
-                        *ptr,
+                // SAFETY: we transform lifetime from SafeCursor<'static> to SafeCursor<'b> to suit the need.
+                // Its safety is guaranteed by the caller, who has access to the underlying tree
+                unsafe {
+                    std::mem::transmute(Some(SafeCursor::from_leaf(
+                        node,
                         position,
                         offset as usize,
                         Position::from_offset(offset as isize, child.atom_len()),
                         0,
-                    )
-                })
+                    )))
+                }
             }
             Marker::Delete(_) => None,
         }

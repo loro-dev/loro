@@ -55,7 +55,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
     #[inline]
     pub fn from_cursor(
         mut start: SafeCursorMut<'tree, T, A>,
-        end: Option<SafeCursor<'tree, T, A>>,
+        end: Option<UnsafeCursor<'tree, T, A>>,
     ) -> Self {
         if start.0.pos == Position::After {
             match start.next_elem_start() {
@@ -77,7 +77,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> IterMut<'tree, T, A> {
                 start.0.pos,
                 0,
             )),
-            end_cursor: end.map(|x| UnsafeCursor::new(x.0.leaf, x.0.index, x.0.offset, x.0.pos, 0)),
+            end_cursor: end,
         }
     }
 }

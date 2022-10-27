@@ -38,6 +38,16 @@ impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
 }
 
 impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
+    fn root(&self) -> &Node<T, A> {
+        // SAFETY: self can be shared ref so the root node must be valid and can be shared ref
+        self.with_node(|node| unsafe { std::mem::transmute::<_, &Node<T, A>>(&**node) })
+    }
+
+    fn root_mut(&mut self) -> &mut Node<T, A> {
+        // SAFETY: self can be exclusively ref so the root node must be valid and can be exclusively ref
+        self.with_node_mut(|node| unsafe { std::mem::transmute::<_, &mut Node<T, A>>(&mut **node) })
+    }
+
     pub fn insert_at_first<F>(&mut self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
@@ -84,76 +94,68 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     /// return a cursor at the given index
     #[inline]
     pub fn get(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
-        self.with_node(|mut node| {
-            loop {
-                match node {
-                    Node::Internal(internal_node) => {
-                        let result = A::find_pos_internal(internal_node, index);
-                        if !result.found {
-                            return None;
-                        }
-
-                        node = &internal_node.children[result.child_index];
-                        index = result.offset;
+        let mut node = self.root();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if !result.found {
+                        return None;
                     }
-                    Node::Leaf(leaf) => {
-                        let result = A::find_pos_leaf(leaf, index);
-                        if !result.found {
-                            return None;
-                        }
 
-                        // SAFETY: result is valid
-                        return Some(unsafe {
-                            std::mem::transmute(SafeCursor::from_leaf(
-                                leaf,
-                                result.child_index,
-                                result.offset,
-                                result.pos,
-                                0,
-                            ))
-                        });
+                    node = internal_node.children[result.child_index];
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if !result.found {
+                        return None;
                     }
+
+                    return Some(SafeCursor::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
                 }
             }
-        })
+        }
     }
 
     /// return the first valid cursor after the given index
     /// reviewed by @Leeeon233
     #[inline]
     fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
-        self.with_node(|mut node| {
-            loop {
-                match node {
-                    Node::Internal(internal_node) => {
-                        let result = A::find_pos_internal(internal_node, index);
-                        if result.child_index >= internal_node.children.len() {
-                            return None;
-                        }
-
-                        node = &internal_node.children[result.child_index];
-                        index = result.offset;
+        let mut node = self.root();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if result.child_index >= internal_node.children.len() {
+                        return None;
                     }
-                    Node::Leaf(leaf) => {
-                        let result = A::find_pos_leaf(leaf, index);
-                        if result.child_index >= leaf.children.len() {
-                            return None;
-                        }
 
-                        // SAFETY: result is valid
-                        return Some(unsafe {
-                            std::mem::transmute(SafeCursor::new(
-                                leaf.into(),
-                                result.child_index,
-                                result.offset,
-                                result.pos,
-                                0,
-                            ))
-                        });
+                    node = internal_node.children[result.child_index];
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if result.child_index >= leaf.children.len() {
+                        return None;
                     }
+
+                    return Some(SafeCursor::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
                 }
             }
-        })
+        }
     }
 
     #[inline]
@@ -165,18 +167,13 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     #[inline]
     pub fn iter(&self) -> iter::Iter<'_, T, A> {
-        // SAFETY: the cursor and iter cannot outlive self
-        self.with_node(|node| unsafe {
-            iter::Iter::new(std::mem::transmute(node.get_first_leaf()))
-        })
+        iter::Iter::new(self.root().get_first_leaf())
     }
 
     #[inline]
     pub fn iter_mut(&mut self) -> iter::IterMut<'_, T, A> {
         // SAFETY: the cursor and iter cannot outlive self
-        self.with_node_mut(|node| unsafe {
-            iter::IterMut::new(std::mem::transmute(node.get_first_leaf_mut()))
-        })
+        iter::IterMut::new(self.root_mut().get_first_leaf_mut())
     }
 
     #[inline]
@@ -184,27 +181,25 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.len() == A::Int::from_usize(0).unwrap()
     }
 
-    pub fn iter_mut_in(
-        &mut self,
-        start: Option<SafeCursor<'_, T, A>>,
-        end: Option<SafeCursor<'_, T, A>>,
-    ) -> iter::IterMut<'_, T, A> {
+    pub fn iter_mut_in<'a>(
+        &'a mut self,
+        start: Option<SafeCursor<'a, T, A>>,
+        end: Option<SafeCursor<'a, T, A>>,
+    ) -> iter::IterMut<'a, T, A> {
         if start.is_none() && end.is_none() {
             self.iter_mut()
         } else {
-            // SAFETY: the cursor cannot outlive self, so we are safe here
-            self.with_node_mut(|node| unsafe {
-                let leaf = node.get_first_leaf().unwrap();
-                // SAFETY: this is safe because we know there are at least one element in the tree
-                let start = start.unwrap_or_else(|| {
-                    std::mem::transmute(SafeCursor::from_leaf(leaf, 0, 0, Position::Start, 0))
-                });
-                let start: SafeCursorMut<'_, T, A> = SafeCursorMut::from(start.0);
-                std::mem::transmute::<_, iter::IterMut<'_, T, A>>(iter::IterMut::from_cursor(
-                    std::mem::transmute::<_, SafeCursorMut<'_, T, A>>(start),
-                    end,
-                ))
-            })
+            let leaf = self.root().get_first_leaf().unwrap();
+            // SAFETY: this is safe because we know there are at least one element in the tree
+            let start =
+                start.unwrap_or_else(|| SafeCursor::from_leaf(leaf, 0, 0, Position::Start, 0));
+
+            // SAFETY: we have exclusive ref to the tree, so it's safe to have an exclusive ref to its elements
+            let start: SafeCursorMut<'a, T, A> = unsafe { SafeCursorMut::from(start.0) };
+            iter::IterMut::from_cursor(
+                start,
+                end.map(|x| UnsafeCursor::new(x.0.leaf, x.0.index, x.0.offset, x.0.pos, 0)),
+            )
         }
     }
 
@@ -371,26 +366,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 }
             }
         }
-    }
-
-    pub fn update_range<U, F>(
-        &mut self,
-        start: A::Int,
-        end: Option<A::Int>,
-        update_fn: &mut U,
-        notify: &mut F,
-    ) where
-        U: FnMut(&mut T),
-        F: FnMut(&T, *mut LeafNode<'_, T, A>),
-    {
-        let mut cursors = Vec::new();
-        for cursor in self.iter_range(start, end) {
-            cursors.push(cursor.0);
-        }
-
-        // SAFETY: it's perfectly safe here because we know what we are doing in the update_at_cursors
-        let mut cursors: Vec<_> = unsafe { std::mem::transmute(cursors) };
-        self.update_at_cursors(&mut cursors, update_fn, notify);
     }
 
     pub fn debug_check(&mut self) {
