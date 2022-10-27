@@ -213,7 +213,7 @@ pub(super) fn make_notify(
     map: &mut CursorMap,
 ) -> impl for<'a> FnMut(&YSpan, *mut LeafNode<'a, YSpan, YSpanTreeTrait>) + '_ {
     |span, leaf| {
-        map.set(
+        map.set_small_range(
             span.id.into(),
             Marker::Insert {
                 // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
@@ -222,7 +222,7 @@ pub(super) fn make_notify(
                 },
                 len: span.atom_len(),
             },
-        )
+        );
     }
 }
 

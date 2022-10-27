@@ -172,7 +172,7 @@ fn test(interactions: &[Interaction]) {
         let mut func = |value: &Value, node: *mut LeafNode<'_, Value, ValueTreeTrait>| {
             // SAFETY: this is safe because node must be valid
             let ptr = unsafe { NonNull::new_unchecked(node as usize as *mut _) };
-            range_map.set(
+            range_map.set_small_range(
                 value.value,
                 WithStartEnd::new(
                     value.value,

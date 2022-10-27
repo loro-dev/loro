@@ -22,7 +22,7 @@ pub mod tree_trait;
 #[self_referencing]
 #[derive(Debug)]
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
-    bump: Bump,
+    pub(crate) bump: Bump,
     #[borrows(bump)]
     node: &'this mut Node<'this, T, A>,
 }
@@ -127,7 +127,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     /// return the first valid cursor after the given index
     /// reviewed by @Leeeon233
     #[inline]
-    fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
+    pub(crate) fn get_cursor_ge(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
         let mut node = self.root();
         loop {
             match node {
@@ -143,6 +143,14 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 Node::Leaf(leaf) => {
                     let result = A::find_pos_leaf(leaf, index);
                     if result.child_index >= leaf.children.len() {
+                        return None;
+                    }
+
+                    if result.child_index == leaf.children.len() - 1
+                        && leaf.next().is_none()
+                        && !result.found
+                        && (result.pos == Position::After || result.pos == Position::End)
+                    {
                         return None;
                     }
 

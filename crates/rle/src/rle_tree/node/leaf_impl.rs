@@ -768,6 +768,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
             .iter()
             .position(|child| std::ptr::eq(child.as_leaf().unwrap(), self))
     }
+
+    #[inline(always)]
+    pub(crate) fn update_cache(&mut self) {
+        A::update_cache_leaf(self);
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for LeafNode<'a, T, A> {

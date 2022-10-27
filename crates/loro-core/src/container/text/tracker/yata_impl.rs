@@ -15,6 +15,7 @@ use super::{
     Tracker,
 };
 
+// TODO: may use a simpler data structure here
 #[derive(Default, Debug)]
 pub struct OpSpanSet {
     map: RangeMap<u128, WithStartEnd<u128, bool>>,
@@ -22,7 +23,7 @@ pub struct OpSpanSet {
 
 impl OpSet<YSpan, ID> for OpSpanSet {
     fn insert(&mut self, value: &YSpan) {
-        self.map.set(
+        self.map.set_large_range(
             value.id.into(),
             WithStartEnd {
                 start: value.id.into(),
@@ -330,6 +331,59 @@ pub mod fuzz {
 
     use Action::*;
     #[test]
+    fn issue_set_range() {
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            100,
+            vec![
+                Sync { from: 1, to: 2 },
+                NewOp {
+                    client_id: 2,
+                    pos: 7,
+                },
+                NewOp {
+                    client_id: 2,
+                    pos: 7,
+                },
+                Delete {
+                    client_id: 2,
+                    pos: 37,
+                    len: 37,
+                },
+                Delete {
+                    client_id: 2,
+                    pos: 7,
+                    len: 17,
+                },
+                Sync { from: 2, to: 2 },
+                NewOp {
+                    client_id: 2,
+                    pos: 52,
+                },
+                Sync { from: 3, to: 2 },
+                Delete {
+                    client_id: 2,
+                    pos: 52,
+                    len: 52,
+                },
+                Delete {
+                    client_id: 2,
+                    pos: 25,
+                    len: 17,
+                },
+                NewOp {
+                    client_id: 2,
+                    pos: 46,
+                },
+                Delete {
+                    client_id: 2,
+                    pos: 52,
+                    len: 52,
+                },
+            ],
+        )
+    }
+    #[test]
     fn issue_1() {
         crdt_list::test::test_with_actions::<YataImpl>(
             5,
@@ -344,34 +398,53 @@ pub mod fuzz {
     #[test]
     fn normalize() {
         let mut actions = vec![
+            Sync { from: 1, to: 107 },
             NewOp {
-                client_id: 129,
-                pos: 142,
+                client_id: 107,
+                pos: 107,
             },
             NewOp {
-                client_id: 0,
-                pos: 85,
+                client_id: 107,
+                pos: 107,
             },
-            Sync { from: 85, to: 86 },
-            NewOp {
-                client_id: 129,
-                pos: 129,
+            Delete {
+                client_id: 237,
+                pos: 237,
+                len: 237,
             },
-            Sync { from: 129, to: 129 },
+            Delete {
+                client_id: 107,
+                pos: 107,
+                len: 117,
+            },
+            Sync { from: 107, to: 252 },
             NewOp {
-                client_id: 106,
-                pos: 106,
+                client_id: 252,
+                pos: 252,
+            },
+            Sync { from: 3, to: 117 },
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
+            },
+            Delete {
+                client_id: 252,
+                pos: 25,
+                len: 217,
             },
             NewOp {
-                client_id: 1,
-                pos: 0,
+                client_id: 157,
+                pos: 146,
             },
-            NewOp {
-                client_id: 129,
-                pos: 106,
+            Delete {
+                client_id: 252,
+                pos: 252,
+                len: 252,
             },
         ];
 
         crdt_list::test::normalize_actions(&mut actions, 5, 100);
+        dbg!(actions);
     }
 }

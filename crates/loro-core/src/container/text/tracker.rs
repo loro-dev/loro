@@ -255,7 +255,7 @@ impl Tracker {
                         debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
                         self.update_spans(&spans, StatusChange::Delete);
                         self.id_to_cursor
-                            .set((id).into(), cursor_map::Marker::Delete(spans));
+                            .set_large_range((id).into(), cursor_map::Marker::Delete(spans));
                     }
                 }
             }
