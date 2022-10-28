@@ -4,7 +4,6 @@
 mod iter;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, RwLock, Weak},
 };
 
 use fxhash::{FxHashMap, FxHashSet};

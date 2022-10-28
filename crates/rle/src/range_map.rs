@@ -1,5 +1,5 @@
-use bumpalo::boxed::Box as BumpBox;
-use std::{cell::UnsafeCell, fmt::Debug, ptr::NonNull};
+
+use std::{fmt::Debug, ptr::NonNull};
 
 use fxhash::FxHashSet;
 
@@ -7,8 +7,7 @@ use crate::{
     rle_trait::{GlobalIndex, HasIndex, ZeroElement},
     rle_tree::{
         node::{InternalNode, LeafNode},
-        tree_trait::GlobalTreeTrait,
-        Position, UnsafeCursor,
+        tree_trait::GlobalTreeTrait, UnsafeCursor,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
