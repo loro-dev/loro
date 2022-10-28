@@ -42,6 +42,7 @@ criterion = "0.4.0"
 doctest = false
 
 [features]
+parallel = []
 # whether to use list slice instead of raw str in text container
 slice = []
 fuzzing = ["crdt-list/fuzzing", "rand", "slice", "arbitrary", "tabled"]
