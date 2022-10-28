@@ -13,7 +13,7 @@ use crate::{
     },
     id::ClientID,
     isomorph::{Irc, IsoRefMut, IsoRw},
-    InternalString, LogStore, LogStore, VersionVector, VersionVector,
+    LogStore, VersionVector,
 };
 
 pub struct LoroCore {
@@ -61,7 +61,7 @@ impl LoroCore {
     pub fn get_map_container(
         &mut self,
         name: &str,
-    ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<MapContainer>> {
+    ) -> OwningRefMut<IsoRefMut<ContainerManager>, Box<MapContainer>> {
         let a = OwningRefMut::new(self.container.write());
         a.map_mut(|x| {
             x.get_or_create(
@@ -89,7 +89,7 @@ impl LoroCore {
     pub fn get_text_container(
         &self,
         name: &str,
-    ) -> OwningRef<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
+    ) -> OwningRef<IsoRefMut<ContainerManager>, Box<TextContainer>> {
         let a = OwningRef::new(self.container.write());
         a.map(|x| {
             x.get(&ContainerID::new_root(name, ContainerType::Text))
