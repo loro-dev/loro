@@ -40,7 +40,7 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
+    pub(crate) fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
         Self {
             id,
             log_store,
@@ -59,28 +59,25 @@ impl TextContainer {
             return None;
         }
 
-        let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
-            let id = store.next_id();
-            #[cfg(feature = "slice")]
-            let slice = ListSlice::from_range(self.raw_str.alloc(text));
-            #[cfg(not(feature = "slice"))]
-            let slice = ListSlice::from_raw(SmString::from(text));
-            self.state.insert(pos, slice.clone());
-            let op = Op::new(
-                id,
-                OpContent::Normal {
-                    content: InsertContent::List(ListOp::Insert { slice, pos }),
-                },
-                self.id.clone(),
-            );
-            let last_id = op.id_last();
-            store.append_local_ops(vec![op]);
-            self.head = smallvec![last_id];
-            self.vv.set_last(last_id);
-            id
-        } else {
-            unimplemented!()
-        };
+        let s = self.log_store.upgrade().unwrap();
+        let mut store = s.write();
+        let id = store.next_id();
+        #[cfg(feature = "slice")]
+        let slice = ListSlice::from_range(self.raw_str.alloc(text));
+        #[cfg(not(feature = "slice"))]
+        let slice = ListSlice::from_raw(SmString::from(text));
+        self.state.insert(pos, slice.clone());
+        let op = Op::new(
+            id,
+            OpContent::Normal {
+                content: InsertContent::List(ListOp::Insert { slice, pos }),
+            },
+            self.id.clone(),
+        );
+        let last_id = op.id_last();
+        store.append_local_ops(vec![op]);
+        self.head = smallvec![last_id];
+        self.vv.set_last(last_id);
 
         Some(id)
     }
@@ -90,26 +87,22 @@ impl TextContainer {
             return None;
         }
 
-        let id = if let Ok(mut store) = self.log_store.upgrade().unwrap().write() {
-            let id = store.next_id();
-            let op = Op::new(
-                id,
-                OpContent::Normal {
-                    content: InsertContent::List(ListOp::Delete { len, pos }),
-                },
-                self.id.clone(),
-            );
+        let s = self.log_store.upgrade().unwrap();
+        let mut store = s.write();
+        let id = store.next_id();
+        let op = Op::new(
+            id,
+            OpContent::Normal {
+                content: InsertContent::List(ListOp::Delete { len, pos }),
+            },
+            self.id.clone(),
+        );
 
-            let last_id = op.id_last();
-            store.append_local_ops(vec![op]);
-            self.state.delete_range(Some(pos), Some(pos + len));
-            self.head = smallvec![last_id];
-            self.vv.set_last(last_id);
-            id
-        } else {
-            unimplemented!()
-        };
-
+        let last_id = op.id_last();
+        store.append_local_ops(vec![op]);
+        self.state.delete_range(Some(pos), Some(pos + len));
+        self.head = smallvec![last_id];
+        self.vv.set_last(last_id);
         Some(id)
     }
 

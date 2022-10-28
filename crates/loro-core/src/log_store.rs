@@ -20,6 +20,7 @@ use crate::{
     dag::Dag,
     debug_log,
     id::{ClientID, Counter},
+    isomorph::{Irc, IsoRw, IsoWeak},
     span::{HasIdSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
 };
@@ -42,8 +43,8 @@ impl Default for GcConfig {
     }
 }
 
-pub type LogStoreRef = Arc<RwLock<LogStore>>;
-pub type LogStoreWeakRef = Weak<RwLock<LogStore>>;
+pub(crate) type LogStoreRef = Irc<IsoRw<LogStore>>;
+pub(crate) type LogStoreWeakRef = IsoWeak<IsoRw<LogStore>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -62,20 +63,20 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: Weak<RwLock<ContainerManager>>,
-    to_self: Weak<RwLock<LogStore>>,
+    pub(crate) container: IsoWeak<IsoRw<ContainerManager>>,
+    to_self: IsoWeak<IsoRw<LogStore>>,
     _pin: PhantomPinned,
 }
 
 impl LogStore {
-    pub fn new(
+    pub(crate) fn new(
         mut cfg: Configure,
         client_id: Option<ClientID>,
-        container: Weak<RwLock<ContainerManager>>,
-    ) -> Arc<RwLock<Self>> {
+        container: IsoWeak<IsoRw<ContainerManager>>,
+    ) -> Irc<IsoRw<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        Arc::new_cyclic(|x| {
-            RwLock::new(Self {
+        Irc::new_cyclic(|x| {
+            IsoRw::new(Self {
                 cfg,
                 this_client_id,
                 changes: FxHashMap::default(),
@@ -156,7 +157,7 @@ impl LogStore {
 
     fn change_to_export_format(&self, change: &mut Change) {
         let upgraded = self.container.upgrade().unwrap();
-        let container_manager = upgraded.read().unwrap();
+        let container_manager = upgraded.read();
         for op in change.ops.vec_mut().iter_mut() {
             let container = container_manager.get(&op.container).unwrap();
             container.to_export(op);
@@ -264,7 +265,7 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let upgraded = self.container.upgrade().unwrap();
-        let mut container_manager = upgraded.write().unwrap();
+        let mut container_manager = upgraded.write();
         #[cfg(feature = "slice")]
         self.change_to_imported_format(&mut container_manager, &mut change);
         let v = self
