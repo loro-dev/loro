@@ -1,7 +1,12 @@
-use std::ptr::NonNull;
+use std::{
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+    sync::RwLockWriteGuard,
+};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use owning_ref::OwningRefMut;
 
 use crate::{log_store::LogStoreWeakRef, span::IdSpan, LogStore};
 
@@ -125,5 +130,31 @@ impl ContainerManager {
         }
 
         self.get_mut(id).unwrap()
+    }
+}
+
+pub struct ContainerRef<'a, T> {
+    value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>,
+}
+
+impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>>
+    for ContainerRef<'a, T>
+{
+    fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>) -> Self {
+        ContainerRef { value }
+    }
+}
+
+impl<'a, T> Deref for ContainerRef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.deref()
+    }
+}
+
+impl<'a, T> DerefMut for ContainerRef<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.deref_mut()
     }
 }

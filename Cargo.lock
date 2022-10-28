@@ -581,6 +581,7 @@ dependencies = [
  "enum-as-inner",
  "fxhash",
  "im",
+ "js-sys",
  "num",
  "owning_ref",
  "pin-project",
@@ -596,6 +597,7 @@ dependencies = [
  "string_cache",
  "tabled",
  "thiserror",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -607,6 +609,15 @@ dependencies = [
  "ring",
  "rle",
  "sha2",
+]
+
+[[package]]
+name = "loro-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "loro-core",
+ "wasm-bindgen",
 ]
 
 [[package]]

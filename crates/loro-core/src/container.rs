@@ -55,9 +55,9 @@ impl ContainerID {
     }
 
     #[inline]
-    pub fn new_root(name: InternalString, container_type: ContainerType) -> Self {
+    pub fn new_root(name: &str, container_type: ContainerType) -> Self {
         ContainerID::Root {
-            name,
+            name: name.into(),
             container_type,
         }
     }

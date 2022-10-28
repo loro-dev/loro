@@ -61,6 +61,50 @@ pub enum InsertValue {
     Container(ContainerID),
 }
 
+#[cfg(feature = "wasm")]
+pub mod wasm {
+    use js_sys::{Array, Object};
+    use wasm_bindgen::{JsValue, __rt::IntoJsResult};
+
+    use crate::LoroValue;
+
+    pub fn convert(value: LoroValue) -> JsValue {
+        match value {
+            LoroValue::Null => JsValue::NULL,
+            LoroValue::Bool(b) => JsValue::from_bool(b),
+            LoroValue::Double(f) => JsValue::from_f64(f),
+            LoroValue::Integer(i) => JsValue::from_f64(i as f64),
+            LoroValue::String(s) => JsValue::from_str(&s),
+            LoroValue::List(list) => {
+                let arr = Array::new_with_length(list.len() as u32);
+                for v in list {
+                    arr.push(&convert(v));
+                }
+
+                arr.into_js_result().unwrap()
+            }
+            LoroValue::Map(m) => {
+                let map = Object::new();
+                for (k, v) in m.into_iter() {
+                    let str: &str = &k;
+                    js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v)).unwrap();
+                }
+
+                map.into_js_result().unwrap()
+            }
+            LoroValue::Unresolved(_) => {
+                unreachable!()
+            }
+        }
+    }
+
+    impl From<LoroValue> for JsValue {
+        fn from(value: LoroValue) -> Self {
+            convert(value)
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod proptest {
     use proptest::prelude::*;

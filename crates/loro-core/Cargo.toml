@@ -25,6 +25,8 @@ arbitrary = { version = "1.1.7", optional = true }
 tabled = { version = "0.10.0", optional = true }
 colored = "2.0.0"
 bit-vec = "0.6.3"
+wasm-bindgen = { version = "0.2.83", optional = true }
+js-sys = { version = "0.3.60", optional = true }
 
 [dev-dependencies]
 dhat = "0.3.1"
@@ -42,6 +44,7 @@ criterion = "0.4.0"
 doctest = false
 
 [features]
+wasm = ["wasm-bindgen", "js-sys"]
 # whether to use list slice instead of raw str in text container
 slice = []
 fuzzing = ["crdt-list/fuzzing", "rand", "slice", "arbitrary", "tabled"]

@@ -3,7 +3,7 @@
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },
-  "rust-analyzer.cargo.features": ["fuzzing"],
+  "rust-analyzer.cargo.features": ["fuzzing", "wasm"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "editor.formatOnSave": true,
   "todo-tree.general.tags": [

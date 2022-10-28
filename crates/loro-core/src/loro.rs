@@ -9,13 +9,13 @@ use crate::{
     change::Change,
     configure::Configure,
     container::{
-        manager::{ContainerInstance, ContainerManager},
+        manager::{ContainerInstance, ContainerManager, ContainerRef},
         map::MapContainer,
         text::text_container::TextContainer,
         ContainerID, ContainerType,
     },
     id::ClientID,
-    InternalString, LogStore, VersionVector,
+    LogStore, VersionVector,
 };
 
 pub struct LoroCore {
@@ -47,7 +47,7 @@ impl LoroCore {
 
     pub fn get_container(
         &mut self,
-        name: InternalString,
+        name: &str,
         container: ContainerType,
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, ContainerInstance> {
         let a = OwningRefMut::new(self.container.write().unwrap());
@@ -61,7 +61,7 @@ impl LoroCore {
 
     pub fn get_map_container(
         &mut self,
-        name: InternalString,
+        name: &str,
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<MapContainer>> {
         let a = OwningRefMut::new(self.container.write().unwrap());
         a.map_mut(|x| {
@@ -74,10 +74,7 @@ impl LoroCore {
         })
     }
 
-    pub fn get_or_create_text_container_mut(
-        &mut self,
-        name: InternalString,
-    ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
+    pub fn get_or_create_text_container_mut(&mut self, name: &str) -> ContainerRef<TextContainer> {
         let a = OwningRefMut::new(self.container.write().unwrap());
         a.map_mut(|x| {
             x.get_or_create(
@@ -87,11 +84,12 @@ impl LoroCore {
             .as_text_mut()
             .unwrap()
         })
+        .into()
     }
 
     pub fn get_text_container(
         &self,
-        name: InternalString,
+        name: &str,
     ) -> OwningRef<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
         let a = OwningRef::new(self.container.write().unwrap());
         a.map(|x| {
