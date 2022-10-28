@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Error, Formatter},
 };
 
-use fxhash::{FxBuildHasher, FxHashSet, FxHasher};
+use fxhash::{FxBuildHasher, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::rle_tree::{
