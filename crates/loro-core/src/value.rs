@@ -50,6 +50,7 @@ impl From<LoroValue> for InsertValue {
 }
 
 /// [InsertValue] can be inserted to Map or List
+/// It's different from [LoroValue] because some of the states in [LoroValue] are illegal to be inserted
 #[derive(Debug, PartialEq, Clone)]
 pub enum InsertValue {
     Null,
