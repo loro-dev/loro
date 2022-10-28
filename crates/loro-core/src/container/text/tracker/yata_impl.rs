@@ -202,7 +202,7 @@ pub mod fuzz {
     }
 
     use crdt_list::test::{Action, TestFramework};
-    use rle::{RleVec, RleVecWithIndex, RleVecWithLen};
+    use rle::{RleVecWithIndex, RleVecWithLen};
     use tabled::TableIteratorExt;
 
     use crate::{

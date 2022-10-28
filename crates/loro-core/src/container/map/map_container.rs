@@ -41,10 +41,16 @@ impl MapContainer {
         }
     }
 
-    pub fn insert(&mut self, key: InternalString, value: InsertValue, store: LogStoreWeakRef) {
+    // FIXME: keep store in the struct
+    pub(crate) fn insert(
+        &mut self,
+        key: InternalString,
+        value: InsertValue,
+        store: LogStoreWeakRef,
+    ) {
         let self_id = self.id.clone();
         let m = store.upgrade().unwrap();
-        let mut store = m.write().unwrap();
+        let mut store = m.write();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
             client_id,
@@ -83,8 +89,9 @@ impl MapContainer {
         );
     }
 
+    // FIXME: keep store in the struct
     #[inline]
-    pub fn delete(&mut self, key: InternalString, store: LogStoreWeakRef) {
+    pub(crate) fn delete(&mut self, key: InternalString, store: LogStoreWeakRef) {
         self.insert(key, InsertValue::Null, store);
     }
 }

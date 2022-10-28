@@ -1,13 +1,13 @@
 #![cfg(test)]
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use fxhash::FxHashMap;
 use proptest::prelude::*;
 use proptest::proptest;
 
 use crate::container::Container;
+use crate::isomorph::Irc;
 use crate::value::proptest::gen_insert_value;
 
 use crate::{fx_map, value::InsertValue, LoroCore, LoroValue};
@@ -15,7 +15,7 @@ use crate::{fx_map, value::InsertValue, LoroCore, LoroValue};
 #[test]
 fn basic() {
     let mut loro = LoroCore::default();
-    let weak = Arc::downgrade(&loro.log_store);
+    let weak = Irc::downgrade(&loro.log_store);
     let mut a = loro.get_map_container("map".into());
     let container = a.as_mut();
     container.insert("haha".into(), InsertValue::Int32(1), weak);
@@ -38,7 +38,7 @@ mod map_proptest {
             value in prop::collection::vec(gen_insert_value(), 0..10 * PROPTEST_FACTOR_10)
         ) {
             let mut loro = LoroCore::default();
-            let weak = Arc::downgrade(&loro.log_store);
+            let weak = Irc::downgrade(&loro.log_store);
             let mut a = loro.get_map_container("map".into());
             let container = a.as_mut();
             let mut map: HashMap<String, InsertValue> = HashMap::new();

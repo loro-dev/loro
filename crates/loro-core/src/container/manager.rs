@@ -89,7 +89,7 @@ pub struct ContainerManager {
 
 impl ContainerManager {
     #[inline]
-    pub fn create(
+    pub(crate) fn create(
         &mut self,
         id: ContainerID,
         container_type: ContainerType,
@@ -119,7 +119,7 @@ impl ContainerManager {
         self.containers.insert(id, container);
     }
 
-    pub fn get_or_create(
+    pub(crate) fn get_or_create(
         &mut self,
         id: &ContainerID,
         log_store: LogStoreWeakRef,

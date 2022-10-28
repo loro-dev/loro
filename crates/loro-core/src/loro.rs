@@ -1,7 +1,4 @@
-use std::{
-    ptr::NonNull,
-    sync::{Arc, RwLock, RwLockWriteGuard},
-};
+use std::ptr::NonNull;
 
 use owning_ref::{OwningRef, OwningRefMut};
 
@@ -15,12 +12,13 @@ use crate::{
         ContainerID, ContainerType,
     },
     id::ClientID,
-    LogStore, VersionVector,
+    isomorph::{Irc, IsoRefMut, IsoRw},
+    InternalString, LogStore, LogStore, VersionVector, VersionVector,
 };
 
 pub struct LoroCore {
-    pub log_store: Arc<RwLock<LogStore>>,
-    pub container: Arc<RwLock<ContainerManager>>,
+    pub(crate) log_store: Irc<IsoRw<LogStore>>,
+    pub(crate) container: Irc<IsoRw<ContainerManager>>,
 }
 
 impl Default for LoroCore {
@@ -31,30 +29,31 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = Arc::new(RwLock::new(ContainerManager {
+        let container = Irc::new(IsoRw::new(ContainerManager {
             containers: Default::default(),
             store: NonNull::dangling(),
         }));
+        let weak = Irc::downgrade(&container);
         Self {
-            log_store: LogStore::new(cfg, client_id, Arc::downgrade(&container)),
+            log_store: LogStore::new(cfg, client_id, weak),
             container,
         }
     }
 
     pub fn vv(&self) -> VersionVector {
-        self.log_store.read().unwrap().get_vv().clone()
+        self.log_store.read().get_vv().clone()
     }
 
     pub fn get_container(
         &mut self,
         name: &str,
         container: ContainerType,
-    ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, ContainerInstance> {
-        let a = OwningRefMut::new(self.container.write().unwrap());
+    ) -> OwningRefMut<IsoRefMut<ContainerManager>, ContainerInstance> {
+        let a = OwningRefMut::new(self.container.write());
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, container),
-                Arc::downgrade(&self.log_store),
+                Irc::downgrade(&self.log_store),
             )
         })
     }
@@ -63,11 +62,11 @@ impl LoroCore {
         &mut self,
         name: &str,
     ) -> OwningRefMut<RwLockWriteGuard<ContainerManager>, Box<MapContainer>> {
-        let a = OwningRefMut::new(self.container.write().unwrap());
+        let a = OwningRefMut::new(self.container.write());
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, ContainerType::Map),
-                Arc::downgrade(&self.log_store),
+                Irc::downgrade(&self.log_store),
             )
             .as_map_mut()
             .unwrap()
@@ -75,11 +74,11 @@ impl LoroCore {
     }
 
     pub fn get_or_create_text_container_mut(&mut self, name: &str) -> ContainerRef<TextContainer> {
-        let a = OwningRefMut::new(self.container.write().unwrap());
+        let a = OwningRefMut::new(self.container.write());
         a.map_mut(|x| {
             x.get_or_create(
                 &ContainerID::new_root(name, ContainerType::Text),
-                Arc::downgrade(&self.log_store),
+                Irc::downgrade(&self.log_store),
             )
             .as_text_mut()
             .unwrap()
@@ -91,7 +90,7 @@ impl LoroCore {
         &self,
         name: &str,
     ) -> OwningRef<RwLockWriteGuard<ContainerManager>, Box<TextContainer>> {
-        let a = OwningRef::new(self.container.write().unwrap());
+        let a = OwningRef::new(self.container.write());
         a.map(|x| {
             x.get(&ContainerID::new_root(name, ContainerType::Text))
                 .unwrap()
@@ -101,12 +100,12 @@ impl LoroCore {
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change> {
-        let store = self.log_store.read().unwrap();
+        let store = self.log_store.read();
         store.export(&remote_vv)
     }
 
     pub fn import(&mut self, changes: Vec<Change>) {
-        let mut store = self.log_store.write().unwrap();
+        let mut store = self.log_store.write();
         store.import(changes)
     }
 }
