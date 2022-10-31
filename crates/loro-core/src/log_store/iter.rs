@@ -1,7 +1,6 @@
 use crate::Op;
 
 use crate::change::Lamport;
-use crate::container::ContainerID;
 
 use crate::id::ClientID;
 use crate::id::ContainerIdx;
@@ -93,7 +92,7 @@ impl<'a> Iterator for OpSpanIter<'a> {
 
                 return Some(RichOp {
                     op,
-                    lamport: (op.id.counter - change.id.counter) as Lamport + change.lamport,
+                    lamport: (op.counter - change.id.counter) as Lamport + change.lamport,
                     timestamp: change.timestamp,
                 });
             } else {

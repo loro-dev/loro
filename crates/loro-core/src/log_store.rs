@@ -19,7 +19,7 @@ use crate::{
     id::{ClientID, Counter},
     isomorph::{Irc, IsoRw, IsoWeak},
     op::RemoteOp,
-    span::{HasIdSpan, HasLamportSpan, IdSpan},
+    span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
 };
 
@@ -257,7 +257,9 @@ impl LogStore {
             client_id: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         };
-        let last_id = ops.last().unwrap().id_last();
+        let last = ops.last().unwrap();
+        let last_ctr = last.ctr_last();
+        let last_id = ID::new(self.this_client_id, last_ctr);
         let change = Change {
             id,
             deps: std::mem::replace(&mut self.frontier, smallvec::smallvec![last_id]),

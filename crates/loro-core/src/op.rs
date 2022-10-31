@@ -2,7 +2,7 @@ use crate::{
     change::{Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
-    span::HasId,
+    span::HasCounter,
     LogStore,
 };
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
@@ -31,14 +31,14 @@ pub enum OpType {
 /// A Op may have multiple atomic operations, since Op can be merged.
 #[derive(Debug, Clone)]
 pub struct Op {
-    pub(crate) id: ID,
+    pub(crate) counter: Counter,
     pub(crate) container: u32,
     pub(crate) content: OpContent,
 }
 
 #[derive(Debug, Clone)]
 pub struct RemoteOp {
-    pub(crate) id: ID,
+    pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
     pub(crate) content: OpContent,
 }
@@ -47,7 +47,7 @@ impl Op {
     #[inline]
     pub(crate) fn new(id: ID, content: OpContent, container: u32) -> Self {
         Op {
-            id,
+            counter: id.counter,
             content,
             container,
         }
@@ -69,7 +69,7 @@ impl Op {
     pub(crate) fn convert(self, log: &LogStore) -> RemoteOp {
         let container = log.get_container_id(self.container).clone();
         RemoteOp {
-            id: self.id,
+            counter: self.counter,
             container,
             content: self.content,
         }
@@ -78,11 +78,10 @@ impl Op {
 
 impl RemoteOp {
     pub(crate) fn convert(self, log: &mut LogStore) -> Op {
-        let id = self.id;
         let container = log.get_or_create_container_idx(&self.container);
         let content = self.content;
         Op {
-            id,
+            counter: self.counter,
             container,
             content,
         }
@@ -91,7 +90,7 @@ impl RemoteOp {
 
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.id.is_connected_id(&other.id, self.content_len())
+        self.counter + self.content_len() as Counter == other.counter
             && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
     }
@@ -135,10 +134,7 @@ impl Sliceable for Op {
         assert!(to > from);
         let content: OpContent = self.content.slice(from, to);
         Op {
-            id: ID {
-                client_id: self.id.client_id,
-                counter: (self.id.counter + from as Counter),
-            },
+            counter: (self.counter + from as Counter),
             content,
             container: self.container.clone(),
         }
@@ -147,7 +143,7 @@ impl Sliceable for Op {
 
 impl Mergable for RemoteOp {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.id.is_connected_id(&other.id, self.content_len())
+        self.counter + self.content_len() as Counter == other.counter
             && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
     }
@@ -191,19 +187,10 @@ impl Sliceable for RemoteOp {
         assert!(to > from);
         let content: OpContent = self.content.slice(from, to);
         RemoteOp {
-            id: ID {
-                client_id: self.id.client_id,
-                counter: (self.id.counter + from as Counter),
-            },
+            counter: (self.counter + from as Counter),
             content,
             container: self.container.clone(),
         }
-    }
-}
-
-impl HasId for Op {
-    fn id_start(&self) -> ID {
-        self.id
     }
 }
 
@@ -217,7 +204,7 @@ impl HasIndex for Op {
     type Int = Counter;
 
     fn get_start_index(&self) -> Self::Int {
-        self.id.counter
+        self.counter
     }
 }
 
@@ -225,6 +212,18 @@ impl HasIndex for RemoteOp {
     type Int = Counter;
 
     fn get_start_index(&self) -> Self::Int {
-        self.id.counter
+        self.counter
+    }
+}
+
+impl HasCounter for Op {
+    fn ctr_start(&self) -> Counter {
+        self.counter
+    }
+}
+
+impl HasCounter for RemoteOp {
+    fn ctr_start(&self) -> Counter {
+        self.counter
     }
 }

@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use rle::{rle_tree::tree_trait::CumulateTreeTrait, RleTree, Sliceable};
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op, OpContent, RemoteOp},
     smstring::SmString,
-    span::{HasIdSpan, IdSpan},
+    span::{HasCounter, HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore, VersionVector,
 };
@@ -82,7 +82,10 @@ impl TextContainer {
             },
             store.get_or_create_container_idx(&self.id),
         );
-        let last_id = op.id_last();
+        let last_id = ID::new(
+            store.this_client_id,
+            op.counter + op.atom_len() as Counter - 1,
+        );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
@@ -106,7 +109,7 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        let last_id = op.id_last();
+        let last_id = ID::new(store.this_client_id, op.ctr_last());
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
@@ -198,7 +201,13 @@ impl Container for TextContainer {
             for op in change.ops.iter() {
                 if op.container == self_idx {
                     // TODO: convert op to local
-                    self.tracker.apply(op.id, &op.content)
+                    self.tracker.apply(
+                        ID {
+                            client_id: change.id.client_id,
+                            counter: op.counter,
+                        },
+                        &op.content,
+                    )
                 }
             }
         }

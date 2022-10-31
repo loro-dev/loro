@@ -6,7 +6,7 @@ use crate::{
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op, RichOp},
     op::{OpContent, RemoteOp},
-    span::{HasId, IdSpan},
+    span::IdSpan,
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
     InternalString, LogStore,
@@ -57,7 +57,7 @@ impl MapContainer {
         let counter = id.counter;
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
-            id,
+            counter: id.counter,
             container,
             content: OpContent::Normal {
                 content: InsertContent::Dyn(Box::new(MapSet {
@@ -109,7 +109,7 @@ impl Container for MapContainer {
                     let v: &MapSet = content.as_map().unwrap();
                     let order = TotalOrderStamp {
                         lamport,
-                        client_id: op.id_start().client_id,
+                        client_id: id_span.client_id,
                     };
                     if let Some(slot) = self.state.get_mut(&v.key) {
                         if slot.order < order {
@@ -123,7 +123,7 @@ impl Container for MapContainer {
                             ValueSlot {
                                 value: v.value.clone(),
                                 order,
-                                counter: op.id_start().counter,
+                                counter: op.counter,
                             },
                         );
 
