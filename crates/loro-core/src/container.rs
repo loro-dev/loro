@@ -5,15 +5,15 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{InsertContent, Op},
+    op::{Op},
     span::IdSpan,
     version::VersionVector,
     InternalString, LogStore, LoroValue, ID,
 };
 
-use rle::RleVec;
+
 use serde::Serialize;
-use smallvec::SmallVec;
+
 use std::{any::Any, fmt::Debug};
 
 mod container_content;

@@ -1,6 +1,5 @@
 use std::{
     ops::{Deref, DerefMut},
-    ptr::NonNull,
 };
 
 use enum_as_inner::EnumAsInner;

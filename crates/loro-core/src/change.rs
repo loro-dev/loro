@@ -6,12 +6,11 @@
 //! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
 
 use crate::{
-    container::{map::MapSet, text::text_content::ListSlice, ContainerID},
     dag::DagNode,
-    id::{ClientID, Counter, ID},
-    op::{InsertContent, Op},
-    span::{HasId, HasLamport, IdSpan},
-    Container, InsertValue,
+    id::{Counter, ID},
+    op::{Op},
+    span::{HasId, HasLamport},
+    Container,
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
@@ -49,7 +48,7 @@ impl Change {
         id: ID,
         lamport: Lamport,
         timestamp: Timestamp,
-        freezed: bool,
+        _freezed: bool,
     ) -> Self {
         Change {
             ops,
