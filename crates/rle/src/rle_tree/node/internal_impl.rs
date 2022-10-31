@@ -526,7 +526,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         debug_assert!(self.is_root());
-        let mut zipper = SmallVec::with_capacity(12);
+        let mut zipper = SmallVec::new();
         match self._delete(start, end, &mut zipper, 1, notify) {
             Ok(_) => {
                 A::update_cache_internal(self);
