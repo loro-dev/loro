@@ -9,7 +9,7 @@ use crate::{id::ID, smstring::SmString};
 pub enum ListSlice {
     RawStr(SmString),
     // TODO: Use small compact rle vec
-    Slice(Range<usize>),
+    Slice(Range<u32>),
     Unknown(usize),
 }
 
@@ -21,7 +21,7 @@ impl Default for ListSlice {
 
 impl ListSlice {
     #[inline(always)]
-    pub fn from_range(range: Range<usize>) -> ListSlice {
+    pub fn from_range(range: Range<u32>) -> ListSlice {
         Self::Slice(range)
     }
 

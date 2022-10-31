@@ -338,6 +338,29 @@ impl LogStore {
     pub fn get_vv(&self) -> &VersionVector {
         &self.vv
     }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&mut self) {
+        println!(
+            "LogStore:\n- Clients={}\n- Changes={}\n- Ops={}\n- Atoms={}",
+            self.changes.len(),
+            self.changes
+                .values()
+                .map(|v| format!("{}", v.vec().len()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.changes
+                .values()
+                .map(|v| format!("{}", v.vec().iter().map(|x| x.ops.len()).sum::<usize>()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.changes
+                .values()
+                .map(|v| format!("{}", v.atom_len()))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
 }
 
 impl Dag for LogStore {

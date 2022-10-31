@@ -29,10 +29,7 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = Irc::new(IsoRw::new(ContainerManager {
-            containers: Default::default(),
-            store: NonNull::dangling(),
-        }));
+        let container = Irc::new(IsoRw::new(ContainerManager::new()));
         let weak = Irc::downgrade(&container);
         Self {
             log_store: LogStore::new(cfg, client_id, weak),
@@ -115,5 +112,11 @@ impl LoroCore {
     pub fn import(&mut self, changes: Vec<Change>) {
         let mut store = self.log_store.write();
         store.import(changes)
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&self) {
+        self.log_store.write().debug_inspect();
+        self.container.write().debug_inspect();
     }
 }

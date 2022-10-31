@@ -314,6 +314,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             Node::Leaf(node) => A::update_cache_leaf(node),
         }
     }
+
+    pub(crate) fn recursive_visit_all(&self, f: &mut impl FnMut(&Node<T, A>)) {
+        f(self);
+        match self {
+            Node::Internal(node) => {
+                for child in &node.children {
+                    child.recursive_visit_all(f);
+                }
+            }
+            Node::Leaf(_) => {}
+        }
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {

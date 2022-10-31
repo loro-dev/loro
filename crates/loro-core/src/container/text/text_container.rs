@@ -1,4 +1,6 @@
-use rle::{RleTree, Sliceable};
+use std::ops::Range;
+
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -16,7 +18,7 @@ use crate::{
 
 use super::{
     string_pool::StringPool,
-    text_content::{ListSlice, ListSliceTreeTrait},
+    text_content::ListSlice,
     tracker::{Effect, Tracker},
 };
 
@@ -30,6 +32,9 @@ struct DagNode {
 pub struct TextContainer {
     id: ContainerID,
     log_store: LogStoreWeakRef,
+    #[cfg(feature = "slice")]
+    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8>>,
+    #[cfg(not(feature = "slice"))]
     state: RleTree<ListSlice, ListSliceTreeTrait>,
     raw_str: StringPool,
     tracker: Tracker,
@@ -63,14 +68,17 @@ impl TextContainer {
         let mut store = s.write();
         let id = store.next_id();
         #[cfg(feature = "slice")]
-        let slice = ListSlice::from_range(self.raw_str.alloc(text));
+        let slice = self.raw_str.alloc(text);
         #[cfg(not(feature = "slice"))]
         let slice = ListSlice::from_raw(SmString::from(text));
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::Insert { slice, pos }),
+                content: InsertContent::List(ListOp::Insert {
+                    slice: ListSlice::Slice(slice),
+                    pos,
+                }),
             },
             self.id.clone(),
         );
@@ -112,6 +120,16 @@ impl TextContainer {
 
     pub fn check(&mut self) {
         self.tracker.check();
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&mut self) {
+        println!(
+            "Text Container {:?}, Raw String size={}, Tree=>\n",
+            self.id,
+            self.raw_str.len(),
+        );
+        self.state.debug_inspect()
     }
 }
 
@@ -207,7 +225,7 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    self.state.insert(pos, content);
+                    self.state.insert(pos, content.as_slice().unwrap().clone());
                 }
             }
         }
@@ -230,11 +248,7 @@ impl Container for TextContainer {
         let mut ans_str = SmString::new();
         for v in self.state.iter() {
             let content = v.as_ref();
-            match content {
-                ListSlice::Slice(range) => ans_str.push_str(&self.raw_str.get_str(range)),
-                ListSlice::RawStr(raw) => ans_str.push_str(raw),
-                _ => unreachable!(),
-            }
+            ans_str.push_str(&self.raw_str.get_str(content));
         }
 
         self.state_cache = LoroValue::String(ans_str);

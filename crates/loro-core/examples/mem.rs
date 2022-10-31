@@ -51,6 +51,8 @@ pub fn main() {
     }
     drop(json);
     drop(d);
+    drop(text);
+    loro.debug_inspect();
     drop(profiler);
     // e.advance().unwrap();
     // let new_new_heap = alloc_stats.read().unwrap();

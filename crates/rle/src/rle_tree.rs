@@ -385,6 +385,52 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         })
     }
 
+    pub fn debug_inspect(&mut self) {
+        println!(
+            "RleTree: \n- len={:?}\n- InternalNodes={}\n- LeafNodes={}\n- Elements={}",
+            self.len(),
+            self.internal_node_num(),
+            self.leaf_node_num(),
+            self.elem_num()
+        );
+    }
+
+    fn internal_node_num(&self) -> usize {
+        self.with_node(|node| {
+            let mut num = 0;
+            node.recursive_visit_all(&mut |node| {
+                if node.as_internal().is_some() {
+                    num += 1;
+                }
+            });
+            num
+        })
+    }
+
+    fn leaf_node_num(&self) -> usize {
+        self.with_node(|node| {
+            let mut num = 0;
+            node.recursive_visit_all(&mut |node| {
+                if node.as_leaf().is_some() {
+                    num += 1;
+                }
+            });
+            num
+        })
+    }
+
+    fn elem_num(&self) -> usize {
+        self.with_node(|node| {
+            let mut num = 0;
+            node.recursive_visit_all(&mut |node| {
+                if let Some(leaf) = node.as_leaf() {
+                    num += leaf.children.len();
+                }
+            });
+            num
+        })
+    }
+
     // pub fn iter_cursor_mut(&mut self) -> impl Iterator<Item = SafeCursorMut<'_, T, A>> {}
 }
 

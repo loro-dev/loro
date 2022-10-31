@@ -29,3 +29,6 @@ flame:
 
 bench *FLAGS:
   cargo bench --features fuzzing {{FLAGS}}
+
+mem:
+  cargo run --example mem -r --features fuzzing

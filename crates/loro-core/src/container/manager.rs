@@ -87,11 +87,16 @@ impl Container for ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerManager {
-    pub(crate) containers: FxHashMap<ContainerID, ContainerInstance>,
-    pub(crate) store: NonNull<LogStore>,
+    containers: FxHashMap<ContainerID, ContainerInstance>,
 }
 
 impl ContainerManager {
+    pub(crate) fn new() -> Self {
+        Self {
+            containers: Default::default(),
+        }
+    }
+
     #[inline]
     pub(crate) fn create(
         &mut self,
@@ -137,6 +142,15 @@ impl ContainerManager {
 
         let container = self.get_mut(id).unwrap();
         Ok(container)
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&mut self) {
+        for container in self.containers.values_mut() {
+            if let ContainerInstance::Text(x) = container {
+                x.debug_inspect()
+            }
+        }
     }
 }
 
