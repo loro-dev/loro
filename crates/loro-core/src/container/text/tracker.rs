@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
-    id::{Counter, ID},
+    id::{ClientID, Counter, ID},
     op::OpContent,
     span::{HasIdSpan, IdSpan},
     version::IdSpanVector,
@@ -40,7 +40,7 @@ pub mod yata_impl;
 #[derive(Debug)]
 pub struct Tracker {
     #[cfg(feature = "fuzzing")]
-    client_id: u64,
+    client_id: ClientID,
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
     /// latest applied ops version vector

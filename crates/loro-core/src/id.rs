@@ -46,7 +46,7 @@ impl Ord for ID {
 }
 
 pub const ROOT_ID: ID = ID {
-    client_id: u64::MAX,
+    client_id: ClientID::MAX,
     counter: i32::MAX,
 };
 
@@ -61,7 +61,7 @@ impl From<u128> for ID {
 
 impl ID {
     #[inline]
-    pub fn new(client_id: u64, counter: Counter) -> Self {
+    pub fn new(client_id: ClientID, counter: Counter) -> Self {
         ID { client_id, counter }
     }
 
@@ -72,7 +72,7 @@ impl ID {
 
     #[inline]
     pub fn is_null(&self) -> bool {
-        self.client_id == u64::MAX
+        self.client_id == ClientID::MAX
     }
 
     #[inline]

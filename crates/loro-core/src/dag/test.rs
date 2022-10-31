@@ -183,7 +183,7 @@ impl TestDag {
     fn _try_push_node(
         &mut self,
         node: &TestNode,
-        pending: &mut Vec<(u64, usize)>,
+        pending: &mut Vec<(ClientID, usize)>,
         i: usize,
     ) -> bool {
         let client_id = node.id.client_id;

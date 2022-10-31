@@ -26,7 +26,7 @@ pub fn main() {
     let start = Instant::now();
     let mut loro = LoroCore::default();
     let mut text = loro.get_or_create_root_text("text").unwrap();
-    for i in 0..10 {
+    for i in 0..1 {
         for txn in txns.unwrap().as_array().unwrap() {
             let patches = txn
                 .as_object()
@@ -48,7 +48,7 @@ pub fn main() {
     drop(d);
     e.advance().unwrap();
     let new_new_heap = alloc_stats.read().unwrap();
-    println!("Apply Automerge Dataset 10X");
+    println!("Apply Automerge Dataset 1X");
     println!("Mem: {} MB", new_new_heap as f64 / 1024. / 1024.);
     println!("Used: {} ms", start.elapsed().as_millis());
 }

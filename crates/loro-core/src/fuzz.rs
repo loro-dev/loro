@@ -4,7 +4,9 @@ use tabled::{TableIteratorExt, Tabled};
 use crate::{
     array_mut_ref,
     container::{text::text_container::TextContainer, Container},
-    debug_log, LoroCore,
+    debug_log,
+    id::ClientID,
+    LoroCore,
 };
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -289,7 +291,7 @@ pub fn test_single_client(mut actions: Vec<Action>) {
 pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        sites.push(LoroCore::new(Default::default(), Some(i as u64)));
+        sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
     }
 
     let mut applied = Vec::new();
