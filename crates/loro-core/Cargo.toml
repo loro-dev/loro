@@ -40,6 +40,15 @@ ctor = "0.1.23"
 criterion = "0.4.0"
 serde_json = "1.0.87"
 flate2 = "1.0.24"
+jemalloc-ctl = "0.5.0"
+jemalloc-sys = { version = "0.5.0+0.5.3", features = [
+  "stats",
+  "profiling",
+  "unprefixed_malloc_on_supported_platforms",
+] }
+
+[target.'cfg(not(target_env = "msvc"))'.dev-dependencies]
+jemallocator = "0.5.0"
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
