@@ -8,3 +8,7 @@ a.insert(0, "hello world");
 a.delete(6, 5);
 a.insert(6, "everyone");
 console.log(a.get_value());
+const b = loro.get_map_container("ha");
+b.set("ab", 123);
+console.log(b.get_value());
+console.log(a.get_value());

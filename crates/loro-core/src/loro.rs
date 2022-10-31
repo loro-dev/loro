@@ -45,7 +45,7 @@ impl LoroCore {
     }
 
     #[inline(always)]
-    pub fn get_or_create_map_container(
+    pub fn get_or_create_root_map(
         &mut self,
         name: &str,
     ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
@@ -60,7 +60,7 @@ impl LoroCore {
     }
 
     #[inline(always)]
-    pub fn get_or_create_text_container(
+    pub fn get_or_create_root_text(
         &mut self,
         name: &str,
     ) -> Result<ContainerRefMut<TextContainer>, LoroError> {

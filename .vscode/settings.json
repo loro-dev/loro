@@ -1,5 +1,5 @@
 {
-  "cSpell.words": ["smstring", "yspan"],
+  "cSpell.words": ["smstring", "thiserror", "yspan"],
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },

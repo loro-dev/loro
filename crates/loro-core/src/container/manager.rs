@@ -136,15 +136,7 @@ impl ContainerManager {
         }
 
         let container = self.get_mut(id).unwrap();
-        if container.type_() != id.container_type() {
-            Err(LoroError::ContainerTypeError {
-                id: id.clone(),
-                actual_type: container.type_(),
-                expected_type: id.container_type(),
-            })
-        } else {
-            Ok(container)
-        }
+        Ok(container)
     }
 }
 

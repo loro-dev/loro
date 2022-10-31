@@ -5,7 +5,7 @@ use loro_core::LoroCore;
 #[test]
 fn test() {
     let mut store = LoroCore::new(Default::default(), Some(10));
-    let mut text_container = store.get_or_create_text_container("haha".into());
+    let mut text_container = store.get_or_create_root_text("haha").unwrap();
     text_container.insert(0, "012");
     text_container.insert(1, "34");
     text_container.insert(1, "56");
@@ -17,7 +17,7 @@ fn test() {
     let mut store_b = LoroCore::new(Default::default(), Some(11));
     let exported = store.export(Default::default());
     store_b.import(exported);
-    let mut text_container = store_b.get_or_create_text_container("haha".into());
+    let mut text_container = store_b.get_or_create_root_text("haha").unwrap();
     text_container.check();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
@@ -31,7 +31,7 @@ fn test() {
     drop(text_container);
 
     store.import(store_b.export(store.vv()));
-    let mut text_container = store.get_or_create_text_container("haha".into());
+    let mut text_container = store.get_or_create_root_text("haha".into()).unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(value.as_str(), "63417892");
@@ -43,7 +43,7 @@ fn test() {
     drop(text_container);
 
     store_b.import(store.export(Default::default()));
-    let mut text_container = store_b.get_or_create_text_container("haha".into());
+    let mut text_container = store_b.get_or_create_root_text("haha".into()).unwrap();
     text_container.check();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();

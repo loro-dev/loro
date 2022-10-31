@@ -1,15 +1,7 @@
 use thiserror::Error;
 
-use crate::{container::ContainerID, ContainerType};
-
 #[derive(Error, Debug)]
 pub enum LoroError {
-    #[error("Expect container with the id of {id:?} has type {expected_type:?} but the actual type is {actual_type:?}.")]
-    ContainerTypeError {
-        id: ContainerID,
-        actual_type: ContainerType,
-        expected_type: ContainerType,
-    },
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

@@ -38,7 +38,7 @@ impl Loro {
 
     pub fn get_text_container(&mut self, name: &str) -> Result<Text, JsValue> {
         let mut loro = self.loro.borrow_mut();
-        let text_container = loro.get_or_create_text_container(name)?;
+        let text_container = loro.get_or_create_root_text(name)?;
         Ok(Text {
             id: text_container.id().clone(),
             loro: Rc::downgrade(&self.loro),
@@ -47,7 +47,7 @@ impl Loro {
 
     pub fn get_map_container(&mut self, name: &str) -> Result<Map, JsValue> {
         let mut loro = self.loro.borrow_mut();
-        let map = loro.get_or_create_map_container(name)?;
+        let map = loro.get_or_create_root_map(name)?;
         Ok(Map {
             id: map.id().clone(),
             loro: Rc::downgrade(&self.loro),
