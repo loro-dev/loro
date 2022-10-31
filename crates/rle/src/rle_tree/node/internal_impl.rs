@@ -1,14 +1,17 @@
 use std::{
-    collections::{BinaryHeap, HashMap, HashSet},
+    collections::{BinaryHeap, HashSet},
     fmt::{Debug, Error, Formatter},
 };
 
-use fxhash::{FxBuildHasher, FxHashSet};
+use fxhash::FxHashSet;
 use smallvec::SmallVec;
 
-use crate::rle_tree::{
-    node::utils::distribute,
-    tree_trait::{FindPosResult, Position},
+use crate::{
+    rle_tree::{
+        node::utils::distribute,
+        tree_trait::{FindPosResult, Position},
+    },
+    small_set::SmallSet,
 };
 
 use super::*;
@@ -143,7 +146,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         &mut self,
         from: Option<A::Int>,
         to: Option<A::Int>,
-        visited: &mut Vec<(usize, NonNull<Node<'a, T, A>>)>,
+        visited: &mut SmallVec<[(usize, NonNull<Node<'a, T, A>>); 8]>,
         depth: usize,
         notify: &mut F,
     ) -> Result<(), &'a mut Node<'a, T, A>>
@@ -523,7 +526,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         debug_assert!(self.is_root());
-        let mut zipper = Vec::with_capacity(8);
+        let mut zipper = SmallVec::with_capacity(12);
         match self._delete(start, end, &mut zipper, 1, notify) {
             Ok(_) => {
                 A::update_cache_internal(self);
@@ -538,12 +541,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let removed = self._root_shrink_levels_if_one_child();
 
         // filter the same
-        let mut visited: HashSet<NonNull<_>, _> =
-            HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
-        let mut should_skip: HashSet<NonNull<_>, _> =
-            HashSet::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
-        let mut depth_to_node: HashMap<isize, SmallVec<[NonNull<_>; 2]>, _> =
-            HashMap::with_capacity_and_hasher(zipper.len(), FxBuildHasher::default());
+        let mut visited: SmallSet<NonNull<_>, 12> = SmallSet::new();
+        let mut should_skip: SmallSet<NonNull<_>, 12> = SmallSet::new();
+        let mut depth_to_node: SmallVec<[SmallVec<[NonNull<_>; 2]>; 10]> = smallvec::smallvec![];
         let mut zipper: BinaryHeap<(isize, NonNull<Node<'a, T, A>>)> = zipper
             .into_iter()
             .filter_map(|(i, mut ptr)| {
@@ -559,7 +559,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 if visited.contains(&ptr) {
                     None
                 } else {
-                    depth_to_node.entry(i as isize).or_default().push(ptr);
+                    while depth_to_node.len() <= i {
+                        depth_to_node.push(SmallVec::new());
+                    }
+                    depth_to_node[i].push(ptr);
                     visited.insert(ptr);
                     Some((-(i as isize), ptr))
                 }
@@ -600,7 +603,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
             if to_delete {
                 should_skip.insert(node_ptr);
-                if let Some(parent) = depth_to_node.get(&(-reverse_depth - 1)).as_ref() {
+                if let Some(parent) = depth_to_node.get((-reverse_depth - 1) as usize).as_ref() {
                     for ptr in parent.iter() {
                         zipper.push((reverse_depth + 1, *ptr));
                     }
