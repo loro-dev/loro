@@ -34,7 +34,10 @@ pub trait Container: Debug + Any + Unpin {
     fn to_import(&mut self, op: &mut Op);
 }
 
-/// it's really cheap to clone
+/// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
+/// the same [ContainerID] with conflict [ContainerType].
+///
+/// This structure is really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.
