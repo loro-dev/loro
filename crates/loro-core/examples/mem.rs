@@ -5,7 +5,7 @@
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use tikv_jemalloc_ctl::{epoch, stats, Access, AsName};
+use tikv_jemalloc_ctl::epoch;
 const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
 
 use std::{io::Read, time::Instant};

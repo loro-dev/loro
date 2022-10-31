@@ -2,7 +2,7 @@ use crate::{
     change::{Lamport, Timestamp},
     container::ContainerID,
     id::{Counter, ID},
-    span::{HasId},
+    span::HasId,
 };
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 mod insert_content;

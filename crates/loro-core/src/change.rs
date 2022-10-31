@@ -6,10 +6,12 @@
 //! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
 
 use crate::{
+    container::{map::MapSet, text::text_content::ListSlice, ContainerID},
     dag::DagNode,
-    id::{Counter, ID},
-    op::Op,
-    span::{HasId, HasLamport},
+    id::{ClientID, Counter, ID},
+    op::{InsertContent, Op},
+    span::{HasId, HasLamport, IdSpan},
+    Container, InsertValue,
 };
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
@@ -29,12 +31,6 @@ pub struct Change {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// Whether this change can be merged with the next change
-    /// - Only the last change in a chain can be merged with the next change
-    /// - Imported changes should be freezed
-    ///
-    /// TODO: maybe we can remove this field?
-    pub(crate) freezed: bool,
     /// if other changes dep on the middle of this change, we need to record a break point here.
     /// So that we can iter the ops in the correct order.
     ///
@@ -61,7 +57,6 @@ impl Change {
             id,
             lamport,
             timestamp,
-            freezed,
             break_points: SmallVec::new(),
         }
     }
@@ -85,13 +80,25 @@ impl HasLength for Change {
 pub struct ChangeMergeCfg {
     pub max_change_length: usize,
     pub max_change_interval: usize,
+    pub from_this_client: bool,
+}
+
+impl ChangeMergeCfg {
+    pub fn new(from_this: bool) -> Self {
+        ChangeMergeCfg {
+            from_this_client: from_this,
+            max_change_length: 1024,
+            max_change_interval: 60,
+        }
+    }
 }
 
 impl Default for ChangeMergeCfg {
     fn default() -> Self {
-        ChangeMergeCfg {
+        Self {
             max_change_length: 1024,
             max_change_interval: 60,
+            from_this_client: false,
         }
     }
 }
@@ -102,7 +109,7 @@ impl Mergable<ChangeMergeCfg> for Change {
     }
 
     fn is_mergable(&self, other: &Self, cfg: &ChangeMergeCfg) -> bool {
-        if self.freezed {
+        if !cfg.from_this_client {
             return false;
         }
 
@@ -149,7 +156,6 @@ impl Sliceable for Change {
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            freezed: self.freezed,
             break_points: self.break_points.clone(),
         }
     }
@@ -159,4 +165,19 @@ impl DagNode for Change {
     fn deps(&self) -> &[ID] {
         &self.deps
     }
+}
+
+#[test]
+fn size_of() {
+    println!("Change {}", std::mem::size_of::<Change>());
+    println!("Op {}", std::mem::size_of::<Op>());
+    println!("InsertContent {}", std::mem::size_of::<InsertContent>());
+    println!("MapSet {}", std::mem::size_of::<MapSet>());
+    println!("ListSlice {}", std::mem::size_of::<ListSlice>());
+    println!("Box {}", std::mem::size_of::<Box<dyn Container>>());
+    println!("InsertValue {}", std::mem::size_of::<InsertValue>());
+    println!("ID {}", std::mem::size_of::<ID>());
+    println!("Vec {}", std::mem::size_of::<Vec<ID>>());
+    println!("IdSpan {}", std::mem::size_of::<IdSpan>());
+    println!("ContainerID {}", std::mem::size_of::<ContainerID>());
 }

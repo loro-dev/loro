@@ -129,7 +129,7 @@ impl TextContainer {
             self.id,
             self.raw_str.len(),
         );
-        self.state.debug_inspect()
+        self.state.debug_inspect();
     }
 }
 

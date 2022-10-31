@@ -168,6 +168,17 @@ impl<T, Conf: Default> RleVecWithIndex<T, Conf> {
     }
 }
 
+impl<T, Cfg> RleVecWithIndex<T, Cfg> {
+    pub fn new_with_conf(cfg: Cfg) -> Self {
+        RleVecWithIndex {
+            vec: Vec::new(),
+            atom_len: 0,
+            index: Vec::new(),
+            cfg,
+        }
+    }
+}
+
 impl<T, Conf> RleVecWithIndex<T, Conf> {
     pub fn with_capacity(&mut self, capacity: usize) -> &mut Self {
         self.vec.reserve(capacity);
