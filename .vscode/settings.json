@@ -19,5 +19,6 @@
   "explorer.fileNesting.patterns": {
     "*.rs": "${capture}.excalidraw"
   },
-  "excalidraw.theme": "dark"
+  "excalidraw.theme": "dark",
+  "deno.enable": true
 }

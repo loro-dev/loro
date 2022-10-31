@@ -68,6 +68,8 @@ pub mod wasm {
 
     use crate::LoroValue;
 
+    use super::InsertValue;
+
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
             LoroValue::Null => JsValue::NULL,
@@ -101,6 +103,22 @@ pub mod wasm {
     impl From<LoroValue> for JsValue {
         fn from(value: LoroValue) -> Self {
             convert(value)
+        }
+    }
+
+    impl InsertValue {
+        pub fn try_from_js(value: JsValue) -> Result<InsertValue, JsValue> {
+            if value.is_null() {
+                Ok(InsertValue::Null)
+            } else if value.as_bool().is_some() {
+                Ok(InsertValue::Bool(value.as_bool().unwrap()))
+            } else if value.as_f64().is_some() {
+                Ok(InsertValue::Double(value.as_f64().unwrap()))
+            } else if value.is_string() {
+                Ok(InsertValue::String(value.as_string().unwrap().into()))
+            } else {
+                Err(value)
+            }
         }
     }
 }

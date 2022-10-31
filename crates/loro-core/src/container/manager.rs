@@ -1,14 +1,18 @@
 use std::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::RwLockWriteGuard,
 };
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use owning_ref::OwningRefMut;
+use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{isomorph::IsoRefMut, log_store::LogStoreWeakRef, span::IdSpan, LogStore};
+use crate::{
+    isomorph::{IsoRef, IsoRefMut},
+    log_store::LogStoreWeakRef,
+    span::IdSpan,
+    LogStore, LoroError,
+};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -96,7 +100,9 @@ impl ContainerManager {
         log_store: LogStoreWeakRef,
     ) -> ContainerInstance {
         match container_type {
-            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
+            ContainerType::Map => {
+                ContainerInstance::Map(Box::new(MapContainer::new(id, log_store)))
+            }
             ContainerType::Text => {
                 ContainerInstance::Text(Box::new(TextContainer::new(id, log_store)))
             }
@@ -123,27 +129,46 @@ impl ContainerManager {
         &mut self,
         id: &ContainerID,
         log_store: LogStoreWeakRef,
-    ) -> &mut ContainerInstance {
+    ) -> Result<&mut ContainerInstance, LoroError> {
         if !self.containers.contains_key(id) {
             let container = self.create(id.clone(), id.container_type(), log_store);
             self.insert(id.clone(), container);
         }
 
-        self.get_mut(id).unwrap()
+        let container = self.get_mut(id).unwrap();
+        if container.type_() != id.container_type() {
+            Err(LoroError::ContainerTypeError {
+                id: id.clone(),
+                actual_type: container.type_(),
+                expected_type: id.container_type(),
+            })
+        } else {
+            Ok(container)
+        }
     }
 }
 
-pub struct ContainerRef<'a, T> {
+pub struct ContainerRefMut<'a, T> {
     value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>,
 }
 
-impl<'a, T> From<OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
+pub struct ContainerRef<'a, T> {
+    value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>,
+}
+
+impl<'a, T> From<OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>> for ContainerRefMut<'a, T> {
     fn from(value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>) -> Self {
+        ContainerRefMut { value }
+    }
+}
+
+impl<'a, T> From<OwningRef<IsoRef<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
+    fn from(value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>) -> Self {
         ContainerRef { value }
     }
 }
 
-impl<'a, T> Deref for ContainerRef<'a, T> {
+impl<'a, T> Deref for ContainerRefMut<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -151,7 +176,7 @@ impl<'a, T> Deref for ContainerRef<'a, T> {
     }
 }
 
-impl<'a, T> DerefMut for ContainerRef<'a, T> {
+impl<'a, T> DerefMut for ContainerRefMut<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value.deref_mut()
     }

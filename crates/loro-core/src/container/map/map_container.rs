@@ -22,6 +22,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     value: Option<LoroValue>,
+    store: LogStoreWeakRef,
 }
 
 #[derive(Debug)]
@@ -33,23 +34,18 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub fn new(id: ContainerID) -> Self {
+    pub(crate) fn new(id: ContainerID, store: LogStoreWeakRef) -> Self {
         MapContainer {
             id,
+            store,
             state: FxHashMap::default(),
             value: None,
         }
     }
 
-    // FIXME: keep store in the struct
-    pub(crate) fn insert(
-        &mut self,
-        key: InternalString,
-        value: InsertValue,
-        store: LogStoreWeakRef,
-    ) {
+    pub fn insert(&mut self, key: InternalString, value: InsertValue) {
         let self_id = self.id.clone();
-        let m = store.upgrade().unwrap();
+        let m = self.store.upgrade().unwrap();
         let mut store = m.write();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
@@ -89,10 +85,9 @@ impl MapContainer {
         );
     }
 
-    // FIXME: keep store in the struct
     #[inline]
-    pub(crate) fn delete(&mut self, key: InternalString, store: LogStoreWeakRef) {
-        self.insert(key, InsertValue::Null, store);
+    pub fn delete(&mut self, key: InternalString) {
+        self.insert(key, InsertValue::Null);
     }
 }
 

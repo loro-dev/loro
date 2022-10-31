@@ -2,9 +2,7 @@
 //!
 //!
 mod iter;
-use std::{
-    marker::PhantomPinned,
-};
+use std::marker::PhantomPinned;
 
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -149,7 +147,9 @@ impl LogStore {
         change: &mut Change,
     ) {
         for op in change.ops.vec_mut().iter_mut() {
-            let container = container_manager.get_or_create(&op.container, self.to_self.clone());
+            let container = container_manager
+                .get_or_create(&op.container, self.to_self.clone())
+                .unwrap();
             container.to_import(op);
         }
     }
@@ -282,7 +282,9 @@ impl LogStore {
         }
 
         for container in set {
-            let container = container_manager.get_or_create(container, self.to_self.clone());
+            let container = container_manager
+                .get_or_create(container, self.to_self.clone())
+                .unwrap();
             container.apply(change.id_span(), self);
         }
 
