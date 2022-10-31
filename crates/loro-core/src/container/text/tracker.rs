@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
-    id::{Counter, ID},
+    id::{ClientID, Counter, ID},
     op::OpContent,
     span::{HasIdSpan, IdSpan},
     version::IdSpanVector,

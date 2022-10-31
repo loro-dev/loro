@@ -1,5 +1,3 @@
-
-
 use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
@@ -13,6 +11,7 @@ use crate::{
     },
     id::ClientID,
     isomorph::{Irc, IsoRw},
+    op::RemoteOp,
     LogStore, LoroError, VersionVector,
 };
 
@@ -48,6 +47,7 @@ impl LoroCore {
     ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
         let mut a = OwningRefMut::new(self.container.write());
         let id = ContainerID::new_root(name, ContainerType::Map);
+        self.log_store.write().get_or_create_container_idx(&id);
         let ptr = Irc::downgrade(&self.log_store);
         a.get_or_create(&id, ptr)?;
         Ok(
@@ -63,6 +63,7 @@ impl LoroCore {
     ) -> Result<ContainerRefMut<TextContainer>, LoroError> {
         let mut a = OwningRefMut::new(self.container.write());
         let id = ContainerID::new_root(name, ContainerType::Text);
+        self.log_store.write().get_or_create_container_idx(&id);
         let ptr = Irc::downgrade(&self.log_store);
         a.get_or_create(&id, ptr)?;
         Ok(
@@ -104,12 +105,12 @@ impl LoroCore {
         Ok(a.map(move |x| x.get(id).unwrap().as_text().unwrap()).into())
     }
 
-    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change> {
+    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
         let store = self.log_store.read();
         store.export(&remote_vv)
     }
 
-    pub fn import(&mut self, changes: Vec<Change>) {
+    pub fn import(&mut self, changes: Vec<Change<RemoteOp>>) {
         let mut store = self.log_store.write();
         store.import(changes)
     }

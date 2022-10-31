@@ -6,7 +6,7 @@ use std::marker::PhantomPinned;
 
 use fxhash::{FxHashMap, FxHashSet};
 
-use rle::{HasLength, RleVecWithIndex, Sliceable};
+use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 
 use smallvec::SmallVec;
 
@@ -18,7 +18,8 @@ use crate::{
     debug_log,
     id::{ClientID, Counter},
     isomorph::{Irc, IsoRw, IsoWeak},
-    span::{HasIdSpan, IdSpan},
+    op::RemoteOp,
+    span::{HasIdSpan, HasLamportSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
 };
 
@@ -62,6 +63,8 @@ pub struct LogStore {
     /// CRDT container manager
     pub(crate) container: IsoWeak<IsoRw<ContainerManager>>,
     to_self: IsoWeak<IsoRw<LogStore>>,
+    container_to_idx: FxHashMap<ContainerID, u32>,
+    idx_to_container: Vec<ContainerID>,
     _pin: PhantomPinned,
 }
 
@@ -83,6 +86,8 @@ impl LogStore {
                 container,
                 to_self: x.clone(),
                 vv: Default::default(),
+                idx_to_container: Default::default(),
+                container_to_idx: Default::default(),
                 _pin: PhantomPinned,
             })
         })
@@ -95,12 +100,12 @@ impl LogStore {
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
-    pub fn import(&mut self, mut changes: Vec<Change>) {
+    pub fn import(&mut self, mut changes: Vec<Change<RemoteOp>>) {
         let self_vv = self.vv();
         changes.sort_by_cached_key(|x| x.lamport);
         for change in changes
             .into_iter()
-            .filter(|x| !self_vv.includes_id(x.last_id()))
+            .filter(|x| !self_vv.includes_id(x.id_last()))
         {
             check_import_change_valid(&change);
             // TODO: cache pending changes
@@ -109,16 +114,15 @@ impl LogStore {
         }
     }
 
-    pub fn export(&self, remote_vv: &VersionVector) -> Vec<Change> {
+    pub fn export(&self, remote_vv: &VersionVector) -> Vec<Change<RemoteOp>> {
         let mut ans = Vec::default();
         let self_vv = self.vv();
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
-            let mut changes = self.get_changes_slice(span.id_span());
-            ans.append(&mut changes);
-        }
-        for change in ans.iter_mut() {
-            self.change_to_export_format(change);
+            let changes = self.get_changes_slice(span.id_span());
+            for change in changes {
+                ans.push(self.change_to_export_format(change))
+            }
         }
 
         ans
@@ -142,24 +146,49 @@ impl LogStore {
     }
 
     fn change_to_imported_format(
-        &self,
+        &mut self,
         container_manager: &mut ContainerManager,
-        change: &mut Change,
-    ) {
-        for op in change.ops.vec_mut().iter_mut() {
+        change: Change<RemoteOp>,
+    ) -> Change {
+        let mut new_ops = RleVec::new();
+        for mut op in change.ops.into_iter() {
             let container = container_manager
                 .get_or_create(&op.container, self.to_self.clone())
                 .unwrap();
-            container.to_import(op);
+            container.to_import(&mut op);
+            self.get_or_create_container_idx(&op.container);
+            new_ops.push(op.convert(self));
+        }
+
+        Change {
+            ops: new_ops,
+            deps: change.deps,
+            id: change.id,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+            break_points: change.break_points,
         }
     }
 
-    fn change_to_export_format(&self, change: &mut Change) {
+    fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
         let upgraded = self.container.upgrade().unwrap();
         let container_manager = upgraded.read();
-        for op in change.ops.vec_mut().iter_mut() {
-            let container = container_manager.get(&op.container).unwrap();
-            container.to_export(op);
+        let mut ops = RleVec::new();
+        for mut op in change.ops.into_iter() {
+            let container = container_manager
+                .get(&self.idx_to_container[op.container as usize])
+                .unwrap();
+            container.to_export(&mut op);
+            ops.push(op.convert(self));
+        }
+
+        Change {
+            ops,
+            deps: change.deps,
+            id: change.id,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+            break_points: change.break_points,
         }
     }
 
@@ -249,8 +278,8 @@ impl LogStore {
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
     }
 
-    pub fn apply_remote_change(&mut self, mut change: Change) {
-        if self.contains(change.last_id()) {
+    pub fn apply_remote_change(&mut self, mut change: Change<RemoteOp>) {
+        if self.contains(change.id_last()) {
             return;
         }
 
@@ -264,7 +293,7 @@ impl LogStore {
         let upgraded = self.container.upgrade().unwrap();
         let mut container_manager = upgraded.write();
         #[cfg(feature = "slice")]
-        self.change_to_imported_format(&mut container_manager, &mut change);
+        let change = self.change_to_imported_format(&mut container_manager, change);
         let v = self
             .changes
             .entry(change.id.client_id)
@@ -281,17 +310,20 @@ impl LogStore {
 
         for container in set {
             let container = container_manager
-                .get_or_create(container, self.to_self.clone())
+                .get_or_create(
+                    &self.idx_to_container[*container as usize],
+                    self.to_self.clone(),
+                )
                 .unwrap();
             container.apply(change.id_span(), self);
         }
 
         drop(container_manager);
         self.vv.set_end(change.id_end());
-        self.update_frontier(&change.deps, &[change.last_id()]);
+        self.update_frontier(&change.deps, &[change.id_last()]);
 
-        if change.last_lamport() > self.latest_lamport {
-            self.latest_lamport = change.last_lamport();
+        if change.lamport_last() > self.latest_lamport {
+            self.latest_lamport = change.lamport_last();
         }
 
         if change.timestamp > self.latest_timestamp {
@@ -329,7 +361,8 @@ impl LogStore {
         id_span: IdSpan,
         container: ContainerID,
     ) -> iter::OpSpanIter<'_> {
-        iter::OpSpanIter::new(&self.changes, id_span, container)
+        let idx = self.get_container_idx(&container).unwrap();
+        iter::OpSpanIter::new(&self.changes, id_span, idx)
     }
 
     #[inline(always)]
@@ -359,6 +392,25 @@ impl LogStore {
                 .join(", "),
         );
     }
+
+    pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<u32> {
+        self.container_to_idx.get(container).copied()
+    }
+
+    pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> u32 {
+        if let Some(idx) = self.container_to_idx.get(container) {
+            *idx
+        } else {
+            let idx = self.container_to_idx.len() as u32;
+            self.container_to_idx.insert(container.clone(), idx);
+            self.idx_to_container.push(container.clone());
+            idx
+        }
+    }
+
+    pub(crate) fn get_container_id(&self, container: u32) -> &ContainerID {
+        &self.idx_to_container[container as usize]
+    }
 }
 
 impl Dag for LogStore {
@@ -379,15 +431,39 @@ impl Dag for LogStore {
     }
 }
 
-fn check_import_change_valid(change: &Change) {
-    for op in change.ops.iter() {
-        if let Some((slice, _)) = op
-            .content
-            .as_normal()
-            .and_then(|x| x.as_list())
-            .and_then(|x| x.as_insert())
-        {
-            assert!(slice.as_raw_str().is_some())
+fn check_import_change_valid(change: &Change<RemoteOp>) {
+    if cfg!(test) {
+        for op in change.ops.iter() {
+            if let Some((slice, _)) = op
+                .content
+                .as_normal()
+                .and_then(|x| x.as_list())
+                .and_then(|x| x.as_insert())
+            {
+                assert!(slice.as_raw_str().is_some())
+            }
         }
     }
+}
+
+#[test]
+fn size_of() {
+    use crate::{
+        container::{map::MapSet, text::text_content::ListSlice, ContainerID},
+        id::ID,
+        op::{InsertContent, Op},
+        span::IdSpan,
+        Container, InsertValue,
+    };
+    println!("Change {}", std::mem::size_of::<Change>());
+    println!("Op {}", std::mem::size_of::<Op>());
+    println!("InsertContent {}", std::mem::size_of::<InsertContent>());
+    println!("MapSet {}", std::mem::size_of::<MapSet>());
+    println!("ListSlice {}", std::mem::size_of::<ListSlice>());
+    println!("Box {}", std::mem::size_of::<Box<dyn Container>>());
+    println!("InsertValue {}", std::mem::size_of::<InsertValue>());
+    println!("ID {}", std::mem::size_of::<ID>());
+    println!("Vec {}", std::mem::size_of::<Vec<ID>>());
+    println!("IdSpan {}", std::mem::size_of::<IdSpan>());
+    println!("ContainerID {}", std::mem::size_of::<ContainerID>());
 }

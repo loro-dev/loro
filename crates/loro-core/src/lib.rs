@@ -32,7 +32,7 @@ pub use error::LoroError;
 pub(crate) mod macros;
 pub(crate) use change::{Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
-pub(crate) use op::{ContentType, InsertContentTrait, Op, OpType};
+pub(crate) use op::{ContentType, InsertContentTrait, Op, OpType, RemoteOp};
 
 pub(crate) type InternalString = DefaultAtom;
 

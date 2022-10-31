@@ -7,9 +7,9 @@ use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     dag::DagUtils,
     debug_log,
-    id::{Counter, ID},
+    id::{ContainerIdx, Counter, ID},
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, OpContent},
+    op::{InsertContent, Op, OpContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, IdSpan},
     value::LoroValue,
@@ -80,7 +80,7 @@ impl TextContainer {
                     pos,
                 }),
             },
-            self.id.clone(),
+            store.get_or_create_container_idx(&self.id),
         );
         let last_id = op.id_last();
         store.append_local_ops(&[op]);
@@ -103,7 +103,7 @@ impl TextContainer {
             OpContent::Normal {
                 content: InsertContent::List(ListOp::Delete { len, pos }),
             },
-            self.id.clone(),
+            store.get_or_create_container_idx(&self.id),
         );
 
         let last_id = op.id_last();
@@ -181,6 +181,7 @@ impl Container for TextContainer {
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
         debug_log!("path={:?}", &path.right);
+        let self_idx = store.get_container_idx(&self.id).unwrap();
         for iter in store.iter_partial(&head, path.right) {
             // TODO: avoid this clone
             let change = iter
@@ -195,7 +196,7 @@ impl Container for TextContainer {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             for op in change.ops.iter() {
-                if op.container == self.id {
+                if op.container == self_idx {
                     // TODO: convert op to local
                     self.tracker.apply(op.id, &op.content)
                 }
@@ -272,7 +273,7 @@ impl Container for TextContainer {
         }
     }
 
-    fn to_import(&mut self, op: &mut Op) {
+    fn to_import(&mut self, op: &mut RemoteOp) {
         if let Some((slice, _pos)) = op
             .content
             .as_normal_mut()

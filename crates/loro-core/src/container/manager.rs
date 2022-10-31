@@ -1,6 +1,4 @@
-use std::{
-    ops::{Deref, DerefMut},
-};
+use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -9,6 +7,7 @@ use owning_ref::{OwningRef, OwningRefMut};
 use crate::{
     isomorph::{IsoRef, IsoRefMut},
     log_store::LogStoreWeakRef,
+    op::RemoteOp,
     span::IdSpan,
     LogStore, LoroError,
 };
@@ -73,7 +72,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn to_import(&mut self, op: &mut crate::op::Op) {
+    fn to_import(&mut self, op: &mut RemoteOp) {
         match self {
             ContainerInstance::Map(x) => x.to_import(op),
             ContainerInstance::Text(x) => x.to_import(op),

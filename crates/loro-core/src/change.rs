@@ -8,11 +8,11 @@
 use crate::{
     dag::DagNode,
     id::{Counter, ID},
-    op::{Op},
-    span::{HasId, HasLamport},
-    Container,
+    op::Op,
+    span::{HasId, HasIdSpan, HasLamport},
 };
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use num::traits::AsPrimitive;
+use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -20,8 +20,8 @@ pub type Lamport = u32;
 
 /// A `Change` contains a list of [Op]s.
 #[derive(Debug, Clone)]
-pub struct Change {
-    pub(crate) ops: RleVec<[Op; 2]>,
+pub struct Change<O = Op> {
+    pub(crate) ops: RleVec<[O; 2]>,
     pub(crate) deps: SmallVec<[ID; 2]>,
     /// id of the first op in the change
     pub(crate) id: ID,
@@ -41,9 +41,9 @@ pub struct Change {
     pub(crate) break_points: SmallVec<[Counter; 2]>,
 }
 
-impl Change {
+impl<O> Change<O> {
     pub fn new(
-        ops: RleVec<[Op; 2]>,
+        ops: RleVec<[O; 2]>,
         deps: SmallVec<[ID; 2]>,
         id: ID,
         lamport: Lamport,
@@ -59,19 +59,23 @@ impl Change {
             break_points: SmallVec::new(),
         }
     }
+}
 
-    pub fn last_id(&self) -> ID {
-        self.id.inc(self.content_len() as Counter - 1)
-    }
-
-    pub fn last_lamport(&self) -> Lamport {
-        self.lamport + self.content_len() as Lamport - 1
+impl<O> HasId for Change<O> {
+    fn id_start(&self) -> ID {
+        self.id
     }
 }
 
-impl HasLength for Change {
+impl<O> HasLamport for Change<O> {
+    fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+}
+
+impl<O: Mergable + HasLength + HasIndex> HasLength for Change<O> {
     fn content_len(&self) -> usize {
-        self.ops.span() as usize
+        self.ops.span().as_()
     }
 }
 
@@ -112,7 +116,7 @@ impl Mergable<ChangeMergeCfg> for Change {
             return false;
         }
 
-        if other.deps.is_empty() || !(other.deps.len() == 1 && self.last_id() == other.deps[0]) {
+        if other.deps.is_empty() || !(other.deps.len() == 1 && self.id_last() == other.deps[0]) {
             return false;
         }
 
@@ -130,19 +134,7 @@ impl Mergable<ChangeMergeCfg> for Change {
     }
 }
 
-impl HasId for Change {
-    fn id_start(&self) -> ID {
-        self.id
-    }
-}
-
-impl HasLamport for Change {
-    fn lamport(&self) -> Lamport {
-        self.lamport
-    }
-}
-
-impl Sliceable for Change {
+impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
     // TODO: feels slow, need to confirm whether this affects performance
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
@@ -164,19 +156,4 @@ impl DagNode for Change {
     fn deps(&self) -> &[ID] {
         &self.deps
     }
-}
-
-#[test]
-fn size_of() {
-    println!("Change {}", std::mem::size_of::<Change>());
-    println!("Op {}", std::mem::size_of::<Op>());
-    println!("InsertContent {}", std::mem::size_of::<InsertContent>());
-    println!("MapSet {}", std::mem::size_of::<MapSet>());
-    println!("ListSlice {}", std::mem::size_of::<ListSlice>());
-    println!("Box {}", std::mem::size_of::<Box<dyn Container>>());
-    println!("InsertValue {}", std::mem::size_of::<InsertValue>());
-    println!("ID {}", std::mem::size_of::<ID>());
-    println!("Vec {}", std::mem::size_of::<Vec<ID>>());
-    println!("IdSpan {}", std::mem::size_of::<IdSpan>());
-    println!("ContainerID {}", std::mem::size_of::<ContainerID>());
 }

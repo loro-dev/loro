@@ -4,8 +4,8 @@ use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogStoreWeakRef,
-    op::OpContent,
     op::{InsertContent, Op, RichOp},
+    op::{OpContent, RemoteOp},
     span::{HasId, IdSpan},
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
@@ -44,7 +44,7 @@ impl MapContainer {
     }
 
     pub fn insert(&mut self, key: InternalString, value: InsertValue) {
-        let self_id = self.id.clone();
+        let self_id = &self.id;
         let m = self.store.upgrade().unwrap();
         let mut store = m.write();
         let client_id = store.this_client_id;
@@ -55,9 +55,10 @@ impl MapContainer {
 
         let id = store.next_id_for(client_id);
         let counter = id.counter;
+        let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             id,
-            container: self_id,
+            container,
             content: OpContent::Normal {
                 content: InsertContent::Dyn(Box::new(MapSet {
                     key: key.clone(),
@@ -159,5 +160,5 @@ impl Container for MapContainer {
 
     fn to_export(&self, _op: &mut Op) {}
 
-    fn to_import(&mut self, _op: &mut Op) {}
+    fn to_import(&mut self, _op: &mut RemoteOp) {}
 }

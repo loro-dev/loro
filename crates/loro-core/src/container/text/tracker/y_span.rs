@@ -204,10 +204,7 @@ pub mod test {
                     slice: Default::default(),
                 })),
             },
-            ContainerID::Normal {
-                id: ROOT_ID,
-                container_type: ContainerType::Text,
-            },
+            5,
         ));
         vec.push(Op::new(
             ID::new(0, 2),
@@ -221,10 +218,7 @@ pub mod test {
                     slice: Default::default(),
                 })),
             },
-            ContainerID::Normal {
-                id: ROOT_ID,
-                container_type: ContainerType::Text,
-            },
+            5,
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0).unwrap();
@@ -248,10 +242,7 @@ pub mod test {
                     slice: Default::default(),
                 })),
             },
-            ContainerID::Normal {
-                id: ROOT_ID,
-                container_type: ContainerType::Text,
-            },
+            5,
         ));
         vec.push(Op::new(
             ID::new(0, 2),
@@ -265,10 +256,7 @@ pub mod test {
                     slice: Default::default(),
                 })),
             },
-            ContainerID::Normal {
-                id: ROOT_ID,
-                container_type: ContainerType::Text,
-            },
+            5,
         ));
         assert_eq!(vec.merged_len(), 2);
         assert_eq!(

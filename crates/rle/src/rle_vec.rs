@@ -129,6 +129,17 @@ impl<A: Array> RleVec<A> {
         self.vec.len()
     }
 }
+
+impl<A: Array> IntoIterator for RleVec<A> {
+    type Item = A::Item;
+
+    type IntoIter = smallvec::IntoIter<A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
+    }
+}
+
 impl<A: Array> Debug for RleVecWithLen<A>
 where
     A::Item: Debug,

@@ -4,6 +4,7 @@ use crate::change::Lamport;
 use crate::container::ContainerID;
 
 use crate::id::ClientID;
+use crate::id::ContainerIdx;
 use crate::op::RichOp;
 use crate::span::HasId;
 use crate::span::IdSpan;
@@ -46,7 +47,7 @@ pub struct OpSpanIter<'a> {
     changes: &'a [Change],
     change_index: usize,
     op_index: usize,
-    container: ContainerID,
+    container: ContainerIdx,
     span: IdSpan,
 }
 
@@ -54,7 +55,7 @@ impl<'a> OpSpanIter<'a> {
     pub fn new(
         changes: &'a FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
         target_span: IdSpan,
-        container: ContainerID,
+        container: ContainerIdx,
     ) -> Self {
         let rle_changes = changes.get(&target_span.client_id).unwrap();
         let changes = rle_changes.vec();

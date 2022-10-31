@@ -6,6 +6,7 @@ use crate::span::{CounterSpan, IdSpan};
 
 pub type ClientID = u64;
 pub type Counter = i32;
+pub(crate) type ContainerIdx = u32;
 const UNKNOWN: ClientID = 404;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize)]

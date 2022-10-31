@@ -5,12 +5,11 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{Op},
+    op::{Op, RemoteOp},
     span::IdSpan,
     version::VersionVector,
     InternalString, LogStore, LoroValue, ID,
 };
-
 
 use serde::Serialize;
 
@@ -36,7 +35,7 @@ pub trait Container: Debug + Any + Unpin {
 
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
     fn to_export(&self, op: &mut Op);
-    fn to_import(&mut self, op: &mut Op);
+    fn to_import(&mut self, op: &mut RemoteOp);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
