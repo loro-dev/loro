@@ -160,7 +160,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
         let deleted_len = direct_delete_end as isize - direct_delete_start as isize;
         // TODO: maybe we can simplify this insertions logic
-        let mut insertions = vec![];
+        let mut insertions: SmallVec<[(usize, &mut Node<T, A>); 2]> = smallvec::smallvec![];
         {
             // handle removing at the end point
             let mut handled = false;
@@ -516,6 +516,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     /// this can only invoke from root
+    /// TODO: need to speed this method up. maybe remove hashset here? use a miniset instead
     #[inline]
     pub(crate) fn delete<F>(&mut self, start: Option<A::Int>, end: Option<A::Int>, notify: &mut F)
     where

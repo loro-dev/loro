@@ -75,7 +75,7 @@ impl TextContainer {
             self.id.clone(),
         );
         let last_id = op.id_last();
-        store.append_local_ops(vec![op]);
+        store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
 
@@ -99,7 +99,7 @@ impl TextContainer {
         );
 
         let last_id = op.id_last();
-        store.append_local_ops(vec![op]);
+        store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);

@@ -552,38 +552,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4217ad341ebadf8d8e724e264f13e593e0648f5b3e94b3896a5df283be015ecc"
 
 [[package]]
-name = "jemalloc-ctl"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1891c671f3db85d8ea8525dd43ab147f9977041911d24a03e5a36187a7bfde9"
-dependencies = [
- "jemalloc-sys",
- "libc",
- "paste",
-]
-
-[[package]]
-name = "jemalloc-sys"
-version = "0.5.2+5.3.0-patched"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "134163979b6eed9564c98637b710b40979939ba351f59952708234ea11b5f3f8"
-dependencies = [
- "cc",
- "fs_extra",
- "libc",
-]
-
-[[package]]
-name = "jemallocator"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16c2514137880c52b0b4822b563fadd38257c1f380858addb74a400889696ea6"
-dependencies = [
- "jemalloc-sys",
- "libc",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -639,9 +607,6 @@ dependencies = [
  "flate2",
  "fxhash",
  "im",
- "jemalloc-ctl",
- "jemalloc-sys",
- "jemallocator",
  "js-sys",
  "num",
  "owning_ref",
@@ -659,6 +624,9 @@ dependencies = [
  "string_cache",
  "tabled",
  "thiserror",
+ "tikv-jemalloc-ctl",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
  "wasm-bindgen",
 ]
 
@@ -1461,6 +1429,38 @@ name = "thousands"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e37706572f4b151dff7a0146e040804e9c26fe3a3118591112f05cf12a4216c1"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.5.2+5.3.0-patched"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec45c14da997d0925c7835883e4d5c181f196fa142f8c19d7643d1e9af2592c3"
+dependencies = [
+ "cc",
+ "fs_extra",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20612db8a13a6c06d57ec83953694185a367e16945f66565e8028d2c0bd76979"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
+]
 
 [[package]]
 name = "tinytemplate"

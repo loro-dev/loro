@@ -1,11 +1,11 @@
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
+// use tikv_jemallocator::Jemalloc;
+// #[global_allocator]
+// static GLOBAL: Jemalloc = Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use jemalloc_ctl::{epoch, stats};
+use tikv_jemalloc_ctl::{epoch, stats, Access, AsName};
 const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
 
 use std::{io::Read, time::Instant};
@@ -15,7 +15,7 @@ use loro_core::LoroCore;
 use serde_json::Value;
 
 pub fn main() {
-    let alloc_stats = stats::allocated::mib().unwrap();
+    // let alloc_stats = stats::allocated::mib().unwrap();
     let mut d = GzDecoder::new(&RAW_DATA[..]);
     let mut s = String::new();
     d.read_to_string(&mut s).unwrap();
@@ -24,6 +24,7 @@ pub fn main() {
     let txns = json.as_object().unwrap().get("txns");
     let e = epoch::mib().unwrap();
     let start = Instant::now();
+    let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
     let mut text = loro.get_or_create_root_text("text").unwrap();
     for i in 0..1 {
@@ -42,13 +43,18 @@ pub fn main() {
                 text.delete(pos, del_here);
                 text.insert(pos, ins_content);
             }
+
+            if start.elapsed().as_secs() > 10 {
+                break;
+            }
         }
     }
     drop(json);
     drop(d);
-    e.advance().unwrap();
-    let new_new_heap = alloc_stats.read().unwrap();
+    drop(profiler);
+    // e.advance().unwrap();
+    // let new_new_heap = alloc_stats.read().unwrap();
     println!("Apply Automerge Dataset 1X");
-    println!("Mem: {} MB", new_new_heap as f64 / 1024. / 1024.);
+    // println!("Mem: {} MB", new_new_heap as f64 / 1024. / 1024.);
     println!("Used: {} ms", start.elapsed().as_millis());
 }

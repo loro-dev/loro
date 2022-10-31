@@ -3,3 +3,4 @@
 *.ipynb
 flamegraph.svg
 target
+dhat-heap.json

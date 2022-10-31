@@ -344,11 +344,11 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         offset: usize,
         len: usize,
         update_fn: &mut U,
-    ) -> Option<Vec<T>>
+    ) -> Option<SmallVec<[T; 2]>>
     where
         U: FnMut(&mut T),
     {
-        let mut ans = vec![];
+        let mut ans = smallvec::smallvec![];
         if len == 0 {
             return None;
         }
@@ -434,7 +434,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
     pub(crate) fn apply_updates<F>(
         &mut self,
-        mut updates: Vec<(usize, Vec<T>)>,
+        mut updates: Vec<(usize, SmallVec<[T; 2]>)>,
         notify: &mut F,
     ) -> Result<(), Vec<&'bump mut Node<'bump, T, A>>>
     where

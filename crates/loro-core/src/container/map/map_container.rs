@@ -55,7 +55,7 @@ impl MapContainer {
 
         let id = store.next_id_for(client_id);
         let counter = id.counter;
-        store.append_local_ops(vec![Op {
+        store.append_local_ops(&[Op {
             id,
             container: self_id,
             content: OpContent::Normal {

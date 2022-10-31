@@ -86,7 +86,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
         })
         .collect();
     for (client_id, break_points) in breaks.iter() {
-        let mut spans = vec![];
+        let mut spans = Vec::with_capacity(break_points.len());
         for (from, to) in break_points.iter().zip(break_points.iter().skip(1)) {
             spans.push(IdSpan::new(*client_id, *from, *to));
         }

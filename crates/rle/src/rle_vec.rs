@@ -374,6 +374,20 @@ where
     }
 }
 
+impl<A: Array> From<&[A::Item]> for RleVec<A>
+where
+    A::Item: Mergable + HasLength + Clone,
+{
+    fn from(value: &[A::Item]) -> Self {
+        let mut ans: RleVec<A> = RleVec::with_capacity(value.len());
+        for v in value.iter() {
+            ans.push(v.clone());
+        }
+        ans.vec.shrink_to_fit();
+        ans
+    }
+}
+
 impl<A: Array> From<SmallVec<A>> for RleVec<A> {
     fn from(value: SmallVec<A>) -> Self {
         RleVec { vec: value }
