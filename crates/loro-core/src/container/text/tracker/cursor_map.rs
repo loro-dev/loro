@@ -292,7 +292,6 @@ impl CursorMap {
     }
 
     pub fn get_first_cursors_at_id_span(&self, span: IdSpan) -> Option<FirstCursorResult> {
-        // TODO: do we need this index
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
             let id: ID = id.into();
             match marker {

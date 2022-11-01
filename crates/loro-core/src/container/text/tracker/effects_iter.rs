@@ -46,7 +46,8 @@ impl<'a> Iterator for EffectIter<'a> {
             while let Some((ref mut delete_op_id, ref mut delete_targets)) =
                 self.current_delete_targets
             {
-                if let Some(target) = delete_targets.pop() {
+                if let Some(mut target) = delete_targets.pop() {
+                    target.normalize_();
                     let result = self
                         .tracker
                         .id_to_cursor

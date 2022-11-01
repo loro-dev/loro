@@ -93,7 +93,7 @@ impl TextContainer {
         Some(id)
     }
 
-    pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete(&mut self, mut pos: usize, mut len: usize) -> Option<ID> {
         if len == 0 {
             return None;
         }
@@ -104,7 +104,7 @@ impl TextContainer {
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::Delete { len, pos }),
+                content: InsertContent::List(ListOp::new_del(pos, len)),
             },
             store.get_or_create_container_idx(&self.id),
         );
@@ -238,6 +238,7 @@ impl Container for TextContainer {
                     self.state.insert(pos, content.as_slice().unwrap().clone());
                 }
             }
+            debug_log!("AFTER EFFECT");
         }
         debug_log!(
             "AFTER EFFECT STATE={}",

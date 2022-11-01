@@ -47,16 +47,37 @@ impl CounterSpan {
         }
     }
 
+    /// Make end greater than start
+    pub fn normalize_(&mut self) {
+        if self.end < self.start {
+            self.reverse();
+        }
+    }
+
+    #[inline(always)]
+    pub fn direction(&self) -> i32 {
+        if self.start < self.end {
+            1
+        } else {
+            -1
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_reversed(&self) -> bool {
+        self.end < self.start
+    }
+
     #[inline]
     pub fn min(&self) -> Counter {
         if self.start < self.end {
             self.start
         } else {
-            self.end
+            self.end + 1
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn max(&self) -> Counter {
         if self.start > self.end {
             self.start
@@ -65,11 +86,12 @@ impl CounterSpan {
         }
     }
 
+    #[inline(always)]
     pub fn end(&self) -> i32 {
-        if self.start > self.end {
-            self.start + 1
-        } else {
+        if self.start < self.end {
             self.end
+        } else {
+            self.start + 1
         }
     }
 
@@ -82,19 +104,19 @@ impl CounterSpan {
         }
     }
 
-    pub fn set_start(&mut self, start: Counter) {
+    pub fn set_start(&mut self, new_start: Counter) {
         if self.start < self.end {
-            self.start = start.min(self.end);
+            self.start = new_start.min(self.end);
         } else {
-            self.start = start.max(self.end);
+            self.start = new_start.max(self.end);
         }
     }
 
-    pub fn set_end(&mut self, end: Counter) {
+    pub fn set_end(&mut self, new_end: Counter) {
         if self.start < self.end {
-            self.end = end.max(self.start);
+            self.end = new_end.max(self.start);
         } else {
-            self.end = end.min(self.start);
+            self.end = new_end.min(self.start);
         }
     }
 }
@@ -102,7 +124,7 @@ impl CounterSpan {
 impl HasLength for CounterSpan {
     #[inline]
     fn content_len(&self) -> usize {
-        if self.end > self.start {
+        if self.start < self.end {
             (self.end - self.start) as usize
         } else {
             (self.start - self.end) as usize
@@ -132,7 +154,8 @@ impl Sliceable for CounterSpan {
 impl Mergable for CounterSpan {
     #[inline]
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        self.end == other.start
+        // TODO: can use the similar logic as [DeleteSpan] to merge
+        self.end == other.start && self.direction() == other.direction()
     }
 
     #[inline]
@@ -161,24 +184,29 @@ impl IdSpan {
         }
     }
 
-    #[inline]
-    pub fn min_ctr(&self) -> Counter {
-        self.counter.min()
+    #[inline(always)]
+    pub fn is_reversed(&self) -> bool {
+        self.counter.end < self.counter.start
     }
 
-    #[inline]
-    pub fn max_ctr(&self) -> Counter {
-        self.counter.max()
+    #[inline(always)]
+    pub fn id_at_begin(&self) -> ID {
+        ID::new(self.client_id, self.counter.start)
+    }
+
+    #[inline(always)]
+    pub fn reverse(&mut self) {
+        self.counter.reverse();
+    }
+
+    #[inline(always)]
+    pub fn normalize_(&mut self) {
+        self.counter.normalize_();
     }
 
     #[inline]
     pub fn min_id(&self) -> ID {
         ID::new(self.client_id, self.counter.min())
-    }
-
-    #[inline]
-    pub fn max_id(&self) -> ID {
-        ID::new(self.client_id, self.counter.max())
     }
 
     #[inline]

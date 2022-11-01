@@ -1,8 +1,10 @@
 use std::fmt::Display;
 
 use crate::{
-    container::text::text_content::ListSlice, id::Counter, span::IdSpan, ContentType,
-    InsertContentTrait, ID,
+    container::text::text_content::ListSlice,
+    id::Counter,
+    span::{HasCounter, HasCounterSpan, IdSpan},
+    ContentType, InsertContentTrait, ID,
 };
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
@@ -108,8 +110,7 @@ impl YSpan {
             return false;
         }
 
-        self.id.counter < id.counter.end
-            && self.id.counter + (self.len as Counter) > id.counter.min()
+        self.id.counter < id.ctr_end() && self.id.counter + (self.len as Counter) > id.ctr_start()
     }
 }
 

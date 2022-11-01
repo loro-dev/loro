@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, Index, Range},
+    ops::{Deref, DerefMut, Index, Range},
 };
 
 use num::{traits::AsPrimitive, FromPrimitive};
@@ -58,6 +58,24 @@ where
 
     pub fn iter(&self) -> std::slice::Iter<'_, A::Item> {
         self.vec.iter()
+    }
+
+    /// # Safety
+    ///
+    /// should not change the element's length during iter
+    pub unsafe fn iter_mut(&mut self) -> std::slice::IterMut<'_, A::Item> {
+        self.vec.iter_mut()
+    }
+
+    pub fn reverse(&mut self) {
+        self.vec.reverse()
+    }
+
+    pub fn check(&self) {
+        assert_eq!(
+            self.atom_len,
+            self.vec.iter().map(|x| x.atom_len()).sum::<usize>()
+        );
     }
 }
 
@@ -127,6 +145,10 @@ impl<A: Array> RleVec<A> {
     /// this is the length of merged elements
     pub fn len(&self) -> usize {
         self.vec.len()
+    }
+
+    pub fn reverse(&mut self) {
+        self.vec.reverse()
     }
 }
 
@@ -433,6 +455,11 @@ impl<A: Array> RleVec<A> {
     }
 
     #[inline(always)]
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, A::Item> {
+        self.vec.iter_mut()
+    }
+
+    #[inline(always)]
     pub fn get_merged(&self, index: usize) -> Option<&A::Item> {
         self.vec.get(index)
     }
@@ -536,10 +563,10 @@ impl<A: Array> Deref for RleVec<A> {
 }
 
 impl<A: Array> Deref for RleVecWithLen<A> {
-    type Target = [A::Item];
+    type Target = RleVec<A>;
 
     fn deref(&self) -> &Self::Target {
-        &self.vec.vec
+        &self.vec
     }
 }
 
