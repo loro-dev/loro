@@ -16,11 +16,11 @@ use crate::{
     container::{manager::ContainerManager, Container, ContainerID},
     dag::Dag,
     debug_log,
-    id::{ClientID, Counter},
+    id::{ClientID, ContainerIdx, Counter},
     isomorph::{Irc, IsoRw, IsoWeak},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    Lamport, Op, Timestamp, VersionVector, ID,
+    InternalString, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -280,7 +280,7 @@ impl LogStore {
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
     }
 
-    pub fn apply_remote_change(&mut self, mut change: Change<RemoteOp>) {
+    pub fn apply_remote_change(&mut self, change: Change<RemoteOp>) {
         if self.contains(change.id_last()) {
             return;
         }
@@ -395,11 +395,11 @@ impl LogStore {
         );
     }
 
-    pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<u32> {
+    pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<ContainerIdx> {
         self.container_to_idx.get(container).copied()
     }
 
-    pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> u32 {
+    pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         if let Some(idx) = self.container_to_idx.get(container) {
             *idx
         } else {
@@ -468,4 +468,5 @@ fn size_of() {
     println!("Vec {}", std::mem::size_of::<Vec<ID>>());
     println!("IdSpan {}", std::mem::size_of::<IdSpan>());
     println!("ContainerID {}", std::mem::size_of::<ContainerID>());
+    println!("InternalString {}", std::mem::size_of::<InternalString>());
 }

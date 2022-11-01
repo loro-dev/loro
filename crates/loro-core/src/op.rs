@@ -1,7 +1,7 @@
 use crate::{
     change::{Lamport, Timestamp},
     container::ContainerID,
-    id::{Counter, ID},
+    id::{ContainerIdx, Counter, ID},
     span::HasCounter,
     LogStore,
 };
@@ -32,7 +32,7 @@ pub enum OpType {
 #[derive(Debug, Clone)]
 pub struct Op {
     pub(crate) counter: Counter,
-    pub(crate) container: u32,
+    pub(crate) container: ContainerIdx,
     pub(crate) content: OpContent,
 }
 
