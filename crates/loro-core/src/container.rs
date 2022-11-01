@@ -5,10 +5,14 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::Op, span::IdSpan, version::VersionVector, InternalString, LogStore, LoroValue, ID,
+    op::{Op, RemoteOp},
+    span::IdSpan,
+    version::VersionVector,
+    InternalString, LogStore, LoroValue, ID,
 };
 
 use serde::Serialize;
+
 use std::{any::Any, fmt::Debug};
 
 mod container_content;
@@ -31,10 +35,13 @@ pub trait Container: Debug + Any + Unpin {
 
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
     fn to_export(&self, op: &mut Op);
-    fn to_import(&mut self, op: &mut Op);
+    fn to_import(&mut self, op: &mut RemoteOp);
 }
 
-/// it's really cheap to clone
+/// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
+/// the same [ContainerID] with conflict [ContainerType].
+///
+/// This structure is really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.
@@ -55,9 +62,9 @@ impl ContainerID {
     }
 
     #[inline]
-    pub fn new_root(name: InternalString, container_type: ContainerType) -> Self {
+    pub fn new_root(name: &str, container_type: ContainerType) -> Self {
         ContainerID::Root {
-            name,
+            name: name.into(),
             container_type,
         }
     }

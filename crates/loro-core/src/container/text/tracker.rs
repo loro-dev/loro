@@ -11,6 +11,9 @@ use crate::{
     VersionVector,
 };
 
+#[allow(unused)]
+use crate::ClientID;
+
 use self::{
     content_map::ContentMap,
     cursor_map::{make_notify, CursorMap, IdSpanQueryResult},
@@ -40,7 +43,7 @@ pub mod yata_impl;
 #[derive(Debug)]
 pub struct Tracker {
     #[cfg(feature = "fuzzing")]
-    client_id: u64,
+    client_id: ClientID,
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
     /// latest applied ops version vector

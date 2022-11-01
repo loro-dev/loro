@@ -3,13 +3,12 @@ use std::ops::Range;
 use enum_as_inner::EnumAsInner;
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
-use crate::{id::ID, smstring::SmString};
+use crate::smstring::SmString;
 
 #[derive(PartialEq, Eq, Debug, EnumAsInner, Clone)]
 pub enum ListSlice {
     RawStr(SmString),
-    // TODO: Use small compact rle vec
-    Slice(Range<usize>),
+    Slice(Range<u32>),
     Unknown(usize),
 }
 
@@ -21,19 +20,13 @@ impl Default for ListSlice {
 
 impl ListSlice {
     #[inline(always)]
-    pub fn from_range(range: Range<usize>) -> ListSlice {
+    pub fn from_range(range: Range<u32>) -> ListSlice {
         Self::Slice(range)
     }
 
     pub fn from_raw(str: SmString) -> ListSlice {
         Self::RawStr(str)
     }
-}
-
-#[derive(Debug, EnumAsInner)]
-pub(super) enum TextOpContent {
-    Insert { id: ID, text: ListSlice, pos: usize },
-    Delete { id: ID, pos: usize, len: usize },
 }
 
 pub(super) fn new_unknown_text(len: usize) -> ListSlice {

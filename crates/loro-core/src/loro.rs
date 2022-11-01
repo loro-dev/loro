@@ -1,19 +1,18 @@
-use std::ptr::NonNull;
-
 use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
     change::Change,
     configure::Configure,
     container::{
-        manager::{ContainerInstance, ContainerManager},
+        manager::{ContainerManager, ContainerRef, ContainerRefMut},
         map::MapContainer,
         text::text_container::TextContainer,
         ContainerID, ContainerType,
     },
     id::ClientID,
-    isomorph::{Irc, IsoRefMut, IsoRw},
-    InternalString, LogStore, VersionVector,
+    isomorph::{Irc, IsoRw},
+    op::RemoteOp,
+    LogStore, LoroError, VersionVector,
 };
 
 pub struct LoroCore {
@@ -29,10 +28,7 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = Irc::new(IsoRw::new(ContainerManager {
-            containers: Default::default(),
-            store: NonNull::dangling(),
-        }));
+        let container = Irc::new(IsoRw::new(ContainerManager::new()));
         let weak = Irc::downgrade(&container);
         Self {
             log_store: LogStore::new(cfg, client_id, weak),
@@ -44,70 +40,84 @@ impl LoroCore {
         self.log_store.read().get_vv().clone()
     }
 
-    pub fn get_container(
+    #[inline(always)]
+    pub fn get_or_create_root_map(
         &mut self,
-        name: InternalString,
-        container: ContainerType,
-    ) -> OwningRefMut<IsoRefMut<ContainerManager>, ContainerInstance> {
-        let a = OwningRefMut::new(self.container.write());
-        a.map_mut(|x| {
-            x.get_or_create(
-                &ContainerID::new_root(name, container),
-                Irc::downgrade(&self.log_store),
-            )
-        })
+        name: &str,
+    ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
+        let mut a = OwningRefMut::new(self.container.write());
+        let id = ContainerID::new_root(name, ContainerType::Map);
+        self.log_store.write().get_or_create_container_idx(&id);
+        let ptr = Irc::downgrade(&self.log_store);
+        a.get_or_create(&id, ptr)?;
+        Ok(
+            a.map_mut(move |x| x.get_mut(&id).unwrap().as_map_mut().unwrap())
+                .into(),
+        )
     }
 
-    pub fn get_map_container(
+    #[inline(always)]
+    pub fn get_or_create_root_text(
         &mut self,
-        name: InternalString,
-    ) -> OwningRefMut<IsoRefMut<ContainerManager>, Box<MapContainer>> {
-        let a = OwningRefMut::new(self.container.write());
-        a.map_mut(|x| {
-            x.get_or_create(
-                &ContainerID::new_root(name, ContainerType::Map),
-                Irc::downgrade(&self.log_store),
-            )
-            .as_map_mut()
-            .unwrap()
-        })
+        name: &str,
+    ) -> Result<ContainerRefMut<TextContainer>, LoroError> {
+        let mut a = OwningRefMut::new(self.container.write());
+        let id = ContainerID::new_root(name, ContainerType::Text);
+        self.log_store.write().get_or_create_container_idx(&id);
+        let ptr = Irc::downgrade(&self.log_store);
+        a.get_or_create(&id, ptr)?;
+        Ok(
+            a.map_mut(move |x| x.get_mut(&id).unwrap().as_text_mut().unwrap())
+                .into(),
+        )
     }
 
-    pub fn get_or_create_text_container_mut(
+    #[inline(always)]
+    pub fn get_map_container_mut(
         &mut self,
-        name: InternalString,
-    ) -> OwningRefMut<IsoRefMut<ContainerManager>, Box<TextContainer>> {
+        id: &ContainerID,
+    ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
         let a = OwningRefMut::new(self.container.write());
-        a.map_mut(|x| {
-            x.get_or_create(
-                &ContainerID::new_root(name, ContainerType::Text),
-                Irc::downgrade(&self.log_store),
-            )
-            .as_text_mut()
-            .unwrap()
-        })
+        Ok(
+            a.map_mut(move |x| x.get_mut(id).unwrap().as_map_mut().unwrap())
+                .into(),
+        )
     }
 
+    #[inline(always)]
+    pub fn get_text_container_mut(
+        &mut self,
+        id: &ContainerID,
+    ) -> Result<ContainerRefMut<TextContainer>, LoroError> {
+        let a = OwningRefMut::new(self.container.write());
+        Ok(
+            a.map_mut(move |x| x.get_mut(id).unwrap().as_text_mut().unwrap())
+                .into(),
+        )
+    }
+
+    #[inline(always)]
     pub fn get_text_container(
         &self,
-        name: InternalString,
-    ) -> OwningRef<IsoRefMut<ContainerManager>, Box<TextContainer>> {
-        let a = OwningRef::new(self.container.write());
-        a.map(|x| {
-            x.get(&ContainerID::new_root(name, ContainerType::Text))
-                .unwrap()
-                .as_text()
-                .unwrap()
-        })
+        id: &ContainerID,
+    ) -> Result<ContainerRef<TextContainer>, LoroError> {
+        let a = OwningRef::new(self.container.read());
+        Ok(a.map(move |x| x.get(id).unwrap().as_text().unwrap()).into())
     }
 
-    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change> {
+    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
         let store = self.log_store.read();
         store.export(&remote_vv)
     }
 
-    pub fn import(&mut self, changes: Vec<Change>) {
+    pub fn import(&mut self, changes: Vec<Change<RemoteOp>>) {
         let mut store = self.log_store.write();
         store.import(changes)
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&self) {
+        self.log_store.write().debug_inspect();
+        self.container.write().debug_inspect();
     }
 }

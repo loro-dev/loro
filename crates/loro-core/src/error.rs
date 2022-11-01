@@ -9,3 +9,16 @@ pub enum LoroError {
     // #[error("unknown data store error")]
     // Unknown,
 }
+
+#[cfg(feature = "wasm")]
+pub mod wasm {
+    use wasm_bindgen::JsValue;
+
+    use crate::LoroError;
+
+    impl From<LoroError> for JsValue {
+        fn from(value: LoroError) -> Self {
+            JsValue::from_str(&value.to_string())
+        }
+    }
+}

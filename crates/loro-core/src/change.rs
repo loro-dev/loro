@@ -9,9 +9,10 @@ use crate::{
     dag::DagNode,
     id::{Counter, ID},
     op::Op,
-    span::{HasId, HasLamport},
+    span::{HasId, HasIdSpan, HasLamport},
 };
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use num::traits::AsPrimitive;
+use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -19,8 +20,8 @@ pub type Lamport = u32;
 
 /// A `Change` contains a list of [Op]s.
 #[derive(Debug, Clone)]
-pub struct Change {
-    pub(crate) ops: RleVec<[Op; 2]>,
+pub struct Change<O = Op> {
+    pub(crate) ops: RleVec<[O; 2]>,
     pub(crate) deps: SmallVec<[ID; 2]>,
     /// id of the first op in the change
     pub(crate) id: ID,
@@ -29,12 +30,6 @@ pub struct Change {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// Whether this change can be merged with the next change
-    /// - Only the last change in a chain can be merged with the next change
-    /// - Imported changes should be freezed
-    ///
-    /// TODO: maybe we can remove this field?
-    pub(crate) freezed: bool,
     /// if other changes dep on the middle of this change, we need to record a break point here.
     /// So that we can iter the ops in the correct order.
     ///
@@ -46,14 +41,14 @@ pub struct Change {
     pub(crate) break_points: SmallVec<[Counter; 2]>,
 }
 
-impl Change {
+impl<O> Change<O> {
     pub fn new(
-        ops: RleVec<[Op; 2]>,
+        ops: RleVec<[O; 2]>,
         deps: SmallVec<[ID; 2]>,
         id: ID,
         lamport: Lamport,
         timestamp: Timestamp,
-        freezed: bool,
+        _freezed: bool,
     ) -> Self {
         Change {
             ops,
@@ -61,23 +56,26 @@ impl Change {
             id,
             lamport,
             timestamp,
-            freezed,
             break_points: SmallVec::new(),
         }
     }
+}
 
-    pub fn last_id(&self) -> ID {
-        self.id.inc(self.content_len() as Counter - 1)
-    }
-
-    pub fn last_lamport(&self) -> Lamport {
-        self.lamport + self.content_len() as Lamport - 1
+impl<O> HasId for Change<O> {
+    fn id_start(&self) -> ID {
+        self.id
     }
 }
 
-impl HasLength for Change {
+impl<O> HasLamport for Change<O> {
+    fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+}
+
+impl<O: Mergable + HasLength + HasIndex> HasLength for Change<O> {
     fn content_len(&self) -> usize {
-        self.ops.span() as usize
+        self.ops.span().as_()
     }
 }
 
@@ -85,13 +83,25 @@ impl HasLength for Change {
 pub struct ChangeMergeCfg {
     pub max_change_length: usize,
     pub max_change_interval: usize,
+    pub from_this_client: bool,
+}
+
+impl ChangeMergeCfg {
+    pub fn new(from_this: bool) -> Self {
+        ChangeMergeCfg {
+            from_this_client: from_this,
+            max_change_length: 1024,
+            max_change_interval: 60,
+        }
+    }
 }
 
 impl Default for ChangeMergeCfg {
     fn default() -> Self {
-        ChangeMergeCfg {
+        Self {
             max_change_length: 1024,
             max_change_interval: 60,
+            from_this_client: false,
         }
     }
 }
@@ -102,11 +112,11 @@ impl Mergable<ChangeMergeCfg> for Change {
     }
 
     fn is_mergable(&self, other: &Self, cfg: &ChangeMergeCfg) -> bool {
-        if self.freezed {
+        if !cfg.from_this_client {
             return false;
         }
 
-        if other.deps.is_empty() || !(other.deps.len() == 1 && self.last_id() == other.deps[0]) {
+        if other.deps.is_empty() || !(other.deps.len() == 1 && self.id_last() == other.deps[0]) {
             return false;
         }
 
@@ -124,19 +134,7 @@ impl Mergable<ChangeMergeCfg> for Change {
     }
 }
 
-impl HasId for Change {
-    fn id_start(&self) -> ID {
-        self.id
-    }
-}
-
-impl HasLamport for Change {
-    fn lamport(&self) -> Lamport {
-        self.lamport
-    }
-}
-
-impl Sliceable for Change {
+impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
     // TODO: feels slow, need to confirm whether this affects performance
     fn slice(&self, from: usize, to: usize) -> Self {
         Self {
@@ -149,7 +147,6 @@ impl Sliceable for Change {
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            freezed: self.freezed,
             break_points: self.break_points.clone(),
         }
     }

@@ -1,8 +1,9 @@
 use crate::{
     change::{Lamport, Timestamp},
     container::ContainerID,
-    id::{Counter, ID},
-    span::{HasId},
+    id::{ContainerIdx, Counter, ID},
+    span::HasCounter,
+    LogStore,
 };
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 mod insert_content;
@@ -30,23 +31,30 @@ pub enum OpType {
 /// A Op may have multiple atomic operations, since Op can be merged.
 #[derive(Debug, Clone)]
 pub struct Op {
-    pub(crate) id: ID,
+    pub(crate) counter: Counter,
+    pub(crate) container: ContainerIdx,
+    pub(crate) content: OpContent,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteOp {
+    pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
     pub(crate) content: OpContent,
 }
 
 impl Op {
     #[inline]
-    pub(crate) fn new(id: ID, content: OpContent, container: ContainerID) -> Self {
+    pub(crate) fn new(id: ID, content: OpContent, container: u32) -> Self {
         Op {
-            id,
+            counter: id.counter,
             content,
             container,
         }
     }
 
     #[inline]
-    pub(crate) fn new_insert_op(id: ID, container: ContainerID, content: InsertContent) -> Self {
+    pub(crate) fn new_insert_op(id: ID, container: u32, content: InsertContent) -> Self {
         Op::new(id, OpContent::Normal { content }, container)
     }
 
@@ -58,14 +66,31 @@ impl Op {
         }
     }
 
-    pub fn container(&self) -> &ContainerID {
-        &self.container
+    pub(crate) fn convert(self, log: &LogStore) -> RemoteOp {
+        let container = log.get_container_id(self.container).clone();
+        RemoteOp {
+            counter: self.counter,
+            container,
+            content: self.content,
+        }
+    }
+}
+
+impl RemoteOp {
+    pub(crate) fn convert(self, log: &mut LogStore) -> Op {
+        let container = log.get_or_create_container_idx(&self.container);
+        let content = self.content;
+        Op {
+            counter: self.counter,
+            container,
+            content,
+        }
     }
 }
 
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.id.is_connected_id(&other.id, self.content_len())
+        self.counter + self.content_len() as Counter == other.counter
             && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
     }
@@ -109,19 +134,63 @@ impl Sliceable for Op {
         assert!(to > from);
         let content: OpContent = self.content.slice(from, to);
         Op {
-            id: ID {
-                client_id: self.id.client_id,
-                counter: (self.id.counter + from as Counter),
-            },
+            counter: (self.counter + from as Counter),
             content,
-            container: self.container.clone(),
+            container: self.container,
         }
     }
 }
 
-impl HasId for Op {
-    fn id_start(&self) -> ID {
-        self.id
+impl Mergable for RemoteOp {
+    fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
+        self.counter + self.content_len() as Counter == other.counter
+            && self.content.is_mergable(&other.content, cfg)
+            && self.container == other.container
+    }
+
+    fn merge(&mut self, other: &Self, cfg: &()) {
+        match &mut self.content {
+            OpContent::Normal { content } => match &other.content {
+                OpContent::Normal {
+                    content: other_content,
+                } => {
+                    content.merge(other_content, cfg);
+                }
+                _ => unreachable!(),
+            },
+            OpContent::Undo { target, .. } => match &other.content {
+                OpContent::Undo {
+                    target: other_target,
+                    ..
+                } => target.merge(other_target, cfg),
+                _ => unreachable!(),
+            },
+            OpContent::Redo { target, .. } => match &other.content {
+                OpContent::Redo {
+                    target: other_target,
+                    ..
+                } => target.merge(other_target, cfg),
+                _ => unreachable!(),
+            },
+        }
+    }
+}
+
+impl HasLength for RemoteOp {
+    fn content_len(&self) -> usize {
+        self.content.content_len()
+    }
+}
+
+impl Sliceable for RemoteOp {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        assert!(to > from);
+        let content: OpContent = self.content.slice(from, to);
+        RemoteOp {
+            counter: (self.counter + from as Counter),
+            content,
+            container: self.container.clone(),
+        }
     }
 }
 
@@ -135,6 +204,26 @@ impl HasIndex for Op {
     type Int = Counter;
 
     fn get_start_index(&self) -> Self::Int {
-        self.id.counter
+        self.counter
+    }
+}
+
+impl HasIndex for RemoteOp {
+    type Int = Counter;
+
+    fn get_start_index(&self) -> Self::Int {
+        self.counter
+    }
+}
+
+impl HasCounter for Op {
+    fn ctr_start(&self) -> Counter {
+        self.counter
+    }
+}
+
+impl HasCounter for RemoteOp {
+    fn ctr_start(&self) -> Counter {
+        self.counter
     }
 }

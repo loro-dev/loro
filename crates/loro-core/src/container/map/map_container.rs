@@ -4,9 +4,9 @@ use crate::{
     container::{Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogStoreWeakRef,
-    op::OpContent,
     op::{InsertContent, Op, RichOp},
-    span::{HasId, IdSpan},
+    op::{OpContent, RemoteOp},
+    span::IdSpan,
     value::{InsertValue, LoroValue},
     version::TotalOrderStamp,
     InternalString, LogStore,
@@ -22,6 +22,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     value: Option<LoroValue>,
+    store: LogStoreWeakRef,
 }
 
 #[derive(Debug)]
@@ -33,23 +34,18 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub fn new(id: ContainerID) -> Self {
+    pub(crate) fn new(id: ContainerID, store: LogStoreWeakRef) -> Self {
         MapContainer {
             id,
+            store,
             state: FxHashMap::default(),
             value: None,
         }
     }
 
-    // FIXME: keep store in the struct
-    pub(crate) fn insert(
-        &mut self,
-        key: InternalString,
-        value: InsertValue,
-        store: LogStoreWeakRef,
-    ) {
-        let self_id = self.id.clone();
-        let m = store.upgrade().unwrap();
+    pub fn insert(&mut self, key: InternalString, value: InsertValue) {
+        let self_id = &self.id;
+        let m = self.store.upgrade().unwrap();
         let mut store = m.write();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
@@ -59,9 +55,10 @@ impl MapContainer {
 
         let id = store.next_id_for(client_id);
         let counter = id.counter;
-        store.append_local_ops(vec![Op {
-            id,
-            container: self_id,
+        let container = store.get_container_idx(self_id).unwrap();
+        store.append_local_ops(&[Op {
+            counter: id.counter,
+            container,
             content: OpContent::Normal {
                 content: InsertContent::Dyn(Box::new(MapSet {
                     key: key.clone(),
@@ -91,8 +88,8 @@ impl MapContainer {
 
     // FIXME: keep store in the struct
     #[inline]
-    pub(crate) fn delete(&mut self, key: InternalString, store: LogStoreWeakRef) {
-        self.insert(key, InsertValue::Null, store);
+    pub fn delete(&mut self, key: InternalString) {
+        self.insert(key, InsertValue::Null);
     }
 }
 
@@ -113,7 +110,7 @@ impl Container for MapContainer {
                     let v: &MapSet = content.as_map().unwrap();
                     let order = TotalOrderStamp {
                         lamport,
-                        client_id: op.id_start().client_id,
+                        client_id: id_span.client_id,
                     };
                     if let Some(slot) = self.state.get_mut(&v.key) {
                         if slot.order < order {
@@ -127,7 +124,7 @@ impl Container for MapContainer {
                             ValueSlot {
                                 value: v.value.clone(),
                                 order,
-                                counter: op.id_start().counter,
+                                counter: op.counter,
                             },
                         );
 
@@ -164,5 +161,5 @@ impl Container for MapContainer {
 
     fn to_export(&self, _op: &mut Op) {}
 
-    fn to_import(&mut self, _op: &mut Op) {}
+    fn to_import(&mut self, _op: &mut RemoteOp) {}
 }

@@ -1,9 +1,9 @@
 {
-  "cSpell.words": ["smstring", "yspan"],
+  "cSpell.words": ["smstring", "thiserror", "yspan"],
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },
-  "rust-analyzer.cargo.features": ["fuzzing"],
+  "rust-analyzer.cargo.features": ["fuzzing", "wasm"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "editor.formatOnSave": true,
   "todo-tree.general.tags": [
@@ -19,5 +19,6 @@
   "explorer.fileNesting.patterns": {
     "*.rs": "${capture}.excalidraw"
   },
-  "excalidraw.theme": "dark"
+  "excalidraw.theme": "dark",
+  "deno.enable": true
 }

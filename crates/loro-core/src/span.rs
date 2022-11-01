@@ -218,6 +218,36 @@ pub trait HasId {
     fn id_start(&self) -> ID;
 }
 
+pub trait HasCounter {
+    fn ctr_start(&self) -> Counter;
+}
+
+pub trait HasCounterSpan: HasCounter + HasLength {
+    fn ctr_end(&self) -> Counter {
+        self.ctr_start() + self.atom_len() as Counter
+    }
+
+    fn ctr_last(&self) -> Counter {
+        self.ctr_start() + self.atom_len() as Counter - 1
+    }
+
+    fn ctr_span(&self) -> CounterSpan {
+        CounterSpan {
+            start: self.ctr_start(),
+            end: self.ctr_end(),
+        }
+    }
+}
+
+impl<T: HasCounter + HasLength> HasCounterSpan for T {}
+
+impl<T: HasId> HasCounter for T {
+    #[inline]
+    fn ctr_start(&self) -> Counter {
+        self.id_start().counter
+    }
+}
+
 pub trait HasIdSpan: HasId + HasLength {
     fn intersect<T: HasIdSpan>(&self, other: &T) -> bool {
         let self_start = self.id_start();
@@ -248,14 +278,6 @@ pub trait HasIdSpan: HasId + HasLength {
 
     fn id_last(&self) -> ID {
         self.id_start().inc(self.content_len() as i32 - 1)
-    }
-
-    fn ctr_last(&self) -> Counter {
-        self.id_start().counter + self.content_len() as i32 - 1
-    }
-
-    fn ctr_first(&self) -> Counter {
-        self.id_start().counter
     }
 
     fn contains_id(&self, id: ID) -> bool {

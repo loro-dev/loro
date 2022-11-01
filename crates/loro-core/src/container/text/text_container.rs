@@ -1,4 +1,6 @@
-use rle::{RleTree, Sliceable};
+use std::ops::Range;
+
+use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, RleTree, Sliceable};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -7,16 +9,16 @@ use crate::{
     debug_log,
     id::{Counter, ID},
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, OpContent},
+    op::{InsertContent, Op, OpContent, RemoteOp},
     smstring::SmString,
-    span::{HasIdSpan, IdSpan},
+    span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore, VersionVector,
 };
 
 use super::{
     string_pool::StringPool,
-    text_content::{ListSlice, ListSliceTreeTrait},
+    text_content::ListSlice,
     tracker::{Effect, Tracker},
 };
 
@@ -30,7 +32,7 @@ struct DagNode {
 pub struct TextContainer {
     id: ContainerID,
     log_store: LogStoreWeakRef,
-    state: RleTree<ListSlice, ListSliceTreeTrait>,
+    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8>>,
     raw_str: StringPool,
     tracker: Tracker,
     state_cache: LoroValue,
@@ -62,20 +64,23 @@ impl TextContainer {
         let s = self.log_store.upgrade().unwrap();
         let mut store = s.write();
         let id = store.next_id();
-        #[cfg(feature = "slice")]
-        let slice = ListSlice::from_range(self.raw_str.alloc(text));
-        #[cfg(not(feature = "slice"))]
-        let slice = ListSlice::from_raw(SmString::from(text));
+        let slice = self.raw_str.alloc(text);
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::Insert { slice, pos }),
+                content: InsertContent::List(ListOp::Insert {
+                    slice: ListSlice::Slice(slice),
+                    pos,
+                }),
             },
-            self.id.clone(),
+            store.get_or_create_container_idx(&self.id),
         );
-        let last_id = op.id_last();
-        store.append_local_ops(vec![op]);
+        let last_id = ID::new(
+            store.this_client_id,
+            op.counter + op.atom_len() as Counter - 1,
+        );
+        store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
 
@@ -95,11 +100,11 @@ impl TextContainer {
             OpContent::Normal {
                 content: InsertContent::List(ListOp::Delete { len, pos }),
             },
-            self.id.clone(),
+            store.get_or_create_container_idx(&self.id),
         );
 
-        let last_id = op.id_last();
-        store.append_local_ops(vec![op]);
+        let last_id = ID::new(store.this_client_id, op.ctr_last());
+        store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
@@ -112,6 +117,16 @@ impl TextContainer {
 
     pub fn check(&mut self) {
         self.tracker.check();
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&mut self) {
+        println!(
+            "Text Container {:?}, Raw String size={}, Tree=>\n",
+            self.id,
+            self.raw_str.len(),
+        );
+        self.state.debug_inspect();
     }
 }
 
@@ -163,6 +178,7 @@ impl Container for TextContainer {
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
         debug_log!("path={:?}", &path.right);
+        let self_idx = store.get_container_idx(&self.id).unwrap();
         for iter in store.iter_partial(&head, path.right) {
             // TODO: avoid this clone
             let change = iter
@@ -177,9 +193,15 @@ impl Container for TextContainer {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             for op in change.ops.iter() {
-                if op.container == self.id {
+                if op.container == self_idx {
                     // TODO: convert op to local
-                    self.tracker.apply(op.id, &op.content)
+                    self.tracker.apply(
+                        ID {
+                            client_id: change.id.client_id,
+                            counter: op.counter,
+                        },
+                        &op.content,
+                    )
                 }
             }
         }
@@ -207,7 +229,7 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    self.state.insert(pos, content);
+                    self.state.insert(pos, content.as_slice().unwrap().clone());
                 }
             }
         }
@@ -230,11 +252,7 @@ impl Container for TextContainer {
         let mut ans_str = SmString::new();
         for v in self.state.iter() {
             let content = v.as_ref();
-            match content {
-                ListSlice::Slice(range) => ans_str.push_str(&self.raw_str.get_str(range)),
-                ListSlice::RawStr(raw) => ans_str.push_str(raw),
-                _ => unreachable!(),
-            }
+            ans_str.push_str(&self.raw_str.get_str(content));
         }
 
         self.state_cache = LoroValue::String(ans_str);
@@ -258,7 +276,7 @@ impl Container for TextContainer {
         }
     }
 
-    fn to_import(&mut self, op: &mut Op) {
+    fn to_import(&mut self, op: &mut RemoteOp) {
         if let Some((slice, _pos)) = op
             .content
             .as_normal_mut()

@@ -1,9 +1,16 @@
-use std::ptr::NonNull;
+use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{log_store::LogStoreWeakRef, span::IdSpan, LogStore};
+use crate::{
+    isomorph::{IsoRef, IsoRefMut},
+    log_store::LogStoreWeakRef,
+    op::RemoteOp,
+    span::IdSpan,
+    LogStore, LoroError,
+};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -65,7 +72,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn to_import(&mut self, op: &mut crate::op::Op) {
+    fn to_import(&mut self, op: &mut RemoteOp) {
         match self {
             ContainerInstance::Map(x) => x.to_import(op),
             ContainerInstance::Text(x) => x.to_import(op),
@@ -78,11 +85,16 @@ impl Container for ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerManager {
-    pub(crate) containers: FxHashMap<ContainerID, ContainerInstance>,
-    pub(crate) store: NonNull<LogStore>,
+    containers: FxHashMap<ContainerID, ContainerInstance>,
 }
 
 impl ContainerManager {
+    pub(crate) fn new() -> Self {
+        Self {
+            containers: Default::default(),
+        }
+    }
+
     #[inline]
     pub(crate) fn create(
         &mut self,
@@ -91,7 +103,9 @@ impl ContainerManager {
         log_store: LogStoreWeakRef,
     ) -> ContainerInstance {
         match container_type {
-            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
+            ContainerType::Map => {
+                ContainerInstance::Map(Box::new(MapContainer::new(id, log_store)))
+            }
             ContainerType::Text => {
                 ContainerInstance::Text(Box::new(TextContainer::new(id, log_store)))
             }
@@ -118,12 +132,56 @@ impl ContainerManager {
         &mut self,
         id: &ContainerID,
         log_store: LogStoreWeakRef,
-    ) -> &mut ContainerInstance {
+    ) -> Result<&mut ContainerInstance, LoroError> {
         if !self.containers.contains_key(id) {
             let container = self.create(id.clone(), id.container_type(), log_store);
             self.insert(id.clone(), container);
         }
 
-        self.get_mut(id).unwrap()
+        let container = self.get_mut(id).unwrap();
+        Ok(container)
+    }
+
+    #[cfg(feature = "fuzzing")]
+    pub fn debug_inspect(&mut self) {
+        for container in self.containers.values_mut() {
+            if let ContainerInstance::Text(x) = container {
+                x.debug_inspect()
+            }
+        }
+    }
+}
+
+pub struct ContainerRefMut<'a, T> {
+    value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>,
+}
+
+pub struct ContainerRef<'a, T> {
+    value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>,
+}
+
+impl<'a, T> From<OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>> for ContainerRefMut<'a, T> {
+    fn from(value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>) -> Self {
+        ContainerRefMut { value }
+    }
+}
+
+impl<'a, T> From<OwningRef<IsoRef<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
+    fn from(value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>) -> Self {
+        ContainerRef { value }
+    }
+}
+
+impl<'a, T> Deref for ContainerRefMut<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.deref()
+    }
+}
+
+impl<'a, T> DerefMut for ContainerRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.deref_mut()
     }
 }

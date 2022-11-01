@@ -129,6 +129,17 @@ impl<A: Array> RleVec<A> {
         self.vec.len()
     }
 }
+
+impl<A: Array> IntoIterator for RleVec<A> {
+    type Item = A::Item;
+
+    type IntoIter = smallvec::IntoIter<A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
+    }
+}
+
 impl<A: Array> Debug for RleVecWithLen<A>
 where
     A::Item: Debug,
@@ -368,6 +379,20 @@ where
         let mut ans: RleVec<A> = RleVec::with_capacity(vec.len());
         for v in vec {
             ans.push(v);
+        }
+        ans.vec.shrink_to_fit();
+        ans
+    }
+}
+
+impl<A: Array> From<&[A::Item]> for RleVec<A>
+where
+    A::Item: Mergable + HasLength + Clone,
+{
+    fn from(value: &[A::Item]) -> Self {
+        let mut ans: RleVec<A> = RleVec::with_capacity(value.len());
+        for v in value.iter() {
+            ans.push(v.clone());
         }
         ans.vec.shrink_to_fit();
         ans

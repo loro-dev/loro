@@ -6,6 +6,7 @@ use crate::span::{CounterSpan, IdSpan};
 
 pub type ClientID = u64;
 pub type Counter = i32;
+pub(crate) type ContainerIdx = u32;
 const UNKNOWN: ClientID = 404;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize)]
@@ -46,7 +47,7 @@ impl Ord for ID {
 }
 
 pub const ROOT_ID: ID = ID {
-    client_id: u64::MAX,
+    client_id: ClientID::MAX,
     counter: i32::MAX,
 };
 
@@ -61,7 +62,7 @@ impl From<u128> for ID {
 
 impl ID {
     #[inline]
-    pub fn new(client_id: u64, counter: Counter) -> Self {
+    pub fn new(client_id: ClientID, counter: Counter) -> Self {
         ID { client_id, counter }
     }
 
@@ -72,7 +73,7 @@ impl ID {
 
     #[inline]
     pub fn is_null(&self) -> bool {
-        self.client_id == u64::MAX
+        self.client_id == ClientID::MAX
     }
 
     #[inline]

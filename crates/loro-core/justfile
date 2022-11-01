@@ -27,5 +27,8 @@ quick-fuzz:
 flame:
   cargo flamegraph --example test --features=fuzzing --root
 
-bench:
-  cargo bench --features fuzzing
+bench *FLAGS:
+  cargo bench --features fuzzing {{FLAGS}}
+
+mem:
+  cargo run --example mem -r --features fuzzing

@@ -228,7 +228,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
         if self.heap.is_empty() {
             debug_assert_eq!(
                 0,
-                self.target.iter().map(|x| x.1.content_len() as i32).sum()
+                self.target
+                    .iter()
+                    .map(|x| x.1.content_len() as i32)
+                    .sum::<i32>()
             );
             return None;
         }
