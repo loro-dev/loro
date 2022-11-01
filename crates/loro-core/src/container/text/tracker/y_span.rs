@@ -180,8 +180,6 @@ impl HasLength for YSpan {
 #[cfg(any(test, features = "fuzzing"))]
 pub mod test {
     use crate::{
-        container::{ContainerID, ContainerType},
-        id::ROOT_ID,
         op::{InsertContent, OpContent},
         ContentType, Op, ID,
     };

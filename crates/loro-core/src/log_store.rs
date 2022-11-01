@@ -20,7 +20,7 @@ use crate::{
     isomorph::{Irc, IsoRw, IsoWeak},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    InternalString, Lamport, Op, Timestamp, VersionVector, ID,
+    Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -454,7 +454,7 @@ fn size_of() {
         id::ID,
         op::{InsertContent, Op},
         span::IdSpan,
-        Container, InsertValue,
+        Container, InsertValue, InternalString,
     };
     println!("Change {}", std::mem::size_of::<Change>());
     println!("Op {}", std::mem::size_of::<Op>());

@@ -4,12 +4,15 @@ use smallvec::SmallVec;
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
-    id::{ClientID, Counter, ID},
+    id::{Counter, ID},
     op::OpContent,
     span::{HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
 };
+
+#[allow(unused)]
+use crate::ClientID;
 
 use self::{
     content_map::ContentMap,
