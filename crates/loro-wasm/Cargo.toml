@@ -8,7 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "0.3.60"
-loro-core = { path = "../loro-core", features = ["wasm", "slice"] }
+loro-core = { path = "../loro-core", features = ["wasm"] }
 wasm-bindgen = "0.2.83"
 
 [profile.release]

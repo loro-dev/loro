@@ -294,7 +294,6 @@ impl LogStore {
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let upgraded = self.container.upgrade().unwrap();
         let mut container_manager = upgraded.write();
-        #[cfg(feature = "slice")]
         let change = self.change_to_imported_format(&mut container_manager, change);
         let v = self
             .changes

@@ -7,11 +7,11 @@ use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
     dag::DagUtils,
     debug_log,
-    id::{ContainerIdx, Counter, ID},
+    id::{Counter, ID},
     log_store::LogStoreWeakRef,
     op::{InsertContent, Op, OpContent, RemoteOp},
     smstring::SmString,
-    span::{HasCounter, HasCounterSpan, HasIdSpan, IdSpan},
+    span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore, VersionVector,
 };
@@ -32,10 +32,7 @@ struct DagNode {
 pub struct TextContainer {
     id: ContainerID,
     log_store: LogStoreWeakRef,
-    #[cfg(feature = "slice")]
     state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8>>,
-    #[cfg(not(feature = "slice"))]
-    state: RleTree<ListSlice, ListSliceTreeTrait>,
     raw_str: StringPool,
     tracker: Tracker,
     state_cache: LoroValue,
@@ -67,10 +64,7 @@ impl TextContainer {
         let s = self.log_store.upgrade().unwrap();
         let mut store = s.write();
         let id = store.next_id();
-        #[cfg(feature = "slice")]
         let slice = self.raw_str.alloc(text);
-        #[cfg(not(feature = "slice"))]
-        let slice = ListSlice::from_raw(SmString::from(text));
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
