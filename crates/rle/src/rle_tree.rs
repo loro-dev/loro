@@ -387,11 +387,12 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn debug_inspect(&mut self) {
         println!(
-            "RleTree: \n- len={:?}\n- InternalNodes={}\n- LeafNodes={}\n- Elements={}",
+            "RleTree: \n- len={:?}\n- InternalNodes={}\n- LeafNodes={}\n- Elements={}\n- Bytes={}",
             self.len(),
             self.internal_node_num(),
             self.leaf_node_num(),
-            self.elem_num()
+            self.elem_num(),
+            self.with_bump(|bump| bump.allocated_bytes())
         );
     }
 
