@@ -20,7 +20,7 @@ use crate::{
     isomorph::{Irc, IsoRw, IsoWeak},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    InternalString, Lamport, Op, Timestamp, VersionVector, ID,
+    Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -294,7 +294,6 @@ impl LogStore {
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let upgraded = self.container.upgrade().unwrap();
         let mut container_manager = upgraded.write();
-        #[cfg(feature = "slice")]
         let change = self.change_to_imported_format(&mut container_manager, change);
         let v = self
             .changes
@@ -455,7 +454,7 @@ fn size_of() {
         id::ID,
         op::{InsertContent, Op},
         span::IdSpan,
-        Container, InsertValue,
+        Container, InsertValue, InternalString,
     };
     println!("Change {}", std::mem::size_of::<Change>());
     println!("Op {}", std::mem::size_of::<Op>());

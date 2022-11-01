@@ -31,7 +31,7 @@ fn test() {
     drop(text_container);
 
     store.import(store_b.export(store.vv()));
-    let mut text_container = store.get_or_create_root_text("haha".into()).unwrap();
+    let mut text_container = store.get_or_create_root_text("haha").unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(value.as_str(), "63417892");
@@ -43,7 +43,7 @@ fn test() {
     drop(text_container);
 
     store_b.import(store.export(Default::default()));
-    let mut text_container = store_b.get_or_create_root_text("haha".into()).unwrap();
+    let mut text_container = store_b.get_or_create_root_text("haha").unwrap();
     text_container.check();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();

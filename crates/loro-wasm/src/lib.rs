@@ -5,7 +5,7 @@ use std::{
 
 use loro_core::{
     container::{Container, ContainerID},
-    InsertValue, LoroCore, LoroError,
+    InsertValue, LoroCore,
 };
 use wasm_bindgen::prelude::*;
 
