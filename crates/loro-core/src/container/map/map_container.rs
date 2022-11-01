@@ -86,6 +86,7 @@ impl MapContainer {
         );
     }
 
+    // FIXME: keep store in the struct
     #[inline]
     pub fn delete(&mut self, key: InternalString) {
         self.insert(key, InsertValue::Null);
