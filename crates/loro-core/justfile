@@ -17,8 +17,8 @@ deny:
 crev:
   cargo crev crate check
 
-fuzz-yata-long:
-  cargo fuzz run yata -- -max_total_time=300 -max_len=4000 -jobs=2
+fuzz-long TARGET:
+  cargo fuzz run {{TARGET}} -- -max_total_time=300 -max_len=4000 -jobs=2
 
 quick-fuzz:
   cargo fuzz run yata -- -max_total_time=10 -max_len=1000 & 
@@ -31,4 +31,4 @@ bench *FLAGS:
   cargo bench --features fuzzing {{FLAGS}}
 
 mem:
-  cargo run --example mem -r --features fuzzing
+  cargo run --example mem -r --features=fuzzing,mem-prof

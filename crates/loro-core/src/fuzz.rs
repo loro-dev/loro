@@ -314,6 +314,230 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn test_15() {
+        // retreat failed
+        test_multi_sites(
+            2,
+            vec![
+                Ins {
+                    content: "012345".into(),
+                    pos: 16145685675428772607,
+                    site: 50,
+                },
+                Ins {
+                    content: "k".into(),
+                    pos: 12514849900981321857,
+                    site: 173,
+                },
+                Ins {
+                    content: "jjj".into(),
+                    pos: 827253908580597753,
+                    site: 235,
+                },
+                Ins {
+                    content: "hh".into(),
+                    pos: 10619084171383039,
+                    site: 186,
+                },
+                Sync { from: 186, to: 187 },
+                Ins {
+                    content: "bb".into(),
+                    pos: 9154669102093696963,
+                    site: 1,
+                },
+                Ins {
+                    content: "ccc".into(),
+                    pos: 10619084154605823,
+                    site: 186,
+                },
+                Sync { from: 186, to: 187 },
+                Ins {
+                    content: "mm".into(),
+                    pos: 10619084154662902,
+                    site: 186,
+                },
+                Sync { from: 103, to: 186 },
+                Ins {
+                    content: "abcdef".into(),
+                    pos: 2718485543582577120,
+                    site: 0,
+                },
+                Del {
+                    pos: 77426591251806906,
+                    len: 15800371181095160576,
+                    site: 1,
+                },
+                Del {
+                    pos: 16348878094905390375,
+                    len: 16348879061405328098,
+                    site: 226,
+                },
+                Del {
+                    pos: 196469752251612538,
+                    len: 13455202075478711110,
+                    site: 186,
+                },
+                Del {
+                    pos: 13527329853585490429,
+                    len: 8863007108824969696,
+                    site: 186,
+                },
+                Sync { from: 186, to: 65 },
+                Ins {
+                    content: "kk".into(),
+                    pos: 18230571291461418738,
+                    site: 255,
+                },
+                Sync { from: 0, to: 43 },
+                Del {
+                    pos: 9007624456401910,
+                    len: 17728429828748607488,
+                    site: 0,
+                },
+                Ins {
+                    content: "666666".into(),
+                    pos: 5058070217968582656,
+                    site: 219,
+                },
+                Del {
+                    pos: 1437795153694407354,
+                    len: 10619084140647187,
+                    site: 0,
+                },
+            ],
+        )
+    }
+    #[test]
+    fn test_14() {
+        // retreat failed
+        test_multi_sites(
+            8,
+            vec![
+                Ins {
+                    content: "(`".into(),
+                    pos: 289360693583710602,
+                    site: 4,
+                },
+                Sync { from: 4, to: 213 },
+                Ins {
+                    content: "333FFFF\u{3}\0(".into(),
+                    pos: 289360693583710602,
+                    site: 4,
+                },
+                Sync { from: 4, to: 137 },
+                Ins {
+                    content: "3\u{3}\0@".into(),
+                    pos: 289360693583710602,
+                    site: 4,
+                },
+                Sync { from: 4, to: 137 },
+                Ins {
+                    content: "\u{4}(".into(),
+                    pos: 9877801357708624266,
+                    site: 5,
+                },
+                Del {
+                    pos: 14806280867407362682,
+                    len: 289360691352074874,
+                    site: 4,
+                },
+                Sync { from: 137, to: 0 },
+                Sync { from: 129, to: 10 },
+                Ins {
+                    content: "".into(),
+                    pos: 15408455913343287690,
+                    site: 14,
+                },
+                Sync { from: 204, to: 52 },
+                Ins {
+                    content: "".into(),
+                    pos: 1513209475975492403,
+                    site: 137,
+                },
+                Ins {
+                    content: "\u{4}\0\u{4}(".into(),
+                    pos: 106532207656077961,
+                    site: 28,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 7089336938131513954,
+                    site: 98,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 7089336938131513899,
+                    site: 98,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 7089336938131513954,
+                    site: 98,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 7089336938131513954,
+                    site: 98,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 7089336938131513954,
+                    site: 98,
+                },
+                Del {
+                    pos: 7089336938131513954,
+                    len: 9971017955808381026,
+                    site: 137,
+                },
+                Sync { from: 98, to: 98 },
+            ],
+        )
+    }
+    #[test]
+    fn test_13() {
+        // retreat failed
+        test_multi_sites(
+            8,
+            vec![
+                Ins {
+                    content: "ab".into(),
+                    pos: 289360693583710602,
+                    site: 4,
+                },
+                Sync { from: 4, to: 137 },
+                Del {
+                    pos: 9873061956456284998,
+                    len: 9955211391596233748,
+                    site: 137,
+                },
+                Ins {
+                    content: "xxx".into(),
+                    pos: 289365091630221706,
+                    site: 4,
+                },
+                Sync { from: 137, to: 0 },
+                Sync { from: 129, to: 10 },
+                Del {
+                    pos: 1513209475199240744,
+                    len: 1130315200595337,
+                    site: 44,
+                },
+                Del {
+                    pos: 0,
+                    len: 1,
+                    site: 1,
+                },
+                Sync { from: 4, to: 0 },
+                Ins {
+                    content: "m".into(),
+                    pos: 8825501086237362561,
+                    site: 122,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn test_12() {
         // retreat failed
         test_multi_sites(
@@ -375,6 +599,7 @@ mod test {
             }],
         )
     }
+
     #[test]
     fn test_9() {
         test_multi_sites(

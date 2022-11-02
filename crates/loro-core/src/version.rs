@@ -123,7 +123,8 @@ fn subtract_start(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
     }
 }
 
-fn merge(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
+fn merge(m: &mut FxHashMap<ClientID, CounterSpan>, mut target: IdSpan) {
+    target.normalize_();
     if let Some(span) = m.get_mut(&target.client_id) {
         span.start = span.start.min(target.counter.start);
         span.end = span.end.max(target.counter.end);

@@ -253,10 +253,23 @@ impl Tracker {
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                         unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
                     }
-                    ListOp::Delete { pos, len } => {
-                        let spans = self.content.get_active_id_spans(*pos, *len);
+                    ListOp::Delete(span) => {
+                        let mut spans = self
+                            .content
+                            .get_active_id_spans(span.start() as usize, span.atom_len());
                         debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
                         self.update_spans(&spans, StatusChange::Delete);
+
+                        if span.is_reversed() && span.atom_len() > 1 {
+                            spans.reverse();
+                            // SAFETY: we don't change the size of the span
+                            unsafe {
+                                for span in spans.iter_mut() {
+                                    span.reverse();
+                                }
+                            }
+                        }
+
                         self.id_to_cursor
                             .set_small_range((id).into(), cursor_map::Marker::Delete(spans));
                     }

@@ -2,11 +2,14 @@
 //!
 //!
 mod iter;
-use std::marker::PhantomPinned;
+use std::{marker::PhantomPinned, ops::Range};
 
 use fxhash::{FxHashMap, FxHashSet};
 
-use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
+use rle::{
+    rle_tree::{node::Node, tree_trait::CumulateTreeTrait},
+    HasLength, RleVec, RleVecWithIndex, Sliceable,
+};
 
 use smallvec::SmallVec;
 
@@ -468,4 +471,8 @@ fn size_of() {
     println!("IdSpan {}", std::mem::size_of::<IdSpan>());
     println!("ContainerID {}", std::mem::size_of::<ContainerID>());
     println!("InternalString {}", std::mem::size_of::<InternalString>());
+    println!(
+        "Node<Range<u32>, Cumulated> {}",
+        std::mem::size_of::<Node<'static, Range<u32>, CumulateTreeTrait<Range<u32>, 8>>>()
+    );
 }

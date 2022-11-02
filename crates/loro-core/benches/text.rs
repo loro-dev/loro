@@ -15,15 +15,6 @@ mod run {
     use rand::SeedableRng;
     use serde_json::Value;
 
-#[cfg(feature = "fuzzing")]
-mod run {
-    use super::*;
-    use arbitrary::Unstructured;
-    use loro_core::fuzz::test_multi_sites;
-    use loro_core::fuzz::Action;
-    use rand::Rng;
-    use rand::SeedableRng;
-
     pub fn criterion_benchmark(c: &mut Criterion) {
         let mut rgn = rand::rngs::StdRng::seed_from_u64(0);
         let mut bytes = Vec::new();
