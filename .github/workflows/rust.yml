@@ -22,7 +22,8 @@ jobs:
       with:
         tool: nextest
     
-    - uses: Swatinem/rust-cache@v1
+    - run: rustup toolchain install stable --profile minimal
+    - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose
     - name: Run tests
