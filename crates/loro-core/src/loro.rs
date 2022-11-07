@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
@@ -10,14 +12,13 @@ use crate::{
         ContainerID, ContainerType,
     },
     id::ClientID,
-    isomorph::{Irc, IsoRw},
     op::RemoteOp,
     LogStore, LoroError, VersionVector,
 };
 
 pub struct LoroCore {
-    pub(crate) log_store: Irc<IsoRw<LogStore>>,
-    pub(crate) container: Irc<IsoRw<ContainerManager>>,
+    pub(crate) log_store: Arc<RwLock<LogStore>>,
+    pub(crate) container: Arc<RwLock<ContainerManager>>,
 }
 
 impl Default for LoroCore {
@@ -28,8 +29,8 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = Irc::new(IsoRw::new(ContainerManager::new()));
-        let weak = Irc::downgrade(&container);
+        let container = Arc::new(RwLock::new(ContainerManager::new()));
+        let weak = Arc::downgrade(&container);
         Self {
             log_store: LogStore::new(cfg, client_id, weak),
             container,
@@ -37,7 +38,7 @@ impl LoroCore {
     }
 
     pub fn vv(&self) -> VersionVector {
-        self.log_store.read().get_vv().clone()
+        self.log_store.read().unwrap().get_vv().clone()
     }
 
     #[inline(always)]
@@ -45,10 +46,13 @@ impl LoroCore {
         &mut self,
         name: &str,
     ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
-        let mut a = OwningRefMut::new(self.container.write());
+        let mut a = OwningRefMut::new(self.container.write().unwrap());
         let id = ContainerID::new_root(name, ContainerType::Map);
-        self.log_store.write().get_or_create_container_idx(&id);
-        let ptr = Irc::downgrade(&self.log_store);
+        self.log_store
+            .write()
+            .unwrap()
+            .get_or_create_container_idx(&id);
+        let ptr = Arc::downgrade(&self.log_store);
         a.get_or_create(&id, ptr)?;
         Ok(
             a.map_mut(move |x| x.get_mut(&id).unwrap().as_map_mut().unwrap())
@@ -61,10 +65,13 @@ impl LoroCore {
         &mut self,
         name: &str,
     ) -> Result<ContainerRefMut<TextContainer>, LoroError> {
-        let mut a = OwningRefMut::new(self.container.write());
+        let mut a = OwningRefMut::new(self.container.write().unwrap());
         let id = ContainerID::new_root(name, ContainerType::Text);
-        self.log_store.write().get_or_create_container_idx(&id);
-        let ptr = Irc::downgrade(&self.log_store);
+        self.log_store
+            .write()
+            .unwrap()
+            .get_or_create_container_idx(&id);
+        let ptr = Arc::downgrade(&self.log_store);
         a.get_or_create(&id, ptr)?;
         Ok(
             a.map_mut(move |x| x.get_mut(&id).unwrap().as_text_mut().unwrap())
@@ -77,7 +84,7 @@ impl LoroCore {
         &mut self,
         id: &ContainerID,
     ) -> Result<ContainerRefMut<MapContainer>, LoroError> {
-        let a = OwningRefMut::new(self.container.write());
+        let a = OwningRefMut::new(self.container.write().unwrap());
         Ok(
             a.map_mut(move |x| x.get_mut(id).unwrap().as_map_mut().unwrap())
                 .into(),
@@ -89,7 +96,7 @@ impl LoroCore {
         &mut self,
         id: &ContainerID,
     ) -> Result<ContainerRefMut<TextContainer>, LoroError> {
-        let a = OwningRefMut::new(self.container.write());
+        let a = OwningRefMut::new(self.container.write().unwrap());
         Ok(
             a.map_mut(move |x| x.get_mut(id).unwrap().as_text_mut().unwrap())
                 .into(),
@@ -101,23 +108,23 @@ impl LoroCore {
         &self,
         id: &ContainerID,
     ) -> Result<ContainerRef<TextContainer>, LoroError> {
-        let a = OwningRef::new(self.container.read());
+        let a = OwningRef::new(self.container.read().unwrap());
         Ok(a.map(move |x| x.get(id).unwrap().as_text().unwrap()).into())
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
-        let store = self.log_store.read();
+        let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
     pub fn import(&mut self, changes: Vec<Change<RemoteOp>>) {
-        let mut store = self.log_store.write();
+        let mut store = self.log_store.write().unwrap();
         store.import(changes)
     }
 
     #[cfg(feature = "fuzzing")]
     pub fn debug_inspect(&self) {
-        self.log_store.write().debug_inspect();
-        self.container.write().debug_inspect();
+        self.log_store.write().unwrap().debug_inspect();
+        self.container.write().unwrap().debug_inspect();
     }
 }
