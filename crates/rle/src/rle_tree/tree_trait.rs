@@ -8,6 +8,7 @@ use crate::{rle_trait::HasIndex, HasLength, Rle};
 use super::{
     arena::Arena,
     node::{InternalNode, LeafNode, Node},
+    Heap,
 };
 
 /// The position relative to a certain node.
@@ -74,6 +75,14 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     type Int: num::Integer + Copy + Debug + FromPrimitive;
     type InternalCache: Default + Debug + Eq + Clone;
     type LeafCache: Default + Debug + Eq + Clone;
+    /// The allocation method used for [crate::RleTree].
+    /// There are two modes provided:
+    ///
+    /// - [crate::rle_tree::Heap] will use Box to allocate nodes
+    /// - [Bump] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
+    ///
+    /// NOTE: Should be cautious when using [Bump] mode, T's drop method won't be called in this mode.
+    /// So you cannot use smart pointer in [Bump] mode directly. You should wrap it inside [bumpalo]'s Box.
     type Arena: Arena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
@@ -105,12 +114,12 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
 }
 
 #[derive(Debug, Default)]
-pub struct CumulateTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Bump> {
+pub struct CumulateTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Heap> {
     _phantom: std::marker::PhantomData<(T, TreeArena)>,
 }
 
 #[derive(Debug, Default)]
-pub struct GlobalTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Bump> {
+pub struct GlobalTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Heap> {
     _phantom: std::marker::PhantomData<(T, TreeArena)>,
 }
 
@@ -132,7 +141,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         node.cache = node
             .children()
             .iter()
-            .map(|x| HasLength::content_len(&**x))
+            .map(|x| HasLength::content_len(x))
             .sum();
     }
 
@@ -181,16 +190,16 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         }
 
         for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::content_len(&**child) {
+            if index < HasLength::content_len(child) {
                 return FindPosResult::new(i, index, Position::get_pos(index, child.content_len()));
             }
 
-            index -= HasLength::content_len(&**child);
+            index -= HasLength::content_len(child);
         }
 
         FindPosResult::new(
             node.children().len() - 1,
-            HasLength::atom_len(&**node.children().last().unwrap()),
+            HasLength::atom_len(node.children().last().unwrap()),
             Position::End,
         )
     }

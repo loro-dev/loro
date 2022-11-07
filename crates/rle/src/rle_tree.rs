@@ -1,9 +1,6 @@
 use std::{collections::HashMap, ptr::NonNull};
 
-use self::{
-    arena::Arena,
-    node::{InternalNode, LeafNode, Node},
-};
+use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
 pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
@@ -16,7 +13,7 @@ pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
 mod arena;
-pub use arena::Heap;
+pub use arena::{Arena, Bump, Heap};
 mod cursor;
 pub mod iter;
 pub mod node;

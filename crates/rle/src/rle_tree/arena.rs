@@ -4,7 +4,7 @@ use std::{
     ops::{Deref, DerefMut, Index, RangeBounds, IndexMut},
 };
 
-use bumpalo::Bump;
+pub use bumpalo::Bump;
 fn test() {
     let _a = vec![1, 2];
 }

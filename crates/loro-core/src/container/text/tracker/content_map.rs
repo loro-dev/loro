@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use rle::{
-    rle_tree::{Position, SafeCursor, SafeCursorMut},
+    rle_tree::{Bump, Position, SafeCursor, SafeCursorMut},
     HasLength, RleTree, RleVecWithLen,
 };
 

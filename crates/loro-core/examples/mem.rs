@@ -52,6 +52,7 @@ pub fn main() {
     drop(json);
     drop(d);
     drop(text);
+    #[cfg(feature = "fuzzing")]
     loro.debug_inspect();
     #[cfg(feature = "mem-prof")]
     drop(profiler);

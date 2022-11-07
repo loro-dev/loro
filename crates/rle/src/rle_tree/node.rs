@@ -40,7 +40,7 @@ pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
 pub struct LeafNode<'a, T: Rle + 'a, A: RleTreeTrait<T>> {
     bump: &'a A::Arena,
     pub(crate) parent: NonNull<InternalNode<'a, T, A>>,
-    pub(crate) children: <A::Arena as Arena>::Vec<'a, <A::Arena as Arena>::Boxed<'a, T>>,
+    pub(crate) children: <A::Arena as Arena>::Vec<'a, T>,
     pub(crate) prev: Option<NonNull<LeafNode<'a, T, A>>>,
     pub(crate) next: Option<NonNull<LeafNode<'a, T, A>>>,
     pub cache: A::LeafCache,

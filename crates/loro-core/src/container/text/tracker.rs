@@ -301,9 +301,8 @@ impl Tracker {
     }
 
     fn update_spans(&mut self, spans: &[IdSpan], change: StatusChange) {
-        let mut cursors: SmallVec<
-            [UnsafeCursor<YSpan, rle::rle_tree::tree_trait::CumulateTreeTrait<YSpan, 4>>; 2],
-        > = SmallVec::with_capacity(spans.len());
+        let mut cursors: SmallVec<[UnsafeCursor<YSpan, YSpanTreeTrait>; 2]> =
+            SmallVec::with_capacity(spans.len());
         for span in spans.iter() {
             let inserts = self.id_to_cursor.get_cursors_at_id_span(*span).inserts;
             // TODO: maybe we can skip this collect
