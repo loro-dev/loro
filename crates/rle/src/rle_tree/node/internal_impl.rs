@@ -1,6 +1,7 @@
 use std::{
     collections::{BinaryHeap, HashSet},
     fmt::{Debug, Error, Formatter},
+    ops::DerefMut,
 };
 
 use fxhash::FxHashSet;
@@ -8,6 +9,7 @@ use smallvec::SmallVec;
 
 use crate::{
     rle_tree::{
+        arena::VecTrait,
         node::utils::distribute,
         tree_trait::{FindPosResult, Position},
     },
@@ -17,11 +19,11 @@ use crate::{
 use super::*;
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
-    pub fn new(bump: &'a Bump, parent: Option<NonNull<Self>>) -> Self {
+    pub fn new(bump: &'a A::Arena, parent: Option<NonNull<Self>>) -> Self {
         Self {
             bump,
             parent,
-            children: BumpVec::with_capacity_in(A::MAX_CHILDREN_NUM, bump),
+            children: <A::Arena as Arena>::Vec::with_capacity_in(A::MAX_CHILDREN_NUM, bump),
             cache: Default::default(),
             _pin: PhantomPinned,
             _a: PhantomData,
@@ -30,10 +32,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     /// return result need to update cache
     #[inline]
-    fn _split(&mut self) -> &'a mut Node<'a, T, A> {
-        let ans = self
+    fn _split(&mut self) -> <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>> {
+        let mut ans = self
             .bump
-            .alloc(Node::Internal(Self::new(self.bump, self.parent)));
+            .allocate(Node::Internal(Self::new(self.bump, self.parent)));
         let inner = ans.as_internal_mut().unwrap();
         self._balance(inner);
         ans
@@ -44,7 +46,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     fn _balance(&mut self, other: &mut Self) {
         let keep_num = (self.children.len() + other.children.len()) / 2;
         debug_assert!(keep_num >= A::MIN_CHILDREN_NUM);
-        for child in self.children.drain(keep_num..) {
+        for mut child in self.children.drain(keep_num..) {
             child.set_parent(other.into());
             other.children.push(child);
         }
@@ -54,7 +56,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[inline]
-    pub fn children(&self) -> &[&'a mut Node<'a, T, A>] {
+    pub fn children(&self) -> &[<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>] {
         &self.children
     }
 
@@ -62,7 +64,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     pub(crate) fn _check_child_parent(&self) {
         for child in self.children.iter() {
             child.get_self_index().unwrap();
-            match child {
+            match child.deref() {
                 Node::Internal(node) => {
                     assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self));
                     node._check_child_parent();
@@ -79,7 +81,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         self.check_children_parent_link();
         for child in self.children.iter_mut() {
-            match child {
+            match child.deref_mut() {
                 Node::Internal(node) => {
                     node.check();
                 }
@@ -130,7 +132,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     fn check_children_parent_link(&mut self) {
         let self_ptr = self as *const _;
         for child in self.children.iter_mut() {
-            match child {
+            match child.deref_mut() {
                 Node::Internal(node) => {
                     assert!(std::ptr::eq(node.parent.unwrap().as_ptr(), self_ptr));
                 }
@@ -149,7 +151,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         visited: &mut SmallVec<[(usize, NonNull<Node<'a, T, A>>); 8]>,
         depth: usize,
         notify: &mut F,
-    ) -> Result<(), &'a mut Node<'a, T, A>>
+    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -163,17 +165,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             to.map_or((self.children.len(), None), |x| self._delete_end(x));
         let deleted_len = direct_delete_end as isize - direct_delete_start as isize;
         // TODO: maybe we can simplify this insertions logic
-        let mut insertions: SmallVec<[(usize, &mut Node<T, A>); 2]> = smallvec::smallvec![];
+        let mut insertions: SmallVec<[(usize, <A::Arena as Arena>::Boxed<'a, Node<T, A>>); 2]> =
+            smallvec::smallvec![];
         {
             // handle removing at the end point
             let mut handled = false;
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
-                    visited.push((
-                        depth,
-                        NonNull::new(&mut *self.children[direct_delete_end]).unwrap(),
-                    ));
-                    match &mut self.children[direct_delete_end] {
+                    visited.push((depth, self.children[direct_delete_end].deref().into()));
+                    match self.children[direct_delete_end].deref_mut() {
                         Node::Internal(node) => {
                             if let Err(new) = node._delete(
                                 Some(del_from),
@@ -201,7 +201,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                         depth,
                         NonNull::new(&mut *self.children[direct_delete_start - 1]).unwrap(),
                     ));
-                    match &mut self.children[direct_delete_start - 1] {
+                    match self.children[direct_delete_start - 1].deref_mut() {
                         Node::Internal(node) => {
                             if let Err(new) =
                                 node._delete(Some(del_from), None, visited, depth + 1, notify)
@@ -223,7 +223,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                         depth,
                         NonNull::new(&mut *self.children[direct_delete_end]).unwrap(),
                     ));
-                    match &mut self.children[direct_delete_end] {
+                    match self.children[direct_delete_end].deref_mut() {
                         Node::Internal(node) => {
                             if let Err(new) =
                                 node._delete(None, Some(del_to), visited, depth + 1, notify)
@@ -271,18 +271,22 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     pub(crate) fn apply_updates(
         &mut self,
-        mut updates: Vec<(usize, Vec<&'a mut Node<'a, T, A>>)>,
-    ) -> Result<(), Vec<&'a mut Node<'a, T, A>>> {
+        mut updates: Vec<(usize, Vec<<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>)>,
+    ) -> Result<(), Vec<<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>> {
         if updates.is_empty() {
             A::update_cache_internal(self);
             return Ok(());
         }
 
         updates.sort_by_key(|x| x.0);
-        let mut new_children: Vec<&'a mut Node<'a, T, A>> = Vec::with_capacity(A::MAX_CHILDREN_NUM);
+        let mut new_children: Vec<<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>> =
+            Vec::with_capacity(A::MAX_CHILDREN_NUM);
         let mut self_children = std::mem::replace(
             &mut self.children,
-            BumpVec::with_capacity_in(A::MAX_CHILDREN_NUM, self.bump),
+            <<A::Arena as Arena>::Vec<'_, _> as VecTrait<_>>::with_capacity_in(
+                A::MAX_CHILDREN_NUM,
+                self.bump,
+            ),
         );
         let mut saved_end = 0;
         for (index, replace) in updates {
@@ -303,7 +307,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         let self_ptr: NonNull<_> = self.into();
         let result = if new_children.len() <= A::MAX_CHILDREN_NUM {
-            for child in new_children {
+            for mut child in new_children {
                 child.set_parent(self_ptr);
                 self.children.push(child);
             }
@@ -314,7 +318,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let children_nums =
                 distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
             let mut index = 0;
-            for child in new_children.drain(0..children_nums[index]) {
+            for mut child in new_children.drain(0..children_nums[index]) {
                 child.set_parent(self_ptr);
                 self.children.push(child);
             }
@@ -323,11 +327,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             A::update_cache_internal(self);
             let mut ans_vec = Vec::new();
             while !new_children.is_empty() {
-                let new_internal_node = self
+                let mut new_internal_node = self
                     .bump
-                    .alloc(Node::Internal(InternalNode::new(self.bump, self.parent)));
+                    .allocate(Node::Internal(InternalNode::new(self.bump, self.parent)));
                 let new_internal = new_internal_node.as_internal_mut().unwrap();
-                for child in new_children.drain(..children_nums[index]) {
+                for mut child in new_children.drain(..children_nums[index]) {
                     child.set_parent(new_internal.into());
                     new_internal.children.push(child);
                 }
@@ -345,7 +349,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let new_vec = result.unwrap_err();
             {
                 // create level
-                let origin_root = self.bump.alloc(Node::Internal(InternalNode::new(
+                let mut origin_root = self.bump.allocate(Node::Internal(InternalNode::new(
                     self.bump,
                     Some(self.into()),
                 )));
@@ -361,7 +365,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
 
             let ptr = self.into();
-            for new_node in new_vec {
+            for mut new_node in new_vec {
                 new_node.set_parent(ptr);
                 self.children.push(new_node);
             }
@@ -417,7 +421,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         index: A::Int,
         value: T,
         notify: &mut F,
-    ) -> Result<(), &'a mut Node<'a, T, A>>
+    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -426,7 +430,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 A::update_cache_internal(self);
                 Ok(())
             }
-            Err(new) => {
+            Err(mut new) => {
                 A::update_cache_internal(self);
                 A::update_cache_internal(new.as_internal_mut().unwrap());
                 if self.is_root() {
@@ -440,11 +444,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     /// root node function. assume self and new's caches are up-to-date
-    fn _create_level(&mut self, new: &'a mut Node<'a, T, A>) {
+    fn _create_level(&mut self, mut new: <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>) {
         debug_assert!(self.is_root());
-        let left = self
+        let mut left = self
             .bump
-            .alloc(Node::Internal(InternalNode::new(self.bump, None)));
+            .allocate(Node::Internal(InternalNode::new(self.bump, None)));
         let left_inner = left.as_internal_mut().unwrap();
         std::mem::swap(left_inner, self);
         let left_ptr = left_inner.into();
@@ -464,7 +468,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         index: A::Int,
         value: T,
         notify: &mut F,
-    ) -> Result<(), &'a mut Node<'a, T, A>>
+    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -480,7 +484,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             ..
         } = A::find_pos_internal(self, index);
         let child = &mut self.children[child_index];
-        let new = match child {
+        let new = match child.deref_mut() {
             Node::Internal(child) => child.insert(relative_idx, value, notify),
             Node::Leaf(child) => child.insert(relative_idx, value, notify),
         };
@@ -495,15 +499,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     pub(crate) fn insert_at_pos(
         &mut self,
         index: usize,
-        value: &'a mut Node<'a, T, A>,
-    ) -> Result<(), &'a mut Node<'a, T, A>> {
+        value: <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>,
+    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>> {
         let result = self._insert_with_split(index, value);
         match result {
             Ok(_) => {
                 A::update_cache_internal(self);
                 Ok(())
             }
-            Err(new) => {
+            Err(mut new) => {
                 A::update_cache_internal(self);
                 A::update_cache_internal(new.as_internal_mut().unwrap());
                 if self.is_root() {
@@ -531,7 +535,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Ok(_) => {
                 A::update_cache_internal(self);
             }
-            Err(new) => {
+            Err(mut new) => {
                 A::update_cache_internal(self);
                 A::update_cache_internal(new.as_internal_mut().unwrap());
                 self._create_level(new);
@@ -618,7 +622,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     fn _root_shrink_levels_if_one_child(&mut self) -> FxHashSet<*const InternalNode<'a, T, A>> {
         let mut ans: HashSet<_, _> = FxHashSet::default();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
-            let child = self.children.pop().unwrap();
+            let mut child = self.children.pop().unwrap();
             let child_ptr = child.as_internal_mut().unwrap();
             std::mem::swap(&mut *child_ptr, self);
             self.parent = None;
@@ -644,10 +648,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     fn _insert_with_split(
         &mut self,
         child_index: usize,
-        new: &'a mut Node<'a, T, A>,
-    ) -> Result<(), &'a mut Node<'a, T, A>> {
+        mut new: <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>,
+    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
-            let ans = self._split();
+            let mut ans = self._split();
             if child_index < self.children.len() {
                 new.set_parent(self.into());
                 self.children.insert(child_index, new);
