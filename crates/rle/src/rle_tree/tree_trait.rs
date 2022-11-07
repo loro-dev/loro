@@ -78,11 +78,11 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// The allocation method used for [crate::RleTree].
     /// There are two modes provided:
     ///
-    /// - [crate::rle_tree::Heap] will use Box to allocate nodes
-    /// - [Bump] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
+    /// - [crate::rle_tree::HeapMode] will use Box to allocate nodes
+    /// - [crate::rle_tree::BumpMode] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
     ///
-    /// NOTE: Should be cautious when using [Bump] mode, T's drop method won't be called in this mode.
-    /// So you cannot use smart pointer in [Bump] mode directly. You should wrap it inside [bumpalo]'s Box.
+    /// NOTE: Should be cautious when using [crate::rle_tree::BumpMode], T's drop method won't be called in this mode.
+    /// So you cannot use smart pointer in [crate::rle_tree::BumpMode] directly. You should wrap it inside [bumpalo]'s Box.
     type Arena: Arena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);

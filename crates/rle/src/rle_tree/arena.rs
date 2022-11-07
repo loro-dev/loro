@@ -5,10 +5,10 @@ use std::{
 };
 
 
-/// [Bump] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
+/// [BumpMode] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
 ///
-/// NOTE: Should be cautious when using [Bump] mode, T's drop method won't be called in this mode.
-/// So you cannot use smart pointer in [Bump] mode directly. You should wrap it inside [bumpalo]'s [bumpalo::boxed::Box];
+/// NOTE: Should be cautious when using [BumpMode] mode, T's drop method won't be called in this mode.
+/// So you cannot use smart pointer in [BumpMode] mode directly. You should wrap it inside [bumpalo]'s [bumpalo::boxed::Box];
 #[derive(Debug, Default)]
 pub struct BumpMode(bumpalo::Bump);
 
