@@ -2,7 +2,11 @@
 //!
 //!
 mod iter;
-use std::{marker::PhantomPinned, ops::Range};
+use std::{
+    marker::PhantomPinned,
+    ops::Range,
+    sync::{Arc, RwLock, Weak},
+};
 
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -20,7 +24,6 @@ use crate::{
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    isomorph::{Irc, IsoRw, IsoWeak},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
     Lamport, Op, Timestamp, VersionVector, ID,
@@ -44,8 +47,8 @@ impl Default for GcConfig {
     }
 }
 
-pub(crate) type LogStoreRef = Irc<IsoRw<LogStore>>;
-pub(crate) type LogStoreWeakRef = IsoWeak<IsoRw<LogStore>>;
+pub(crate) type LogStoreRef = Arc<RwLock<LogStore>>;
+pub(crate) type LogStoreWeakRef = Weak<RwLock<LogStore>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -64,8 +67,8 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: IsoWeak<IsoRw<ContainerManager>>,
-    to_self: IsoWeak<IsoRw<LogStore>>,
+    pub(crate) container: Weak<RwLock<ContainerManager>>,
+    to_self: Weak<RwLock<LogStore>>,
     container_to_idx: FxHashMap<ContainerID, u32>,
     idx_to_container: Vec<ContainerID>,
     _pin: PhantomPinned,
@@ -75,11 +78,11 @@ impl LogStore {
     pub(crate) fn new(
         mut cfg: Configure,
         client_id: Option<ClientID>,
-        container: IsoWeak<IsoRw<ContainerManager>>,
-    ) -> Irc<IsoRw<Self>> {
+        container: Weak<RwLock<ContainerManager>>,
+    ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        Irc::new_cyclic(|x| {
-            IsoRw::new(Self {
+        Arc::new_cyclic(|x| {
+            RwLock::new(Self {
                 cfg,
                 this_client_id,
                 changes: FxHashMap::default(),
@@ -175,7 +178,7 @@ impl LogStore {
 
     fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
         let upgraded = self.container.upgrade().unwrap();
-        let container_manager = upgraded.read();
+        let container_manager = upgraded.read().unwrap();
         let mut ops = RleVec::new();
         for mut op in change.ops.into_iter() {
             let container = container_manager
@@ -296,7 +299,7 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let upgraded = self.container.upgrade().unwrap();
-        let mut container_manager = upgraded.write();
+        let mut container_manager = upgraded.write().unwrap();
         let change = self.change_to_imported_format(&mut container_manager, change);
         let v = self
             .changes

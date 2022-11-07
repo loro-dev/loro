@@ -48,7 +48,6 @@ doctest = false
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]
-parallel = []
 mem-prof = []
 # whether to use list slice instead of raw str in text container
 fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled"]

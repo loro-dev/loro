@@ -46,7 +46,7 @@ impl MapContainer {
     pub fn insert(&mut self, key: InternalString, value: InsertValue) {
         let self_id = &self.id;
         let m = self.store.upgrade().unwrap();
-        let mut store = m.write();
+        let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
             client_id,

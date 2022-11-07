@@ -18,7 +18,6 @@ pub mod version;
 mod error;
 #[cfg(feature = "fuzzing")]
 pub mod fuzz;
-mod isomorph;
 mod loro;
 mod smstring;
 mod snapshot;
