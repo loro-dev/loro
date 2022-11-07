@@ -9,8 +9,8 @@ struct Ref {
 
 #[cfg(feature = "fuzzing")]
 fn main() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    
+    
 
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action::*;

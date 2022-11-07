@@ -27,7 +27,7 @@ pub fn main() {
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
     let mut text = loro.get_or_create_root_text("text").unwrap();
-    for i in 0..1 {
+    for _i in 0..1 {
         for txn in txns.unwrap().as_array().unwrap() {
             let patches = txn
                 .as_object()

@@ -21,7 +21,7 @@ check-unsafe:
   env RUSTFLAGS="-Funsafe-code --cap-lints=warn" cargo check
 
 fix *FLAGS:
-  cargo clippy --fix {{FLAGS}}
+  cargo clippy --fix --features=fuzzing {{FLAGS}}
 
 deny:
   cargo deny check

@@ -87,7 +87,7 @@ impl TextContainer {
         Some(id)
     }
 
-    pub fn delete(&mut self, mut pos: usize, mut len: usize) -> Option<ID> {
+    pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
         if len == 0 {
             return None;
         }

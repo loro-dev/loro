@@ -285,13 +285,13 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                         left.merge(&right, &());
                         Ok(())
                     } else {
-                        return self.insert_at_pos(
+                        self.insert_at_pos(
                             Position::Start,
                             child_index + 1,
                             0,
                             right,
                             notify,
-                        );
+                        )
                     }
                 } else {
                     Ok(())
@@ -299,7 +299,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             } else if let Some(right) = right {
                 if target.is_mergable(&right, &()) {
                     target.merge(&right, &());
-                    return self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify);
+                    self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify)
                 } else {
                     let result =
                         self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify);
@@ -308,7 +308,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                             // insert one element should not cause Err
                             self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify)
                                 .unwrap();
-                            return Err(new);
+                            Err(new)
                         } else {
                             let new_insert_index = child_index + 2 - self.children.len();
                             // insert one element should not cause Err
@@ -316,20 +316,20 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                                 .unwrap()
                                 .insert_at_pos(Position::Start, new_insert_index, 0, right, notify)
                                 .unwrap();
-                            return Err(new);
+                            Err(new)
                         }
                     } else {
-                        return self.insert_at_pos(
+                        self.insert_at_pos(
                             Position::Start,
                             child_index + 2,
                             0,
                             right,
                             notify,
-                        );
+                        )
                     }
                 }
             } else {
-                return self.insert_at_pos(pos, child_index + 1, offset, target, notify);
+                self.insert_at_pos(pos, child_index + 1, offset, target, notify)
             }
         } else {
             self.children[child_index] = self.bump.allocate(target);

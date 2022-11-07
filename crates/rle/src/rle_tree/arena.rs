@@ -6,7 +6,7 @@ use std::{
 
 use bumpalo::Bump;
 fn test() {
-    let mut a = vec![1, 2];
+    let _a = vec![1, 2];
 }
 
 pub trait VecTrait<'v, T>:
