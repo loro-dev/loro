@@ -16,6 +16,7 @@ pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
 mod arena;
+pub use arena::Heap;
 mod cursor;
 pub mod iter;
 pub mod node;

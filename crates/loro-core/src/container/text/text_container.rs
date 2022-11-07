@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, RleTree, Sliceable};
+use rle::{
+    rle_tree::{tree_trait::CumulateTreeTrait, Heap},
+    HasLength, RleTree, Sliceable,
+};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -32,7 +35,7 @@ struct DagNode {
 pub struct TextContainer {
     id: ContainerID,
     log_store: LogStoreWeakRef,
-    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8>>,
+    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, Heap>>,
     raw_str: StringPool,
     tracker: Tracker,
     state_cache: LoroValue,

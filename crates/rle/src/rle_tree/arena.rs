@@ -17,7 +17,7 @@ pub trait VecTrait<'v, T>:
     where
         Self:'a;
 
-    fn drain<'a, R>(&'a mut self, range: R) -> Self::Drain<'a>
+    fn drain<R>(&mut self, range: R) -> Self::Drain<'_>
     where
         R: RangeBounds<usize>;
 
