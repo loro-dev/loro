@@ -176,6 +176,7 @@ impl Arena for BumpMode {
     }
 }
 
+/// [HeapMode] will use [Box] and [Vec] to allocate nodes for [crate::RleTree]
 #[derive(Debug, Default)]
 pub struct HeapMode;
 
