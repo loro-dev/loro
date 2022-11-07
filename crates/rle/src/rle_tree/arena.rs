@@ -4,7 +4,14 @@ use std::{
     ops::{Deref, DerefMut, Index, RangeBounds, IndexMut},
 };
 
-pub use bumpalo::Bump;
+
+/// [Bump] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
+///
+/// NOTE: Should be cautious when using [Bump] mode, T's drop method won't be called in this mode.
+/// So you cannot use smart pointer in [Bump] mode directly. You should wrap it inside [bumpalo]'s [bumpalo::boxed::Box];
+#[derive(Debug, Default)]
+pub struct Bump(bumpalo::Bump);
+
 fn test() {
     let _a = vec![1, 2];
 }
@@ -88,7 +95,7 @@ impl<'bump, T: Debug + 'bump> VecTrait<'bump, T> for BumpVec<'bump, T> {
 
     #[inline(always)]
     fn with_capacity_in(capacity: usize, arena: &'bump Self::Arena) -> BumpVec<'bump, T> {
-        BumpVec::with_capacity_in(capacity, arena)
+        BumpVec::with_capacity_in(capacity, &arena.0)
     }
 
     #[inline(always)]
@@ -161,11 +168,11 @@ impl Arena for Bump {
     where
         T: 'a + Debug,
     {
-        self.alloc(value)
+        self.0.alloc(value)
     }
 
     fn allocated_bytes(&self) -> usize {
-        Bump::allocated_bytes(self)
+        bumpalo::Bump::allocated_bytes(&self.0)
     }
 }
 
