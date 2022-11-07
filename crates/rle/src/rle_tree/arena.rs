@@ -10,7 +10,7 @@ use std::{
 /// NOTE: Should be cautious when using [Bump] mode, T's drop method won't be called in this mode.
 /// So you cannot use smart pointer in [Bump] mode directly. You should wrap it inside [bumpalo]'s [bumpalo::boxed::Box];
 #[derive(Debug, Default)]
-pub struct Bump(bumpalo::Bump);
+pub struct BumpMode(bumpalo::Bump);
 
 fn test() {
     let _a = vec![1, 2];
@@ -86,7 +86,7 @@ impl<'bump, T: Debug + 'bump> VecTrait<'bump, T> for BumpVec<'bump, T> {
         self.clear()
     }
 
-    type Arena = Bump;
+    type Arena = BumpMode;
 
     #[inline(always)]
     fn insert(&mut self, index: usize, value: T) {
@@ -138,7 +138,7 @@ impl<'v, T: Debug + 'v> VecTrait<'v, T> for Vec<T> {
         self.clear()
     }
 
-    type Arena = Heap;
+    type Arena = HeapMode;
 
     #[inline(always)]
     fn insert(&mut self, index: usize, value: T) {
@@ -160,7 +160,7 @@ impl<'v, T: Debug + 'v> VecTrait<'v, T> for Vec<T> {
     }
 }
 
-impl Arena for Bump {
+impl Arena for BumpMode {
     type Boxed<'a, T> = &'a mut T where T: 'a + Debug;
     type Vec<'a, T> = BumpVec<'a, T> where T: 'a + Debug;
 
@@ -177,9 +177,9 @@ impl Arena for Bump {
 }
 
 #[derive(Debug, Default)]
-pub struct Heap;
+pub struct HeapMode;
 
-impl Arena for Heap {
+impl Arena for HeapMode {
     type Boxed<'a, T> = Box<T> where T: 'a + Debug;
     type Vec<'a, T> = Vec<T> where T: 'a + Debug;
 

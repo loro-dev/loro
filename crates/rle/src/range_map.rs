@@ -7,7 +7,7 @@ use crate::{
     rle_tree::{
         node::{InternalNode, LeafNode},
         tree_trait::GlobalTreeTrait,
-        Arena, Heap, UnsafeCursor,
+        Arena, HeapMode, UnsafeCursor,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -57,7 +57,7 @@ impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
 pub struct RangeMap<
     Index: GlobalIndex + 'static,
     Value: Rle + ZeroElement + 'static,
-    TreeArena: Arena + 'static = Heap,
+    TreeArena: Arena + 'static = HeapMode,
 > {
     pub(crate) tree:
         RleTree<WithIndex<Value, Index>, GlobalTreeTrait<WithIndex<Value, Index>, 10, TreeArena>>,

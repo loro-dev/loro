@@ -7,7 +7,7 @@ use crate::{
     ContentType, InsertContentTrait, ID,
 };
 use rle::{
-    rle_tree::{tree_trait::CumulateTreeTrait, Bump},
+    rle_tree::{tree_trait::CumulateTreeTrait, BumpMode},
     HasLength, Mergable, Sliceable,
 };
 
@@ -86,7 +86,7 @@ pub enum StatusChange {
     UndoDelete,
 }
 
-pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 8, Bump>;
+pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 8, BumpMode>;
 
 impl YSpan {
     /// this is the last id of the span, which is **included** by self

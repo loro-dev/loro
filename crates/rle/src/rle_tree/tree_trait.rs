@@ -8,7 +8,7 @@ use crate::{rle_trait::HasIndex, HasLength, Rle};
 use super::{
     arena::Arena,
     node::{InternalNode, LeafNode, Node},
-    Heap,
+    HeapMode,
 };
 
 /// The position relative to a certain node.
@@ -114,12 +114,12 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
 }
 
 #[derive(Debug, Default)]
-pub struct CumulateTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Heap> {
+pub struct CumulateTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = HeapMode> {
     _phantom: std::marker::PhantomData<(T, TreeArena)>,
 }
 
 #[derive(Debug, Default)]
-pub struct GlobalTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = Heap> {
+pub struct GlobalTreeTrait<T: Rle, const MAX_CHILD: usize, TreeArena: Arena = HeapMode> {
     _phantom: std::marker::PhantomData<(T, TreeArena)>,
 }
 
