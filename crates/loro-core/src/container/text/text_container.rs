@@ -38,7 +38,6 @@ pub struct TextContainer {
     state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, HeapMode>>,
     raw_str: StringPool,
     tracker: Tracker,
-    state_cache: LoroValue,
 
     head: SmallVec<[ID; 2]>,
     vv: VersionVector,
@@ -51,7 +50,6 @@ impl TextContainer {
             log_store,
             raw_str: StringPool::default(),
             tracker: Tracker::new(Default::default(), 0),
-            state_cache: LoroValue::Null,
             state: Default::default(),
             // TODO: should be eq to log_store frontier?
             head: Default::default(),
@@ -252,15 +250,14 @@ impl Container for TextContainer {
     }
 
     // TODO: maybe we need to let this return Cow
-    fn get_value(&mut self) -> &LoroValue {
+    fn get_value(&self) -> LoroValue {
         let mut ans_str = SmString::new();
         for v in self.state.iter() {
             let content = v.as_ref();
             ans_str.push_str(&self.raw_str.get_str(content));
         }
 
-        self.state_cache = LoroValue::String(ans_str);
-        &self.state_cache
+        LoroValue::String(ans_str)
     }
 
     fn to_export(&self, op: &mut Op) {

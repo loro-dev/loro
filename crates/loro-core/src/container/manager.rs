@@ -53,7 +53,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn get_value(&mut self) -> &crate::LoroValue {
+    fn get_value(&self) -> crate::LoroValue {
         match self {
             ContainerInstance::Map(x) => x.get_value(),
             ContainerInstance::Text(x) => x.get_value(),

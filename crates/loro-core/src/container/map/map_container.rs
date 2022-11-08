@@ -21,7 +21,6 @@ use super::MapSet;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
-    value: Option<LoroValue>,
     store: LogStoreWeakRef,
 }
 
@@ -39,7 +38,6 @@ impl MapContainer {
             id,
             store,
             state: FxHashMap::default(),
-            value: None,
         }
     }
 
@@ -66,15 +64,6 @@ impl MapContainer {
                 })),
             },
         }]);
-
-        if self.value.is_some() {
-            self.value
-                .as_mut()
-                .unwrap()
-                .as_map_mut()
-                .unwrap()
-                .insert(key.clone(), value.clone().into());
-        }
 
         self.state.insert(
             key,
@@ -126,15 +115,6 @@ impl Container for MapContainer {
                                 counter: op.counter,
                             },
                         );
-
-                        if self.value.is_some() {
-                            self.value
-                                .as_mut()
-                                .unwrap()
-                                .as_map_mut()
-                                .unwrap()
-                                .insert(v.key.clone(), v.value.clone().into());
-                        }
                     }
                 }
                 _ => unreachable!(),
@@ -142,16 +122,12 @@ impl Container for MapContainer {
         }
     }
 
-    fn get_value(&mut self) -> &LoroValue {
-        if self.value.is_none() {
-            let mut map = FxHashMap::default();
-            for (key, value) in self.state.iter() {
-                map.insert(key.clone(), value.value.clone().into());
-            }
-            self.value = Some(LoroValue::Map(map));
+    fn get_value(&self) -> LoroValue {
+        let mut map = FxHashMap::default();
+        for (key, value) in self.state.iter() {
+            map.insert(key.clone(), value.value.clone().into());
         }
-
-        self.value.as_ref().unwrap()
+        LoroValue::Map(map)
     }
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {

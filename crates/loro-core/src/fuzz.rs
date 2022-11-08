@@ -202,10 +202,11 @@ impl Actionable for Vec<LoroCore> {
         match action {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
-                let mut text = self[*site as usize]
+                let text = self[*site as usize]
                     .get_or_create_root_text("text")
                     .unwrap();
-                let value = text.get_value().as_string().unwrap();
+                let value = text.get_value();
+                let value = value.as_string().unwrap();
                 *pos %= value.len() + 1;
                 while !value.is_char_boundary(*pos) {
                     *pos = (*pos + 1) % (value.len() + 1)
@@ -213,7 +214,7 @@ impl Actionable for Vec<LoroCore> {
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
-                let mut text = self[*site as usize]
+                let text = self[*site as usize]
                     .get_or_create_root_text("text")
                     .unwrap();
                 if text.text_len() == 0 {
@@ -222,7 +223,8 @@ impl Actionable for Vec<LoroCore> {
                     return;
                 }
 
-                let str = text.get_value().as_string().unwrap();
+                let text = text.get_value();
+                let str = text.as_string().unwrap();
                 *pos %= str.len() + 1;
                 while !str.is_char_boundary(*pos) {
                     *pos = (*pos + 1) % str.len();
@@ -243,8 +245,8 @@ impl Actionable for Vec<LoroCore> {
 }
 
 fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
-    let mut a = site_a.get_or_create_root_text("text").unwrap();
-    let mut b = site_b.get_or_create_root_text("text").unwrap();
+    let a = site_a.get_or_create_root_text("text").unwrap();
+    let b = site_b.get_or_create_root_text("text").unwrap();
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a.as_string().unwrap(), value_b.as_string().unwrap());

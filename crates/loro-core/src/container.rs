@@ -29,7 +29,7 @@ pub trait Container: Debug + Any + Unpin {
     /// NOTE: this method expect that [LogStore] has store the Change
     fn apply(&mut self, id_span: IdSpan, log: &LogStore);
     fn checkout_version(&mut self, vv: &VersionVector);
-    fn get_value(&mut self) -> &LoroValue;
+    fn get_value(&self) -> LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;
 

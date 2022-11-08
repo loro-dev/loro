@@ -1,9 +1,16 @@
 use ctor::ctor;
 use loro_core::container::Container;
-use loro_core::LoroCore;
+use loro_core::{InsertValue, LoroCore};
 
 #[test]
-fn test() {
+fn map() {
+    let mut loro = LoroCore::new(Default::default(), Some(10));
+    let mut root = loro.get_or_create_root_map("root").unwrap();
+    root.insert("haha".into(), InsertValue::Double(1.2));
+}
+
+#[test]
+fn two_client_text_sync() {
     let mut store = LoroCore::new(Default::default(), Some(10));
     let mut text_container = store.get_or_create_root_text("haha").unwrap();
     text_container.insert(0, "012");
