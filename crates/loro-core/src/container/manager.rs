@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{log_store::LogStoreWeakRef, op::RemoteOp, span::IdSpan, LogStore, LoroError};
+use crate::{log_store::LogStoreWeakRef, op::RemoteOp, span::IdSpan, LogStore};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,

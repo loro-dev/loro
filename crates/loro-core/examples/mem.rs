@@ -26,9 +26,9 @@ pub fn main() {
     #[cfg(feature = "mem-prof")]
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
-    let mut text = loro.get_or_create_root_text("text");
+    let text = loro.get_or_create_root_text("text");
     let mut text_lock = text.lock().unwrap();
-    let mut text = text_lock.as_text_mut().unwrap();
+    let text = text_lock.as_text_mut().unwrap();
     for _i in 0..1 {
         for txn in txns.unwrap().as_array().unwrap() {
             let patches = txn

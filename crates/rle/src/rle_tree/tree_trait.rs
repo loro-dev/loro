@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::Deref};
 
-use bumpalo::Bump;
+
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
 
 use crate::{rle_trait::HasIndex, HasLength, Rle};

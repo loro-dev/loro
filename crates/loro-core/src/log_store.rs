@@ -4,7 +4,6 @@
 mod iter;
 use std::{
     marker::PhantomPinned,
-    ops::Range,
     sync::{Arc, RwLock, Weak},
 };
 

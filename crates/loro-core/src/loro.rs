@@ -1,19 +1,17 @@
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
-use owning_ref::{OwningRef, OwningRefMut};
+
 
 use crate::{
     change::Change,
     configure::Configure,
     container::{
-        manager::{ContainerInstance, ContainerManager, ContainerRef, ContainerRefMut},
-        map::MapContainer,
-        text::text_container::TextContainer,
+        manager::{ContainerInstance, ContainerManager},
         ContainerID, ContainerType,
     },
     id::ClientID,
     op::RemoteOp,
-    LogStore, LoroError, VersionVector,
+    LogStore, VersionVector,
 };
 
 pub struct LoroCore {
@@ -69,7 +67,7 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
         let container = self.container.read().unwrap();
-        container.get(id).map(|x| x.clone())
+        container.get(id).cloned()
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {

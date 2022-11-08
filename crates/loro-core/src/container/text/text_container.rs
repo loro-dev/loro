@@ -13,7 +13,6 @@ use crate::{
     id::{Counter, ID},
     log_store::LogStoreWeakRef,
     op::{Content, Op, OpContent, RemoteOp},
-    smstring::SmString,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore, VersionVector,

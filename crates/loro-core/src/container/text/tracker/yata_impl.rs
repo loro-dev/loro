@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crdt_list::{
     crdt::{ListCrdt, OpSet},
     yata::Yata,
@@ -204,6 +205,7 @@ pub mod fuzz {
     use crdt_list::test::{Action, TestFramework};
     use rle::{RleVecWithIndex, RleVecWithLen};
     use tabled::TableIteratorExt;
+    use Action::*;
 
     use crate::{
         container::text::{
@@ -329,7 +331,6 @@ pub mod fuzz {
         }
     }
 
-    use Action::*;
     #[test]
     fn issue_set_range() {
         crdt_list::test::test_with_actions::<YataImpl>(
