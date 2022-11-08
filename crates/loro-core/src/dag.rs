@@ -86,17 +86,6 @@ pub(crate) trait DagUtils: Dag {
 }
 
 impl<T: Dag + ?Sized> DagUtils for T {
-    //
-    // TODO: Maybe use Result return type
-    // TODO: Maybe we only need one heap?
-    // TODO: benchmark
-    // how to test better?
-    // - converge through other nodes
-    //
-    /// only returns a single root.
-    /// but the least common ancestor may be more than one root.
-    /// But that is a rare case.
-    ///
     #[inline]
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]> {
         find_common_ancestor(&|id| self.get(id), a_id, b_id)

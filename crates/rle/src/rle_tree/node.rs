@@ -35,8 +35,6 @@ pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
 }
 
 // TODO: remove bump field
-// TODO: remove parent field?
-// TODO: only one child?
 pub struct LeafNode<'a, T: Rle + 'a, A: RleTreeTrait<T>> {
     bump: &'a A::Arena,
     pub(crate) parent: NonNull<InternalNode<'a, T, A>>,
