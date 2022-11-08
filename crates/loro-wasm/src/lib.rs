@@ -53,7 +53,7 @@ impl Loro {
     pub fn get_map_container(&mut self, name: &str) -> Result<Map, JsValue> {
         let mut loro = self.loro.borrow_mut();
         let get_or_create_root_map = loro.get_or_create_root_map(name);
-        let map = get_or_create_root_map.lock_text();
+        let map = get_or_create_root_map.lock_map();
         Ok(Map {
             id: map.id().clone(),
             loro: Rc::downgrade(&self.loro),
