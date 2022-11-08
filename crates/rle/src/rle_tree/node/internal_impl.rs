@@ -168,10 +168,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut insertions: SmallVec<[(usize, <A::Arena as Arena>::Boxed<'a, Node<T, A>>); 2]> =
             smallvec::smallvec![];
         {
-            // handle removing at the end point
+            // handle deletions at the end point
             let mut handled = false;
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
+                    // start and end are at the same child
                     visited.push((depth, self.children[direct_delete_end].deref().into()));
                     match self.children[direct_delete_end].deref_mut() {
                         Node::Internal(node) => {
@@ -197,6 +198,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
             if !handled {
                 if let Some(del_from) = to_del_start_offset {
+                    // handle deletions at the start
                     visited.push((
                         depth,
                         NonNull::new(&mut *self.children[direct_delete_start - 1]).unwrap(),
@@ -219,6 +221,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     }
                 }
                 if let Some(del_to) = to_del_end_offset {
+                    // handle deletions at the end
                     visited.push((
                         depth,
                         NonNull::new(&mut *self.children[direct_delete_end]).unwrap(),
@@ -550,14 +553,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut depth_to_node: SmallVec<[SmallVec<[NonNull<_>; 2]>; 10]> = smallvec::smallvec![];
         let mut zipper: BinaryHeap<(isize, NonNull<Node<'a, T, A>>)> = zipper
             .into_iter()
-            .filter_map(|(i, mut ptr)| {
-                // SAFETY: node_ptr points to a valid descendant of self
-                let node: &mut Node<'a, T, A> = unsafe { ptr.as_mut() };
-                if let Some(node) = node.as_internal() {
-                    let in_ptr = node as *const InternalNode<'a, T, A>;
-                    if removed.contains(&in_ptr) {
-                        return None;
-                    }
+            .filter_map(|(i, ptr)| {
+                if removed.contains(&ptr) {
+                    return None;
                 }
 
                 if visited.contains(&ptr) {
@@ -619,10 +617,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         self._root_shrink_levels_if_one_child();
     }
 
-    fn _root_shrink_levels_if_one_child(&mut self) -> FxHashSet<*const InternalNode<'a, T, A>> {
+    fn _root_shrink_levels_if_one_child(&mut self) -> FxHashSet<NonNull<Node<'a, T, A>>> {
         let mut ans: HashSet<_, _> = FxHashSet::default();
         while self.children.len() == 1 && self.children[0].as_internal().is_some() {
             let mut child = self.children.pop().unwrap();
+            ans.insert(child.deref().into());
             let child_ptr = child.as_internal_mut().unwrap();
             std::mem::swap(&mut *child_ptr, self);
             self.parent = None;
@@ -634,7 +633,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
             child_ptr.parent = None;
             child_ptr.children.clear();
-            ans.insert(&*child_ptr as *const _);
         }
 
         ans

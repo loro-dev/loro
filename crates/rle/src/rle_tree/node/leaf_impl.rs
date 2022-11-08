@@ -156,7 +156,8 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     }
 
     pub fn is_deleted(&self) -> bool {
-        // SAFETY: we used bumpalo here, so even if current node is deleted we
+        // SAFETY: In HeapMode this function should always returns true.
+        // In BumpMode we may keep the pointer to the leaf even if it's deleted
         unsafe {
             let mut node = self.parent.as_ref();
             if !node
