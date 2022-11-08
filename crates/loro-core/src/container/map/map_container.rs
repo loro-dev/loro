@@ -127,7 +127,7 @@ impl Container for MapContainer {
         for (key, value) in self.state.iter() {
             map.insert(key.clone(), value.value.clone().into());
         }
-        LoroValue::Map(map)
+        LoroValue::Map(Box::new(map))
     }
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {

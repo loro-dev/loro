@@ -283,7 +283,7 @@ pub fn test_single_client(mut actions: Vec<Action>) {
         text_container.apply_action(action);
         assert_eq!(
             ground_truth.as_str(),
-            text_container.get_value().as_string().unwrap().as_str(),
+            &**text_container.get_value().as_string().unwrap(),
             "{}",
             applied.table()
         );

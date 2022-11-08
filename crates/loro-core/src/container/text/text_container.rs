@@ -223,7 +223,7 @@ impl Container for TextContainer {
         );
         debug_log!(
             "BEFORE EFFECT STATE={}",
-            self.get_value().as_string().unwrap().as_str()
+            self.get_value().as_string().unwrap()
         );
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
@@ -237,7 +237,7 @@ impl Container for TextContainer {
         }
         debug_log!(
             "AFTER EFFECT STATE={}",
-            self.get_value().as_string().unwrap().as_str()
+            self.get_value().as_string().unwrap()
         );
 
         self.head.push(new_op_id);
@@ -251,13 +251,13 @@ impl Container for TextContainer {
 
     // TODO: maybe we need to let this return Cow
     fn get_value(&self) -> LoroValue {
-        let mut ans_str = SmString::new();
+        let mut ans_str = String::new();
         for v in self.state.iter() {
             let content = v.as_ref();
             ans_str.push_str(&self.raw_str.get_str(content));
         }
 
-        LoroValue::String(ans_str)
+        LoroValue::String(ans_str.into_boxed_str())
     }
 
     fn to_export(&self, op: &mut Op) {

@@ -1,7 +1,7 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
-use crate::{container::ContainerID, smstring::SmString, InternalString};
+use crate::{container::ContainerID, InternalString};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, serde::Serialize, EnumAsInner)]
@@ -10,15 +10,27 @@ pub enum LoroValue {
     Bool(bool),
     Double(f64),
     Integer(i32),
-    String(SmString),
-    List(Vec<LoroValue>),
-    Map(FxHashMap<InternalString, LoroValue>),
-    Unresolved(ContainerID),
+    String(Box<str>),
+    List(Box<Vec<LoroValue>>),
+    Map(Box<FxHashMap<InternalString, LoroValue>>),
+    Unresolved(Box<ContainerID>),
 }
 
 impl Default for LoroValue {
     fn default() -> Self {
         LoroValue::Null
+    }
+}
+
+impl From<FxHashMap<InternalString, LoroValue>> for LoroValue {
+    fn from(map: FxHashMap<InternalString, LoroValue>) -> Self {
+        LoroValue::Map(Box::new(map))
+    }
+}
+
+impl From<Vec<LoroValue>> for LoroValue {
+    fn from(vec: Vec<LoroValue>) -> Self {
+        LoroValue::List(Box::new(vec))
     }
 }
 
@@ -57,8 +69,8 @@ pub enum InsertValue {
     Bool(bool),
     Double(f64),
     Int32(i32),
-    String(SmString),
-    Container(ContainerID),
+    String(Box<str>),
+    Container(Box<ContainerID>),
 }
 
 #[cfg(feature = "wasm")]
@@ -79,7 +91,7 @@ pub mod wasm {
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::List(list) => {
                 let arr = Array::new_with_length(list.len() as u32);
-                for v in list {
+                for v in list.into_iter() {
                     arr.push(&convert(v));
                 }
 

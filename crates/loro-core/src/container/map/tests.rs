@@ -22,7 +22,7 @@ fn basic() {
         "haha".into() => LoroValue::Integer(1)
     );
 
-    assert_eq!(container.get_value(), LoroValue::Map(ans));
+    assert_eq!(container.get_value(), LoroValue::Map(Box::new(ans)));
 }
 
 mod map_proptest {
