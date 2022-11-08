@@ -1,16 +1,13 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::{RwLockReadGuard, RwLockWriteGuard},
+};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{
-    isomorph::{IsoRef, IsoRefMut},
-    log_store::LogStoreWeakRef,
-    op::RemoteOp,
-    span::IdSpan,
-    LogStore, LoroError,
-};
+use crate::{log_store::LogStoreWeakRef, op::RemoteOp, span::IdSpan, LogStore, LoroError};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -153,21 +150,23 @@ impl ContainerManager {
 }
 
 pub struct ContainerRefMut<'a, T> {
-    value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>,
+    value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>,
 }
 
 pub struct ContainerRef<'a, T> {
-    value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>,
+    value: OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>,
 }
 
-impl<'a, T> From<OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>> for ContainerRefMut<'a, T> {
-    fn from(value: OwningRefMut<IsoRefMut<'a, ContainerManager>, Box<T>>) -> Self {
+impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>>
+    for ContainerRefMut<'a, T>
+{
+    fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>) -> Self {
         ContainerRefMut { value }
     }
 }
 
-impl<'a, T> From<OwningRef<IsoRef<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
-    fn from(value: OwningRef<IsoRef<'a, ContainerManager>, Box<T>>) -> Self {
+impl<'a, T> From<OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
+    fn from(value: OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>) -> Self {
         ContainerRef { value }
     }
 }

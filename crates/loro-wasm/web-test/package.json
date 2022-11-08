@@ -1,0 +1,22 @@
+{
+  "name": "web-test",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "loro-wasm": "../pkg",
+    "preact": "^10.11.2"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.4.0",
+    "@types/node": "^18.11.9",
+    "typescript": "^4.6.4",
+    "vite": "^3.2.3",
+    "vitest": "^0.24.5"
+  }
+}

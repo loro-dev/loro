@@ -65,7 +65,7 @@ impl TextContainer {
         }
 
         let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write();
+        let mut store = s.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         self.state.insert(pos, slice.clone());
@@ -96,7 +96,7 @@ impl TextContainer {
         }
 
         let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write();
+        let mut store = s.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
             id,
