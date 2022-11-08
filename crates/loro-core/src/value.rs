@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
-use crate::{container::ContainerID, InternalString};
+use crate::container::ContainerID;
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, serde::Serialize, EnumAsInner)]
@@ -12,7 +14,7 @@ pub enum LoroValue {
     I32(i32),
     String(Box<str>),
     List(Box<Vec<LoroValue>>),
-    Map(Box<FxHashMap<InternalString, LoroValue>>),
+    Map(Box<FxHashMap<String, LoroValue>>),
     Unresolved(Box<ContainerID>),
 }
 
@@ -22,9 +24,14 @@ impl Default for LoroValue {
     }
 }
 
-impl From<FxHashMap<InternalString, LoroValue>> for LoroValue {
-    fn from(map: FxHashMap<InternalString, LoroValue>) -> Self {
-        LoroValue::Map(Box::new(map))
+impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
+    fn from(map: HashMap<S, LoroValue, M>) -> Self {
+        let mut new_map = FxHashMap::default();
+        for (k, v) in map {
+            new_map.insert(k.into(), v);
+        }
+
+        LoroValue::Map(Box::new(new_map))
     }
 }
 
@@ -93,7 +100,7 @@ impl From<String> for LoroValue {
 
 /// [InsertValue] can be inserted to Map or List
 /// It's different from [LoroValue] because some of the states in [LoroValue] are illegal to be inserted
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, EnumAsInner)]
 pub enum InsertValue {
     Null,
     Bool(bool),

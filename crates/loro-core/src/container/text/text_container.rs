@@ -12,7 +12,7 @@ use crate::{
     debug_log,
     id::{Counter, ID},
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, OpContent, RemoteOp},
+    op::{Content, Op, OpContent, RemoteOp},
     smstring::SmString,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
@@ -70,7 +70,7 @@ impl TextContainer {
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::Insert {
+                content: Content::List(ListOp::Insert {
                     slice: ListSlice::Slice(slice),
                     pos,
                 }),
@@ -99,7 +99,7 @@ impl TextContainer {
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::new_del(pos, len)),
+                content: Content::List(ListOp::new_del(pos, len)),
             },
             store.get_or_create_container_idx(&self.id),
         );

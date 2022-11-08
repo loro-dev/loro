@@ -38,7 +38,9 @@ mod run {
         c.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
-                let mut text = loro.get_or_create_root_text("text").unwrap();
+                let text = loro.get_or_create_root_text("text");
+                let mut text = text.lock().unwrap();
+                let text = text.as_text_mut().unwrap();
                 for txn in txns.unwrap().as_array().unwrap() {
                     let patches = txn
                         .as_object()

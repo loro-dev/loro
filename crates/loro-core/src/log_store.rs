@@ -21,9 +21,9 @@ use crate::{
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::RemoteOp,
+    op::{Content, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    Lamport, Op, Timestamp, VersionVector, ID,
+    ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -155,8 +155,9 @@ impl LogStore {
     ) -> Change {
         let mut new_ops = RleVec::new();
         for mut op in change.ops.into_iter() {
-            let container = container_manager
+            let mut container = container_manager
                 .get_or_create(&op.container, self.to_self.clone())
+                .lock()
                 .unwrap();
             container.to_import(&mut op);
             self.get_or_create_container_idx(&op.container);
@@ -180,6 +181,8 @@ impl LogStore {
         for mut op in change.ops.into_iter() {
             let container = container_manager
                 .get(&self.idx_to_container[op.container as usize])
+                .unwrap()
+                .lock()
                 .unwrap();
             container.to_export(&mut op);
             ops.push(op.convert(self));
@@ -193,6 +196,28 @@ impl LogStore {
             timestamp: change.timestamp,
             break_points: change.break_points,
         }
+    }
+
+    pub(crate) fn create_container(
+        &mut self,
+        container_type: ContainerType,
+        parent: ContainerID,
+    ) -> ContainerID {
+        let id = self.next_id();
+        let container_id = ContainerID::new_normal(id, container_type);
+        let parent_idx = self.get_container_idx(&parent).unwrap();
+        self.append_local_ops(&[Op::new(
+            id,
+            OpContent::Normal {
+                content: Content::Container(container_id.clone()),
+            },
+            parent_idx,
+        )]);
+        let mng = self.container.upgrade().unwrap();
+        let mut mng = mng.write().unwrap();
+        mng.get_or_create(&container_id, self.to_self.clone());
+        self.get_or_create_container_idx(&container_id);
+        container_id
     }
 
     #[inline(always)]
@@ -313,11 +338,12 @@ impl LogStore {
         }
 
         for container in set {
-            let container = container_manager
+            let mut container = container_manager
                 .get_or_create(
                     &self.idx_to_container[*container as usize],
                     self.to_self.clone(),
                 )
+                .lock()
                 .unwrap();
             container.apply(change.id_span(), self);
         }

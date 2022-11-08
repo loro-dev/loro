@@ -1,10 +1,12 @@
+use std::sync::{RwLock, Weak};
+
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{Container, ContainerID, ContainerType},
+    container::{manager::ContainerManager, Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, RichOp},
+    op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
     value::{InsertValue, LoroValue},
@@ -22,6 +24,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     store: LogStoreWeakRef,
+    manager: Weak<RwLock<ContainerManager>>,
 }
 
 #[derive(Debug)]
@@ -33,10 +36,15 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub(crate) fn new(id: ContainerID, store: LogStoreWeakRef) -> Self {
+    pub(crate) fn new(
+        id: ContainerID,
+        store: LogStoreWeakRef,
+        manager: Weak<RwLock<ContainerManager>>,
+    ) -> Self {
         MapContainer {
             id,
             store,
+            manager,
             state: FxHashMap::default(),
         }
     }
@@ -58,7 +66,7 @@ impl MapContainer {
             counter: id.counter,
             container,
             content: OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(MapSet {
+                content: Content::Dyn(Box::new(MapSet {
                     key: key.clone(),
                     value: value.clone(),
                 })),
@@ -73,6 +81,30 @@ impl MapContainer {
                 counter,
             },
         );
+    }
+
+    pub fn insert_obj(&mut self, key: InternalString, obj: ContainerType) -> ContainerID {
+        let self_id = &self.id;
+        let m = self.store.upgrade().unwrap();
+        let mut store = m.write().unwrap();
+        let client_id = store.this_client_id;
+        let order = TotalOrderStamp {
+            client_id,
+            lamport: store.next_lamport(),
+        };
+
+        let id = store.next_id_for(client_id);
+        let counter = id.counter;
+        let container_id = store.create_container(obj, self_id.clone());
+        self.state.insert(
+            key,
+            ValueSlot {
+                value: InsertValue::Container(Box::new(container_id.clone())),
+                order,
+                counter,
+            },
+        );
+        container_id
     }
 
     #[inline]
@@ -123,11 +155,20 @@ impl Container for MapContainer {
     }
 
     fn get_value(&self) -> LoroValue {
+        let manager = self.manager.upgrade().unwrap();
+        let mut manager_read = None;
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
-            map.insert(key.clone(), value.value.clone().into());
+            if let Some(container_id) = value.value.as_container() {
+                let m = manager_read.get_or_insert_with(|| manager.read().unwrap());
+                let c = m.get(container_id).unwrap().lock().unwrap();
+                map.insert(key.to_string(), c.get_value());
+            } else {
+                map.insert(key.to_string(), value.value.clone().into());
+            }
         }
-        LoroValue::Map(Box::new(map))
+
+        map.into()
     }
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {

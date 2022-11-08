@@ -54,7 +54,7 @@ impl Op {
     }
 
     #[inline]
-    pub(crate) fn new_insert_op(id: ID, container: u32, content: InsertContent) -> Self {
+    pub(crate) fn new_insert_op(id: ID, container: u32, content: Content) -> Self {
         Op::new(id, OpContent::Normal { content }, container)
     }
 

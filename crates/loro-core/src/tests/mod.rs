@@ -16,7 +16,7 @@ fn size_of() {
     use crate::{
         container::{map::MapSet, text::text_content::ListSlice, ContainerID},
         id::ID,
-        op::{InsertContent, Op},
+        op::{Content, Op},
         span::IdSpan,
         Container, InsertValue, InternalString,
     };
@@ -26,7 +26,7 @@ fn size_of() {
 
     println!("Change {}", std::mem::size_of::<Change>());
     println!("Op {}", std::mem::size_of::<Op>());
-    println!("InsertContent {}", std::mem::size_of::<InsertContent>());
+    println!("InsertContent {}", std::mem::size_of::<Content>());
     println!("MapSet {}", std::mem::size_of::<MapSet>());
     println!("ListSlice {}", std::mem::size_of::<ListSlice>());
     println!("Box {}", std::mem::size_of::<Box<dyn Container>>());

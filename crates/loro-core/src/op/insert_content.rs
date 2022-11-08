@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::container::{list::list_op::ListOp, map::MapSet};
+use crate::container::{list::list_op::ListOp, map::MapSet, ContainerID};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ContentType {
@@ -18,28 +18,31 @@ pub enum ContentType {
 }
 
 #[derive(EnumAsInner, Debug)]
-pub(crate) enum InsertContent {
+pub(crate) enum Content {
+    Container(ContainerID),
     Map(MapSet),
     List(ListOp),
     Dyn(Box<dyn InsertContentTrait>),
 }
 
-impl Clone for InsertContent {
+impl Clone for Content {
     fn clone(&self) -> Self {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Dyn(arg0) => Self::Dyn(arg0.clone_content()),
+            Content::Container(arg0) => Self::Container(arg0.clone()),
         }
     }
 }
 
-impl InsertContent {
+impl Content {
     pub fn id(&self) -> ContentType {
         match self {
             Self::Map(_) => ContentType::Map,
             Self::List(_) => ContentType::Text,
             Self::Dyn(arg0) => arg0.id(),
+            Self::Container(_) => ContentType::Container,
         }
     }
 }
@@ -92,41 +95,39 @@ impl<T: Mergable + Any> MergeableContent for T {
     }
 }
 
-impl HasLength for InsertContent {
+impl HasLength for Content {
     fn content_len(&self) -> usize {
         match self {
-            InsertContent::Map(x) => x.content_len(),
-            InsertContent::Dyn(x) => x.content_len(),
-            InsertContent::List(x) => x.content_len(),
+            Content::Map(x) => x.content_len(),
+            Content::Dyn(x) => x.content_len(),
+            Content::List(x) => x.content_len(),
+            Content::Container(_) => 1,
         }
     }
 }
 
-impl Sliceable for InsertContent {
+impl Sliceable for Content {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            InsertContent::Map(x) => InsertContent::Map(x.slice(from, to)),
-            InsertContent::Dyn(x) => InsertContent::Dyn(x.slice_content(from, to)),
-            InsertContent::List(x) => InsertContent::List(x.slice(from, to)),
+            Content::Map(x) => Content::Map(x.slice(from, to)),
+            Content::Dyn(x) => Content::Dyn(x.slice_content(from, to)),
+            Content::List(x) => Content::List(x.slice(from, to)),
+            Content::Container(x) => Content::Container(x.clone()),
         }
     }
 }
 
-impl Mergable for InsertContent {
-    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+impl Mergable for Content {
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        match self {
-            InsertContent::Map(x) => match _other {
-                InsertContent::Map(y) => x.is_mergable(y, &()),
-                _ => false,
-            },
-            InsertContent::List(x) => match _other {
-                InsertContent::List(y) => x.is_mergable(y, &()),
-                _ => false,
-            },
-            InsertContent::Dyn(x) => x.is_mergable_content(&**_other.as_dyn().unwrap()),
+        match (self, other) {
+            (Content::Map(x), Content::Map(y)) => x.is_mergable(y, &()),
+            (Content::List(x), Content::List(y)) => x.is_mergable(y, &()),
+            (Content::Dyn(x), Content::Dyn(y)) => x.is_mergable_content(&**y),
+            (Content::Container(_), _) => false,
+            _ => false,
         }
     }
 
@@ -135,15 +136,16 @@ impl Mergable for InsertContent {
         Self: Sized,
     {
         match self {
-            InsertContent::Map(x) => match _other {
-                InsertContent::Map(y) => x.merge(y, &()),
+            Content::Map(x) => match _other {
+                Content::Map(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            InsertContent::List(x) => match _other {
-                InsertContent::List(y) => x.merge(y, &()),
+            Content::List(x) => match _other {
+                Content::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            InsertContent::Dyn(x) => x.merge_content(&**_other.as_dyn().unwrap()),
+            Content::Dyn(x) => x.merge_content(&**_other.as_dyn().unwrap()),
+            Content::Container(_) => unreachable!(),
         }
     }
 }

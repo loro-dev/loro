@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -82,27 +82,28 @@ impl Container for ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerManager {
-    containers: FxHashMap<ContainerID, ContainerInstance>,
+    containers: FxHashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
+    to_self: Weak<RwLock<ContainerManager>>,
 }
 
 impl ContainerManager {
-    pub(crate) fn new() -> Self {
-        Self {
-            containers: Default::default(),
-        }
+    pub(crate) fn new() -> Arc<RwLock<ContainerManager>> {
+        Arc::new_cyclic(|x| {
+            RwLock::new(ContainerManager {
+                containers: Default::default(),
+                to_self: x.clone(),
+            })
+        })
     }
 
     #[inline]
-    pub(crate) fn create(
-        &mut self,
-        id: ContainerID,
-        container_type: ContainerType,
-        log_store: LogStoreWeakRef,
-    ) -> ContainerInstance {
-        match container_type {
-            ContainerType::Map => {
-                ContainerInstance::Map(Box::new(MapContainer::new(id, log_store)))
-            }
+    fn create(&mut self, id: ContainerID, log_store: LogStoreWeakRef) -> ContainerInstance {
+        match id.container_type() {
+            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(
+                id,
+                log_store,
+                self.to_self.clone(),
+            ))),
             ContainerType::Text => {
                 ContainerInstance::Text(Box::new(TextContainer::new(id, log_store)))
             }
@@ -111,38 +112,33 @@ impl ContainerManager {
     }
 
     #[inline]
-    pub fn get(&self, id: &ContainerID) -> Option<&ContainerInstance> {
+    pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
         self.containers.get(id)
     }
 
     #[inline]
-    pub fn get_mut(&mut self, id: &ContainerID) -> Option<&mut ContainerInstance> {
-        self.containers.get_mut(id)
-    }
-
-    #[inline]
     fn insert(&mut self, id: ContainerID, container: ContainerInstance) {
-        self.containers.insert(id, container);
+        self.containers.insert(id, Arc::new(Mutex::new(container)));
     }
 
     pub(crate) fn get_or_create(
         &mut self,
         id: &ContainerID,
         log_store: LogStoreWeakRef,
-    ) -> Result<&mut ContainerInstance, LoroError> {
+    ) -> &Arc<Mutex<ContainerInstance>> {
         if !self.containers.contains_key(id) {
-            let container = self.create(id.clone(), id.container_type(), log_store);
+            let container = self.create(id.clone(), log_store);
             self.insert(id.clone(), container);
         }
 
-        let container = self.get_mut(id).unwrap();
-        Ok(container)
+        let container = self.get(id).unwrap();
+        container
     }
 
     #[cfg(feature = "fuzzing")]
     pub fn debug_inspect(&mut self) {
         for container in self.containers.values_mut() {
-            if let ContainerInstance::Text(x) = container {
+            if let ContainerInstance::Text(x) = container.lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }
         }
@@ -182,5 +178,47 @@ impl<'a, T> Deref for ContainerRefMut<'a, T> {
 impl<'a, T> DerefMut for ContainerRefMut<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value.deref_mut()
+    }
+}
+
+pub trait LockContainer {
+    type MapTarget<'a>
+    where
+        Self: 'a;
+    type TextTarget<'a>
+    where
+        Self: 'a;
+
+    fn lock_map(&self) -> Self::MapTarget<'_>;
+    fn lock_text(&self) -> Self::TextTarget<'_>;
+}
+
+impl LockContainer for Arc<Mutex<ContainerInstance>> {
+    type MapTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<MapContainer>> where Self:'a;
+    type TextTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<TextContainer>> where Self:'a;
+
+    fn lock_map(&self) -> Self::MapTarget<'_> {
+        let a = OwningRefMut::new(self.lock().unwrap());
+        a.map_mut(|x| x.as_map_mut().unwrap())
+    }
+
+    fn lock_text(&self) -> Self::TextTarget<'_> {
+        let a = OwningRefMut::new(self.lock().unwrap());
+        a.map_mut(|x| x.as_text_mut().unwrap())
+    }
+}
+
+impl<'x> LockContainer for &'x Arc<Mutex<ContainerInstance>> {
+    type MapTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<MapContainer>> where Self:'a;
+    type TextTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<TextContainer>> where Self:'a;
+
+    fn lock_map(&self) -> Self::MapTarget<'_> {
+        let a = OwningRefMut::new(self.lock().unwrap());
+        a.map_mut(|x| x.as_map_mut().unwrap())
+    }
+
+    fn lock_text(&self) -> Self::TextTarget<'_> {
+        let a = OwningRefMut::new(self.lock().unwrap());
+        a.map_mut(|x| x.as_text_mut().unwrap())
     }
 }

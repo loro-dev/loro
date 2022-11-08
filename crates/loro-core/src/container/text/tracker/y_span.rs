@@ -184,7 +184,7 @@ impl HasLength for YSpan {
 #[cfg(any(test, features = "fuzzing"))]
 pub mod test {
     use crate::{
-        op::{InsertContent, OpContent},
+        op::{Content, OpContent},
         ContentType, Op, ID,
     };
     use rle::{HasLength, RleVecWithIndex};
@@ -197,7 +197,7 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
@@ -211,7 +211,7 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 1)),
                     origin_right: None,
                     id: ID::new(0, 2),
@@ -235,7 +235,7 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
@@ -249,7 +249,7 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
