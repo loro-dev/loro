@@ -208,13 +208,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(Some(del_from), None, visited, depth + 1, notify)
                             {
-                                // TODO: maybe even if we panic here it can still work
+                                // even if we panic here it can still work
                                 insertions.push((direct_delete_start, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(Some(del_from), None, notify) {
-                                // TODO: maybe even if we panic here it can still work
+                                // even if we panic here it can still work
                                 insertions.push((direct_delete_start, new));
                             }
                         }
@@ -231,13 +231,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             if let Err(new) =
                                 node._delete(None, Some(del_to), visited, depth + 1, notify)
                             {
-                                // TODO: maybe even if we panic here it can still work
+                                // even if we panic here it can still work
                                 insertions.push((direct_delete_end + 1, new));
                             }
                         }
                         Node::Leaf(node) => {
                             if let Err(new) = node.delete(None, Some(del_to), notify) {
-                                // TODO: maybe even if we panic here it can still work
+                                // even if we panic here it can still work
                                 insertions.push((direct_delete_end + 1, new));
                             }
                         }
@@ -388,7 +388,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let next = self.children[right_index]
             .get_last_leaf()
             .and_then(|x| x.next);
-        // SAFETY: rle_tree is single threaded
+        // SAFETY: rle_tree is single threaded and we have the exclusive ref
         unsafe {
             if let Some(mut prev) = prev {
                 let prev = prev.as_mut();
@@ -526,7 +526,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     /// this can only invoke from root
-    /// TODO: need to speed this method up. maybe remove hashset here? use a miniset instead
     #[inline]
     pub(crate) fn delete<F>(&mut self, start: Option<A::Int>, end: Option<A::Int>, notify: &mut F)
     where

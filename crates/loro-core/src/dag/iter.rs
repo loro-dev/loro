@@ -49,7 +49,7 @@ pub struct DagIterator<'a, T> {
     visited: VersionVector,
 }
 
-// TODO: Need benchmark on memory
+/// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
     type Item = &'a T;
 
@@ -103,7 +103,7 @@ pub(crate) struct DagIteratorVV<'a, T> {
     heap: BinaryHeap<IdHeapItem>,
 }
 
-// TODO: Need benchmark on memory
+/// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
     type Item = (&'a T, VersionVector);
 

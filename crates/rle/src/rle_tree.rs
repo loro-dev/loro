@@ -290,7 +290,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
-    // TODO: perf, use smallvec
     pub fn update_at_cursors_with_args<U, F, Arg>(
         &mut self,
         cursor_groups: &[UnsafeCursor<T, A>],
