@@ -1,4 +1,3 @@
-
 use std::{fmt::Debug, ptr::NonNull};
 
 use fxhash::FxHashSet;
@@ -7,7 +6,8 @@ use crate::{
     rle_trait::{GlobalIndex, HasIndex, ZeroElement},
     rle_tree::{
         node::{InternalNode, LeafNode},
-        tree_trait::GlobalTreeTrait, UnsafeCursor,
+        tree_trait::GlobalTreeTrait,
+        Arena, HeapMode, UnsafeCursor,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -54,12 +54,20 @@ impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
 
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct RangeMap<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> {
-    pub(crate) tree: RleTree<WithIndex<Value, Index>, GlobalTreeTrait<WithIndex<Value, Index>, 10>>,
+pub struct RangeMap<
+    Index: GlobalIndex + 'static,
+    Value: Rle + ZeroElement + 'static,
+    TreeArena: Arena + 'static = HeapMode,
+> {
+    pub(crate) tree:
+        RleTree<WithIndex<Value, Index>, GlobalTreeTrait<WithIndex<Value, Index>, 10, TreeArena>>,
 }
 
-impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> Default
-    for RangeMap<Index, Value>
+impl<
+        Index: GlobalIndex + 'static,
+        Value: Rle + ZeroElement + 'static,
+        TreeArena: Arena + 'static,
+    > Default for RangeMap<Index, Value, TreeArena>
 {
     fn default() -> Self {
         Self {
@@ -68,7 +76,12 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> Default
     }
 }
 
-impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<Index, Value> {
+impl<
+        Index: GlobalIndex + 'static,
+        Value: Rle + ZeroElement + 'static,
+        TreeArena: Arena + 'static,
+    > RangeMap<Index, Value, TreeArena>
+{
     pub fn set_large_range(&mut self, start: Index, value: Value) {
         let end = start + Index::from_usize(std::cmp::max(value.content_len(), 1)).unwrap();
         self.tree.delete_range(Some(start), Some(end));
@@ -107,7 +120,7 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
         // there are a lot of updates are in-place, we can update them directly and return
         // because cache won't change
         if elem.index == start && elem_end == end {
-            **elem = WithIndex {
+            *elem = WithIndex {
                 value,
                 index: start,
             };
@@ -166,15 +179,15 @@ impl<Index: GlobalIndex + 'static, Value: Rle + ZeroElement + 'static> RangeMap<
             } else if elem.index < start {
                 // start element overlaps with target range
                 // let it keep its left part
-                **elem = elem.slice(0, (start - elem.index).as_());
+                *elem = elem.slice(0, (start - elem.index).as_());
             } else if elem_end > end {
                 // end element overlaps with target range
                 // let it keep its right part
-                **elem = elem.slice((end - elem.index).as_(), elem.atom_len());
+                *elem = elem.slice((end - elem.index).as_(), elem.atom_len());
             } else {
                 // elements inside the target range
                 // extends its start to last_end
-                **elem = WithIndex {
+                *elem = WithIndex {
                     index: last_end,
                     value: value.slice((last_end - start).as_(), (elem_end - start).as_()),
                 };

@@ -179,13 +179,13 @@ impl Actionable for Vec<LoroCore> {
         match action {
             Action::Ins { content, pos, site } => {
                 self[*site as usize]
-                    .get_or_create_root_text("text".into())
+                    .get_or_create_root_text("text")
                     .unwrap()
                     .insert(*pos, content);
             }
             Action::Del { pos, len, site } => {
                 self[*site as usize]
-                    .get_or_create_root_text("text".into())
+                    .get_or_create_root_text("text")
                     .unwrap()
                     .delete(*pos, *len);
             }
@@ -203,7 +203,7 @@ impl Actionable for Vec<LoroCore> {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
                 let mut text = self[*site as usize]
-                    .get_or_create_root_text("text".into())
+                    .get_or_create_root_text("text")
                     .unwrap();
                 let value = text.get_value().as_string().unwrap();
                 *pos %= value.len() + 1;
@@ -214,7 +214,7 @@ impl Actionable for Vec<LoroCore> {
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
                 let mut text = self[*site as usize]
-                    .get_or_create_root_text("text".into())
+                    .get_or_create_root_text("text")
                     .unwrap();
                 if text.text_len() == 0 {
                     *len = 0;
@@ -243,8 +243,8 @@ impl Actionable for Vec<LoroCore> {
 }
 
 fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
-    let mut a = site_a.get_or_create_root_text("text".into()).unwrap();
-    let mut b = site_b.get_or_create_root_text("text".into()).unwrap();
+    let mut a = site_a.get_or_create_root_text("text").unwrap();
+    let mut b = site_b.get_or_create_root_text("text").unwrap();
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a.as_string().unwrap(), value_b.as_string().unwrap());
@@ -267,7 +267,7 @@ fn check_synced(sites: &mut [LoroCore]) {
 
 pub fn test_single_client(mut actions: Vec<Action>) {
     let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut text_container = store.get_or_create_root_text("haha".into()).unwrap();
+    let mut text_container = store.get_or_create_root_text("haha").unwrap();
     let mut ground_truth = String::new();
     let mut applied = Vec::new();
     for action in actions

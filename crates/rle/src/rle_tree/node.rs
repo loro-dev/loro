@@ -1,14 +1,17 @@
 use std::{
     fmt::Debug,
     marker::{PhantomData, PhantomPinned},
+    ops::Deref,
     ptr::NonNull,
 };
 
 use crate::Rle;
-use bumpalo::boxed::Box as BumpBox;
 
-use super::{cursor::SafeCursor, tree_trait::RleTreeTrait, BumpVec};
-use bumpalo::Bump;
+use super::{
+    arena::{Arena, VecTrait},
+    cursor::SafeCursor,
+    tree_trait::RleTreeTrait,
+};
 use enum_as_inner::EnumAsInner;
 mod internal_impl;
 mod leaf_impl;
@@ -21,10 +24,11 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
     Leaf(LeafNode<'a, T, A>),
 }
 
-pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
-    bump: &'a Bump,
+pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
+    bump: &'a A::Arena,
     pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(super) children: BumpVec<'a, &'a mut Node<'a, T, A>>,
+    pub(super) children:
+        <A::Arena as Arena>::Vec<'a, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,
@@ -33,10 +37,10 @@ pub struct InternalNode<'a, T: Rle, A: RleTreeTrait<T>> {
 // TODO: remove bump field
 // TODO: remove parent field?
 // TODO: only one child?
-pub struct LeafNode<'a, T: Rle, A: RleTreeTrait<T>> {
-    bump: &'a Bump,
+pub struct LeafNode<'a, T: Rle + 'a, A: RleTreeTrait<T>> {
+    bump: &'a A::Arena,
     pub(crate) parent: NonNull<InternalNode<'a, T, A>>,
-    pub(crate) children: BumpVec<'a, BumpBox<'a, T>>,
+    pub(crate) children: <A::Arena as Arena>::Vec<'a, T>,
     pub(crate) prev: Option<NonNull<LeafNode<'a, T, A>>>,
     pub(crate) next: Option<NonNull<LeafNode<'a, T, A>>>,
     pub cache: A::LeafCache,
@@ -52,13 +56,16 @@ pub(crate) enum Either {
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
-    fn _new_internal(bump: &'a Bump, parent: Option<NonNull<InternalNode<'a, T, A>>>) -> Self {
+    fn _new_internal(bump: &'a A::Arena, parent: Option<NonNull<InternalNode<'a, T, A>>>) -> Self {
         Self::Internal(InternalNode::new(bump, parent))
     }
 
     #[inline]
-    fn new_leaf(bump: &'a Bump, parent: NonNull<InternalNode<'a, T, A>>) -> &'a mut Self {
-        bump.alloc(Self::Leaf(LeafNode::new(bump, parent)))
+    fn new_leaf(
+        bump: &'a A::Arena,
+        parent: NonNull<InternalNode<'a, T, A>>,
+    ) -> <A::Arena as Arena>::Boxed<'a, Self> {
+        bump.allocate(Self::Leaf(LeafNode::new(bump, parent)))
     }
 
     #[inline]
@@ -126,7 +133,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             let ans = parent
                 .children
                 .iter()
-                .position(|child| match (child, self) {
+                .position(|child| match (child.deref(), self) {
                     (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(a, b),
                     (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(a, b),
                     _ => false,
@@ -147,9 +154,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         let index = self.get_self_index()?;
         let parent = self.parent()?;
         if index > 0 {
-            Some((parent.children[index - 1], Either::Left))
+            Some((&parent.children[index - 1], Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((parent.children[index + 1], Either::Right))
+            Some((&parent.children[index + 1], Either::Right))
         } else {
             None
         }
@@ -175,7 +182,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
                     let ptr = NonNull::new(&mut *sibling).unwrap();
-                    for child in self_node.children.drain(..) {
+                    for mut child in self_node.children.drain(..) {
                         child.set_parent(ptr);
                         sibling.children.push(child);
                     }
@@ -195,7 +202,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let ptr = NonNull::new(&mut *sibling).unwrap();
                     sibling.children.splice(
                         0..0,
-                        self_node.children.drain(0..).map(|x| {
+                        self_node.children.drain(0..).map(|mut x| {
                             x.set_parent(ptr);
                             x
                         }),
@@ -232,10 +239,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 Node::Internal(sibling) => {
                     let self_node = self.as_internal_mut().unwrap();
                     let self_ptr = NonNull::new(&mut *self_node).unwrap();
-                    let sibling_drain = sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|x| {
-                        x.set_parent(self_ptr);
-                        x
-                    });
+                    let sibling_drain =
+                        sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|mut x| {
+                            x.set_parent(self_ptr);
+                            x
+                        });
                     self_node.children.splice(0..0, sibling_drain);
                 }
                 Node::Leaf(sibling) => {
@@ -260,7 +268,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                         sibling
                             .children
                             .drain(0..sibling_len - A::MIN_CHILDREN_NUM)
-                            .map(|x| {
+                            .map(|mut x| {
                                 x.set_parent(self_ptr);
                                 x
                             }),
@@ -319,7 +327,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         f(self);
         match self {
             Node::Internal(node) => {
-                for child in &node.children {
+                for child in node.children.deref() {
                     child.recursive_visit_all(f);
                 }
             }

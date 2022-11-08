@@ -3,7 +3,6 @@ use std::{collections::HashMap, ptr::NonNull};
 use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
 pub(self) use bumpalo::collections::vec::Vec as BumpVec;
-use bumpalo::Bump;
 pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
 use fxhash::FxHashMap;
 use num::FromPrimitive;
@@ -13,6 +12,8 @@ use smallvec::SmallVec;
 pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
+mod arena;
+pub use arena::{Arena, BumpMode, HeapMode};
 mod cursor;
 pub mod iter;
 pub mod node;
@@ -23,16 +24,19 @@ pub mod tree_trait;
 #[self_referencing]
 #[derive(Debug)]
 pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
-    pub(crate) bump: Bump,
+    pub(crate) bump: A::Arena,
     #[borrows(bump)]
-    node: &'this mut Node<'this, T, A>,
+    #[not_covariant]
+    node: <A::Arena as arena::Arena>::Boxed<'this, Node<'this, T, A>>,
 }
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
         RleTreeBuilder {
-            bump: Bump::new(),
-            node_builder: |bump| bump.alloc(Node::Internal(InternalNode::new(bump, None))),
+            bump: Default::default(),
+            node_builder: |bump: &A::Arena| {
+                bump.allocate(Node::Internal(InternalNode::new(bump, None)))
+            },
         }
         .build()
     }
@@ -104,7 +108,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         return None;
                     }
 
-                    node = internal_node.children[result.child_index];
+                    node = &internal_node.children[result.child_index];
                     index = result.offset;
                 }
                 Node::Leaf(leaf) => {
@@ -138,7 +142,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         return None;
                     }
 
-                    node = internal_node.children[result.child_index];
+                    node = &internal_node.children[result.child_index];
                     index = result.offset;
                 }
                 Node::Leaf(leaf) => {

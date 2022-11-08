@@ -9,7 +9,7 @@ use super::{node::LeafNode, tree_trait::Position};
 
 /// when len > 0, it acts as a selection. When iterating the tree, the len should be the size of the element.
 #[derive(Debug)]
-pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T>> {
+pub struct UnsafeCursor<'tree, T: Rle, A: RleTreeTrait<T> + 'tree> {
     pub leaf: NonNull<LeafNode<'tree, T, A>>,
     pub index: usize,
     pub offset: usize,

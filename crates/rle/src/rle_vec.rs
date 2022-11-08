@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut, Index, Range},
+    ops::{Deref, Index, Range},
 };
 
 use num::{traits::AsPrimitive, FromPrimitive};
