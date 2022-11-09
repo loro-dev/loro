@@ -5,6 +5,7 @@ use crdt_list::{
 use rle::{
     range_map::{RangeMap, WithStartEnd},
     rle_tree::{iter::IterMut, SafeCursorMut},
+    HasLength,
 };
 
 use crate::id::{Counter, ID};
@@ -27,7 +28,7 @@ impl OpSet<YSpan, ID> for OpSpanSet {
             value.id.into(),
             WithStartEnd {
                 start: value.id.into(),
-                end: value.id.inc(value.len as i32).into(),
+                end: value.id.inc(value.atom_len() as i32).into(),
                 value: true,
             },
         )
@@ -92,7 +93,7 @@ impl ListCrdt for YataImpl {
     }
 
     fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
-        op.id.contains(op.len as Counter, id)
+        op.id.contains(op.atom_len() as Counter, id)
     }
 }
 
@@ -134,7 +135,10 @@ mod test {
     use crdt_list::crdt::OpSet;
 
     use crate::{
-        container::text::tracker::y_span::{Status, YSpan},
+        container::text::{
+            text_content::ListSlice,
+            tracker::y_span::{Status, YSpan},
+        },
         id::ID,
     };
 
@@ -145,11 +149,10 @@ mod test {
         let mut set = OpSpanSet::default();
         set.insert(&YSpan {
             id: ID::new(1, 10),
-            len: 10,
             origin_left: Some(ID::new(0, 1)),
             origin_right: Some(ID::new(0, 2)),
             status: Status::new(),
-            slice: Default::default(),
+            slice: ListSlice::Unknown(10),
         });
         assert!(set.contain(ID::new(1, 10)));
         assert!(set.contain(ID::new(1, 11)));
@@ -173,7 +176,7 @@ pub mod fuzz {
         fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
             vec![
                 self.id.to_string().into(),
-                self.len.to_string().into(),
+                self.atom_len().to_string().into(),
                 self.status.future.to_string().into(),
                 self.status.delete_times.to_string().into(),
                 self.status.undo_times.to_string().into(),
@@ -202,7 +205,7 @@ pub mod fuzz {
     }
 
     use crdt_list::test::{Action, TestFramework};
-    use rle::{RleVecWithIndex, RleVecWithLen};
+    use rle::{HasLength, RleVecWithIndex, RleVecWithLen};
     use tabled::TableIteratorExt;
 
     use crate::{
@@ -221,7 +224,7 @@ pub mod fuzz {
 
     impl TestFramework for YataImpl {
         fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
-            container.head_vv.set_end(op.id.inc(op.len as i32));
+            container.head_vv.set_end(op.id.inc(op.atom_len() as i32));
             // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
             unsafe { crdt_list::yata::integrate::<Self>(container, op) };
         }

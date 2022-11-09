@@ -72,7 +72,6 @@ impl Tracker {
                     origin_right: None,
                     id: ID::unknown(0),
                     status: Status::new(),
-                    len: init_len as usize,
                     slice: ListSlice::Unknown(init_len as usize),
                 },
                 &mut make_notify(&mut id_to_cursor),
@@ -114,7 +113,7 @@ impl Tracker {
             let id_span = IdSpan::new(
                 yspan.id.client_id,
                 yspan.id.counter,
-                yspan.len as Counter + yspan.id.counter,
+                yspan.atom_len() as Counter + yspan.id.counter,
             );
             let mut len = 0;
             for marker in self
@@ -126,7 +125,7 @@ impl Tracker {
                 }
             }
 
-            assert_eq!(len, yspan.len);
+            assert_eq!(len, yspan.atom_len());
         }
 
         self.content.debug_check();

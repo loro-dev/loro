@@ -68,12 +68,16 @@ impl Status {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YSpan {
     pub id: ID,
-    pub len: usize,
     pub status: Status,
     pub origin_left: Option<ID>,
     pub origin_right: Option<ID>,
     // TODO: remove this field when the system is stable
     pub slice: ListSlice,
+}
+
+#[test]
+fn y_span_size() {
+    println!("{}", std::mem::size_of::<YSpan>());
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -92,7 +96,7 @@ impl YSpan {
     /// this is the last id of the span, which is **included** by self
     #[inline]
     pub fn last_id(&self) -> ID {
-        self.id.inc(self.len as i32 - 1)
+        self.id.inc(self.atom_len() as i32 - 1)
     }
 
     #[inline]
@@ -104,7 +108,7 @@ impl YSpan {
     pub fn contain_id(&self, id: ID) -> bool {
         self.id.client_id == id.client_id
             && self.id.counter <= id.counter
-            && id.counter < self.id.counter + self.len as i32
+            && id.counter < self.id.counter + self.atom_len() as i32
     }
 
     #[inline]
@@ -113,7 +117,8 @@ impl YSpan {
             return false;
         }
 
-        self.id.counter < id.ctr_end() && self.id.counter + (self.len as Counter) > id.ctr_start()
+        self.id.counter < id.ctr_end()
+            && self.id.counter + (self.atom_len() as Counter) > id.ctr_start()
     }
 }
 
@@ -121,15 +126,14 @@ impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
             && self.status == other.status
-            && self.id.counter + self.len as Counter == other.id.counter
+            && self.id.counter + self.atom_len() as Counter == other.id.counter
             && self.origin_right == other.origin_right
-            && Some(self.id.inc(self.len as Counter - 1)) == other.origin_left
+            && Some(self.id.inc(self.atom_len() as Counter - 1)) == other.origin_left
             && self.slice.is_mergable(&other.slice, &())
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
         self.origin_right = other.origin_right;
-        self.len += other.len;
         self.slice.merge(&other.slice, &())
     }
 }
@@ -152,7 +156,6 @@ impl Sliceable for YSpan {
             origin_left,
             origin_right,
             id: self.id.inc(from as i32),
-            len: to - from,
             status: self.status.clone(),
             slice: self.slice.slice(from, to),
         }
@@ -166,24 +169,25 @@ impl InsertContentTrait for YSpan {
 }
 
 impl HasLength for YSpan {
-    #[inline]
+    #[inline(always)]
     fn content_len(&self) -> usize {
         if self.status.is_activated() {
-            self.len
+            self.slice.atom_len()
         } else {
             0
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn atom_len(&self) -> usize {
-        self.len
+        self.slice.atom_len()
     }
 }
 
 #[cfg(any(test, features = "fuzzing"))]
 pub mod test {
     use crate::{
+        container::text::text_content::ListSlice,
         op::{InsertContent, OpContent},
         ContentType, Op, ID,
     };
@@ -201,9 +205,8 @@ pub mod test {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
-                    len: 1,
                     status: Default::default(),
-                    slice: Default::default(),
+                    slice: ListSlice::Unknown(1),
                 })),
             },
             5,
@@ -215,9 +218,8 @@ pub mod test {
                     origin_left: Some(ID::new(0, 1)),
                     origin_right: None,
                     id: ID::new(0, 2),
-                    len: 1,
                     status: Default::default(),
-                    slice: Default::default(),
+                    slice: ListSlice::Unknown(1),
                 })),
             },
             5,
@@ -239,9 +241,8 @@ pub mod test {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
-                    len: 4,
                     status: Default::default(),
-                    slice: Default::default(),
+                    slice: ListSlice::Unknown(4),
                 })),
             },
             5,
@@ -253,9 +254,8 @@ pub mod test {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
-                    len: 4,
                     status: Default::default(),
-                    slice: Default::default(),
+                    slice: ListSlice::Unknown(4),
                 })),
             },
             5,

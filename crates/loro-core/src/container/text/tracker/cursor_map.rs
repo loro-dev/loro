@@ -91,10 +91,10 @@ impl Marker {
                         if child.overlap(id_span) {
                             let start_counter = child.id.counter;
                             let offset = std::cmp::max(id_span.counter.min() - start_counter, 0);
-                            debug_assert!((offset as usize) < child.len);
+                            debug_assert!((offset as usize) < child.atom_len());
                             let max_offset = std::cmp::min(
                                 id_span.counter.max() - start_counter,
-                                (child.len - 1) as i32,
+                                (child.atom_len() - 1) as i32,
                             );
                             let len = max_offset - offset + 1;
                             // SAFETY: we just checked it is valid
@@ -103,7 +103,7 @@ impl Marker {
                                     *ptr,
                                     i,
                                     offset as usize,
-                                    Position::from_offset(offset as isize, child.len),
+                                    Position::from_offset(offset as isize, child.atom_len()),
                                     len as usize,
                                 ))
                             })

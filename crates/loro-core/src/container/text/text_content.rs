@@ -18,6 +18,12 @@ impl Default for ListSlice {
     }
 }
 
+impl From<Range<u32>> for ListSlice {
+    fn from(a: Range<u32>) -> Self {
+        ListSlice::Slice(a)
+    }
+}
+
 impl ListSlice {
     #[inline(always)]
     pub fn from_range(range: Range<u32>) -> ListSlice {
