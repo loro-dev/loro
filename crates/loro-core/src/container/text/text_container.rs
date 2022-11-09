@@ -8,7 +8,10 @@ use smallvec::{smallvec, SmallVec};
 use tabled::object::LastColumn;
 
 use crate::{
-    container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
+    container::{
+        list::list_op::{DeleteSpan, ListOp},
+        Container, ContainerID, ContainerType,
+    },
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
@@ -144,9 +147,46 @@ impl Container for TextContainer {
     // TODO: move main logic to tracker module
     fn apply(&mut self, id_span: IdSpan, store: &LogStore) {
         debug_log!("APPLY ENTRY client={}", store.this_client_id);
+        let self_idx = store.get_container_idx(&self.id).unwrap();
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
+        if common_ancestors == self.head {
+            let latest_head: SmallVec<[ID; 2]> = smallvec![new_op_id];
+            let path = store.find_path(&self.head, &latest_head);
+            if path.right.len() == 1 {
+                for iter in store.iter_partial(&self.head, path.right) {
+                    let change = iter
+                        .data
+                        .slice(iter.slice.start as usize, iter.slice.end as usize);
+                    assert!(iter.retreat.is_empty());
+                    assert!(iter.forward.is_empty());
+                    for op in change.ops.iter() {
+                        if op.container == self_idx {
+                            match &op.content {
+                                OpContent::Normal {
+                                    content: InsertContent::List(op),
+                                } => match op {
+                                    ListOp::Insert { slice, pos } => {
+                                        self.state.insert(*pos, slice.as_slice().unwrap().clone())
+                                    }
+                                    ListOp::Delete(span) => self.state.delete_range(
+                                        Some(span.start() as usize),
+                                        Some(span.end() as usize),
+                                    ),
+                                },
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                }
+
+                self.head = smallvec![new_op_id];
+                self.vv.set_last(new_op_id);
+                return;
+            }
+        }
+
         let path_to_head = store.find_path(&common_ancestors, &self.head);
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&path_to_head.right);
@@ -161,7 +201,7 @@ impl Container for TextContainer {
             &self.head
         );
 
-        let head = if common_ancestors.is_empty()
+        let head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
             debug_log!("NewTracker");
@@ -177,7 +217,6 @@ impl Container for TextContainer {
         // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
         debug_log!("path={:?}", &path.right);
-        let self_idx = store.get_container_idx(&self.id).unwrap();
         for iter in store.iter_partial(&head, path.right) {
             // TODO: avoid this clone
             let change = iter

@@ -4,7 +4,7 @@ fn main() {}
 #[cfg(feature = "fuzzing")]
 fn main() {
     const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
-    use std::io::Read;
+    use std::{io::Read, time::Instant};
 
     use flate2::read::GzDecoder;
     use loro_core::LoroCore;
@@ -19,6 +19,7 @@ fn main() {
 
     let mut loro = LoroCore::default();
     let mut loro_b = LoroCore::default();
+    let start = Instant::now();
     for txn in txns.unwrap().as_array().unwrap() {
         let mut text = loro.get_or_create_root_text("text").unwrap();
         let patches = txn
@@ -36,7 +37,12 @@ fn main() {
             text.insert(pos, ins_content);
         }
 
+        let a = text.text_len();
         drop(text);
         loro_b.import(loro.export(loro_b.vv()));
+        let text = loro_b.get_or_create_root_text("text").unwrap();
+        let b = text.text_len();
+        assert_eq!(a, b);
     }
+    println!("Elapsed {}ms", start.elapsed().as_millis());
 }

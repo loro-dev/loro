@@ -19,8 +19,8 @@ pub(crate) enum ListOp {
 /// pos: 5, len: -3 eq a range of (2, 5]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DeleteSpan {
-    pos: isize,
-    len: isize,
+    pub pos: isize,
+    pub len: isize,
 }
 
 impl ListOp {

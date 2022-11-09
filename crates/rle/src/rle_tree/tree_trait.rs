@@ -408,6 +408,10 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     }
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
+        if node.children().is_empty() {
+            return;
+        }
+
         assert_eq!(
             node.cache.end,
             node.children()
