@@ -15,8 +15,8 @@ use rle::{
 pub struct Status {
     /// is this span from a future operation
     pub future: bool,
-    pub delete_times: usize,
-    pub undo_times: usize,
+    pub delete_times: u16,
+    pub undo_times: u16,
 }
 
 impl Display for Status {
