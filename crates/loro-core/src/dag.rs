@@ -117,6 +117,21 @@ impl<T: Dag + ?Sized> DagUtils for T {
             if from.client_id == to.client_id {
                 let from_span = self.get(from).unwrap();
                 let to_span = self.get(to).unwrap();
+                if std::ptr::eq(from_span, to_span) {
+                    if from.counter < to.counter {
+                        ans.right.insert(
+                            from.client_id,
+                            CounterSpan::new(from.counter + 1, to.counter + 1),
+                        );
+                    } else {
+                        ans.left.insert(
+                            from.client_id,
+                            CounterSpan::new(to.counter + 1, from.counter + 1),
+                        );
+                    }
+                    return ans;
+                }
+
                 if from_span.deps().len() == 1 && to_span.contains_id(from_span.deps()[0]) {
                     ans.left.insert(
                         from.client_id,
@@ -533,6 +548,14 @@ where
         if left.client_id == right.client_id {
             let left_span = get(left).unwrap();
             let right_span = get(right).unwrap();
+            if std::ptr::eq(left_span, right_span) {
+                if left.counter < right.counter {
+                    return smallvec![left];
+                } else {
+                    return smallvec![right];
+                }
+            }
+
             if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
                 return smallvec![right];
             }
