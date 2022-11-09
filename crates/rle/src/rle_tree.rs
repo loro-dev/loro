@@ -13,7 +13,7 @@ pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
 mod arena;
-pub use arena::{Arena, BumpMode, HeapMode};
+pub use arena::{Arena, BumpMode, HeapMode, VecTrait};
 mod cursor;
 pub mod iter;
 pub mod node;

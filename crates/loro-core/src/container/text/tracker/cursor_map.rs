@@ -194,10 +194,10 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct CursorMap(RangeMap<u128, Marker, BumpMode>);
+pub(super) struct CursorMap(RangeMap<u128, Marker>);
 
 impl Deref for CursorMap {
-    type Target = RangeMap<u128, Marker, BumpMode>;
+    type Target = RangeMap<u128, Marker>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

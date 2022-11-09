@@ -1,13 +1,13 @@
 use std::{fmt::Debug, ptr::NonNull};
 
-use fxhash::FxHashSet;
+use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
     rle_trait::{GlobalIndex, HasIndex, ZeroElement},
     rle_tree::{
         node::{InternalNode, LeafNode},
         tree_trait::GlobalTreeTrait,
-        Arena, HeapMode, UnsafeCursor,
+        Arena, HeapMode, UnsafeCursor, VecTrait,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -53,7 +53,7 @@ impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
 }
 
 type RangeMapTrait<Index, Value, TreeArena> =
-    GlobalTreeTrait<WithIndex<Value, Index>, 10, TreeArena>;
+    GlobalTreeTrait<WithIndex<Value, Index>, 16, TreeArena>;
 
 #[repr(transparent)]
 #[derive(Debug)]
@@ -164,13 +164,19 @@ impl<
             return;
         }
 
-        let mut visited_nodes: FxHashSet<NonNull<LeafNode<_, _>>> = Default::default();
-        visited_nodes.insert(cur_ptr);
-        let mut last_end: Index = start;
+        #[derive(Default, Debug)]
+        struct Data {
+            delete_start: Option<usize>,
+            delete_end: Option<usize>,
+        }
+
+        let mut visited_nodes: FxHashMap<NonNull<LeafNode<_, _>>, Data> = Default::default();
+        let mut cur_data: Data = Default::default();
         let mut last_inside_element: Option<NonNull<_>> = None;
         // iterate over the elements inside the range
         loop {
             if elem.index >= end {
+                visited_nodes.insert(cur_leaf.into(), cur_data);
                 break;
             }
 
@@ -181,21 +187,23 @@ impl<
             } else if elem.index < start {
                 // start element overlaps with target range
                 // let it keep its left part
-                *elem = elem.slice(0, (start - elem.index).as_());
+                let new_len = (start - elem.index).as_();
+                *elem = elem.slice(0, new_len);
             } else if elem_end > end {
                 // end element overlaps with target range
                 // let it keep its right part
-                *elem = elem.slice((end - elem.index).as_(), elem.atom_len());
+                let start = (end - elem.index).as_();
+                *elem = elem.slice(start, elem.atom_len());
                 break;
             } else {
                 // elements inside the target range
                 // extends its start to last_end
-                *elem = WithIndex {
-                    index: last_end,
-                    value: value.slice((last_end - start).as_(), (elem_end - start).as_()),
-                };
-                last_inside_element = Some(elem.into());
-                last_end = elem_end;
+                if last_inside_element.is_none() {
+                    last_inside_element = Some(elem.into());
+                } else {
+                    cur_data.delete_start.get_or_insert(index);
+                    cur_data.delete_end = Some(index + 1);
+                }
             }
 
             // move to next element
@@ -204,10 +212,12 @@ impl<
                 elem = &mut cur_leaf.children[index];
             } else {
                 if let Some(next) = cur_leaf.next_mut() {
+                    visited_nodes.insert(cur_ptr, cur_data);
                     cur_ptr = next.into();
-                    visited_nodes.insert(next.into());
+                    cur_data = Default::default();
                     cur_leaf = next;
                 } else {
+                    visited_nodes.insert(cur_ptr, cur_data);
                     // is the last element of the tree
                     break;
                 }
@@ -217,21 +227,51 @@ impl<
             }
         }
 
-        if last_end != end {
-            if let Some(mut insider) = last_inside_element {
-                // we can extended the last element to the end
-                // SAFETY: we just got the element from the tree and save it to the option value
-                let insider = unsafe { insider.as_mut() };
-                insider.value = value.slice((insider.index - start).as_(), (end - start).as_());
-                last_end = end;
+        if let Some(mut insider) = last_inside_element {
+            // we can extended the last element to the end
+            // SAFETY: we just got the element from the tree and save it to the option value
+            let insider = unsafe { insider.as_mut() };
+            insider.index = start;
+            insider.value = value;
+        } else {
+            // need to insert a new element from here
+            // current pointer must be greater than start or at the end of the tree
+            // SAFETY: we just visited cursor
+            unsafe {
+                let cursor: UnsafeCursor<_, RangeMapTrait<Index, Value, TreeArena>> =
+                    UnsafeCursor::new(cur_ptr, index, 0, crate::rle_tree::Position::Start, 0);
+                let last_item = cursor.as_ref();
+                if last_item.index >= end {
+                    let value = WithIndex {
+                        value,
+                        index: start,
+                    };
+                    cursor.insert_notify(value, &mut |_, _| {});
+                } else if last_item.get_end_index() <= start {
+                    // current pointer points to the end of the tree
+                    let cursor: UnsafeCursor<_, RangeMapTrait<Index, Value, TreeArena>> =
+                        cursor.shift(last_item.atom_len()).unwrap();
+                    cursor.insert_notify(
+                        WithIndex {
+                            value,
+                            index: start,
+                        },
+                        &mut |_, _| {},
+                    );
+                } else {
+                    unreachable!()
+                }
             }
         }
 
         let mut visited_internal_nodes: FxHashSet<NonNull<InternalNode<_, _>>> =
             FxHashSet::with_capacity_and_hasher(visited_nodes.len(), Default::default());
-        for mut leaf in visited_nodes {
+        for (mut leaf, data) in visited_nodes {
             // SAFETY: we have exclusive ref to the tree
             let leaf = unsafe { leaf.as_mut() };
+            if let (Some(start), Some(end)) = (data.delete_start, data.delete_end) {
+                leaf.children.drain(start..end);
+            }
             leaf.update_cache();
             visited_internal_nodes.insert(leaf.parent);
         }
@@ -244,40 +284,21 @@ impl<
             ) {
                 // SAFETY: we have exclusive ref to the tree
                 let internal = unsafe { internal.as_mut() };
+                let mut del_start = None;
+                let mut del_end = None;
+                for i in 0..internal.children().len() {
+                    let child = &internal.children()[i];
+                    if child.is_empty() {
+                        del_start.get_or_insert(i);
+                        del_end = Some(i);
+                    }
+                }
+                if let (Some(start), Some(end)) = (del_start, del_end) {
+                    internal.children.drain(start..end + 1);
+                }
                 internal.update_cache();
                 if let Some(parent) = internal.parent {
                     visited_internal_nodes.insert(parent);
-                }
-            }
-        }
-
-        if last_end != end {
-            // need to insert a new element from here
-            // current pointer must be greater than start or at the end of the tree
-            // SAFETY: we just visited cursor
-            unsafe {
-                let cursor: UnsafeCursor<_, RangeMapTrait<Index, Value, TreeArena>> =
-                    UnsafeCursor::new(cur_ptr, index, 0, crate::rle_tree::Position::Start, 0);
-                let last_item = cursor.as_ref();
-                if last_item.index >= end {
-                    let value = WithIndex {
-                        value: value.slice((last_end - start).as_(), (end - start).as_()),
-                        index: last_end,
-                    };
-                    cursor.insert_notify(value, &mut |_, _| {});
-                } else if last_item.get_end_index() <= start {
-                    // current pointer points to the end of the tree
-                    let cursor: UnsafeCursor<_, RangeMapTrait<Index, Value, TreeArena>> =
-                        cursor.shift(last_item.atom_len()).unwrap();
-                    cursor.insert_notify(
-                        WithIndex {
-                            value: value.slice((last_end - start).as_(), (end - start).as_()),
-                            index: last_end,
-                        },
-                        &mut |_, _| {},
-                    );
-                } else {
-                    unreachable!()
                 }
             }
         }
@@ -502,14 +523,7 @@ mod test {
 
         // 5-20
         map.set_small_range(5, V::new(5, 20, "k"));
-        assert_eq!(
-            map.get_range(9, 15),
-            vec![
-                &V::new(5, 11, "k"),
-                &V::new(11, 12, "k"),
-                &V::new(12, 15, "k"),
-            ]
-        );
+        assert_eq!(map.get_range(9, 15), vec![&V::new(5, 20, "k"),]);
     }
 
     #[test]

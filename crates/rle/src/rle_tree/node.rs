@@ -27,7 +27,7 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
     bump: &'a A::Arena,
     pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(super) children:
+    pub(crate) children:
         <A::Arena as Arena>::Vec<'a, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
@@ -222,6 +222,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
         self.update_cache();
         sibling.update_cache();
+    }
+
+    #[inline(always)]
+    pub(crate) fn child_num(&self) -> usize {
+        match self {
+            Node::Internal(x) => x.children.len(),
+            Node::Leaf(x) => x.children.len(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.child_num() == 0
     }
 
     pub(crate) fn borrow_from_sibling<F>(
