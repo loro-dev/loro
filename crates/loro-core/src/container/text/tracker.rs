@@ -72,7 +72,7 @@ impl Tracker {
                     origin_right: None,
                     id: ID::unknown(0),
                     status: Status::new(),
-                    slice: ListSlice::Unknown(init_len as usize),
+                    slice: ListSlice::UnknownRange(init_len as usize),
                 },
                 &mut make_notify(&mut id_to_cursor),
             );
@@ -254,7 +254,7 @@ impl Tracker {
                             id,
                             *pos,
                             slice.content_len(),
-                            slice.clone(),
+                            slice.as_slice().unwrap().clone(),
                         );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements

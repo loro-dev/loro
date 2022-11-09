@@ -74,7 +74,7 @@ impl TextContainer {
             id,
             OpContent::Normal {
                 content: InsertContent::List(ListOp::Insert {
-                    slice: ListSlice::Slice(slice),
+                    slice: slice.into(),
                     pos,
                 }),
             },
@@ -166,7 +166,7 @@ impl Container for TextContainer {
                             content: InsertContent::List(op),
                         } => match op {
                             ListOp::Insert { slice, pos } => {
-                                self.state.insert(*pos, slice.as_slice().unwrap().clone())
+                                self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
                             }
                             ListOp::Delete(span) => self.state.delete_range(
                                 Some(span.start() as usize),
@@ -199,7 +199,7 @@ impl Container for TextContainer {
                                     } => match op {
                                         ListOp::Insert { slice, pos } => self
                                             .state
-                                            .insert(*pos, slice.as_slice().unwrap().clone()),
+                                            .insert(*pos, slice.as_slice().unwrap().clone().0),
                                         ListOp::Delete(span) => self.state.delete_range(
                                             Some(span.start() as usize),
                                             Some(span.end() as usize),
@@ -297,7 +297,8 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    self.state.insert(pos, content.as_slice().unwrap().clone());
+                    self.state
+                        .insert(pos, content.as_slice().unwrap().clone().0);
                 }
             }
             debug_log!("AFTER EFFECT");
@@ -335,7 +336,7 @@ impl Container for TextContainer {
             .and_then(|x| x.as_insert_mut())
         {
             if let Some(change) = if let ListSlice::Slice(ranges) = slice {
-                Some(self.raw_str.get_str(ranges))
+                Some(self.raw_str.get_str(&ranges.0))
             } else {
                 None
             } {
@@ -359,7 +360,7 @@ impl Container for TextContainer {
                 ListSlice::Slice(_) => unreachable!(),
                 ListSlice::Unknown(_) => unreachable!(),
             } {
-                *slice = ListSlice::Slice(slice_range);
+                *slice = slice_range.into();
             }
         }
     }

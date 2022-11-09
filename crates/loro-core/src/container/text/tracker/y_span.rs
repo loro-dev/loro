@@ -1,7 +1,7 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Range};
 
 use crate::{
-    container::text::text_content::ListSlice,
+    container::text::text_content::{ListSlice, SliceRange},
     id::Counter,
     span::{HasCounter, HasCounterSpan, IdSpan},
     ContentType, InsertContentTrait, ID,
@@ -65,14 +65,20 @@ impl Status {
     }
 }
 
+/// 80 bytes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YSpan {
+    // 16 bytes
     pub id: ID,
+    // 8 bytes
     pub status: Status,
+    // 24 bytes
     pub origin_left: Option<ID>,
+    // 24 bytes
     pub origin_right: Option<ID>,
+    // 8 bytes
     // TODO: remove this field when the system is stable
-    pub slice: ListSlice,
+    pub slice: SliceRange,
 }
 
 #[test]
@@ -206,7 +212,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::Unknown(1),
+                    slice: ListSlice::UnknownRange(1),
                 })),
             },
             5,
@@ -219,7 +225,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 2),
                     status: Default::default(),
-                    slice: ListSlice::Unknown(1),
+                    slice: ListSlice::UnknownRange(1),
                 })),
             },
             5,
@@ -228,6 +234,7 @@ pub mod test {
         let merged = vec.get_merged(0).unwrap();
         assert_eq!(merged.content.as_normal().unwrap().id(), ContentType::Text);
         let text_content = merged.content.as_normal().unwrap().as_dyn().unwrap();
+        dbg!(&merged);
         assert_eq!(text_content.content_len(), 2);
     }
 
@@ -242,7 +249,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::Unknown(4),
+                    slice: ListSlice::UnknownRange(4),
                 })),
             },
             5,
@@ -255,7 +262,7 @@ pub mod test {
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
                     status: Default::default(),
-                    slice: ListSlice::Unknown(4),
+                    slice: ListSlice::UnknownRange(4),
                 })),
             },
             5,
