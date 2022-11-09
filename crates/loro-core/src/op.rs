@@ -198,6 +198,14 @@ pub struct RichOp<'a> {
     pub op: &'a Op,
     pub lamport: Lamport,
     pub timestamp: Timestamp,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl<'a> RichOp<'a> {
+    pub fn get_sliced(&self) -> Op {
+        self.op.slice(self.start, self.end)
+    }
 }
 
 impl HasIndex for Op {

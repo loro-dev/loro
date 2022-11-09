@@ -5,10 +5,12 @@ use crate::change::Lamport;
 use crate::id::ClientID;
 use crate::id::ContainerIdx;
 use crate::op::RichOp;
+use crate::span::HasCounter;
 use crate::span::HasId;
 use crate::span::IdSpan;
 
 use fxhash::FxHashMap;
+use rle::HasLength;
 
 use crate::change::ChangeMergeCfg;
 
@@ -68,7 +70,11 @@ impl<'a> OpSpanIter<'a> {
             container,
             changes,
             change_index,
-            op_index: 0,
+            op_index: rle_changes[change_index]
+                .ops
+                .get(target_span.counter.start)
+                .unwrap()
+                .merged_index,
         }
     }
 }
@@ -85,13 +91,22 @@ impl<'a> Iterator for OpSpanIter<'a> {
             let change = &self.changes[self.change_index];
             let ops = change.ops.vec();
             if let Some(op) = ops.get(self.op_index) {
+                if op.counter >= self.span.counter.end {
+                    return None;
+                }
+
+                self.op_index += 1;
                 if op.container != self.container {
-                    self.op_index += 1;
                     continue;
                 }
 
+                let start = (self.span.counter.min() - op.counter).max(0) as usize;
+                let end = ((self.span.counter.end() - op.counter) as usize).min(op.atom_len());
+                assert!(start < end, "{:?} {:#?}", self.span, op);
                 return Some(RichOp {
                     op,
+                    start,
+                    end,
                     lamport: (op.counter - change.id.counter) as Lamport + change.lamport,
                     timestamp: change.timestamp,
                 });

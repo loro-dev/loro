@@ -152,38 +152,70 @@ impl Container for TextContainer {
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
         if common_ancestors == self.head {
-            let latest_head: SmallVec<[ID; 2]> = smallvec![new_op_id];
+            let latest_head = smallvec![new_op_id];
             let path = store.find_path(&self.head, &latest_head);
             if path.right.len() == 1 {
-                for iter in store.iter_partial(&self.head, path.right) {
-                    let change = iter
-                        .data
-                        .slice(iter.slice.start as usize, iter.slice.end as usize);
-                    assert!(iter.retreat.is_empty());
-                    assert!(iter.forward.is_empty());
-                    for op in change.ops.iter() {
-                        if op.container == self_idx {
-                            match &op.content {
-                                OpContent::Normal {
-                                    content: InsertContent::List(op),
-                                } => match op {
-                                    ListOp::Insert { slice, pos } => {
-                                        self.state.insert(*pos, slice.as_slice().unwrap().clone())
-                                    }
-                                    ListOp::Delete(span) => self.state.delete_range(
-                                        Some(span.start() as usize),
-                                        Some(span.end() as usize),
-                                    ),
-                                },
-                                _ => unreachable!(),
+                // linear updates, we can apply them directly
+                let start = self.vv.get(&new_op_id.client_id).copied().unwrap_or(0);
+                for op in store.iter_ops_at_id_span(
+                    IdSpan::new(new_op_id.client_id, start, new_op_id.counter + 1),
+                    self.id.clone(),
+                ) {
+                    let op = op.get_sliced();
+                    match &op.content {
+                        OpContent::Normal {
+                            content: InsertContent::List(op),
+                        } => match op {
+                            ListOp::Insert { slice, pos } => {
+                                self.state.insert(*pos, slice.as_slice().unwrap().clone())
                             }
-                        }
+                            ListOp::Delete(span) => self.state.delete_range(
+                                Some(span.start() as usize),
+                                Some(span.end() as usize),
+                            ),
+                        },
+                        _ => unreachable!(),
                     }
                 }
 
-                self.head = smallvec![new_op_id];
+                self.head = latest_head;
                 self.vv.set_last(new_op_id);
                 return;
+            } else {
+                let path: Vec<_> = store.iter_partial(&self.head, path.right).collect();
+                if path
+                    .iter()
+                    .all(|x| x.forward.is_empty() && x.retreat.is_empty())
+                {
+                    // if we don't need to retreat or forward, we can update the state directly
+                    for iter in path {
+                        let change = iter
+                            .data
+                            .slice(iter.slice.start as usize, iter.slice.end as usize);
+                        for op in change.ops.iter() {
+                            if op.container == self_idx {
+                                match &op.content {
+                                    OpContent::Normal {
+                                        content: InsertContent::List(op),
+                                    } => match op {
+                                        ListOp::Insert { slice, pos } => self
+                                            .state
+                                            .insert(*pos, slice.as_slice().unwrap().clone()),
+                                        ListOp::Delete(span) => self.state.delete_range(
+                                            Some(span.start() as usize),
+                                            Some(span.end() as usize),
+                                        ),
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+
+                    self.head = latest_head;
+                    self.vv.set_last(new_op_id);
+                    return;
+                }
             }
         }
 
@@ -214,7 +246,6 @@ impl Container for TextContainer {
         };
 
         // stage 1
-        // TODO: need a better mechanism to track the head (KEEP IT IN TRACKER?)
         let path = store.find_path(&head, &latest_head);
         debug_log!("path={:?}", &path.right);
         for iter in store.iter_partial(&head, path.right) {

@@ -44,5 +44,7 @@ fn main() {
         let b = text.text_len();
         assert_eq!(a, b);
     }
+    loro_b.debug_inspect();
+    loro.debug_inspect();
     println!("Elapsed {}ms", start.elapsed().as_millis());
 }

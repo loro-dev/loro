@@ -277,7 +277,7 @@ impl LogStore {
         self.vv.set_end(change.id_end());
         self.changes
             .entry(self.this_client_id)
-            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new(true)))
+            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
             .push(change);
 
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
