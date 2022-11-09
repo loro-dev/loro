@@ -329,6 +329,56 @@ pub mod fuzz {
         }
     }
 
+    #[test]
+    fn issue_global_tree_trait() {
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            100,
+            vec![
+                NewOp {
+                    client_id: 124,
+                    pos: 124,
+                },
+                Delete {
+                    client_id: 8,
+                    pos: 47,
+                    len: 68,
+                },
+                Delete {
+                    client_id: 255,
+                    pos: 255,
+                    len: 255,
+                },
+                Delete {
+                    client_id: 184,
+                    pos: 184,
+                    len: 48,
+                },
+                Sync { from: 158, to: 0 },
+                Delete {
+                    client_id: 182,
+                    pos: 182,
+                    len: 182,
+                },
+                NewOp {
+                    client_id: 255,
+                    pos: 252,
+                },
+                Sync { from: 134, to: 2 },
+                Delete {
+                    client_id: 246,
+                    pos: 246,
+                    len: 246,
+                },
+                Delete {
+                    client_id: 246,
+                    pos: 246,
+                    len: 246,
+                },
+            ],
+        )
+    }
+
     use Action::*;
     #[test]
     fn issue_set_range() {
