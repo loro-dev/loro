@@ -19,34 +19,43 @@ fn main() {
 
     let mut loro = LoroCore::default();
     let mut loro_b = LoroCore::default();
+    let mut loro_c = LoroCore::default();
     let start = Instant::now();
-    for _ in 0..10 {
-        for txn in txns.unwrap().as_array().unwrap() {
-            let mut text = loro.get_or_create_root_text("text").unwrap();
-            let patches = txn
-                .as_object()
-                .unwrap()
-                .get("patches")
-                .unwrap()
-                .as_array()
-                .unwrap();
-            for patch in patches {
-                let pos = patch[0].as_u64().unwrap() as usize;
-                let del_here = patch[1].as_u64().unwrap() as usize;
-                let ins_content = patch[2].as_str().unwrap();
-                text.delete(pos, del_here);
-                text.insert(pos, ins_content);
-            }
+    for (i, txn) in txns.unwrap().as_array().unwrap().into_iter().enumerate() {
+        let mut text = loro.get_or_create_root_text("text").unwrap();
+        let patches = txn
+            .as_object()
+            .unwrap()
+            .get("patches")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        for patch in patches {
+            let pos = patch[0].as_u64().unwrap() as usize;
+            let del_here = patch[1].as_u64().unwrap() as usize;
+            let ins_content = patch[2].as_str().unwrap();
+            text.delete(pos, del_here);
+            text.insert(pos, ins_content);
+        }
 
-            let a = text.text_len();
-            drop(text);
+        drop(text);
+        let mut text = loro_b.get_or_create_root_text("text").unwrap();
+        for patch in patches {
+            let pos = patch[0].as_u64().unwrap() as usize;
+            let del_here = patch[1].as_u64().unwrap() as usize;
+            let ins_content = patch[2].as_str().unwrap();
+            text.delete(pos, del_here);
+            text.insert(pos, ins_content);
+        }
+        drop(text);
+        if i % 10 == 0 {
+            loro.import(loro_b.export(loro.vv()));
             loro_b.import(loro.export(loro_b.vv()));
-            let text = loro_b.get_or_create_root_text("text").unwrap();
-            let b = text.text_len();
-            assert_eq!(a, b);
         }
     }
     loro_b.debug_inspect();
     loro.debug_inspect();
+    println!("Elapsed {}ms", start.elapsed().as_millis());
+    loro_c.import(loro.export(loro_c.vv()));
     println!("Elapsed {}ms", start.elapsed().as_millis());
 }

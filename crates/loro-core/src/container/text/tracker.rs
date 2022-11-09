@@ -147,6 +147,10 @@ impl Tracker {
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
+        if spans.is_empty() {
+            return;
+        }
+
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
@@ -187,6 +191,10 @@ impl Tracker {
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
+        if spans.is_empty() {
+            return;
+        }
+
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
