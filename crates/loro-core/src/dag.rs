@@ -16,7 +16,7 @@ use std::{
 use colored::Colorize;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 mod iter;
 mod mermaid;
 #[cfg(test)]
@@ -527,6 +527,22 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
+    if left.len() == 1 && right.len() == 1 {
+        let left = left[0];
+        let right = right[0];
+        if left.client_id == right.client_id {
+            let left_span = get(left).unwrap();
+            let right_span = get(right).unwrap();
+            if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
+                return smallvec![right];
+            }
+
+            if right_span.deps().len() == 1 && left_span.contains_id(right_span.deps()[0]) {
+                return smallvec![left];
+            }
+        }
+    }
+
     let mut ans: SmallVec<[ID; 2]> = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
