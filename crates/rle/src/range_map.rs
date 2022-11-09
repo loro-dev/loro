@@ -53,7 +53,7 @@ impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
 }
 
 type RangeMapTrait<Index, Value, TreeArena> =
-    GlobalTreeTrait<WithIndex<Value, Index>, 16, TreeArena>;
+    GlobalTreeTrait<WithIndex<Value, Index>, 32, TreeArena>;
 
 #[repr(transparent)]
 #[derive(Debug)]
