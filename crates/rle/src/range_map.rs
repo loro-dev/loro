@@ -182,7 +182,6 @@ impl<
 
             let elem_end = elem.index + Index::from_usize(elem.atom_len()).unwrap();
             if start > elem_end {
-                debug_assert!(false, "something wrong with get_cursor_ge")
                 // go to next loop
             } else if elem.index < start {
                 // start element overlaps with target range
@@ -194,6 +193,7 @@ impl<
                 // let it keep its right part
                 let start = (end - elem.index).as_();
                 *elem = elem.slice(start, elem.atom_len());
+                visited_nodes.insert(cur_ptr, cur_data);
                 break;
             } else {
                 // elements inside the target range
@@ -290,18 +290,22 @@ impl<
                     let child = &internal.children()[i];
                     if child.is_empty() {
                         del_start.get_or_insert(i);
-                        del_end = Some(i);
+                        del_end = Some(i + 1);
                     }
                 }
+
                 if let (Some(start), Some(end)) = (del_start, del_end) {
-                    internal.children.drain(start..end + 1);
+                    internal.drain_children(start, end);
                 }
+
                 internal.update_cache();
                 if let Some(parent) = internal.parent {
                     visited_internal_nodes.insert(parent);
                 }
             }
         }
+
+        self.tree.debug_check();
     }
 
     #[inline]

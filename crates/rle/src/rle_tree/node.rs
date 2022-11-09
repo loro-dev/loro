@@ -27,7 +27,7 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
     bump: &'a A::Arena,
     pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(crate) children:
+    pub(super) children:
         <A::Arena as Arena>::Vec<'a, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
