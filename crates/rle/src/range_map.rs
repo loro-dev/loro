@@ -164,7 +164,7 @@ impl<
             return;
         }
 
-        let mut visited_nodes: FxHashSet<NonNull<LeafNode<_, _>>> = FxHashSet::default();
+        let mut visited_nodes: FxHashSet<NonNull<LeafNode<_, _>>> = Default::default();
         visited_nodes.insert(cur_ptr);
         let mut last_end: Index = start;
         let mut last_inside_element: Option<NonNull<_>> = None;
@@ -227,9 +227,8 @@ impl<
             }
         }
 
-        // TODO: use heapless set
         let mut visited_internal_nodes: FxHashSet<NonNull<InternalNode<_, _>>> =
-            FxHashSet::default();
+            FxHashSet::with_capacity_and_hasher(visited_nodes.len(), Default::default());
         for mut leaf in visited_nodes {
             // SAFETY: we have exclusive ref to the tree
             let leaf = unsafe { leaf.as_mut() };
@@ -238,7 +237,11 @@ impl<
         }
 
         while !visited_internal_nodes.is_empty() {
-            for mut internal in std::mem::take(&mut visited_internal_nodes) {
+            let len = visited_internal_nodes.len();
+            for mut internal in std::mem::replace(
+                &mut visited_internal_nodes,
+                FxHashSet::with_capacity_and_hasher(len, Default::default()),
+            ) {
                 // SAFETY: we have exclusive ref to the tree
                 let internal = unsafe { internal.as_mut() };
                 internal.update_cache();
