@@ -299,12 +299,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         }
 
         // TODO: Maybe panic if overlap?
-        node.cache.end = node
-            .children()
-            .iter()
-            .map(|x| x.get_end_index())
-            .max()
-            .unwrap();
+        node.cache.end = node.children().last().unwrap().get_end_index();
         node.cache.start = node.children()[0].get_start_index();
     }
 
@@ -313,12 +308,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
             return;
         }
 
-        node.cache.end = node
-            .children()
-            .iter()
-            .map(|x| get_cache(x).end)
-            .max()
-            .unwrap();
+        node.cache.end = get_cache(node.children().last().unwrap()).end;
         node.cache.start = get_cache(&node.children()[0]).start;
     }
 
