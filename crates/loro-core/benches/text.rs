@@ -91,6 +91,48 @@ mod run {
                 }
             })
         });
+
+        b.bench_function("B4Parallel", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                let mut loro_b = LoroCore::default();
+                let mut i = 0;
+                for txn in txns.unwrap().as_array().unwrap() {
+                    i += 1;
+                    if i > 1000 {
+                        break;
+                    }
+
+                    let mut text = loro.get_or_create_root_text("text").unwrap();
+                    let patches = txn
+                        .as_object()
+                        .unwrap()
+                        .get("patches")
+                        .unwrap()
+                        .as_array()
+                        .unwrap();
+                    for patch in patches {
+                        let pos = patch[0].as_u64().unwrap() as usize;
+                        let del_here = patch[1].as_u64().unwrap() as usize;
+                        let ins_content = patch[2].as_str().unwrap();
+                        text.delete(pos, del_here);
+                        text.insert(pos, ins_content);
+                    }
+
+                    drop(text);
+                    let mut text = loro_b.get_or_create_root_text("text").unwrap();
+                    for patch in patches {
+                        let pos = patch[0].as_u64().unwrap() as usize;
+                        let del_here = patch[1].as_u64().unwrap() as usize;
+                        let ins_content = patch[2].as_str().unwrap();
+                        text.delete(pos, del_here);
+                        text.insert(pos, ins_content);
+                    }
+                    drop(text);
+                    loro_b.import(loro.export(loro_b.vv()));
+                }
+            })
+        });
     }
 }
 pub fn dumb(_c: &mut Criterion) {}
