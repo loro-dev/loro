@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, BumpMode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
@@ -27,7 +27,7 @@ pub(super) enum Marker {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
     },
-    Delete(RleVecWithLen<[IdSpan; 2]>),
+    Delete(Box<RleVecWithLen<[IdSpan; 2]>>),
     // FUTURE: REDO, UNDO
 }
 
@@ -151,7 +151,7 @@ impl Sliceable for Marker {
                 ptr: *ptr,
                 len: to - from,
             },
-            Marker::Delete(x) => Marker::Delete(x.slice(from, to)),
+            Marker::Delete(x) => Marker::Delete(Box::new(x.slice(from, to))),
         }
     }
 }

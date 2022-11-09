@@ -278,8 +278,10 @@ impl Tracker {
                             }
                         }
 
-                        self.id_to_cursor
-                            .set_small_range((id).into(), cursor_map::Marker::Delete(spans));
+                        self.id_to_cursor.set_small_range(
+                            (id).into(),
+                            cursor_map::Marker::Delete(Box::new(spans)),
+                        );
                     }
                 }
             }
