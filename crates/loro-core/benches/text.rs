@@ -130,6 +130,7 @@ mod run {
                     }
                     drop(text);
                     loro_b.import(loro.export(loro_b.vv()));
+                    loro.import(loro_b.export(loro.vv()));
                 }
             })
         });
