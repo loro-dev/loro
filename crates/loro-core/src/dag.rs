@@ -26,7 +26,7 @@ use crate::{
     change::Lamport,
     debug_log,
     id::{ClientID, Counter, ID},
-    span::{HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
+    span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{IdSpanVector, VersionVector, VersionVectorDiff},
 };
 
@@ -110,6 +110,29 @@ impl<T: Dag + ?Sized> DagUtils for T {
         );
         if from == to {
             return ans;
+        }
+        if from.len() == 1 && to.len() == 1 {
+            let from = from[0];
+            let to = to[0];
+            if from.client_id == to.client_id {
+                let from_span = self.get(from).unwrap();
+                let to_span = self.get(to).unwrap();
+                if from_span.deps().len() == 1 && to_span.contains_id(from_span.deps()[0]) {
+                    ans.left.insert(
+                        from.client_id,
+                        CounterSpan::new(to.counter + 1, from.counter + 1),
+                    );
+                    return ans;
+                }
+
+                if to_span.deps().len() == 1 && from_span.contains_id(to_span.deps()[0]) {
+                    ans.right.insert(
+                        from.client_id,
+                        CounterSpan::new(from.counter + 1, to.counter + 1),
+                    );
+                    return ans;
+                }
+            }
         }
 
         _find_common_ancestor(

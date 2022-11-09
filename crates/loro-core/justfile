@@ -25,7 +25,7 @@ quick-fuzz:
   cargo fuzz run text -- -max_total_time=10 -max_len=1000
 
 flame:
-  cargo flamegraph --example test --features=fuzzing --root
+  cargo flamegraph --example text_sync --features=fuzzing --root
 
 bench *FLAGS:
   cargo bench --features fuzzing {{FLAGS}}
