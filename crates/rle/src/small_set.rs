@@ -18,6 +18,13 @@ impl<T: Eq + Hash, const SIZE: usize> SmallSet<T, SIZE> {
         SmallSet::Arr(a)
     }
 
+    pub fn is_empty(&self) -> bool {
+        match self {
+            SmallSet::Arr(a) => a.is_empty(),
+            SmallSet::Set(s) => s.is_empty(),
+        }
+    }
+
     /// Adds a value to the set.
     ///
     /// Returns whether the value was newly inserted. That is:

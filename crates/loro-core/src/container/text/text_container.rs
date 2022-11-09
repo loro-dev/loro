@@ -5,7 +5,6 @@ use rle::{
     HasLength, RleTree, Sliceable,
 };
 use smallvec::{smallvec, SmallVec};
-use tabled::object::LastColumn;
 
 use crate::{
     container::{
