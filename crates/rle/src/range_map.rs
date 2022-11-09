@@ -304,8 +304,6 @@ impl<
                 }
             }
         }
-
-        self.tree.debug_check();
     }
 
     #[inline]
