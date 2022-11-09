@@ -5,6 +5,7 @@ use rle::{
     HasLength, RleTree, Sliceable,
 };
 use smallvec::{smallvec, SmallVec};
+use tabled::object::LastColumn;
 
 use crate::{
     container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
@@ -150,6 +151,7 @@ impl Container for TextContainer {
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
+        latest_head.retain(|x| !common_ancestors_vv.includes_id(*x));
         latest_head.push(new_op_id);
         // println!("{}", store.mermaid());
         debug_log!(
@@ -158,17 +160,13 @@ impl Container for TextContainer {
             new_op_id,
             &self.head
         );
-        // TODO: reuse tracker
-        // let head = if true {
+
         let head = if common_ancestors.is_empty()
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
             debug_log!("NewTracker");
-            // FIXME use common ancestors
             self.tracker = Tracker::new(common_ancestors_vv, Counter::MAX / 2);
             common_ancestors
-            // self.tracker = Tracker::new(Default::default(), 0);
-            // smallvec![]
         } else {
             debug_log!("OldTracker");
             self.tracker.checkout_to_latest();
@@ -240,7 +238,7 @@ impl Container for TextContainer {
             self.get_value().as_string().unwrap()
         );
 
-        self.head.push(new_op_id);
+        self.head = latest_head;
         self.vv.set_last(new_op_id);
         debug_log!("--------------------------------");
     }
