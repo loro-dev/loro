@@ -326,6 +326,147 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn test_16() {
+        // retreat failed
+        test_multi_sites(
+            8,
+            vec![
+                Ins {
+                    content: "\0\0\0\0".into(),
+                    pos: 46183951198975,
+                    site: 0,
+                },
+                Ins {
+                    content: "hhhh\0\u{15}".into(),
+                    pos: 18446463180827232135,
+                    site: 255,
+                },
+                Ins {
+                    content: "\u{1}\0\0\0".into(),
+                    pos: 17872543955649300641,
+                    site: 247,
+                },
+                SyncAll,
+                Ins {
+                    content: "I".into(),
+                    pos: 17144359356472099242,
+                    site: 237,
+                },
+                Ins {
+                    content: "\u{1}\0\0\u{14}\0".into(),
+                    pos: 17149707381026848749,
+                    site: 64,
+                },
+                Ins {
+                    content: "\0\0".into(),
+                    pos: 576460752320727201,
+                    site: 8,
+                },
+                Ins {
+                    content: "\u{8}\u{8}\u{8}".into(),
+                    pos: 74451787075125633,
+                    site: 7,
+                },
+                Ins {
+                    content: "\0DD*\u{1}\0\n\0".into(),
+                    pos: 1100718403053,
+                    site: 161,
+                },
+                SyncAll,
+                SyncAll,
+                Ins {
+                    content: "".into(),
+                    pos: 18444210798919163626,
+                    site: 255,
+                },
+                Del {
+                    pos: 7523377975159973992,
+                    len: 7523377975159973992,
+                    site: 104,
+                },
+                Del {
+                    pos: 90728552,
+                    len: 7523377975153131520,
+                    site: 104,
+                },
+                Del {
+                    pos: 6842472,
+                    len: 8259072,
+                    site: 48,
+                },
+                Ins {
+                    content: "0002".into(),
+                    pos: 60868003017,
+                    site: 0,
+                },
+                Ins {
+                    content: "\0\0\0\0hhhh\0\u{15}".into(),
+                    pos: 201792722274183,
+                    site: 0,
+                },
+                Ins {
+                    content: "\t\0,`".into(),
+                    pos: 2882585236494125450,
+                    site: 136,
+                },
+                Ins {
+                    content: "\u{4}\u{4}\u{4}".into(),
+                    pos: 6929914515027398276,
+                    site: 138,
+                },
+                Sync { from: 137, to: 4 },
+                Ins {
+                    content: "\u{4}".into(),
+                    pos: 2879109919149700,
+                    site: 4,
+                },
+                Del {
+                    pos: 8680820740569200760,
+                    len: 18446744071435745400,
+                    site: 255,
+                },
+                SyncAll,
+                SyncAll,
+                Del {
+                    pos: 144116287587483658,
+                    len: 8646911284728217599,
+                    site: 120,
+                },
+                Ins {
+                    content: "\0\0SSSSSS\0".into(),
+                    pos: 4755847789890108906,
+                    site: 38,
+                },
+                Ins {
+                    content: "\0\u{10}I\u{4}\u{4}\u{4}\u{4}\u{4}\0\0\u{1}\0".into(),
+                    pos: 10768900350821001,
+                    site: 0,
+                },
+                Ins {
+                    content: "I\u{4}\u{4}".into(),
+                    pos: 73387494324306057,
+                    site: 0,
+                },
+                Ins {
+                    content: "\u{4}\u{4}\u{4}\u{4}\u{4}".into(),
+                    pos: 47890328526783742,
+                    site: 0,
+                },
+                Ins {
+                    content: "\0\0\0\0\0\0\0\0\0\0\0\0\0\0".into(),
+                    pos: 792926255917040777,
+                    site: 0,
+                },
+                Ins {
+                    content: "\u{4}\0\0\0\0\u{4}".into(),
+                    pos: 3497652043353424901,
+                    site: 48,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn test_15() {
         // retreat failed
         test_multi_sites(

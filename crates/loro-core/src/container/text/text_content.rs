@@ -8,8 +8,24 @@ use crate::smstring::SmString;
 #[derive(PartialEq, Eq, Debug, EnumAsInner, Clone)]
 pub enum ListSlice {
     RawStr(SmString),
-    Slice(Range<u32>),
+    Slice(SliceRange),
     Unknown(usize),
+}
+
+#[repr(transparent)]
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct SliceRange(pub Range<u32>);
+
+const UNKNOWN_START: u32 = u32::MAX / 2;
+impl SliceRange {
+    #[inline(always)]
+    pub fn is_unknown(&self) -> bool {
+        self.0.start == UNKNOWN_START
+    }
+
+    pub fn new_unknown(size: u32) -> Self {
+        Self(UNKNOWN_START..UNKNOWN_START + size)
+    }
 }
 
 impl Default for ListSlice {
@@ -18,14 +34,68 @@ impl Default for ListSlice {
     }
 }
 
-impl ListSlice {
-    #[inline(always)]
-    pub fn from_range(range: Range<u32>) -> ListSlice {
-        Self::Slice(range)
+impl From<Range<u32>> for ListSlice {
+    fn from(a: Range<u32>) -> Self {
+        ListSlice::Slice(a.into())
+    }
+}
+
+impl From<SliceRange> for ListSlice {
+    fn from(a: SliceRange) -> Self {
+        ListSlice::Slice(a)
+    }
+}
+
+impl From<Range<u32>> for SliceRange {
+    fn from(a: Range<u32>) -> Self {
+        SliceRange(a)
+    }
+}
+
+impl HasLength for SliceRange {
+    fn content_len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl Sliceable for SliceRange {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        if self.is_unknown() {
+            Self::new_unknown((to - from) as u32)
+        } else {
+            SliceRange(self.0.start + from as u32..self.0.start + to as u32)
+        }
+    }
+}
+
+impl Mergable for SliceRange {
+    fn merge(&mut self, other: &Self, _: &()) {
+        if self.is_unknown() {
+            self.0.end += other.0.end - other.0.start;
+        } else {
+            self.0.end = other.0.end;
+        }
     }
 
-    pub fn from_raw(str: SmString) -> ListSlice {
-        Self::RawStr(str)
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        (self.is_unknown() && other.is_unknown()) || self.0.end == other.0.start
+    }
+}
+
+impl ListSlice {
+    #[inline(always)]
+    pub fn UnknownRange(len: usize) -> SliceRange {
+        let start = UNKNOWN_START;
+        let end = len as u32 + UNKNOWN_START;
+        SliceRange(start..end)
+    }
+
+    #[inline(always)]
+    pub fn is_unknown(range: &SliceRange) -> bool {
+        range.is_unknown()
     }
 }
 

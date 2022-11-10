@@ -16,7 +16,7 @@ use std::{
 use colored::Colorize;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 mod iter;
 mod mermaid;
 #[cfg(test)]
@@ -26,7 +26,7 @@ use crate::{
     change::Lamport,
     debug_log,
     id::{ClientID, Counter, ID},
-    span::{HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
+    span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{IdSpanVector, VersionVector, VersionVectorDiff},
 };
 
@@ -68,6 +68,7 @@ pub(crate) trait Dag {
 
 pub(crate) trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>;
+    /// Slow, should probably only use on dev
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
@@ -96,7 +97,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
         self.vv().includes_id(id)
     }
 
-    /// TODO: we probably need cache to speedup this
     #[inline]
     fn get_vv(&self, id: ID) -> VersionVector {
         get_version_vector(&|id| self.get(id), id)
@@ -110,6 +110,44 @@ impl<T: Dag + ?Sized> DagUtils for T {
         );
         if from == to {
             return ans;
+        }
+        if from.len() == 1 && to.len() == 1 {
+            let from = from[0];
+            let to = to[0];
+            if from.client_id == to.client_id {
+                let from_span = self.get(from).unwrap();
+                let to_span = self.get(to).unwrap();
+                if std::ptr::eq(from_span, to_span) {
+                    if from.counter < to.counter {
+                        ans.right.insert(
+                            from.client_id,
+                            CounterSpan::new(from.counter + 1, to.counter + 1),
+                        );
+                    } else {
+                        ans.left.insert(
+                            from.client_id,
+                            CounterSpan::new(to.counter + 1, from.counter + 1),
+                        );
+                    }
+                    return ans;
+                }
+
+                if from_span.deps().len() == 1 && to_span.contains_id(from_span.deps()[0]) {
+                    ans.left.insert(
+                        from.client_id,
+                        CounterSpan::new(to.counter + 1, from.counter + 1),
+                    );
+                    return ans;
+                }
+
+                if to_span.deps().len() == 1 && from_span.contains_id(to_span.deps()[0]) {
+                    ans.right.insert(
+                        from.client_id,
+                        CounterSpan::new(from.counter + 1, to.counter + 1),
+                    );
+                    return ans;
+                }
+            }
         }
 
         _find_common_ancestor(
@@ -504,6 +542,30 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
 {
+    if left.len() == 1 && right.len() == 1 {
+        let left = left[0];
+        let right = right[0];
+        if left.client_id == right.client_id {
+            let left_span = get(left).unwrap();
+            let right_span = get(right).unwrap();
+            if std::ptr::eq(left_span, right_span) {
+                if left.counter < right.counter {
+                    return smallvec![left];
+                } else {
+                    return smallvec![right];
+                }
+            }
+
+            if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
+                return smallvec![right];
+            }
+
+            if right_span.deps().len() == 1 && left_span.contains_id(right_span.deps()[0]) {
+                return smallvec![left];
+            }
+        }
+    }
+
     let mut ans: SmallVec<[ID; 2]> = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 

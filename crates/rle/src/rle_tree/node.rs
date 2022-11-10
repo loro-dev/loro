@@ -224,6 +224,19 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         sibling.update_cache();
     }
 
+    #[inline(always)]
+    pub(crate) fn child_num(&self) -> usize {
+        match self {
+            Node::Internal(x) => x.children.len(),
+            Node::Leaf(x) => x.children.len(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.child_num() == 0
+    }
+
     pub(crate) fn borrow_from_sibling<F>(
         &mut self,
         sibling: &mut Node<'a, T, A>,

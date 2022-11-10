@@ -6,6 +6,7 @@ use crdt_list::{
 use rle::{
     range_map::{RangeMap, WithStartEnd},
     rle_tree::{iter::IterMut, SafeCursorMut},
+    HasLength,
 };
 
 use crate::id::{Counter, ID};
@@ -28,7 +29,7 @@ impl OpSet<YSpan, ID> for OpSpanSet {
             value.id.into(),
             WithStartEnd {
                 start: value.id.into(),
-                end: value.id.inc(value.len as i32).into(),
+                end: value.id.inc(value.atom_len() as i32).into(),
                 value: true,
             },
         )
@@ -93,7 +94,7 @@ impl ListCrdt for YataImpl {
     }
 
     fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
-        op.id.contains(op.len as Counter, id)
+        op.id.contains(op.atom_len() as Counter, id)
     }
 }
 
@@ -135,7 +136,10 @@ mod test {
     use crdt_list::crdt::OpSet;
 
     use crate::{
-        container::text::tracker::y_span::{Status, YSpan},
+        container::text::{
+            text_content::ListSlice,
+            tracker::y_span::{Status, YSpan},
+        },
         id::ID,
     };
 
@@ -146,11 +150,10 @@ mod test {
         let mut set = OpSpanSet::default();
         set.insert(&YSpan {
             id: ID::new(1, 10),
-            len: 10,
             origin_left: Some(ID::new(0, 1)),
             origin_right: Some(ID::new(0, 2)),
             status: Status::new(),
-            slice: Default::default(),
+            slice: ListSlice::UnknownRange(10),
         });
         assert!(set.contain(ID::new(1, 10)));
         assert!(set.contain(ID::new(1, 11)));
@@ -174,7 +177,7 @@ pub mod fuzz {
         fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
             vec![
                 self.id.to_string().into(),
-                self.len.to_string().into(),
+                self.atom_len().to_string().into(),
                 self.status.future.to_string().into(),
                 self.status.delete_times.to_string().into(),
                 self.status.undo_times.to_string().into(),
@@ -203,7 +206,7 @@ pub mod fuzz {
     }
 
     use crdt_list::test::{Action, TestFramework};
-    use rle::{RleVecWithIndex, RleVecWithLen};
+    use rle::{HasLength, RleVecWithIndex, RleVecWithLen};
     use tabled::TableIteratorExt;
     use Action::*;
 
@@ -223,7 +226,7 @@ pub mod fuzz {
 
     impl TestFramework for YataImpl {
         fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
-            container.head_vv.set_end(op.id.inc(op.len as i32));
+            container.head_vv.set_end(op.id.inc(op.atom_len() as i32));
             // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
             unsafe { crdt_list::yata::integrate::<Self>(container, op) };
         }
@@ -301,7 +304,7 @@ pub mod fuzz {
                 ),
                 pos % container.content.len(),
                 len,
-                ListSlice::Unknown(len),
+                ListSlice::UnknownRange(len),
             );
             ans
         }
@@ -329,6 +332,191 @@ pub mod fuzz {
         fn integrate_delete_op(container: &mut Self::Container, op: Self::DeleteOp) {
             container.update_spans(&op, StatusChange::Delete);
         }
+    }
+
+    #[test]
+    fn issue_global_tree_trait() {
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            100,
+            vec![
+                Delete {
+                    client_id: 252,
+                    pos: 58,
+                    len: 179,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 126,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 227,
+                },
+                Delete {
+                    client_id: 177,
+                    pos: 177,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 177,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 202,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 176,
+                    pos: 177,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 177,
+                    pos: 177,
+                    len: 162,
+                },
+                NewOp {
+                    client_id: 217,
+                    pos: 0,
+                },
+                Sync { from: 126, to: 126 },
+                Sync { from: 177, to: 6 },
+                NewOp {
+                    client_id: 96,
+                    pos: 64,
+                },
+                NewOp {
+                    client_id: 217,
+                    pos: 227,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 227,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 227,
+                },
+                Delete {
+                    client_id: 176,
+                    pos: 177,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 202,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 202,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 241,
+                    pos: 177,
+                    len: 176,
+                },
+                Delete {
+                    client_id: 177,
+                    pos: 101,
+                    len: 101,
+                },
+                NewOp {
+                    client_id: 101,
+                    pos: 101,
+                },
+                Delete {
+                    client_id: 153,
+                    pos: 255,
+                    len: 126,
+                },
+                NewOp {
+                    client_id: 232,
+                    pos: 156,
+                },
+                Delete {
+                    client_id: 177,
+                    pos: 176,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 241,
+                    pos: 177,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 177,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 202,
+                    pos: 202,
+                    len: 202,
+                },
+                Delete {
+                    client_id: 176,
+                    pos: 177,
+                    len: 177,
+                },
+                Delete {
+                    client_id: 177,
+                    pos: 176,
+                    len: 177,
+                },
+                NewOp {
+                    client_id: 153,
+                    pos: 153,
+                },
+                Delete {
+                    client_id: 0,
+                    pos: 0,
+                    len: 126,
+                },
+                Sync { from: 0, to: 162 },
+                NewOp {
+                    client_id: 96,
+                    pos: 96,
+                },
+                Delete {
+                    client_id: 232,
+                    pos: 126,
+                    len: 126,
+                },
+                Delete {
+                    client_id: 126,
+                    pos: 126,
+                    len: 126,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 227,
+                },
+                Delete {
+                    client_id: 227,
+                    pos: 227,
+                    len: 227,
+                },
+                NewOp {
+                    client_id: 158,
+                    pos: 107,
+                },
+                Delete {
+                    client_id: 126,
+                    pos: 126,
+                    len: 43,
+                },
+            ],
+        )
     }
 
     #[test]
@@ -384,6 +572,56 @@ pub mod fuzz {
             ],
         )
     }
+    #[test]
+    fn issue_range_map() {
+        crdt_list::test::test_with_actions::<YataImpl>(
+            5,
+            100,
+            vec![
+                NewOp {
+                    client_id: 124,
+                    pos: 124,
+                },
+                Delete {
+                    client_id: 8,
+                    pos: 47,
+                    len: 68,
+                },
+                Delete {
+                    client_id: 255,
+                    pos: 255,
+                    len: 255,
+                },
+                Delete {
+                    client_id: 184,
+                    pos: 184,
+                    len: 48,
+                },
+                Sync { from: 158, to: 0 },
+                Delete {
+                    client_id: 182,
+                    pos: 182,
+                    len: 182,
+                },
+                NewOp {
+                    client_id: 255,
+                    pos: 252,
+                },
+                Sync { from: 134, to: 2 },
+                Delete {
+                    client_id: 246,
+                    pos: 246,
+                    len: 246,
+                },
+                Delete {
+                    client_id: 246,
+                    pos: 246,
+                    len: 246,
+                },
+            ],
+        )
+    }
+
     #[test]
     fn issue_1() {
         crdt_list::test::test_with_actions::<YataImpl>(

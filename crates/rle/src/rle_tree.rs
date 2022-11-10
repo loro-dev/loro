@@ -13,7 +13,7 @@ pub use tree_trait::Position;
 use tree_trait::RleTreeTrait;
 
 mod arena;
-pub use arena::{Arena, BumpMode, HeapMode};
+pub use arena::{Arena, BumpMode, HeapMode, VecTrait};
 mod cursor;
 pub mod iter;
 pub mod node;
@@ -335,7 +335,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
-    // TODO: perf, use smallvec
     fn update_with_gathered_map<F, M>(
         &mut self,
         iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, SmallVec<[T; 2]>)>, M>,

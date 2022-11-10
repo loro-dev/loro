@@ -71,36 +71,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
             return None;
         }
 
-        // TODO: test this threshold
-        if self.vec.len() < 8 {
-            for (i, v) in self.vec.iter().enumerate() {
-                if self.index[i] <= index && index < self.index[i + 1] {
-                    return Some(SearchResult {
-                        element: v,
-                        merged_index: i,
-                        offset: index - self.index[i],
-                    });
-                }
-            }
-
-            return None;
-        }
-
-        let mut start = 0;
-        let mut end = self.index.len() - 1;
-        while start < end {
-            let mid = (start + end) / 2;
-            if self.index[mid] == index {
-                start = mid;
-                break;
-            }
-
-            if self.index[mid] < index {
-                start = mid + 1;
-            } else {
-                end = mid;
-            }
-        }
+        let mut start = self.index.binary_search(&index).unwrap_or_else(|x| x);
 
         if index < self.index[start] {
             start -= 1;

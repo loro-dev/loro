@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{cmp::Ordering, fmt::Debug, ops::Deref};
 
 
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
@@ -42,6 +42,7 @@ impl Position {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct FindPosResult<I> {
     pub child_index: usize,
     pub offset: I,
@@ -299,12 +300,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         }
 
         // TODO: Maybe panic if overlap?
-        node.cache.end = node
-            .children()
-            .iter()
-            .map(|x| x.get_end_index())
-            .max()
-            .unwrap();
+        node.cache.end = node.children().last().unwrap().get_end_index();
         node.cache.start = node.children()[0].get_start_index();
     }
 
@@ -313,12 +309,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
             return;
         }
 
-        node.cache.end = node
-            .children()
-            .iter()
-            .map(|x| get_cache(x).end)
-            .max()
-            .unwrap();
+        node.cache.end = get_cache(node.children().last().unwrap()).end;
         node.cache.start = get_cache(&node.children()[0]).start;
     }
 
@@ -326,65 +317,126 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         node: &InternalNode<'_, T, Self>,
         index: Self::Int,
     ) -> FindPosResult<Self::Int> {
-        for (i, child) in node.children().iter().enumerate() {
-            let cache = get_cache(child);
-            if index <= cache.end {
-                if index < cache.start {
-                    return FindPosResult::new_not_found(i, index, Position::Before);
-                }
-
-                // prefer Start than End
-                if index == cache.end
-                    && i + 1 < node.children.len()
-                    && index == get_cache(&node.children[i + 1]).start
-                {
-                    return FindPosResult::new(i + 1, index, Position::Start);
-                }
-
-                return FindPosResult::new(i, index, get_pos_global(index, cache));
-            }
+        if node.children.is_empty() || index > node.cache.end {
+            return FindPosResult::new_not_found(
+                node.children.len().saturating_sub(1),
+                index,
+                Position::After,
+            );
         }
 
-        FindPosResult::new_not_found(
-            node.children.len().saturating_sub(1),
-            index,
-            Position::After,
-        )
+        if index < node.cache.start {
+            return FindPosResult::new_not_found(0, index, Position::Before);
+        }
+
+        let ans = node
+            .children
+            .binary_search_by(|x| {
+                let cache = get_cache(x);
+                if index < cache.start {
+                    Ordering::Greater
+                } else if index > cache.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .map_or_else(
+                |x| {
+                    FindPosResult::new_not_found(
+                        x,
+                        index,
+                        get_pos_global(index, get_cache(&node.children[x])),
+                    )
+                },
+                |x| {
+                    FindPosResult::new(
+                        x,
+                        index,
+                        get_pos_global(index, get_cache(&node.children[x])),
+                    )
+                },
+            );
+        if ans.pos == Position::End {
+            if ans.child_index + 1 < node.children.len()
+                && index == get_cache(&node.children[ans.child_index + 1]).start
+            {
+                FindPosResult::new(ans.child_index + 1, index, Position::Start)
+            } else {
+                ans
+            }
+        } else {
+            ans
+        }
     }
 
     fn find_pos_leaf(node: &LeafNode<'_, T, Self>, index: Self::Int) -> FindPosResult<usize> {
-        for (i, child) in node.children().iter().enumerate() {
-            let cache = Cache {
-                start: child.get_start_index(),
-                end: child.get_end_index(),
-            };
-
-            if index <= cache.end {
-                if index < cache.start {
-                    return FindPosResult::new_not_found(i, 0, Position::Before);
-                }
-
-                // prefer Start than End
-                if index == cache.end
-                    && i + 1 < node.children.len()
-                    && index == node.children[i + 1].get_start_index()
-                {
-                    return FindPosResult::new(i + 1, 0, Position::Start);
-                }
-
-                return FindPosResult::new(
-                    i,
-                    (index - cache.start).as_(),
-                    get_pos_global(index, cache),
-                );
-            }
+        if node.children.is_empty() || index > node.cache.end {
+            return FindPosResult::new_not_found(
+                node.children.len().saturating_sub(1),
+                node.children.last().map(|x| x.atom_len()).unwrap_or(0),
+                Position::After,
+            );
         }
 
-        FindPosResult::new_not_found(
-            node.children.len().saturating_sub(1),
-            node.children().last().unwrap().atom_len(),
-            Position::After,
-        )
+        if index < node.cache.start {
+            return FindPosResult::new_not_found(0, 0, Position::Before);
+        }
+
+        let ans = node
+            .children
+            .binary_search_by(|x| {
+                let cache = Cache {
+                    start: x.get_start_index(),
+                    end: x.get_end_index(),
+                };
+                if index < cache.start {
+                    Ordering::Greater
+                } else if index > cache.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .map_or_else(
+                |x| {
+                    FindPosResult::new_not_found(
+                        x,
+                        0,
+                        get_pos_global(
+                            index,
+                            Cache {
+                                start: node.children[x].get_start_index(),
+                                end: node.children[x].get_end_index(),
+                            },
+                        ),
+                    )
+                },
+                |x| {
+                    FindPosResult::new(
+                        x,
+                        (index - node.children[x].get_start_index()).as_(),
+                        get_pos_global(
+                            index,
+                            Cache {
+                                start: node.children[x].get_start_index(),
+                                end: node.children[x].get_end_index(),
+                            },
+                        ),
+                    )
+                },
+            );
+        if ans.pos == Position::End {
+            if ans.child_index + 1 < node.children.len()
+                && index == node.children[ans.child_index + 1].get_start_index()
+            {
+                FindPosResult::new(ans.child_index + 1, 0, Position::Start)
+            } else {
+                ans
+            }
+        } else {
+            ans
+        }
     }
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int {
@@ -408,6 +460,10 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     }
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
+        if node.children().is_empty() {
+            return;
+        }
+
         assert_eq!(
             node.cache.end,
             node.children()
@@ -430,6 +486,10 @@ fn get_pos_global<I: Integer>(index: I, cache: Cache<I>) -> Position {
         Position::Start
     } else if index == cache.end {
         Position::End
+    } else if index < cache.start {
+        Position::Before
+    } else if index > cache.end {
+        Position::After
     } else {
         Position::Middle
     }
