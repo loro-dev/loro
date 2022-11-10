@@ -335,7 +335,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
-    // TODO: perf, use smallvec
     fn update_with_gathered_map<F, M>(
         &mut self,
         iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, SmallVec<[T; 2]>)>, M>,

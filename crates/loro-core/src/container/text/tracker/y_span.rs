@@ -77,7 +77,6 @@ pub struct YSpan {
     // 24 bytes
     pub origin_right: Option<ID>,
     // 8 bytes
-    // TODO: remove this field when the system is stable
     pub slice: SliceRange,
 }
 

@@ -68,6 +68,7 @@ pub(crate) trait Dag {
 
 pub(crate) trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>;
+    /// Slow, should probably only use on dev
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
@@ -96,7 +97,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
         self.vv().includes_id(id)
     }
 
-    /// TODO: we probably need cache to speedup this
     #[inline]
     fn get_vv(&self, id: ID) -> VersionVector {
         get_version_vector(&|id| self.get(id), id)

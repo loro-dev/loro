@@ -325,21 +325,6 @@ where
             return None;
         }
 
-        // TODO: test this threshold
-        if self.vec.len() < 16 {
-            for (i, v) in self.vec.iter().enumerate() {
-                if self[i].get_start_index() <= index && index < self[i].get_end_index() {
-                    return Some(SearchResult {
-                        element: v,
-                        merged_index: i,
-                        offset: index - self[i].get_start_index(),
-                    });
-                }
-            }
-
-            return None;
-        }
-
         let mut start = 0;
         let mut end = self.vec.len() - 1;
         while start < end {
