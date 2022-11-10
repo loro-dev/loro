@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 smallvec = "1.8.0"
-bumpalo = { version = "3.10.0", features = ["collections", "boxed"] }
+bumpalo = { version = "3.11.1", features = ["collections", "boxed"] }
 num = "0.4.0"
 enum-as-inner = "0.5.1"
 ouroboros = "0.15.2"
