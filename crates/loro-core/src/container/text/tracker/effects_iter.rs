@@ -116,7 +116,7 @@ impl<'a> Iterator for EffectIter<'a> {
                                 debug_assert_eq!(length_diff, len as i32);
                                 return Some(Effect::Ins {
                                     pos: index,
-                                    content,
+                                    content: content.into(),
                                 });
                             }
                         }

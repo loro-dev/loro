@@ -9,7 +9,7 @@ pub enum LoroValue {
     Null,
     Bool(bool),
     Double(f64),
-    Integer(i32),
+    I32(i32),
     String(Box<str>),
     List(Box<Vec<LoroValue>>),
     Map(Box<FxHashMap<InternalString, LoroValue>>),
@@ -40,7 +40,7 @@ impl From<InsertValue> for LoroValue {
             InsertValue::Null => LoroValue::Null,
             InsertValue::Bool(b) => LoroValue::Bool(b),
             InsertValue::Double(d) => LoroValue::Double(d),
-            InsertValue::Int32(i) => LoroValue::Integer(i),
+            InsertValue::Int32(i) => LoroValue::I32(i),
             InsertValue::String(s) => LoroValue::String(s),
             InsertValue::Container(c) => LoroValue::Unresolved(c),
         }
@@ -53,11 +53,41 @@ impl From<LoroValue> for InsertValue {
             LoroValue::Null => InsertValue::Null,
             LoroValue::Bool(b) => InsertValue::Bool(b),
             LoroValue::Double(d) => InsertValue::Double(d),
-            LoroValue::Integer(i) => InsertValue::Int32(i),
+            LoroValue::I32(i) => InsertValue::Int32(i),
             LoroValue::String(s) => InsertValue::String(s),
             LoroValue::Unresolved(c) => InsertValue::Container(c),
             _ => unreachable!("Unsupported convert from LoroValue to InsertValue"),
         }
+    }
+}
+
+impl From<i32> for LoroValue {
+    fn from(v: i32) -> Self {
+        LoroValue::I32(v)
+    }
+}
+
+impl From<f64> for LoroValue {
+    fn from(v: f64) -> Self {
+        LoroValue::Double(v)
+    }
+}
+
+impl From<bool> for LoroValue {
+    fn from(v: bool) -> Self {
+        LoroValue::Bool(v)
+    }
+}
+
+impl From<&str> for LoroValue {
+    fn from(v: &str) -> Self {
+        LoroValue::String(v.into())
+    }
+}
+
+impl From<String> for LoroValue {
+    fn from(v: String) -> Self {
+        LoroValue::String(v.into())
     }
 }
 
@@ -87,7 +117,7 @@ pub mod wasm {
             LoroValue::Null => JsValue::NULL,
             LoroValue::Bool(b) => JsValue::from_bool(b),
             LoroValue::Double(f) => JsValue::from_f64(f),
-            LoroValue::Integer(i) => JsValue::from_f64(i as f64),
+            LoroValue::I32(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::List(list) => {
                 let arr = Array::new_with_length(list.len() as u32);

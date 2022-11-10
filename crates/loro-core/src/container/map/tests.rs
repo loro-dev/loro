@@ -19,7 +19,7 @@ fn basic() {
     let mut container = loro.get_or_create_root_map("map").unwrap();
     container.insert("haha".into(), InsertValue::Int32(1));
     let ans = fx_map!(
-        "haha".into() => LoroValue::Integer(1)
+        "haha".into() => LoroValue::I32(1)
     );
 
     assert_eq!(container.get_value(), LoroValue::Map(Box::new(ans)));

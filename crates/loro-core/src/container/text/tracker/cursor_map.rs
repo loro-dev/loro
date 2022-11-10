@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, BumpMode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
@@ -27,7 +27,7 @@ pub(super) enum Marker {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
     },
-    Delete(RleVecWithLen<[IdSpan; 2]>),
+    Delete(Box<RleVecWithLen<[IdSpan; 2]>>),
     // FUTURE: REDO, UNDO
 }
 
@@ -91,10 +91,10 @@ impl Marker {
                         if child.overlap(id_span) {
                             let start_counter = child.id.counter;
                             let offset = std::cmp::max(id_span.counter.min() - start_counter, 0);
-                            debug_assert!((offset as usize) < child.len);
+                            debug_assert!((offset as usize) < child.atom_len());
                             let max_offset = std::cmp::min(
                                 id_span.counter.max() - start_counter,
-                                (child.len - 1) as i32,
+                                (child.atom_len() - 1) as i32,
                             );
                             let len = max_offset - offset + 1;
                             // SAFETY: we just checked it is valid
@@ -103,7 +103,7 @@ impl Marker {
                                     *ptr,
                                     i,
                                     offset as usize,
-                                    Position::from_offset(offset as isize, child.len),
+                                    Position::from_offset(offset as isize, child.atom_len()),
                                     len as usize,
                                 ))
                             })
@@ -151,7 +151,7 @@ impl Sliceable for Marker {
                 ptr: *ptr,
                 len: to - from,
             },
-            Marker::Delete(x) => Marker::Delete(x.slice(from, to)),
+            Marker::Delete(x) => Marker::Delete(Box::new(x.slice(from, to))),
         }
     }
 }
@@ -194,10 +194,10 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct CursorMap(RangeMap<u128, Marker, BumpMode>);
+pub(super) struct CursorMap(RangeMap<u128, Marker>);
 
 impl Deref for CursorMap {
-    type Target = RangeMap<u128, Marker, BumpMode>;
+    type Target = RangeMap<u128, Marker>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

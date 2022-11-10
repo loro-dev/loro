@@ -247,8 +247,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         if deleted_len > 0 {
-            self.connect_leaf(direct_delete_start, direct_delete_end - 1);
-            self.children.drain(direct_delete_start..direct_delete_end);
+            self.drain_children(direct_delete_start, direct_delete_end);
         }
 
         insertions.sort_by_key(|x| -(x.0 as isize));
@@ -270,6 +269,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         result
+    }
+
+    #[inline(always)]
+    pub fn drain_children(&mut self, direct_delete_start: usize, direct_delete_end: usize) {
+        self.connect_leaf(direct_delete_start, direct_delete_end - 1);
+        self.children.drain(direct_delete_start..direct_delete_end);
     }
 
     pub(crate) fn apply_updates(

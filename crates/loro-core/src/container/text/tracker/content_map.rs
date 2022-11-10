@@ -1,11 +1,11 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, Range};
 
 use rle::{
-    rle_tree::{BumpMode, Position, SafeCursor, SafeCursorMut},
+    rle_tree::{Position, SafeCursor, SafeCursorMut},
     HasLength, RleTree, RleVecWithLen,
 };
 
-use crate::{container::text::text_content::ListSlice, id::ID, span::IdSpan};
+use crate::{container::text::text_content::SliceRange, id::ID, span::IdSpan};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 
@@ -23,7 +23,7 @@ impl ContentMap {
         id: ID,
         pos: usize,
         len: usize,
-        slice: ListSlice,
+        slice: SliceRange,
     ) -> YSpan {
         debug_assert!(slice.content_len() == len);
         let (left, right) = self.get_sibling_at(pos);
@@ -31,7 +31,6 @@ impl ContentMap {
             origin_left: left,
             origin_right: right,
             id,
-            len,
             status: Default::default(),
             slice,
         }

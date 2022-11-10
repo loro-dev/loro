@@ -48,7 +48,6 @@ impl<O> Change<O> {
         id: ID,
         lamport: Lamport,
         timestamp: Timestamp,
-        _freezed: bool,
     ) -> Self {
         Change {
             ops,
@@ -83,13 +82,11 @@ impl<O: Mergable + HasLength + HasIndex> HasLength for Change<O> {
 pub struct ChangeMergeCfg {
     pub max_change_length: usize,
     pub max_change_interval: usize,
-    pub from_this_client: bool,
 }
 
 impl ChangeMergeCfg {
-    pub fn new(from_this: bool) -> Self {
+    pub fn new() -> Self {
         ChangeMergeCfg {
-            from_this_client: from_this,
             max_change_length: 1024,
             max_change_interval: 60,
         }
@@ -101,7 +98,6 @@ impl Default for ChangeMergeCfg {
         Self {
             max_change_length: 1024,
             max_change_interval: 60,
-            from_this_client: false,
         }
     }
 }
@@ -112,10 +108,6 @@ impl Mergable<ChangeMergeCfg> for Change {
     }
 
     fn is_mergable(&self, other: &Self, cfg: &ChangeMergeCfg) -> bool {
-        if !cfg.from_this_client {
-            return false;
-        }
-
         if other.deps.is_empty() || !(other.deps.len() == 1 && self.id_last() == other.deps[0]) {
             return false;
         }

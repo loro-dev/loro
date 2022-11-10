@@ -72,8 +72,7 @@ impl Tracker {
                     origin_right: None,
                     id: ID::unknown(0),
                     status: Status::new(),
-                    len: init_len as usize,
-                    slice: ListSlice::Unknown(init_len as usize),
+                    slice: ListSlice::UnknownRange(init_len as usize),
                 },
                 &mut make_notify(&mut id_to_cursor),
             );
@@ -114,7 +113,7 @@ impl Tracker {
             let id_span = IdSpan::new(
                 yspan.id.client_id,
                 yspan.id.counter,
-                yspan.len as Counter + yspan.id.counter,
+                yspan.atom_len() as Counter + yspan.id.counter,
             );
             let mut len = 0;
             for marker in self
@@ -126,7 +125,7 @@ impl Tracker {
                 }
             }
 
-            assert_eq!(len, yspan.len);
+            assert_eq!(len, yspan.atom_len());
         }
 
         self.content.debug_check();
@@ -147,6 +146,10 @@ impl Tracker {
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
+        if spans.is_empty() {
+            return;
+        }
+
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
@@ -187,6 +190,10 @@ impl Tracker {
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
+        if spans.is_empty() {
+            return;
+        }
+
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
@@ -247,7 +254,7 @@ impl Tracker {
                             id,
                             *pos,
                             slice.content_len(),
-                            slice.clone(),
+                            slice.as_slice().unwrap().clone(),
                         );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
@@ -270,8 +277,10 @@ impl Tracker {
                             }
                         }
 
-                        self.id_to_cursor
-                            .set_small_range((id).into(), cursor_map::Marker::Delete(spans));
+                        self.id_to_cursor.set_small_range(
+                            (id).into(),
+                            cursor_map::Marker::Delete(Box::new(spans)),
+                        );
                     }
                 }
             }

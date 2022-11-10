@@ -86,21 +86,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
             return None;
         }
 
-        let mut start = 0;
-        let mut end = self.index.len() - 1;
-        while start < end {
-            let mid = (start + end) / 2;
-            if self.index[mid] == index {
-                start = mid;
-                break;
-            }
-
-            if self.index[mid] < index {
-                start = mid + 1;
-            } else {
-                end = mid;
-            }
-        }
+        let mut start = self.index.binary_search(&index).unwrap_or_else(|x| x);
 
         if index < self.index[start] {
             start -= 1;

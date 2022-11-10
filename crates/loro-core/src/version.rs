@@ -28,7 +28,7 @@ use crate::{
 /// see also [im].
 #[repr(transparent)]
 #[derive(Debug, Clone)]
-pub struct VersionVector(ImHashMap<ClientID, Counter>);
+pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
 impl PartialEq for VersionVector {
     fn eq(&self, other: &Self) -> bool {
@@ -43,7 +43,7 @@ impl PartialEq for VersionVector {
 impl Eq for VersionVector {}
 
 impl Deref for VersionVector {
-    type Target = ImHashMap<ClientID, Counter>;
+    type Target = FxHashMap<ClientID, Counter>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -250,7 +250,7 @@ impl VersionVector {
 
     #[inline]
     pub fn new() -> Self {
-        Self(ImHashMap::new())
+        Self(Default::default())
     }
 
     /// set the inclusive ending point. target id will be included by self
@@ -377,7 +377,7 @@ impl Default for VersionVector {
 
 impl From<FxHashMap<ClientID, Counter>> for VersionVector {
     fn from(map: FxHashMap<ClientID, Counter>) -> Self {
-        let mut im_map = ImHashMap::new();
+        let mut im_map = FxHashMap::default();
         for (client_id, counter) in map {
             im_map.insert(client_id, counter);
         }
