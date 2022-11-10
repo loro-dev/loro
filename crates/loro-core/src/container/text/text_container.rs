@@ -162,7 +162,7 @@ impl Container for TextContainer {
                     let op = op.get_sliced();
                     match &op.content {
                         OpContent::Normal {
-                            content: InsertContent::List(op),
+                            content: Content::List(op),
                         } => match op {
                             ListOp::Insert { slice, pos } => {
                                 self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
@@ -194,7 +194,7 @@ impl Container for TextContainer {
                             if op.container == self_idx {
                                 match &op.content {
                                     OpContent::Normal {
-                                        content: InsertContent::List(op),
+                                        content: Content::List(op),
                                     } => match op {
                                         ListOp::Insert { slice, pos } => self
                                             .state

@@ -8,6 +8,7 @@ mod run {
     use super::*;
     use arbitrary::Unstructured;
     use flate2::read::GzDecoder;
+    use loro_core::container::manager::LockContainer;
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action;
     use loro_core::LoroCore;
@@ -78,7 +79,10 @@ mod run {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
                 for txn in txns.unwrap().as_array().unwrap() {
-                    let mut text = loro.get_or_create_root_text("text").unwrap();
+                    let get_or_create_root_text = loro.get_or_create_root_text("text");
+                    let lock = get_or_create_root_text.lock();
+                    let mut container_instance = lock.unwrap();
+                    let text = container_instance.as_text_mut().unwrap();
                     let patches = txn
                         .as_object()
                         .unwrap()
@@ -94,7 +98,7 @@ mod run {
                         text.insert(pos, ins_content);
                     }
 
-                    drop(text);
+                    drop(container_instance);
                     loro_b.import(loro.export(loro_b.vv()));
                 }
             })
@@ -113,7 +117,8 @@ mod run {
                         break;
                     }
 
-                    let mut text = loro.get_or_create_root_text("text").unwrap();
+                    let get_or_create_root_text = loro.get_or_create_root_text("text");
+                    let mut text = get_or_create_root_text.lock_text();
                     let patches = txn
                         .as_object()
                         .unwrap()
@@ -130,7 +135,8 @@ mod run {
                     }
 
                     drop(text);
-                    let mut text = loro_b.get_or_create_root_text("text").unwrap();
+                    let get_or_create_root_text = loro_b.get_or_create_root_text("text");
+                    let mut text = get_or_create_root_text.lock_text();
                     for patch in patches {
                         let pos = patch[0].as_u64().unwrap() as usize;
                         let del_here = patch[1].as_u64().unwrap() as usize;
