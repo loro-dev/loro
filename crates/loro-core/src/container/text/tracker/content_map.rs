@@ -1,15 +1,11 @@
 use std::ops::{Deref, DerefMut, Range};
 
 use rle::{
-    rle_tree::{BumpMode, Position, SafeCursor, SafeCursorMut},
+    rle_tree::{Position, SafeCursor, SafeCursorMut},
     HasLength, RleTree, RleVecWithLen,
 };
 
-use crate::{
-    container::text::text_content::{ListSlice, SliceRange},
-    id::ID,
-    span::IdSpan,
-};
+use crate::{container::text::text_content::SliceRange, id::ID, span::IdSpan};
 
 use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
 

@@ -18,17 +18,23 @@ mod run {
     pub fn two_client_edits(c: &mut Criterion) {
         let mut rgn = rand::rngs::StdRng::seed_from_u64(0);
         let mut bytes = Vec::new();
-        for _ in 0..1000 {
+        for _ in 0..8000 {
             bytes.push(rgn.gen::<u8>());
         }
 
         let mut gen = Unstructured::new(&bytes);
+        let mut c = c.benchmark_group("sync");
         let actions = gen.arbitrary::<[Action; 200]>().unwrap();
         c.bench_function("random text edit 2 sites", |b| {
             b.iter(|| test_multi_sites(2, actions.clone().into()))
         });
 
         c.bench_function("random text edit 8 sites", |b| {
+            b.iter(|| test_multi_sites(8, actions.clone().into()))
+        });
+        let actions = gen.arbitrary::<[Action; 4000]>().unwrap();
+        c.sample_size(10);
+        c.bench_function("random text edit 8 sites long", |b| {
             b.iter(|| test_multi_sites(8, actions.clone().into()))
         });
     }
@@ -40,7 +46,8 @@ mod run {
         let json: Value = serde_json::from_str(&s).unwrap();
         let txns = json.as_object().unwrap().get("txns");
         println!("{}", txns.unwrap().as_array().unwrap().len());
-        c.bench_function("B4", |b| {
+        let mut b = c.benchmark_group("directapply");
+        b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut text = loro.get_or_create_root_text("text").unwrap();
@@ -63,9 +70,8 @@ mod run {
             })
         });
 
-        let mut b = c.benchmark_group("sync");
         b.sample_size(10);
-        b.bench_function("B4Sync", |b| {
+        b.bench_function("B4DirectSync", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
@@ -92,6 +98,8 @@ mod run {
             })
         });
 
+        drop(b);
+        let mut b = c.benchmark_group("sync");
         b.bench_function("B4Parallel", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
