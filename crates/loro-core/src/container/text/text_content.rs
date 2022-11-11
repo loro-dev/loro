@@ -87,7 +87,7 @@ impl Mergable for SliceRange {
 
 impl ListSlice {
     #[inline(always)]
-    pub fn UnknownRange(len: usize) -> SliceRange {
+    pub fn unknown_range(len: usize) -> SliceRange {
         let start = UNKNOWN_START;
         let end = len as u32 + UNKNOWN_START;
         SliceRange(start..end)

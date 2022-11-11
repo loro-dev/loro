@@ -72,7 +72,7 @@ impl Tracker {
                     origin_right: None,
                     id: ID::unknown(0),
                     status: Status::new(),
-                    slice: ListSlice::UnknownRange(init_len as usize),
+                    slice: ListSlice::unknown_range(init_len as usize),
                 },
                 &mut make_notify(&mut id_to_cursor),
             );

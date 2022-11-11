@@ -153,7 +153,7 @@ mod test {
             origin_left: Some(ID::new(0, 1)),
             origin_right: Some(ID::new(0, 2)),
             status: Status::new(),
-            slice: ListSlice::UnknownRange(10),
+            slice: ListSlice::unknown_range(10),
         });
         assert!(set.contain(ID::new(1, 10)));
         assert!(set.contain(ID::new(1, 11)));
@@ -304,7 +304,7 @@ pub mod fuzz {
                 ),
                 pos % container.content.len(),
                 len,
-                ListSlice::UnknownRange(len),
+                ListSlice::unknown_range(len),
             );
             ans
         }

@@ -1,7 +1,7 @@
-use std::{fmt::Display};
+use std::fmt::Display;
 
 use crate::{
-    container::text::text_content::{SliceRange},
+    container::text::text_content::SliceRange,
     id::Counter,
     span::{HasCounter, HasCounterSpan, IdSpan},
     ContentType, InsertContentTrait, ID,
@@ -211,7 +211,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(1),
+                    slice: ListSlice::unknown_range(1),
                 })),
             },
             5,
@@ -224,7 +224,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 2),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(1),
+                    slice: ListSlice::unknown_range(1),
                 })),
             },
             5,
@@ -248,7 +248,7 @@ pub mod test {
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(4),
+                    slice: ListSlice::unknown_range(4),
                 })),
             },
             5,
@@ -261,7 +261,7 @@ pub mod test {
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(4),
+                    slice: ListSlice::unknown_range(4),
                 })),
             },
             5,
