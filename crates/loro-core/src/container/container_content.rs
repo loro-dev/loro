@@ -1,11 +1,11 @@
 use crate::{InsertContentTrait, ID};
 use rle::{HasLength, Mergable, Sliceable};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub(crate) enum Slot {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,

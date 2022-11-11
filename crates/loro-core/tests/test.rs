@@ -4,6 +4,7 @@ use loro_core::container::registry::ContainerWrapper;
 use loro_core::{InsertValue, LoroCore, LoroValue};
 
 #[test]
+#[cfg(feature = "json")]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");
@@ -31,6 +32,8 @@ fn map() {
     let map = value.as_map().unwrap();
     assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
     assert!(map.get("map").unwrap().as_unresolved().is_some());
+    println!("{}", value.to_json());
+
     let deep_value = root.get_value_deep(&loro);
     assert_eq!(deep_value.as_map().unwrap().len(), 2);
     let map = deep_value.as_map().unwrap();
@@ -38,6 +41,11 @@ fn map() {
     let inner_map = map.get("map").unwrap().as_map().unwrap();
     assert_eq!(inner_map.len(), 1);
     assert_eq!(inner_map.get("sub").unwrap(), &LoroValue::Bool(false));
+    let json = deep_value.to_json();
+    // println!("{}", json);
+    let actual: LoroValue = serde_json::from_str(&json).unwrap();
+    // dbg!(&actual);
+    assert_eq!(actual, deep_value);
 }
 
 #[test]

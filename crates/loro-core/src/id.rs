@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::span::{CounterSpan, IdSpan};
 
@@ -9,7 +9,7 @@ pub type Counter = i32;
 pub(crate) type ContainerIdx = u32;
 const UNKNOWN: ClientID = 404;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ID {
     pub client_id: ClientID,
     pub counter: Counter,

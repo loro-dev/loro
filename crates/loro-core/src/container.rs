@@ -11,7 +11,7 @@ use crate::{
     InternalString, LogStore, LoroValue, ID,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::{any::Any, fmt::Debug};
 
@@ -42,7 +42,7 @@ pub trait Container: Debug + Any + Unpin {
 /// the same [ContainerID] with conflict [ContainerType].
 ///
 /// This structure is really cheap to clone
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.
     Root {

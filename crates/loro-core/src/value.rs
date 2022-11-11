@@ -2,20 +2,143 @@ use std::collections::HashMap;
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{container::ContainerID, context::Context, Container};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
-#[derive(Debug, PartialEq, Clone, serde::Serialize, EnumAsInner)]
+#[derive(Debug, PartialEq, Clone, EnumAsInner)]
 pub enum LoroValue {
     Null,
     Bool(bool),
     Double(f64),
     I32(i32),
+    // i64?
     String(Box<str>),
     List(Box<Vec<LoroValue>>),
     Map(Box<FxHashMap<String, LoroValue>>),
     Unresolved(Box<ContainerID>),
+}
+
+#[derive(Serialize, Deserialize)]
+enum Test {
+    Unknown(ContainerID),
+    Map(FxHashMap<u32, usize>),
+}
+
+impl Serialize for LoroValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            LoroValue::Null => serializer.serialize_none(),
+            LoroValue::Bool(b) => serializer.serialize_bool(*b),
+            LoroValue::Double(d) => serializer.serialize_f64(*d),
+            LoroValue::I32(i) => serializer.serialize_i32(*i),
+            LoroValue::String(s) => serializer.serialize_str(s),
+            LoroValue::List(l) => serializer.collect_seq(l.iter()),
+            LoroValue::Map(m) => serializer.collect_map(m.iter()),
+            LoroValue::Unresolved(id) => {
+                let mut state = serializer.serialize_struct("Unresolved", 1)?;
+                state.serialize_field("Unresolved", id)?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LoroValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct LoroValueVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
+            type Value = LoroValue;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a LoroValue")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::Null)
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::Bool(v))
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::I32(v as i32))
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::I32(v as i32))
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::Double(v))
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::String(v.into()))
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(LoroValue::String(v.into()))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut list = Vec::new();
+                while let Some(value) = seq.next_element()? {
+                    list.push(value);
+                }
+                Ok(LoroValue::List(list.into()))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut ans: FxHashMap<String, _> = FxHashMap::default();
+                let mut last_key = None;
+                while let Some((key, value)) = map.next_entry::<String, _>()? {
+                    last_key.get_or_insert_with(|| key.clone());
+                    ans.insert(key, value);
+                }
+
+                Ok(LoroValue::Map(ans.into()))
+            }
+        }
+
+        deserializer.deserialize_any(LoroValueVisitor)
+    }
 }
 
 impl LoroValue {
@@ -26,6 +149,16 @@ impl LoroValue {
         } else {
             None
         }
+    }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+
+    #[cfg(feature = "json")]
+    pub fn from_json(s: &str) -> Self {
+        serde_json::from_str(s).unwrap()
     }
 }
 
@@ -82,6 +215,24 @@ impl From<LoroValue> for InsertValue {
 impl From<i32> for LoroValue {
     fn from(v: i32) -> Self {
         LoroValue::I32(v)
+    }
+}
+
+impl From<u8> for LoroValue {
+    fn from(v: u8) -> Self {
+        LoroValue::I32(v as i32)
+    }
+}
+
+impl From<u16> for LoroValue {
+    fn from(v: u16) -> Self {
+        LoroValue::I32(v as i32)
+    }
+}
+
+impl From<i16> for LoroValue {
+    fn from(v: i16) -> Self {
+        LoroValue::I32(v as i32)
     }
 }
 
@@ -198,5 +349,22 @@ pub(crate) mod proptest {
             any::<bool>().prop_map(InsertValue::Bool),
             any::<String>().prop_map(|s| InsertValue::String(s.into())),
         ]
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "json")]
+mod json_test {
+    use crate::{fx_map, LoroValue};
+    use fxhash::FxHashMap;
+
+    #[test]
+    fn list() {
+        let list = LoroValue::List(
+            vec![12.into(), "123".into(), fx_map!("kk" => 123.into()).into()].into(),
+        );
+        let json = list.to_json();
+        println!("{}", json);
+        assert_eq!(LoroValue::from_json(&json), list);
     }
 }
