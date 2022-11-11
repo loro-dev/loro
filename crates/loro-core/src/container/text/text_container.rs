@@ -12,7 +12,6 @@ use crate::{
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
-    log_store::LogStoreWeakRef,
     op::{Content, Op, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
@@ -42,7 +41,7 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub(crate) fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
+    pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
             raw_str: StringPool::default(),

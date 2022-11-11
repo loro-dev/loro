@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard, Weak},
+    sync::{Arc, Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use dashmap::DashMap;
@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{log_store::LogStoreWeakRef, op::RemoteOp, span::IdSpan, LogStore};
+use crate::{op::RemoteOp, span::IdSpan, LogStore};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -84,28 +84,20 @@ impl Container for ContainerInstance {
 #[derive(Debug)]
 pub struct ContainerRegistry {
     containers: DashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
-    to_self: Weak<ContainerRegistry>,
 }
 
 impl ContainerRegistry {
     pub(crate) fn new() -> Arc<ContainerRegistry> {
-        Arc::new_cyclic(|x| ContainerRegistry {
+        Arc::new(ContainerRegistry {
             containers: Default::default(),
-            to_self: x.clone(),
         })
     }
 
     #[inline]
-    fn create(&self, id: ContainerID, log_store: LogStoreWeakRef) -> ContainerInstance {
+    fn create(&self, id: ContainerID) -> ContainerInstance {
         match id.container_type() {
-            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(
-                id,
-                log_store,
-                self.to_self.clone(),
-            ))),
-            ContainerType::Text => {
-                ContainerInstance::Text(Box::new(TextContainer::new(id, log_store)))
-            }
+            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
+            ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
             _ => unimplemented!(),
         }
     }
@@ -126,10 +118,9 @@ impl ContainerRegistry {
     pub(crate) fn get_or_create(
         &self,
         id: &ContainerID,
-        log_store: LogStoreWeakRef,
     ) -> dashmap::mapref::one::Ref<ContainerID, Arc<Mutex<ContainerInstance>>> {
         if !self.containers.contains_key(id) {
-            let container = self.create(id.clone(), log_store);
+            let container = self.create(id.clone());
             self.insert(id.clone(), container);
         }
 

@@ -64,7 +64,6 @@ pub struct LogStore {
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
     pub(crate) container: Weak<ContainerRegistry>,
-    to_self: Weak<RwLock<LogStore>>,
     container_to_idx: FxHashMap<ContainerID, u32>,
     idx_to_container: Vec<ContainerID>,
     _pin: PhantomPinned,
@@ -77,22 +76,19 @@ impl LogStore {
         container: Weak<ContainerRegistry>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        Arc::new_cyclic(|x| {
-            RwLock::new(Self {
-                cfg,
-                this_client_id,
-                changes: FxHashMap::default(),
-                latest_lamport: 0,
-                latest_timestamp: 0,
-                frontier: Default::default(),
-                container,
-                to_self: x.clone(),
-                vv: Default::default(),
-                idx_to_container: Default::default(),
-                container_to_idx: Default::default(),
-                _pin: PhantomPinned,
-            })
-        })
+        Arc::new(RwLock::new(Self {
+            cfg,
+            this_client_id,
+            changes: FxHashMap::default(),
+            latest_lamport: 0,
+            latest_timestamp: 0,
+            frontier: Default::default(),
+            container,
+            vv: Default::default(),
+            idx_to_container: Default::default(),
+            container_to_idx: Default::default(),
+            _pin: PhantomPinned,
+        }))
     }
 
     #[inline]
@@ -154,7 +150,7 @@ impl LogStore {
     ) -> Change {
         let mut new_ops = RleVec::new();
         for mut op in change.ops.into_iter() {
-            let container = container_manager.get_or_create(&op.container, self.to_self.clone());
+            let container = container_manager.get_or_create(&op.container);
             let mut container = container.lock().unwrap();
             container.to_import(&mut op);
             self.get_or_create_container_idx(&op.container);
@@ -209,7 +205,7 @@ impl LogStore {
             parent_idx,
         )]);
         let mng = self.container.upgrade().unwrap();
-        mng.get_or_create(&container_id, self.to_self.clone());
+        mng.get_or_create(&container_id);
         self.get_or_create_container_idx(&container_id);
         container_id
     }
@@ -331,10 +327,8 @@ impl LogStore {
         }
 
         for container in set {
-            let container = container_manager.get_or_create(
-                &self.idx_to_container[*container as usize],
-                self.to_self.clone(),
-            );
+            let container =
+                container_manager.get_or_create(&self.idx_to_container[*container as usize]);
             let mut container = container.lock().unwrap();
             container.apply(change.id_span(), self);
         }

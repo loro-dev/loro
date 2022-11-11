@@ -1,12 +1,9 @@
-use std::sync::Weak;
-
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{registry::ContainerRegistry, Container, ContainerID, ContainerType},
+    container::{Container, ContainerID, ContainerType},
     context::Context,
     id::Counter,
-    log_store::LogStoreWeakRef,
     op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
@@ -35,11 +32,7 @@ struct ValueSlot {
 
 impl MapContainer {
     #[inline]
-    pub(crate) fn new(
-        id: ContainerID,
-        store: LogStoreWeakRef,
-        manager: Weak<ContainerRegistry>,
-    ) -> Self {
+    pub(crate) fn new(id: ContainerID) -> Self {
         MapContainer {
             id,
             state: FxHashMap::default(),

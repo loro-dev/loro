@@ -47,8 +47,7 @@ impl LoroCore {
             .write()
             .unwrap()
             .get_or_create_container_idx(&id);
-        let ptr = Arc::downgrade(&self.log_store);
-        let map = self.container.get_or_create(&id, ptr);
+        let map = self.container.get_or_create(&id);
         map.clone()
     }
 
@@ -59,8 +58,7 @@ impl LoroCore {
             .write()
             .unwrap()
             .get_or_create_container_idx(&id);
-        let ptr = Arc::downgrade(&self.log_store);
-        self.container.get_or_create(&id, ptr).clone()
+        self.container.get_or_create(&id).clone()
     }
 
     #[inline(always)]
