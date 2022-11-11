@@ -185,33 +185,6 @@ impl From<Vec<LoroValue>> for LoroValue {
     }
 }
 
-impl From<InsertValue> for LoroValue {
-    fn from(v: InsertValue) -> Self {
-        match v {
-            InsertValue::Null => LoroValue::Null,
-            InsertValue::Bool(b) => LoroValue::Bool(b),
-            InsertValue::Double(d) => LoroValue::Double(d),
-            InsertValue::Int32(i) => LoroValue::I32(i),
-            InsertValue::String(s) => LoroValue::String(s),
-            InsertValue::Container(c) => LoroValue::Unresolved(c),
-        }
-    }
-}
-
-impl From<LoroValue> for InsertValue {
-    fn from(v: LoroValue) -> Self {
-        match v {
-            LoroValue::Null => InsertValue::Null,
-            LoroValue::Bool(b) => InsertValue::Bool(b),
-            LoroValue::Double(d) => InsertValue::Double(d),
-            LoroValue::I32(i) => InsertValue::Int32(i),
-            LoroValue::String(s) => InsertValue::String(s),
-            LoroValue::Unresolved(c) => InsertValue::Container(c),
-            _ => unreachable!("Unsupported convert from LoroValue to InsertValue"),
-        }
-    }
-}
-
 impl From<i32> for LoroValue {
     fn from(v: i32) -> Self {
         LoroValue::I32(v)
@@ -260,26 +233,13 @@ impl From<String> for LoroValue {
     }
 }
 
-/// [InsertValue] can be inserted to Map or List
-/// It's different from [LoroValue] because some of the states in [LoroValue] are illegal to be inserted
-#[derive(Debug, PartialEq, Clone, EnumAsInner)]
-pub enum InsertValue {
-    Null,
-    Bool(bool),
-    Double(f64),
-    Int32(i32),
-    String(Box<str>),
-    Container(Box<ContainerID>),
-}
-
 #[cfg(feature = "wasm")]
 pub mod wasm {
+    use fxhash::FxHashMap;
     use js_sys::{Array, Object};
-    use wasm_bindgen::{JsValue, __rt::IntoJsResult};
+    use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
     use crate::LoroValue;
-
-    use super::InsertValue;
 
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
@@ -317,37 +277,61 @@ pub mod wasm {
         }
     }
 
-    impl InsertValue {
-        pub fn try_from_js(value: JsValue) -> Result<InsertValue, JsValue> {
-            if value.is_null() {
-                Ok(InsertValue::Null)
-            } else if value.as_bool().is_some() {
-                Ok(InsertValue::Bool(value.as_bool().unwrap()))
-            } else if value.as_f64().is_some() {
-                Ok(InsertValue::Double(value.as_f64().unwrap()))
-            } else if value.is_string() {
-                Ok(InsertValue::String(value.as_string().unwrap().into()))
+    impl From<JsValue> for LoroValue {
+        fn from(js_value: JsValue) -> Self {
+            if js_value.is_null() {
+                LoroValue::Null
+            } else if js_value.as_bool().is_some() {
+                LoroValue::Bool(js_value.as_bool().unwrap())
+            } else if js_value.as_f64().is_some() {
+                let num = js_value.as_f64().unwrap();
+                if num.fract() == 0.0 {
+                    LoroValue::I32(num as i32)
+                } else {
+                    LoroValue::Double(num)
+                }
+            } else if js_value.is_string() {
+                LoroValue::String(js_value.as_string().unwrap().into_boxed_str())
+            } else if js_value.has_type::<Array>() {
+                let array = js_value.unchecked_into::<Array>();
+                let mut list = Vec::new();
+                for i in 0..array.length() {
+                    list.push(LoroValue::from(array.get(i)));
+                }
+
+                LoroValue::List(Box::new(list))
+            } else if js_value.is_object() {
+                let object = js_value.unchecked_into::<Object>();
+                let mut map = FxHashMap::default();
+                for key in js_sys::Reflect::own_keys(&object).unwrap().iter() {
+                    let key = key.as_string().unwrap();
+                    map.insert(
+                        key.clone(),
+                        LoroValue::from(js_sys::Reflect::get(&object, &key.into()).unwrap()),
+                    );
+                }
+
+                map.into()
             } else {
-                Err(value)
+                unreachable!()
             }
         }
     }
 }
-
 #[cfg(test)]
 pub(crate) mod proptest {
     use proptest::prelude::*;
     use proptest::prop_oneof;
 
-    use super::InsertValue;
+    use super::LoroValue;
 
-    pub fn gen_insert_value() -> impl Strategy<Value = InsertValue> {
+    pub fn gen_insert_value() -> impl Strategy<Value = LoroValue> {
         prop_oneof![
-            Just(InsertValue::Null),
-            any::<f64>().prop_map(InsertValue::Double),
-            any::<i32>().prop_map(InsertValue::Int32),
-            any::<bool>().prop_map(InsertValue::Bool),
-            any::<String>().prop_map(|s| InsertValue::String(s.into())),
+            Just(LoroValue::Null),
+            any::<f64>().prop_map(LoroValue::Double),
+            any::<i32>().prop_map(LoroValue::I32),
+            any::<bool>().prop_map(LoroValue::Bool),
+            any::<String>().prop_map(|s| LoroValue::String(s.into())),
         ]
     }
 }

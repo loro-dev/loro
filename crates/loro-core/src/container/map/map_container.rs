@@ -12,7 +12,7 @@ use crate::{
     op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
-    value::{InsertValue, LoroValue},
+    value::LoroValue,
     version::TotalOrderStamp,
     InternalString, LogStore,
 };
@@ -30,7 +30,7 @@ pub struct MapContainer {
 
 #[derive(Debug)]
 struct ValueSlot {
-    value: InsertValue,
+    value: LoroValue,
     order: TotalOrderStamp,
     counter: Counter,
 }
@@ -44,7 +44,13 @@ impl MapContainer {
         }
     }
 
-    pub fn insert<C: Context>(&mut self, ctx: &C, key: InternalString, value: InsertValue) {
+    pub fn insert<C: Context, V: Into<LoroValue>>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+        value: V,
+    ) {
+        let value = value.into();
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -61,10 +67,10 @@ impl MapContainer {
             counter: id.counter,
             container,
             content: OpContent::Normal {
-                content: Content::Dyn(Box::new(MapSet {
+                content: Content::Map(MapSet {
                     key: key.clone(),
                     value: value.clone(),
-                })),
+                }),
             },
         }]);
 
@@ -99,7 +105,7 @@ impl MapContainer {
         self.state.insert(
             key,
             ValueSlot {
-                value: InsertValue::Container(Box::new(container_id.clone())),
+                value: LoroValue::Unresolved(Box::new(container_id.clone())),
                 order,
                 counter,
             },
@@ -109,7 +115,7 @@ impl MapContainer {
 
     #[inline]
     pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
-        self.insert(ctx, key, InsertValue::Null);
+        self.insert(ctx, key, LoroValue::Null);
     }
 }
 
@@ -157,14 +163,14 @@ impl Container for MapContainer {
     fn get_value(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
-            if let Some(container_id) = value.value.as_container() {
+            if let Some(container_id) = value.value.as_unresolved() {
                 map.insert(
                     key.to_string(),
                     // TODO: make a from
                     LoroValue::Unresolved(container_id.clone()),
                 );
             } else {
-                map.insert(key.to_string(), value.value.clone().into());
+                map.insert(key.to_string(), value.value.clone());
             }
         }
 
@@ -185,7 +191,7 @@ pub struct Map {
 }
 
 impl Map {
-    pub fn insert<C: Context>(&mut self, ctx: &C, key: &str, value: InsertValue) {
+    pub fn insert<C: Context, V: Into<LoroValue>>(&mut self, ctx: &C, key: &str, value: V) {
         self.with_container(|map| {
             map.insert(ctx, key.into(), value);
         })

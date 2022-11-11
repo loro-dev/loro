@@ -1,11 +1,11 @@
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::{value::InsertValue, ContentType, InsertContentTrait};
+use crate::{ContentType, InsertContentTrait, LoroValue};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListInsertContent {
     pub(crate) key: u32,
-    pub(crate) value: InsertValue,
+    pub(crate) value: LoroValue,
 }
 
 impl Mergable for ListInsertContent {}

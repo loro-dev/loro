@@ -6,7 +6,7 @@ use std::{
 
 use loro_core::{
     container::{registry::ContainerWrapper, ContainerID},
-    InsertValue, LoroCore,
+    LoroCore,
 };
 use wasm_bindgen::prelude::*;
 
@@ -62,7 +62,7 @@ impl Map {
         let loro = self.loro.upgrade().unwrap();
         let mut loro = loro.borrow_mut();
         let mut map = loro.get_map(&self.id);
-        map.insert(loro.deref(), &key, InsertValue::try_from_js(value).unwrap())
+        map.insert(loro.deref(), &key, value)
     }
 
     pub fn delete(&mut self, key: String) {

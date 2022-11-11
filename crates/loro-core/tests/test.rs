@@ -1,14 +1,14 @@
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
-use loro_core::{InsertValue, LoroCore, LoroValue};
+use loro_core::{LoroCore, LoroValue};
 
 #[test]
 #[cfg(feature = "json")]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");
-    root.insert(&loro, "haha", InsertValue::Double(1.2));
+    root.insert(&loro, "haha", 1.2);
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
     assert_eq!(
@@ -24,7 +24,7 @@ fn map() {
     let map_id = root.insert_obj(&loro, "map", loro_core::ContainerType::Map);
     drop(root);
     let mut sub_map = loro.get_map(&map_id);
-    sub_map.insert(&loro, "sub", InsertValue::Bool(false));
+    sub_map.insert(&loro, "sub", false);
     drop(sub_map);
     let root = loro.get_map("root");
     let value = root.get_value();

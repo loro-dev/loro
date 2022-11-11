@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use crate::LoroValue;
+
 #[cfg(feature = "proptest")]
 pub const PROPTEST_FACTOR_10: usize = 10;
 #[cfg(not(feature = "proptest"))]
@@ -18,7 +20,7 @@ fn size_of() {
         id::ID,
         op::{Content, Op},
         span::IdSpan,
-        Container, InsertValue, InternalString,
+        Container, InternalString,
     };
     use std::ops::Range;
 
@@ -30,7 +32,7 @@ fn size_of() {
     println!("MapSet {}", std::mem::size_of::<MapSet>());
     println!("ListSlice {}", std::mem::size_of::<ListSlice>());
     println!("Box {}", std::mem::size_of::<Box<dyn Container>>());
-    println!("InsertValue {}", std::mem::size_of::<InsertValue>());
+    println!("LoroValue {}", std::mem::size_of::<LoroValue>());
     println!("ID {}", std::mem::size_of::<ID>());
     println!("Vec {}", std::mem::size_of::<Vec<ID>>());
     println!("IdSpan {}", std::mem::size_of::<IdSpan>());

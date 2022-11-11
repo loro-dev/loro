@@ -39,7 +39,7 @@ pub(crate) type InternalString = DefaultAtom;
 pub use container::{map::Map, text::Text, Container, ContainerType};
 pub use log_store::LogStore;
 pub use loro::LoroCore;
-pub use value::{InsertValue, LoroValue};
+pub use value::LoroValue;
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
