@@ -986,7 +986,7 @@ mod find_common_ancestors_proptest {
         }
 
         let mut expected = Vec::with_capacity(N);
-        for dag in dags.iter_mut() {
+        for dag in dags[0..N].iter_mut() {
             dag.push(1);
             expected.push(dag.frontier[0]);
         }
