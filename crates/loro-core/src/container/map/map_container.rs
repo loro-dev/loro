@@ -24,7 +24,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     store: LogStoreWeakRef,
-    manager: Weak<RwLock<ContainerManager>>,
+    manager: Weak<ContainerManager>,
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ impl MapContainer {
     pub(crate) fn new(
         id: ContainerID,
         store: LogStoreWeakRef,
-        manager: Weak<RwLock<ContainerManager>>,
+        manager: Weak<ContainerManager>,
     ) -> Self {
         MapContainer {
             id,
@@ -156,13 +156,14 @@ impl Container for MapContainer {
 
     fn get_value(&self) -> LoroValue {
         let manager = self.manager.upgrade().unwrap();
-        let mut manager_read = None;
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
             if let Some(container_id) = value.value.as_container() {
-                let m = manager_read.get_or_insert_with(|| manager.read().unwrap());
-                let c = m.get(container_id).unwrap().lock().unwrap();
-                map.insert(key.to_string(), c.get_value());
+                map.insert(
+                    key.to_string(),
+                    // TODO: make a from
+                    LoroValue::Unresolved(container_id.clone()),
+                );
             } else {
                 map.insert(key.to_string(), value.value.clone().into());
             }

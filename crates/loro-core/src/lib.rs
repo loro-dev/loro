@@ -9,6 +9,7 @@
 pub mod change;
 pub mod configure;
 pub mod container;
+pub mod context;
 pub mod dag;
 pub mod id;
 pub mod log_store;

@@ -63,7 +63,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: Weak<RwLock<ContainerManager>>,
+    pub(crate) container: Weak<ContainerManager>,
     to_self: Weak<RwLock<LogStore>>,
     container_to_idx: FxHashMap<ContainerID, u32>,
     idx_to_container: Vec<ContainerID>,
@@ -74,7 +74,7 @@ impl LogStore {
     pub(crate) fn new(
         mut cfg: Configure,
         client_id: Option<ClientID>,
-        container: Weak<RwLock<ContainerManager>>,
+        container: Weak<ContainerManager>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Arc::new_cyclic(|x| {
@@ -149,15 +149,13 @@ impl LogStore {
 
     fn change_to_imported_format(
         &mut self,
-        container_manager: &mut ContainerManager,
+        container_manager: &ContainerManager,
         change: Change<RemoteOp>,
     ) -> Change {
         let mut new_ops = RleVec::new();
         for mut op in change.ops.into_iter() {
-            let mut container = container_manager
-                .get_or_create(&op.container, self.to_self.clone())
-                .lock()
-                .unwrap();
+            let container = container_manager.get_or_create(&op.container, self.to_self.clone());
+            let mut container = container.lock().unwrap();
             container.to_import(&mut op);
             self.get_or_create_container_idx(&op.container);
             new_ops.push(op.convert(self));
@@ -174,15 +172,13 @@ impl LogStore {
     }
 
     fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
-        let upgraded = self.container.upgrade().unwrap();
-        let container_manager = upgraded.read().unwrap();
+        let container_manager = self.container.upgrade().unwrap();
         let mut ops = RleVec::new();
         for mut op in change.ops.into_iter() {
             let container = container_manager
                 .get(&self.idx_to_container[op.container as usize])
-                .unwrap()
-                .lock()
                 .unwrap();
+            let container = container.lock().unwrap();
             container.to_export(&mut op);
             ops.push(op.convert(self));
         }
@@ -213,7 +209,6 @@ impl LogStore {
             parent_idx,
         )]);
         let mng = self.container.upgrade().unwrap();
-        let mut mng = mng.write().unwrap();
         mng.get_or_create(&container_id, self.to_self.clone());
         self.get_or_create_container_idx(&container_id);
         container_id
@@ -319,9 +314,8 @@ impl LogStore {
         }
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let upgraded = self.container.upgrade().unwrap();
-        let mut container_manager = upgraded.write().unwrap();
-        let change = self.change_to_imported_format(&mut container_manager, change);
+        let container_manager = self.container.upgrade().unwrap();
+        let change = self.change_to_imported_format(&container_manager, change);
         let v = self
             .changes
             .entry(change.id.client_id)
@@ -337,13 +331,11 @@ impl LogStore {
         }
 
         for container in set {
-            let mut container = container_manager
-                .get_or_create(
-                    &self.idx_to_container[*container as usize],
-                    self.to_self.clone(),
-                )
-                .lock()
-                .unwrap();
+            let container = container_manager.get_or_create(
+                &self.idx_to_container[*container as usize],
+                self.to_self.clone(),
+            );
+            let mut container = container.lock().unwrap();
             container.apply(change.id_span(), self);
         }
 

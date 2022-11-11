@@ -1,6 +1,7 @@
-use std::sync::{Arc, Mutex, RwLock};
-
-
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use crate::{
     change::Change,
@@ -16,7 +17,7 @@ use crate::{
 
 pub struct LoroCore {
     pub(crate) log_store: Arc<RwLock<LogStore>>,
-    pub(crate) container: Arc<RwLock<ContainerManager>>,
+    pub(crate) container: Arc<ContainerManager>,
 }
 
 impl Default for LoroCore {
@@ -47,27 +48,24 @@ impl LoroCore {
             .unwrap()
             .get_or_create_container_idx(&id);
         let ptr = Arc::downgrade(&self.log_store);
-        let mut container = self.container.write().unwrap();
-        let map = container.get_or_create(&id, ptr);
+        let map = self.container.get_or_create(&id, ptr);
         map.clone()
     }
 
     #[inline(always)]
     pub fn get_or_create_root_text(&mut self, name: &str) -> Arc<Mutex<ContainerInstance>> {
-        let mut container = self.container.write().unwrap();
         let id = ContainerID::new_root(name, ContainerType::Text);
         self.log_store
             .write()
             .unwrap()
             .get_or_create_container_idx(&id);
         let ptr = Arc::downgrade(&self.log_store);
-        container.get_or_create(&id, ptr).clone()
+        self.container.get_or_create(&id, ptr).clone()
     }
 
     #[inline(always)]
     pub fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        let container = self.container.read().unwrap();
-        container.get(id).cloned()
+        self.container.get(id).map(|x| x.deref().clone())
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
@@ -83,6 +81,6 @@ impl LoroCore {
     #[cfg(feature = "fuzzing")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
-        self.container.write().unwrap().debug_inspect();
+        self.container.debug_inspect();
     }
 }

@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak},
 };
 
+use dashmap::DashMap;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
@@ -82,22 +83,20 @@ impl Container for ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerManager {
-    containers: FxHashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
-    to_self: Weak<RwLock<ContainerManager>>,
+    containers: DashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
+    to_self: Weak<ContainerManager>,
 }
 
 impl ContainerManager {
-    pub(crate) fn new() -> Arc<RwLock<ContainerManager>> {
-        Arc::new_cyclic(|x| {
-            RwLock::new(ContainerManager {
-                containers: Default::default(),
-                to_self: x.clone(),
-            })
+    pub(crate) fn new() -> Arc<ContainerManager> {
+        Arc::new_cyclic(|x| ContainerManager {
+            containers: Default::default(),
+            to_self: x.clone(),
         })
     }
 
     #[inline]
-    fn create(&mut self, id: ContainerID, log_store: LogStoreWeakRef) -> ContainerInstance {
+    fn create(&self, id: ContainerID, log_store: LogStoreWeakRef) -> ContainerInstance {
         match id.container_type() {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(
                 id,
@@ -112,20 +111,23 @@ impl ContainerManager {
     }
 
     #[inline]
-    pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+    pub fn get(
+        &self,
+        id: &ContainerID,
+    ) -> Option<dashmap::mapref::one::Ref<ContainerID, Arc<Mutex<ContainerInstance>>>> {
         self.containers.get(id)
     }
 
     #[inline]
-    fn insert(&mut self, id: ContainerID, container: ContainerInstance) {
+    fn insert(&self, id: ContainerID, container: ContainerInstance) {
         self.containers.insert(id, Arc::new(Mutex::new(container)));
     }
 
     pub(crate) fn get_or_create(
-        &mut self,
+        &self,
         id: &ContainerID,
         log_store: LogStoreWeakRef,
-    ) -> &Arc<Mutex<ContainerInstance>> {
+    ) -> dashmap::mapref::one::Ref<ContainerID, Arc<Mutex<ContainerInstance>>> {
         if !self.containers.contains_key(id) {
             let container = self.create(id.clone(), log_store);
             self.insert(id.clone(), container);
@@ -136,8 +138,8 @@ impl ContainerManager {
     }
 
     #[cfg(feature = "fuzzing")]
-    pub fn debug_inspect(&mut self) {
-        for container in self.containers.values_mut() {
+    pub fn debug_inspect(&self) {
+        for container in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }

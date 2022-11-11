@@ -1,8 +1,8 @@
 use ctor::ctor;
 use fxhash::FxHashMap;
 use loro_core::container::manager::LockContainer;
-use loro_core::container::Container;
-use loro_core::{InsertValue, LoroCore};
+use loro_core::container::{Container, ContainerID};
+use loro_core::{InsertValue, LoroCore, LoroValue};
 
 #[test]
 fn map() {
@@ -34,9 +34,7 @@ fn map() {
     assert_eq!(value.as_map().unwrap().len(), 2);
     let map = value.as_map().unwrap();
     assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
-    let mut expected_map: FxHashMap<String, _> = FxHashMap::default();
-    expected_map.insert("sub".into(), loro_core::LoroValue::Bool(false));
-    assert_eq!(**map.get("map").unwrap().as_map().unwrap(), expected_map);
+    assert!(map.get("map").unwrap().as_unresolved().is_some());
 }
 
 #[test]
