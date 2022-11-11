@@ -1,7 +1,7 @@
 use ctor::ctor;
 
-use loro_core::container::manager::LockContainer;
-use loro_core::container::{Container};
+use loro_core::container::registry::LockContainer;
+use loro_core::container::Container;
 use loro_core::{InsertValue, LoroCore};
 
 #[test]

@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{manager::ContainerManager, Container, ContainerID},
+    container::{registry::ContainerRegistry, Container, ContainerID},
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
@@ -63,7 +63,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: Weak<ContainerManager>,
+    pub(crate) container: Weak<ContainerRegistry>,
     to_self: Weak<RwLock<LogStore>>,
     container_to_idx: FxHashMap<ContainerID, u32>,
     idx_to_container: Vec<ContainerID>,
@@ -74,7 +74,7 @@ impl LogStore {
     pub(crate) fn new(
         mut cfg: Configure,
         client_id: Option<ClientID>,
-        container: Weak<ContainerManager>,
+        container: Weak<ContainerRegistry>,
     ) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Arc::new_cyclic(|x| {
@@ -149,7 +149,7 @@ impl LogStore {
 
     fn change_to_imported_format(
         &mut self,
-        container_manager: &ContainerManager,
+        container_manager: &ContainerRegistry,
         change: Change<RemoteOp>,
     ) -> Change {
         let mut new_ops = RleVec::new();

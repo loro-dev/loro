@@ -8,7 +8,7 @@ mod run {
     use super::*;
     use arbitrary::Unstructured;
     use flate2::read::GzDecoder;
-    use loro_core::container::manager::LockContainer;
+    use loro_core::container::registry::LockContainer;
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action;
     use loro_core::LoroCore;

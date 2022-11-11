@@ -82,14 +82,14 @@ impl Container for ContainerInstance {
 // TODO: containers snapshot: we need to resolve each container's parent even
 // if its creation op is not in the logStore
 #[derive(Debug)]
-pub struct ContainerManager {
+pub struct ContainerRegistry {
     containers: DashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
-    to_self: Weak<ContainerManager>,
+    to_self: Weak<ContainerRegistry>,
 }
 
-impl ContainerManager {
-    pub(crate) fn new() -> Arc<ContainerManager> {
-        Arc::new_cyclic(|x| ContainerManager {
+impl ContainerRegistry {
+    pub(crate) fn new() -> Arc<ContainerRegistry> {
+        Arc::new_cyclic(|x| ContainerRegistry {
             containers: Default::default(),
             to_self: x.clone(),
         })
@@ -148,23 +148,25 @@ impl ContainerManager {
 }
 
 pub struct ContainerRefMut<'a, T> {
-    value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>,
+    value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>,
 }
 
 pub struct ContainerRef<'a, T> {
-    value: OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>,
+    value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>,
 }
 
-impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>>
+impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>>
     for ContainerRefMut<'a, T>
 {
-    fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerManager>, Box<T>>) -> Self {
+    fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
         ContainerRefMut { value }
     }
 }
 
-impl<'a, T> From<OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>> for ContainerRef<'a, T> {
-    fn from(value: OwningRef<RwLockReadGuard<'a, ContainerManager>, Box<T>>) -> Self {
+impl<'a, T> From<OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>>
+    for ContainerRef<'a, T>
+{
+    fn from(value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
         ContainerRef { value }
     }
 }

@@ -7,7 +7,7 @@ fn main() {
     use std::{io::Read, time::Instant};
 
     use flate2::read::GzDecoder;
-    use loro_core::{container::manager::LockContainer, LoroCore};
+    use loro_core::{container::registry::LockContainer, LoroCore};
     use serde_json::Value;
 
     let mut d = GzDecoder::new(&RAW_DATA[..]);

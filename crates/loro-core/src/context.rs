@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    container::{manager::ContainerInstance, ContainerID},
+    container::{registry::ContainerInstance, ContainerID},
     LogStore,
 };
 

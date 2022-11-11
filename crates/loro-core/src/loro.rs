@@ -7,7 +7,7 @@ use crate::{
     change::Change,
     configure::Configure,
     container::{
-        manager::{ContainerInstance, ContainerManager},
+        registry::{ContainerInstance, ContainerRegistry},
         ContainerID, ContainerType,
     },
     id::ClientID,
@@ -17,7 +17,7 @@ use crate::{
 
 pub struct LoroCore {
     pub(crate) log_store: Arc<RwLock<LogStore>>,
-    pub(crate) container: Arc<ContainerManager>,
+    pub(crate) container: Arc<ContainerRegistry>,
 }
 
 impl Default for LoroCore {
@@ -28,7 +28,7 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = ContainerManager::new();
+        let container = ContainerRegistry::new();
         let weak = Arc::downgrade(&container);
         Self {
             log_store: LogStore::new(cfg, client_id, weak),

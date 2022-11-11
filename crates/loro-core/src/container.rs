@@ -16,7 +16,7 @@ use serde::Serialize;
 use std::{any::Any, fmt::Debug};
 
 mod container_content;
-pub mod manager;
+pub mod registry;
 
 pub mod list;
 pub mod map;

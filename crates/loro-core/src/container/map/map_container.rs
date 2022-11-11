@@ -1,9 +1,9 @@
-use std::sync::{Weak};
+use std::sync::Weak;
 
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{manager::ContainerManager, Container, ContainerID, ContainerType},
+    container::{registry::ContainerRegistry, Container, ContainerID, ContainerType},
     id::Counter,
     log_store::LogStoreWeakRef,
     op::{Content, Op, RichOp},
@@ -24,7 +24,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     store: LogStoreWeakRef,
-    manager: Weak<ContainerManager>,
+    manager: Weak<ContainerRegistry>,
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ impl MapContainer {
     pub(crate) fn new(
         id: ContainerID,
         store: LogStoreWeakRef,
-        manager: Weak<ContainerManager>,
+        manager: Weak<ContainerRegistry>,
     ) -> Self {
         MapContainer {
             id,

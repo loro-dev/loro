@@ -4,10 +4,7 @@ use std::{
 };
 
 use loro_core::{
-    container::{
-        manager::LockContainer,
-        Container, ContainerID,
-    },
+    container::{registry::LockContainer, Container, ContainerID},
     InsertValue, LoroCore,
 };
 use wasm_bindgen::prelude::*;
