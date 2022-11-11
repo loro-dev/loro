@@ -11,7 +11,9 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
-        list::list_op::ListOp, registry::ContainerWrapper, Container, ContainerID, ContainerType,
+        list::list_op::ListOp,
+        registry::{ContainerInstance, ContainerWrapper},
+        Container, ContainerID, ContainerType,
     },
     context::Context,
     dag::DagUtils,
@@ -365,23 +367,38 @@ impl Container for TextContainer {
 }
 
 pub struct Text {
-    text: Arc<Mutex<TextContainer>>,
+    text: Arc<Mutex<ContainerInstance>>,
 }
 
 impl Text {
     pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
-        self.text.lock().unwrap().insert(ctx, pos, text)
+        self.with_container(|x| x.insert(ctx, pos, text))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
-        self.text.lock().unwrap().delete(ctx, pos, len)
+        self.with_container(|text| text.delete(ctx, pos, len))
+    }
+
+    pub fn text_len(&self) -> usize {
+        self.with_container(|text| text.text_len())
     }
 }
 
 impl ContainerWrapper for Text {
     type Container = TextContainer;
 
-    fn get_inner_container(&self) -> std::sync::MutexGuard<Self::Container> {
-        self.text.lock().unwrap()
+    fn with_container<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R,
+    {
+        let mut container_instance = self.text.lock().unwrap();
+        let map = container_instance.as_text_mut().unwrap();
+        f(map)
+    }
+}
+
+impl From<Arc<Mutex<ContainerInstance>>> for Text {
+    fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
+        Text { text }
     }
 }

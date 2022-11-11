@@ -7,7 +7,9 @@ use crate::{
     change::Change,
     configure::Configure,
     container::{
+        map::Map,
         registry::{ContainerInstance, ContainerRegistry},
+        text::Text,
         ContainerID, ContainerType,
     },
     id::ClientID,
@@ -17,7 +19,7 @@ use crate::{
 
 pub struct LoroCore {
     pub(crate) log_store: Arc<RwLock<LogStore>>,
-    pub(crate) container: Arc<ContainerRegistry>,
+    pub(crate) reg: Arc<ContainerRegistry>,
 }
 
 impl Default for LoroCore {
@@ -32,7 +34,7 @@ impl LoroCore {
         let weak = Arc::downgrade(&container);
         Self {
             log_store: LogStore::new(cfg, client_id, weak),
-            container,
+            reg: container,
         }
     }
 
@@ -41,29 +43,28 @@ impl LoroCore {
     }
 
     #[inline(always)]
-    pub fn get_or_create_root_map(&mut self, name: &str) -> Arc<Mutex<ContainerInstance>> {
+    pub fn get_map(&mut self, name: &str) -> Map {
         let id = ContainerID::new_root(name, ContainerType::Map);
         self.log_store
             .write()
             .unwrap()
             .get_or_create_container_idx(&id);
-        let map = self.container.get_or_create(&id);
-        map.clone()
+        self.reg.get_or_create(&id).clone().into()
     }
 
     #[inline(always)]
-    pub fn get_or_create_root_text(&mut self, name: &str) -> Arc<Mutex<ContainerInstance>> {
+    pub fn get_text(&mut self, name: &str) -> Text {
         let id = ContainerID::new_root(name, ContainerType::Text);
         self.log_store
             .write()
             .unwrap()
             .get_or_create_container_idx(&id);
-        self.container.get_or_create(&id).clone()
+        self.reg.get_or_create(&id).clone().into()
     }
 
     #[inline(always)]
     pub fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        self.container.get(id).map(|x| x.deref().clone())
+        self.reg.get(id).map(|x| x.deref().clone())
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
@@ -79,6 +80,6 @@ impl LoroCore {
     #[cfg(feature = "fuzzing")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
-        self.container.debug_inspect();
+        self.reg.debug_inspect();
     }
 }

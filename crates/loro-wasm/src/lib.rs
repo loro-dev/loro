@@ -5,7 +5,10 @@ use std::{
 };
 
 use loro_core::{
-    container::{registry::LockContainer, Container, ContainerID},
+    container::{
+        registry::{ContainerWrapper, LockContainer},
+        Container, ContainerID,
+    },
     InsertValue, LoroCore,
 };
 use wasm_bindgen::prelude::*;
@@ -39,20 +42,18 @@ impl Loro {
 
     pub fn get_text_container(&mut self, name: &str) -> Result<Text, JsValue> {
         let mut loro = self.loro.borrow_mut();
-        let get_or_create_root_text = loro.get_or_create_root_text(name);
-        let text_container = get_or_create_root_text.lock_text();
+        let text_container = loro.get_text(name);
         Ok(Text {
-            id: text_container.id().clone(),
+            id: text_container.id(),
             loro: Rc::downgrade(&self.loro),
         })
     }
 
     pub fn get_map_container(&mut self, name: &str) -> Result<Map, JsValue> {
         let mut loro = self.loro.borrow_mut();
-        let get_or_create_root_map = loro.get_or_create_root_map(name);
-        let map = get_or_create_root_map.lock_map();
+        let map = loro.get_map(name);
         Ok(Map {
-            id: map.id().clone(),
+            id: map.id(),
             loro: Rc::downgrade(&self.loro),
         })
     }

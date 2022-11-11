@@ -1,12 +1,12 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{registry::ContainerWrapper, Container, ContainerID, ContainerType},
+    container::{
+        registry::{ContainerInstance, ContainerWrapper},
+        Container, ContainerID, ContainerType,
+    },
     context::Context,
     id::Counter,
     op::{Content, Op, RichOp},
@@ -181,38 +181,43 @@ impl Container for MapContainer {
 }
 
 pub struct Map {
-    map: Arc<Mutex<MapContainer>>,
+    map: Arc<Mutex<ContainerInstance>>,
 }
 
 impl Map {
     pub fn insert<C: Context>(&self, ctx: &C, key: &str, value: InsertValue) {
-        let mut map = self.map.lock().unwrap();
-        map.insert(ctx, key.into(), value);
+        self.with_container(|map| {
+            map.insert(ctx, key.into(), value);
+        })
     }
 
     pub fn insert_obj<C: Context>(&self, ctx: &C, key: &str, obj: ContainerType) -> ContainerID {
-        let mut map = self.map.lock().unwrap();
-        map.insert_obj(ctx, key.into(), obj)
+        self.with_container(|map| map.insert_obj(ctx, key.into(), obj))
     }
 
     pub fn delete<C: Context>(&self, ctx: &C, key: &str) {
-        let mut map = self.map.lock().unwrap();
-        map.delete(ctx, key.into());
-    }
-
-    pub fn id(&self) -> ContainerID {
-        self.map.lock().unwrap().id.clone()
-    }
-
-    pub fn get_value(&self) -> LoroValue {
-        self.map.lock().unwrap().get_value()
+        self.with_container(|map| {
+            map.delete(ctx, key.into());
+        })
     }
 }
 
 impl ContainerWrapper for Map {
     type Container = MapContainer;
 
-    fn get_inner_container(&self) -> std::sync::MutexGuard<Self::Container> {
-        self.map.lock().unwrap()
+    #[inline(always)]
+    fn with_container<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R,
+    {
+        let mut container_instance = self.map.lock().unwrap();
+        let map = container_instance.as_map_mut().unwrap();
+        f(map)
+    }
+}
+
+impl From<Arc<Mutex<ContainerInstance>>> for Map {
+    fn from(map: Arc<Mutex<ContainerInstance>>) -> Self {
+        Map { map }
     }
 }

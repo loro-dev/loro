@@ -16,6 +16,6 @@ impl Context for LoroCore {
     }
 
     fn get_container(&self, id: ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        self.container.get(&id).map(|x| x.clone())
+        self.reg.get(&id).map(|x| x.clone())
     }
 }

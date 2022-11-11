@@ -10,9 +10,7 @@ use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{op::RemoteOp, span::IdSpan, LogStore, LoroValue};
 
-use super::{
-    map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
-};
+use super::{map::MapContainer, text::TextContainer, Container, ContainerID, ContainerType};
 
 #[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
@@ -221,13 +219,15 @@ impl<'x> LockContainer for &'x Arc<Mutex<ContainerInstance>> {
 pub trait ContainerWrapper {
     type Container: Container;
 
-    fn get_inner_container(&self) -> MutexGuard<Self::Container>;
+    fn with_container<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R;
 
     fn id(&self) -> ContainerID {
-        self.get_inner_container().id().clone()
+        self.with_container(|x| x.id().clone())
     }
 
     fn get_value(&self) -> LoroValue {
-        self.get_inner_container().get_value()
+        self.with_container(|x| x.get_value())
     }
 }

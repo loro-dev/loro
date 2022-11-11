@@ -1,14 +1,13 @@
 use ctor::ctor;
 
-use loro_core::container::registry::LockContainer;
+use loro_core::container::registry::{ContainerWrapper, LockContainer};
 use loro_core::container::Container;
 use loro_core::{InsertValue, LoroCore};
 
 #[test]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
-    let get_or_create_root_map = loro.get_or_create_root_map("root");
-    let mut root = get_or_create_root_map.lock_map();
+    let mut root = loro.get_map("root");
     root.insert(&loro, "haha".into(), InsertValue::Double(1.2));
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
@@ -28,8 +27,7 @@ fn map() {
     let mut sub_map = arc.lock_map();
     sub_map.insert(&loro, "sub".into(), InsertValue::Bool(false));
     drop(sub_map);
-    let get_or_create_root_map = loro.get_or_create_root_map("root");
-    let root = get_or_create_root_map.lock_map();
+    let root = loro.get_map("root");
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 2);
     let map = value.as_map().unwrap();
@@ -40,8 +38,7 @@ fn map() {
 #[test]
 fn two_client_text_sync() {
     let mut store = LoroCore::new(Default::default(), Some(10));
-    let get_or_create_root_text = store.get_or_create_root_text("haha");
-    let mut text_container = get_or_create_root_text.lock_text();
+    let mut text_container = store.get_text("haha");
     text_container.insert(&store, 0, "012");
     text_container.insert(&store, 1, "34");
     text_container.insert(&store, 1, "56");
@@ -53,9 +50,8 @@ fn two_client_text_sync() {
     let mut store_b = LoroCore::new(Default::default(), Some(11));
     let exported = store.export(Default::default());
     store_b.import(exported);
-    let get_or_create_root_text = store_b.get_or_create_root_text("haha");
-    let mut text_container = get_or_create_root_text.lock_text();
-    text_container.check();
+    let mut text_container = store_b.get_text("haha");
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
@@ -68,8 +64,7 @@ fn two_client_text_sync() {
     drop(text_container);
 
     store.import(store_b.export(store.vv()));
-    let get_or_create_root_text = store.get_or_create_root_text("haha");
-    let mut text_container = get_or_create_root_text.lock_text();
+    let mut text_container = store.get_text("haha");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
@@ -78,12 +73,10 @@ fn two_client_text_sync() {
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");
-    drop(text_container);
 
     store_b.import(store.export(Default::default()));
-    let get_or_create_root_text = store_b.get_or_create_root_text("haha");
-    let mut text_container = get_or_create_root_text.lock_text();
-    text_container.check();
+    let text_container = store_b.get_text("haha");
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");

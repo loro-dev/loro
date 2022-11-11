@@ -2,11 +2,7 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
-    array_mut_ref,
-    container::{text::text_container::TextContainer, Container},
-    debug_log,
-    id::ClientID,
-    LoroCore,
+    array_mut_ref, container::registry::ContainerWrapper, debug_log, id::ClientID, LoroCore,
 };
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -157,21 +153,13 @@ impl Actionable for Vec<LoroCore> {
         match action {
             Action::Ins { content, pos, site } => {
                 let site = &mut self[*site as usize];
-                let text = site.get_or_create_root_text("text");
-                let mut container_instance = text.lock().unwrap();
-                container_instance
-                    .as_text_mut()
-                    .unwrap()
-                    .insert(site, *pos, content);
+                let mut text = site.get_text("text");
+                text.insert(site, *pos, content);
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
-                let text = site.get_or_create_root_text("text");
-                let mut container_instance = text.lock().unwrap();
-                container_instance
-                    .as_text_mut()
-                    .unwrap()
-                    .delete(site, *pos, *len);
+                let mut text = site.get_text("text");
+                text.delete(site, *pos, *len);
             }
             Action::Sync { from, to } => {
                 let to_vv = self[*to as usize].vv();
@@ -186,9 +174,7 @@ impl Actionable for Vec<LoroCore> {
         match action {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
-                let get_or_create_root_text = self[*site as usize].get_or_create_root_text("text");
-                let mut container_instance = get_or_create_root_text.lock().unwrap();
-                let text = container_instance.as_text_mut().unwrap();
+                let text = self[*site as usize].get_text("text");
                 let value = text.get_value();
                 let value = value.as_string().unwrap();
                 *pos %= value.len() + 1;
@@ -198,9 +184,7 @@ impl Actionable for Vec<LoroCore> {
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
-                let get_or_create_root_text = self[*site as usize].get_or_create_root_text("text");
-                let mut container_instance = get_or_create_root_text.lock().unwrap();
-                let text = container_instance.as_text_mut().unwrap();
+                let text = self[*site as usize].get_text("text");
                 if text.text_len() == 0 {
                     *len = 0;
                     *pos = 0;
@@ -229,10 +213,8 @@ impl Actionable for Vec<LoroCore> {
 }
 
 fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
-    let get_or_create_root_text = site_a.get_or_create_root_text("text");
-    let a = get_or_create_root_text.lock().unwrap();
-    let get_or_create_root_text = site_b.get_or_create_root_text("text");
-    let b = get_or_create_root_text.lock().unwrap();
+    let a = site_a.get_text("text");
+    let b = site_b.get_text("text");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a.as_string().unwrap(), value_b.as_string().unwrap());
@@ -255,9 +237,7 @@ fn check_synced(sites: &mut [LoroCore]) {
 
 pub fn test_single_client(mut actions: Vec<Action>) {
     let mut store = LoroCore::new(Default::default(), Some(1));
-    let get_or_create_root_text = store.get_or_create_root_text("haha");
-    let mut container_instance = get_or_create_root_text.lock().unwrap();
-    let text_container = container_instance.as_text_mut().unwrap();
+    let mut text_container = store.get_text("haha");
     let mut ground_truth = String::new();
     let mut applied = Vec::new();
     for action in actions
