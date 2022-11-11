@@ -7,10 +7,8 @@ use rle::{
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    container::{
-        list::list_op::{ListOp},
-        Container, ContainerID, ContainerType,
-    },
+    container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
+    context::Context,
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
@@ -36,11 +34,9 @@ struct DagNode {
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    log_store: LogStoreWeakRef,
     state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, HeapMode>>,
     raw_str: StringPool,
     tracker: Tracker,
-
     head: SmallVec<[ID; 2]>,
     vv: VersionVector,
 }
@@ -49,7 +45,6 @@ impl TextContainer {
     pub(crate) fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
         Self {
             id,
-            log_store,
             raw_str: StringPool::default(),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
@@ -59,13 +54,13 @@ impl TextContainer {
         }
     }
 
-    pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
+    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
         if text.is_empty() {
             return None;
         }
 
-        let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write().unwrap();
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         self.state.insert(pos, slice.clone());
@@ -90,13 +85,13 @@ impl TextContainer {
         Some(id)
     }
 
-    pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
         if len == 0 {
             return None;
         }
 
-        let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write().unwrap();
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
             id,

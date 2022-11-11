@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 
 use crate::{
     container::{registry::ContainerRegistry, Container, ContainerID, ContainerType},
+    context::Context,
     id::Counter,
     log_store::LogStoreWeakRef,
     op::{Content, Op, RichOp},
@@ -23,8 +24,6 @@ use super::MapSet;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
-    store: LogStoreWeakRef,
-    manager: Weak<ContainerRegistry>,
 }
 
 #[derive(Debug)]
@@ -43,15 +42,13 @@ impl MapContainer {
     ) -> Self {
         MapContainer {
             id,
-            store,
-            manager,
             state: FxHashMap::default(),
         }
     }
 
-    pub fn insert(&mut self, key: InternalString, value: InsertValue) {
+    pub fn insert<C: Context>(&mut self, ctx: &C, key: InternalString, value: InsertValue) {
         let self_id = &self.id;
-        let m = self.store.upgrade().unwrap();
+        let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
@@ -83,9 +80,14 @@ impl MapContainer {
         );
     }
 
-    pub fn insert_obj(&mut self, key: InternalString, obj: ContainerType) -> ContainerID {
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+        obj: ContainerType,
+    ) -> ContainerID {
         let self_id = &self.id;
-        let m = self.store.upgrade().unwrap();
+        let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
@@ -108,8 +110,8 @@ impl MapContainer {
     }
 
     #[inline]
-    pub fn delete(&mut self, key: InternalString) {
-        self.insert(key, InsertValue::Null);
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
+        self.insert(ctx, key, InsertValue::Null);
     }
 }
 
@@ -155,7 +157,6 @@ impl Container for MapContainer {
     }
 
     fn get_value(&self) -> LoroValue {
-        let _manager = self.manager.upgrade().unwrap();
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
             if let Some(container_id) = value.value.as_container() {

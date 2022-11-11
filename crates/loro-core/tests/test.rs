@@ -9,7 +9,7 @@ fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let get_or_create_root_map = loro.get_or_create_root_map("root");
     let mut root = get_or_create_root_map.lock_map();
-    root.insert("haha".into(), InsertValue::Double(1.2));
+    root.insert(&loro, "haha".into(), InsertValue::Double(1.2));
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
     assert_eq!(
@@ -22,11 +22,11 @@ fn map() {
             .unwrap(),
         1.2
     );
-    let map_id = root.insert_obj("map".into(), loro_core::ContainerType::Map);
+    let map_id = root.insert_obj(&loro, "map".into(), loro_core::ContainerType::Map);
     drop(root);
     let arc = loro.get_container(&map_id).unwrap();
     let mut sub_map = arc.lock_map();
-    sub_map.insert("sub".into(), InsertValue::Bool(false));
+    sub_map.insert(&loro, "sub".into(), InsertValue::Bool(false));
     drop(sub_map);
     let get_or_create_root_map = loro.get_or_create_root_map("root");
     let root = get_or_create_root_map.lock_map();
@@ -42,9 +42,9 @@ fn two_client_text_sync() {
     let mut store = LoroCore::new(Default::default(), Some(10));
     let get_or_create_root_text = store.get_or_create_root_text("haha");
     let mut text_container = get_or_create_root_text.lock_text();
-    text_container.insert(0, "012");
-    text_container.insert(1, "34");
-    text_container.insert(1, "56");
+    text_container.insert(&store, 0, "012");
+    text_container.insert(&store, 1, "34");
+    text_container.insert(&store, 1, "56");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
@@ -60,8 +60,8 @@ fn two_client_text_sync() {
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
 
-    text_container.delete(0, 2);
-    text_container.insert(4, "789");
+    text_container.delete(&store_b, 0, 2);
+    text_container.insert(&store_b, 4, "789");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
@@ -73,8 +73,8 @@ fn two_client_text_sync() {
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
-    text_container.delete(0, 8);
-    text_container.insert(0, "abc");
+    text_container.delete(&store, 0, 8);
+    text_container.insert(&store, 0, "abc");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");

@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    ops::Deref,
     rc::{Rc, Weak},
 };
 
@@ -64,7 +65,11 @@ impl Map {
         let loro = loro.borrow_mut();
         let get_map_container_mut = loro.get_container(&self.id).unwrap();
         let mut map = get_map_container_mut.lock_map();
-        map.insert(key.into(), InsertValue::try_from_js(value).unwrap())
+        map.insert(
+            loro.deref(),
+            key.into(),
+            InsertValue::try_from_js(value).unwrap(),
+        )
     }
 
     pub fn delete(&mut self, key: String) {
@@ -72,7 +77,7 @@ impl Map {
         let loro = loro.borrow_mut();
         let map = loro.get_container(&self.id).unwrap();
         let mut map = map.lock_map();
-        map.delete(key.into())
+        map.delete(loro.deref(), key.into())
     }
 
     pub fn get_value(&mut self) -> JsValue {
@@ -91,7 +96,7 @@ impl Text {
         let loro = loro.borrow_mut();
         let text_container = loro.get_container(&self.id).unwrap();
         let mut text_container = text_container.lock_text();
-        text_container.insert(index, text);
+        text_container.insert(loro.deref(), index, text);
     }
 
     pub fn delete(&mut self, index: usize, len: usize) {
@@ -99,7 +104,7 @@ impl Text {
         let loro = loro.borrow_mut();
         let get_container = loro.get_container(&self.id).unwrap();
         let mut text_container = get_container.lock_text();
-        text_container.delete(index, len);
+        text_container.delete(loro.deref(), index, len);
     }
 
     pub fn get_value(&mut self) -> String {

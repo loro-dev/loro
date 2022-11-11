@@ -35,8 +35,8 @@ fn main() {
             let pos = patch[0].as_u64().unwrap() as usize;
             let del_here = patch[1].as_u64().unwrap() as usize;
             let ins_content = patch[2].as_str().unwrap();
-            text.delete(pos, del_here);
-            text.insert(pos, ins_content);
+            text.delete(&loro, pos, del_here);
+            text.insert(&loro, pos, ins_content);
         }
 
         drop(text);
@@ -46,8 +46,8 @@ fn main() {
             let pos = patch[0].as_u64().unwrap() as usize;
             let del_here = patch[1].as_u64().unwrap() as usize;
             let ins_content = patch[2].as_str().unwrap();
-            text.delete(pos, del_here);
-            text.insert(pos, ins_content);
+            text.delete(&loro_b, pos, del_here);
+            text.insert(&loro_b, pos, ins_content);
         }
         drop(text);
         if i % 10 == 0 {

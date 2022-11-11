@@ -1,12 +1,21 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     container::{registry::ContainerInstance, ContainerID},
-    LogStore,
+    LogStore, LoroCore,
 };
 
 pub trait Context {
-    fn log_store(&self) -> &LogStore;
-    fn log_store_mut(&mut self) -> &mut LogStore;
-    fn get_container(&self, id: ContainerID) -> Arc<Mutex<ContainerInstance>>;
+    fn log_store(&self) -> Arc<RwLock<LogStore>>;
+    fn get_container(&self, id: ContainerID) -> Option<Arc<Mutex<ContainerInstance>>>;
+}
+
+impl Context for LoroCore {
+    fn log_store(&self) -> Arc<RwLock<LogStore>> {
+        self.log_store.clone()
+    }
+
+    fn get_container(&self, id: ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
+        self.container.get(&id).map(|x| x.clone())
+    }
 }

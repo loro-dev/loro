@@ -152,48 +152,26 @@ impl Actionable for String {
     }
 }
 
-impl Actionable for TextContainer {
-    fn apply_action(&mut self, action: &Action) {
-        match action {
-            Action::Ins { content, pos, .. } => {
-                self.insert(*pos, content);
-            }
-            &Action::Del { pos, len, .. } => {
-                if self.text_len() == 0 {
-                    return;
-                }
-
-                self.delete(pos, len);
-            }
-            _ => {}
-        }
-    }
-
-    fn preprocess(&mut self, _action: &mut Action) {
-        unreachable!();
-    }
-}
-
 impl Actionable for Vec<LoroCore> {
     fn apply_action(&mut self, action: &Action) {
         match action {
             Action::Ins { content, pos, site } => {
-                self[*site as usize]
-                    .get_or_create_root_text("text")
-                    .lock()
-                    .unwrap()
+                let site = &mut self[*site as usize];
+                let text = site.get_or_create_root_text("text");
+                let mut container_instance = text.lock().unwrap();
+                container_instance
                     .as_text_mut()
                     .unwrap()
-                    .insert(*pos, content);
+                    .insert(site, *pos, content);
             }
             Action::Del { pos, len, site } => {
-                self[*site as usize]
-                    .get_or_create_root_text("text")
-                    .lock()
-                    .unwrap()
+                let site = &mut self[*site as usize];
+                let text = site.get_or_create_root_text("text");
+                let mut container_instance = text.lock().unwrap();
+                container_instance
                     .as_text_mut()
                     .unwrap()
-                    .delete(*pos, *len);
+                    .delete(site, *pos, *len);
             }
             Action::Sync { from, to } => {
                 let to_vv = self[*to as usize].vv();
@@ -290,7 +268,19 @@ pub fn test_single_client(mut actions: Vec<Action>) {
         applied.push(action.clone());
         // println!("{}", (&applied).table());
         ground_truth.apply_action(action);
-        text_container.apply_action(action);
+        match action {
+            Action::Ins { content, pos, .. } => {
+                text_container.insert(&store, *pos, content);
+            }
+            Action::Del { pos, len, .. } => {
+                if text_container.text_len() == 0 {
+                    return;
+                }
+
+                text_container.delete(&store, *pos, *len);
+            }
+            _ => {}
+        }
         assert_eq!(
             ground_truth.as_str(),
             &**text_container.get_value().as_string().unwrap(),

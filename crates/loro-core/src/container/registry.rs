@@ -110,7 +110,7 @@ impl ContainerRegistry {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get(
         &self,
         id: &ContainerID,
@@ -118,7 +118,7 @@ impl ContainerRegistry {
         self.containers.get(id)
     }
 
-    #[inline]
+    #[inline(always)]
     fn insert(&self, id: ContainerID, container: ContainerInstance) {
         self.containers.insert(id, Arc::new(Mutex::new(container)));
     }
