@@ -39,6 +39,7 @@ pub trait VecTrait<'v, T>:
         I: IntoIterator<Item = T>;
 }
 
+
 pub trait Arena: Debug + Default {
     type Boxed<'a, T>: Debug + Deref<Target = T> + DerefMut
     where

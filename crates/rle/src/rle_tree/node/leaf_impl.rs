@@ -429,7 +429,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         &mut self,
         mut updates: Vec<(usize, SmallVec<[T; 2]>)>,
         notify: &mut F,
-    ) -> Result<(), Vec<<A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>>
+    ) -> Result<(), Vec<ArenaBoxedNode<'bump, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {

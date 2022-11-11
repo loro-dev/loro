@@ -144,6 +144,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     // TODO: simplify this func?
+    #[allow(clippy::type_complexity)]
     fn _delete<F>(
         &mut self,
         from: Option<A::Int>,
@@ -279,8 +280,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     pub(crate) fn apply_updates(
         &mut self,
-        mut updates: Vec<(usize, Vec<<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>)>,
-    ) -> Result<(), Vec<<A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>> {
+        mut updates: Vec<(usize, Vec<ArenaBoxedNode<'a, T, A>>)>,
+    ) -> Result<(), Vec<ArenaBoxedNode<'a, T, A>>> {
         if updates.is_empty() {
             A::update_cache_internal(self);
             return Ok(());
