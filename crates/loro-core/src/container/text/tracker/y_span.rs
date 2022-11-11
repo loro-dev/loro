@@ -1,7 +1,7 @@
-use std::{fmt::Display, ops::Range};
+use std::{fmt::Display};
 
 use crate::{
-    container::text::text_content::{ListSlice, SliceRange},
+    container::text::text_content::{SliceRange},
     id::Counter,
     span::{HasCounter, HasCounterSpan, IdSpan},
     ContentType, InsertContentTrait, ID,

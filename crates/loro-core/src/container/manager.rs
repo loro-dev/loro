@@ -1,11 +1,11 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak},
+    sync::{Arc, Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard, Weak},
 };
 
 use dashmap::DashMap;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+
 use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{log_store::LogStoreWeakRef, op::RemoteOp, span::IdSpan, LogStore};

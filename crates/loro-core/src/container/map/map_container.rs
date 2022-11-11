@@ -1,4 +1,4 @@
-use std::sync::{RwLock, Weak};
+use std::sync::{Weak};
 
 use fxhash::FxHashMap;
 
@@ -155,7 +155,7 @@ impl Container for MapContainer {
     }
 
     fn get_value(&self) -> LoroValue {
-        let manager = self.manager.upgrade().unwrap();
+        let _manager = self.manager.upgrade().unwrap();
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
             if let Some(container_id) = value.value.as_container() {

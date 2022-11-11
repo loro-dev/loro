@@ -1,8 +1,8 @@
 use ctor::ctor;
-use fxhash::FxHashMap;
+
 use loro_core::container::manager::LockContainer;
-use loro_core::container::{Container, ContainerID};
-use loro_core::{InsertValue, LoroCore, LoroValue};
+use loro_core::container::{Container};
+use loro_core::{InsertValue, LoroCore};
 
 #[test]
 fn map() {

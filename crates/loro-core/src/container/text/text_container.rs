@@ -8,7 +8,7 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
-        list::list_op::{DeleteSpan, ListOp},
+        list::list_op::{ListOp},
         Container, ContainerID, ContainerType,
     },
     dag::DagUtils,

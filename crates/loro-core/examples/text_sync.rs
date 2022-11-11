@@ -21,7 +21,7 @@ fn main() {
     let mut loro_b = LoroCore::default();
     let mut loro_c = LoroCore::default();
     let start = Instant::now();
-    for (i, txn) in txns.unwrap().as_array().unwrap().into_iter().enumerate() {
+    for (i, txn) in txns.unwrap().as_array().unwrap().iter().enumerate() {
         let get_or_create_root_text = loro.get_or_create_root_text("text");
         let mut text = get_or_create_root_text.lock_text();
         let patches = txn

@@ -4,7 +4,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use im::hashmap::HashMap as ImHashMap;
+
 use smallvec::SmallVec;
 
 use crate::{
