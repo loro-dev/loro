@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, Range},
+    ops::{Range},
     sync::{Arc, Mutex},
 };
 

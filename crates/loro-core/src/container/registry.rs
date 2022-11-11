@@ -160,8 +160,8 @@ impl ContainerRegistry {
             self.insert(id.clone(), container);
         }
 
-        let idx = self.get_idx(id).unwrap();
-        idx
+        
+        self.get_idx(id).unwrap()
     }
 
     #[cfg(feature = "fuzzing")]

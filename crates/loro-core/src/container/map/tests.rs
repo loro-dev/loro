@@ -18,7 +18,7 @@ fn basic() {
     let mut loro = LoroCore::default();
     let _weak = Arc::downgrade(&loro.log_store);
     let container = loro.get_map("map");
-    container.insert(&loro, "haha".into(), InsertValue::Int32(1));
+    container.insert(&loro, "haha", InsertValue::Int32(1));
     let ans = fx_map!(
         "haha".into() => LoroValue::I32(1)
     );

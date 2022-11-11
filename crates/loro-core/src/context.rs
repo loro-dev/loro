@@ -19,7 +19,6 @@ impl Context for LoroCore {
         self.log_store
             .write()
             .unwrap()
-            .get_container(&id)
-            .map(|x| x.clone())
+            .get_container(&id).cloned()
     }
 }

@@ -1,5 +1,4 @@
 use std::{
-    ops::Deref,
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -8,7 +7,7 @@ use crate::{
     configure::Configure,
     container::{
         map::Map,
-        registry::{ContainerInstance, ContainerRegistry},
+        registry::{ContainerInstance},
         text::Text,
         ContainerID, ContainerType,
     },

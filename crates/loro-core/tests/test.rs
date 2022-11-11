@@ -7,8 +7,8 @@ use loro_core::{InsertValue, LoroCore};
 #[test]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
-    let mut root = loro.get_map("root");
-    root.insert(&loro, "haha".into(), InsertValue::Double(1.2));
+    let root = loro.get_map("root");
+    root.insert(&loro, "haha", InsertValue::Double(1.2));
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
     assert_eq!(
@@ -21,7 +21,7 @@ fn map() {
             .unwrap(),
         1.2
     );
-    let map_id = root.insert_obj(&loro, "map".into(), loro_core::ContainerType::Map);
+    let map_id = root.insert_obj(&loro, "map", loro_core::ContainerType::Map);
     drop(root);
     let arc = loro.get_container(&map_id).unwrap();
     let mut sub_map = arc.lock_map();
