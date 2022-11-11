@@ -1,7 +1,12 @@
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
+
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{Container, ContainerID, ContainerType},
+    container::{registry::ContainerWrapper, Container, ContainerID, ContainerType},
     context::Context,
     id::Counter,
     op::{Content, Op, RichOp},
@@ -173,4 +178,41 @@ impl Container for MapContainer {
     fn to_export(&self, _op: &mut Op) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
+}
+
+pub struct Map {
+    map: Arc<Mutex<MapContainer>>,
+}
+
+impl Map {
+    pub fn insert<C: Context>(&self, ctx: &C, key: &str, value: InsertValue) {
+        let mut map = self.map.lock().unwrap();
+        map.insert(ctx, key.into(), value);
+    }
+
+    pub fn insert_obj<C: Context>(&self, ctx: &C, key: &str, obj: ContainerType) -> ContainerID {
+        let mut map = self.map.lock().unwrap();
+        map.insert_obj(ctx, key.into(), obj)
+    }
+
+    pub fn delete<C: Context>(&self, ctx: &C, key: &str) {
+        let mut map = self.map.lock().unwrap();
+        map.delete(ctx, key.into());
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.map.lock().unwrap().id.clone()
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.map.lock().unwrap().get_value()
+    }
+}
+
+impl ContainerWrapper for Map {
+    type Container = MapContainer;
+
+    fn get_inner_container(&self) -> std::sync::MutexGuard<Self::Container> {
+        self.map.lock().unwrap()
+    }
 }

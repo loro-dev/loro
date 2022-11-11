@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    ops::{Deref, Range},
+    sync::{Arc, Mutex},
+};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -7,7 +10,9 @@ use rle::{
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
-    container::{list::list_op::ListOp, Container, ContainerID, ContainerType},
+    container::{
+        list::list_op::ListOp, registry::ContainerWrapper, Container, ContainerID, ContainerType,
+    },
     context::Context,
     dag::DagUtils,
     debug_log,
@@ -356,5 +361,27 @@ impl Container for TextContainer {
                 *slice = slice_range.into();
             }
         }
+    }
+}
+
+pub struct Text {
+    text: Arc<Mutex<TextContainer>>,
+}
+
+impl Text {
+    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
+        self.text.lock().unwrap().insert(ctx, pos, text)
+    }
+
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
+        self.text.lock().unwrap().delete(ctx, pos, len)
+    }
+}
+
+impl ContainerWrapper for Text {
+    type Container = TextContainer;
+
+    fn get_inner_container(&self) -> std::sync::MutexGuard<Self::Container> {
+        self.text.lock().unwrap()
     }
 }

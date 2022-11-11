@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{op::RemoteOp, span::IdSpan, LogStore};
+use crate::{op::RemoteOp, span::IdSpan, LogStore, LoroValue};
 
 use super::{
     map::MapContainer, text::text_container::TextContainer, Container, ContainerID, ContainerType,
@@ -215,5 +215,19 @@ impl<'x> LockContainer for &'x Arc<Mutex<ContainerInstance>> {
     fn lock_text(&self) -> Self::TextTarget<'_> {
         let a = OwningRefMut::new(self.lock().unwrap());
         a.map_mut(|x| x.as_text_mut().unwrap())
+    }
+}
+
+pub trait ContainerWrapper {
+    type Container: Container;
+
+    fn get_inner_container(&self) -> MutexGuard<Self::Container>;
+
+    fn id(&self) -> ContainerID {
+        self.get_inner_container().id().clone()
+    }
+
+    fn get_value(&self) -> LoroValue {
+        self.get_inner_container().get_value()
     }
 }
