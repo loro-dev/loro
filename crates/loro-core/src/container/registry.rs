@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Mutex, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
+use crate::{context::Context, id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
 
 use super::{map::MapContainer, text::TextContainer, Container, ContainerID, ContainerType};
 
@@ -160,7 +160,6 @@ impl ContainerRegistry {
             self.insert(id.clone(), container);
         }
 
-        
         self.get_idx(id).unwrap()
     }
 
@@ -171,6 +170,12 @@ impl ContainerRegistry {
                 x.debug_inspect()
             }
         }
+    }
+}
+
+impl Default for ContainerRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -224,36 +229,6 @@ pub trait LockContainer {
     fn lock_text(&self) -> Self::TextTarget<'_>;
 }
 
-impl LockContainer for Arc<Mutex<ContainerInstance>> {
-    type MapTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<MapContainer>> where Self:'a;
-    type TextTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<TextContainer>> where Self:'a;
-
-    fn lock_map(&self) -> Self::MapTarget<'_> {
-        let a = OwningRefMut::new(self.lock().unwrap());
-        a.map_mut(|x| x.as_map_mut().unwrap())
-    }
-
-    fn lock_text(&self) -> Self::TextTarget<'_> {
-        let a = OwningRefMut::new(self.lock().unwrap());
-        a.map_mut(|x| x.as_text_mut().unwrap())
-    }
-}
-
-impl<'x> LockContainer for &'x Arc<Mutex<ContainerInstance>> {
-    type MapTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<MapContainer>> where Self:'a;
-    type TextTarget<'a> = OwningRefMut<MutexGuard<'a, ContainerInstance>, Box<TextContainer>> where Self:'a;
-
-    fn lock_map(&self) -> Self::MapTarget<'_> {
-        let a = OwningRefMut::new(self.lock().unwrap());
-        a.map_mut(|x| x.as_map_mut().unwrap())
-    }
-
-    fn lock_text(&self) -> Self::TextTarget<'_> {
-        let a = OwningRefMut::new(self.lock().unwrap());
-        a.map_mut(|x| x.as_text_mut().unwrap())
-    }
-}
-
 pub trait ContainerWrapper {
     type Container: Container;
 
@@ -267,5 +242,29 @@ pub trait ContainerWrapper {
 
     fn get_value(&self) -> LoroValue {
         self.with_container(|x| x.get_value())
+    }
+
+    fn get_value_deep<C: Context>(&self, ctx: &C) -> LoroValue {
+        let mut value = self.get_value();
+        match &mut value {
+            LoroValue::List(list) => {
+                list.iter_mut().for_each(|x| {
+                    if x.as_unresolved().is_some() {
+                        *x = x.resolve(ctx).unwrap();
+                    }
+                });
+            }
+            LoroValue::Map(map) => {
+                map.iter_mut().for_each(|(_, x)| {
+                    if x.as_unresolved().is_some() {
+                        *x = x.resolve(ctx).unwrap();
+                    }
+                });
+            }
+            LoroValue::Unresolved(_) => unreachable!(),
+            _ => {}
+        }
+
+        value
     }
 }

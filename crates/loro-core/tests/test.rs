@@ -1,13 +1,12 @@
 use ctor::ctor;
 
-use loro_core::container::registry::{ContainerWrapper, LockContainer};
-use loro_core::container::Container;
-use loro_core::{InsertValue, LoroCore};
+use loro_core::container::registry::ContainerWrapper;
+use loro_core::{InsertValue, LoroCore, LoroValue};
 
 #[test]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
-    let root = loro.get_map("root");
+    let mut root = loro.get_map("root");
     root.insert(&loro, "haha", InsertValue::Double(1.2));
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
@@ -23,9 +22,8 @@ fn map() {
     );
     let map_id = root.insert_obj(&loro, "map", loro_core::ContainerType::Map);
     drop(root);
-    let arc = loro.get_container(&map_id).unwrap();
-    let mut sub_map = arc.lock_map();
-    sub_map.insert(&loro, "sub".into(), InsertValue::Bool(false));
+    let mut sub_map = loro.get_map(&map_id);
+    sub_map.insert(&loro, "sub", InsertValue::Bool(false));
     drop(sub_map);
     let root = loro.get_map("root");
     let value = root.get_value();
@@ -33,6 +31,13 @@ fn map() {
     let map = value.as_map().unwrap();
     assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
     assert!(map.get("map").unwrap().as_unresolved().is_some());
+    let deep_value = root.get_value_deep(&loro);
+    assert_eq!(deep_value.as_map().unwrap().len(), 2);
+    let map = deep_value.as_map().unwrap();
+    assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
+    let inner_map = map.get("map").unwrap().as_map().unwrap();
+    assert_eq!(inner_map.len(), 1);
+    assert_eq!(inner_map.get("sub").unwrap(), &LoroValue::Bool(false));
 }
 
 #[test]

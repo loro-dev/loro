@@ -185,17 +185,22 @@ pub struct Map {
 }
 
 impl Map {
-    pub fn insert<C: Context>(&self, ctx: &C, key: &str, value: InsertValue) {
+    pub fn insert<C: Context>(&mut self, ctx: &C, key: &str, value: InsertValue) {
         self.with_container(|map| {
             map.insert(ctx, key.into(), value);
         })
     }
 
-    pub fn insert_obj<C: Context>(&self, ctx: &C, key: &str, obj: ContainerType) -> ContainerID {
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: &str,
+        obj: ContainerType,
+    ) -> ContainerID {
         self.with_container(|map| map.insert_obj(ctx, key.into(), obj))
     }
 
-    pub fn delete<C: Context>(&self, ctx: &C, key: &str) {
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) {
         self.with_container(|map| {
             map.delete(ctx, key.into());
         })

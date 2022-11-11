@@ -116,7 +116,7 @@ impl<'v, T: Debug + 'v> VecTrait<'v, T> for Vec<T> {
         T: 'a;
 
     #[inline(always)]
-    fn drain<'a, R>(&'a mut self, range: R) -> Self::Drain<'a>
+    fn drain<R>(&mut self, range: R) -> Self::Drain<'_>
     where
         R: RangeBounds<usize>,
     {

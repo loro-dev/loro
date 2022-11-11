@@ -1,15 +1,11 @@
-use std::{
-    sync::{Arc, Mutex, RwLock},
-};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     change::Change,
     configure::Configure,
     container::{
-        map::Map,
-        registry::{ContainerInstance},
-        text::Text,
-        ContainerID, ContainerType,
+        map::Map, registry::ContainerInstance, text::Text, ContainerID, ContainerIdRaw,
+        ContainerType,
     },
     id::ClientID,
     op::RemoteOp,
@@ -38,23 +34,23 @@ impl LoroCore {
     }
 
     #[inline(always)]
-    pub fn get_map(&mut self, name: &str) -> Map {
-        let id = ContainerID::new_root(name, ContainerType::Map);
+    pub fn get_map<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Map {
+        let id: ContainerIdRaw = id.into();
         self.log_store
             .write()
             .unwrap()
-            .get_or_create_container(&id)
+            .get_or_create_container(&id.with_type(ContainerType::Map))
             .clone()
             .into()
     }
 
     #[inline(always)]
-    pub fn get_text(&mut self, name: &str) -> Text {
-        let id = ContainerID::new_root(name, ContainerType::Text);
+    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Text {
+        let id: ContainerIdRaw = id.into();
         self.log_store
             .write()
             .unwrap()
-            .get_or_create_container(&id)
+            .get_or_create_container(&id.with_type(ContainerType::Text))
             .clone()
             .into()
     }

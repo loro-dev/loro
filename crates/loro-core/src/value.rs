@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
-use crate::container::ContainerID;
+use crate::{container::ContainerID, context::Context, Container};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, serde::Serialize, EnumAsInner)]
@@ -16,6 +16,17 @@ pub enum LoroValue {
     List(Box<Vec<LoroValue>>),
     Map(Box<FxHashMap<String, LoroValue>>),
     Unresolved(Box<ContainerID>),
+}
+
+impl LoroValue {
+    pub(crate) fn resolve<C: Context>(&self, ctx: &C) -> Option<LoroValue> {
+        if let Some(id) = self.as_unresolved() {
+            ctx.get_container(id)
+                .map(|container| container.lock().unwrap().get_value())
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for LoroValue {

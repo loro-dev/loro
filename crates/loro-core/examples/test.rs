@@ -1,25 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
-
 #[cfg(not(feature = "fuzzing"))]
 fn main() {}
 
-struct Ref {
-    out: Option<Rc<RefCell<Ref>>>,
-}
-
 #[cfg(feature = "fuzzing")]
 fn main() {
-    
-    
-
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action::*;
 
-    // let mut a = Rc::new(RefCell::new(Ref { out: None }));
-    // let mut b = Rc::new(RefCell::new(Ref {
-    //     out: Some(a.clone()),
-    // }));
-    // a.borrow_mut().out = Some(b.clone());
     for _ in 0..1 {
         test_multi_sites(
             10,

@@ -5,10 +5,7 @@ use std::{
 };
 
 use loro_core::{
-    container::{
-        registry::{ContainerWrapper, LockContainer},
-        Container, ContainerID,
-    },
+    container::{registry::ContainerWrapper, ContainerID},
     InsertValue, LoroCore,
 };
 use wasm_bindgen::prelude::*;
@@ -63,29 +60,22 @@ impl Loro {
 impl Map {
     pub fn set(&mut self, key: String, value: JsValue) {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let get_map_container_mut = loro.get_container(&self.id).unwrap();
-        let mut map = get_map_container_mut.lock_map();
-        map.insert(
-            loro.deref(),
-            key.into(),
-            InsertValue::try_from_js(value).unwrap(),
-        )
+        let mut loro = loro.borrow_mut();
+        let mut map = loro.get_map(&self.id);
+        map.insert(loro.deref(), &key, InsertValue::try_from_js(value).unwrap())
     }
 
     pub fn delete(&mut self, key: String) {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let map = loro.get_container(&self.id).unwrap();
-        let mut map = map.lock_map();
-        map.delete(loro.deref(), key.into())
+        let mut loro = loro.borrow_mut();
+        let mut map = loro.get_map(&self.id);
+        map.delete(loro.deref(), &key)
     }
 
     pub fn get_value(&mut self) -> JsValue {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let map = loro.get_container(&self.id).unwrap();
-        let map = map.lock_map();
+        let mut loro = loro.borrow_mut();
+        let map = loro.get_map(&self.id);
         map.get_value().into()
     }
 }
@@ -94,25 +84,22 @@ impl Map {
 impl Text {
     pub fn insert(&mut self, index: usize, text: &str) {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let text_container = loro.get_container(&self.id).unwrap();
-        let mut text_container = text_container.lock_text();
+        let mut loro = loro.borrow_mut();
+        let mut text_container = loro.get_text(&self.id);
         text_container.insert(loro.deref(), index, text);
     }
 
     pub fn delete(&mut self, index: usize, len: usize) {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let get_container = loro.get_container(&self.id).unwrap();
-        let mut text_container = get_container.lock_text();
+        let mut loro = loro.borrow_mut();
+        let mut text_container = loro.get_text(&self.id);
         text_container.delete(loro.deref(), index, len);
     }
 
     pub fn get_value(&mut self) -> String {
         let loro = self.loro.upgrade().unwrap();
-        let loro = loro.borrow_mut();
-        let get_container = loro.get_container(&self.id).unwrap();
-        let text_container = get_container.lock_text();
+        let mut loro = loro.borrow_mut();
+        let text_container = loro.get_text(&self.id);
         text_container.get_value().as_string().unwrap().to_string()
     }
 }
