@@ -19,7 +19,6 @@ use crate::{
 
 pub struct LoroCore {
     pub(crate) log_store: Arc<RwLock<LogStore>>,
-    pub(crate) reg: Arc<ContainerRegistry>,
 }
 
 impl Default for LoroCore {
@@ -30,11 +29,8 @@ impl Default for LoroCore {
 
 impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let container = ContainerRegistry::new();
-        let weak = Arc::downgrade(&container);
         Self {
-            log_store: LogStore::new(cfg, client_id, weak),
-            reg: container,
+            log_store: LogStore::new(cfg, client_id),
         }
     }
 
@@ -48,8 +44,9 @@ impl LoroCore {
         self.log_store
             .write()
             .unwrap()
-            .get_or_create_container_idx(&id);
-        self.reg.get_or_create(&id).clone().into()
+            .get_or_create_container(&id)
+            .clone()
+            .into()
     }
 
     #[inline(always)]
@@ -58,13 +55,20 @@ impl LoroCore {
         self.log_store
             .write()
             .unwrap()
-            .get_or_create_container_idx(&id);
-        self.reg.get_or_create(&id).clone().into()
+            .get_or_create_container(&id)
+            .clone()
+            .into()
     }
 
     #[inline(always)]
     pub fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        self.reg.get(id).map(|x| x.deref().clone())
+        self.log_store
+            .read()
+            .unwrap()
+            .get_container(id)
+            .unwrap()
+            .clone()
+            .into()
     }
 
     pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
@@ -80,6 +84,5 @@ impl LoroCore {
     #[cfg(feature = "fuzzing")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
-        self.reg.debug_inspect();
     }
 }

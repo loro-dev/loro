@@ -3,12 +3,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use dashmap::DashMap;
 use enum_as_inner::EnumAsInner;
 
+use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{op::RemoteOp, span::IdSpan, LogStore, LoroValue};
+use crate::{id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
 
 use super::{map::MapContainer, text::TextContainer, Container, ContainerID, ContainerType};
 
@@ -81,18 +81,26 @@ impl Container for ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerRegistry {
-    containers: DashMap<ContainerID, Arc<Mutex<ContainerInstance>>>,
+    container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
+    containers: Vec<ContainerAndId>,
+}
+
+#[derive(Debug)]
+struct ContainerAndId {
+    pub container: Arc<Mutex<ContainerInstance>>,
+    pub id: ContainerID,
 }
 
 impl ContainerRegistry {
-    pub(crate) fn new() -> Arc<ContainerRegistry> {
-        Arc::new(ContainerRegistry {
-            containers: Default::default(),
-        })
+    pub fn new() -> Self {
+        ContainerRegistry {
+            container_to_idx: FxHashMap::default(),
+            containers: Vec::new(),
+        }
     }
 
     #[inline]
-    fn create(&self, id: ContainerID) -> ContainerInstance {
+    fn create(&mut self, id: ContainerID) -> ContainerInstance {
         match id.container_type() {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
             ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
@@ -101,23 +109,43 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub fn get(
-        &self,
-        id: &ContainerID,
-    ) -> Option<dashmap::mapref::one::Ref<ContainerID, Arc<Mutex<ContainerInstance>>>> {
-        self.containers.get(id)
+    pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.container_to_idx
+            .get(id)
+            .map(|x| &self.containers[*x as usize].container)
     }
 
     #[inline(always)]
-    fn insert(&self, id: ContainerID, container: ContainerInstance) {
-        self.containers.insert(id, Arc::new(Mutex::new(container)));
+    pub fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.containers.get(idx as usize).map(|x| &x.container)
     }
 
-    pub(crate) fn get_or_create(
-        &self,
-        id: &ContainerID,
-    ) -> dashmap::mapref::one::Ref<ContainerID, Arc<Mutex<ContainerInstance>>> {
-        if !self.containers.contains_key(id) {
+    #[inline(always)]
+    pub fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
+        self.container_to_idx.get(id).copied()
+    }
+
+    pub fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
+        self.containers.get(idx as usize).map(|x| &x.id)
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, id: ContainerID, container: ContainerInstance) {
+        let idx = self.next_idx();
+        self.container_to_idx.insert(id.clone(), idx);
+        self.containers.push(ContainerAndId {
+            container: Arc::new(Mutex::new(container)),
+            id,
+        });
+    }
+
+    #[inline(always)]
+    fn next_idx(&self) -> ContainerIdx {
+        self.containers.len() as ContainerIdx
+    }
+
+    pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {
+        if !self.container_to_idx.contains_key(id) {
             let container = self.create(id.clone());
             self.insert(id.clone(), container);
         }
@@ -126,9 +154,19 @@ impl ContainerRegistry {
         container
     }
 
+    pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
+        if !self.container_to_idx.contains_key(id) {
+            let container = self.create(id.clone());
+            self.insert(id.clone(), container);
+        }
+
+        let idx = self.get_idx(id).unwrap();
+        idx
+    }
+
     #[cfg(feature = "fuzzing")]
-    pub fn debug_inspect(&self) {
-        for container in self.containers.iter_mut() {
+    pub fn debug_inspect(&mut self) {
+        for ContainerAndId { container, id: _ } in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }

@@ -67,7 +67,7 @@ impl Op {
     }
 
     pub(crate) fn convert(self, log: &LogStore) -> RemoteOp {
-        let container = log.get_container_id(self.container).clone();
+        let container = log.reg.get_id(self.container).unwrap().clone();
         RemoteOp {
             counter: self.counter,
             container,

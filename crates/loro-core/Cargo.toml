@@ -27,7 +27,6 @@ colored = "2.0.0"
 bit-vec = "0.6.3"
 wasm-bindgen = { version = "0.2.83", optional = true }
 js-sys = { version = "0.3.60", optional = true }
-dashmap = "5.4.0"
 
 [dev-dependencies]
 dhat = "0.3.1"
