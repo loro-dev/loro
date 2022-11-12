@@ -166,7 +166,16 @@ impl Actionable for Vec<LoroCore> {
                 let from_exported = self[*from as usize].export(to_vv);
                 self[*to as usize].import(from_exported);
             }
-            Action::SyncAll => {}
+            Action::SyncAll => {
+                for i in 1..self.len() {
+                    let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.import(b.export(a.vv()));
+                }
+                for i in 1..self.len() {
+                    let (a, b) = array_mut_ref!(self, [0, i]);
+                    b.import(a.export(b.vv()));
+                }
+            }
         }
     }
 
