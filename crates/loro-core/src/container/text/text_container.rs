@@ -1,5 +1,5 @@
 use std::{
-    ops::{Range},
+    ops::Range,
     sync::{Arc, Mutex},
 };
 
@@ -359,6 +359,7 @@ impl Container for TextContainer {
                 }
                 ListSlice::Slice(_) => unreachable!(),
                 ListSlice::Unknown(_) => unreachable!(),
+                ListSlice::RawData(_) => unreachable!(),
             } {
                 *slice = slice_range.into();
             }

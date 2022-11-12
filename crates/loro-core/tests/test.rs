@@ -5,6 +5,23 @@ use loro_core::{LoroCore, LoroValue};
 
 #[test]
 #[cfg(feature = "json")]
+fn list() {
+    let mut loro_a = LoroCore::default();
+    let mut loro_b = LoroCore::default();
+    let mut list_a = loro_a.get_list("list");
+    let mut list_b = loro_b.get_list("list");
+    list_a.insert_batch(&loro_a, 0, vec![12.into(), "haha".into()]);
+    list_b.insert_batch(&loro_b, 0, vec![123.into(), "kk".into()]);
+    println!("{}", list_a.get_value().to_json());
+    loro_b.import(loro_a.export(loro_b.vv()));
+    loro_a.import(loro_b.export(loro_a.vv()));
+    println!("{}", list_b.get_value().to_json());
+    println!("{}", list_a.get_value().to_json());
+    assert_eq!(list_b.get_value(), list_a.get_value());
+}
+
+#[test]
+#[cfg(feature = "json")]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");

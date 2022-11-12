@@ -10,12 +10,16 @@ use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{context::Context, id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
 
-use super::{map::MapContainer, text::TextContainer, Container, ContainerID, ContainerType};
+use super::{
+    list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
+    ContainerType,
+};
 
 #[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
     Map(Box<MapContainer>),
     Text(Box<TextContainer>),
+    List(Box<ListContainer>),
     Dyn(Box<dyn Container>),
 }
 
@@ -25,6 +29,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.id(),
             ContainerInstance::Text(x) => x.id(),
             ContainerInstance::Dyn(x) => x.id(),
+            ContainerInstance::List(x) => x.id(),
         }
     }
 
@@ -33,6 +38,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(_) => ContainerType::Map,
             ContainerInstance::Text(_) => ContainerType::Text,
             ContainerInstance::Dyn(x) => x.type_(),
+            ContainerInstance::List(_) => ContainerType::List,
         }
     }
 
@@ -41,6 +47,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.apply(id_span, log),
             ContainerInstance::Text(x) => x.apply(id_span, log),
             ContainerInstance::Dyn(x) => x.apply(id_span, log),
+            ContainerInstance::List(x) => x.apply(id_span, log),
         }
     }
 
@@ -49,6 +56,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.checkout_version(vv),
             ContainerInstance::Text(x) => x.checkout_version(vv),
             ContainerInstance::Dyn(x) => x.checkout_version(vv),
+            ContainerInstance::List(x) => x.checkout_version(vv),
         }
     }
 
@@ -57,6 +65,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.get_value(),
             ContainerInstance::Text(x) => x.get_value(),
             ContainerInstance::Dyn(x) => x.get_value(),
+            ContainerInstance::List(x) => x.get_value(),
         }
     }
 
@@ -65,6 +74,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.to_export(op),
             ContainerInstance::Text(x) => x.to_export(op),
             ContainerInstance::Dyn(x) => x.to_export(op),
+            ContainerInstance::List(x) => x.to_export(op),
         }
     }
 
@@ -73,6 +83,7 @@ impl Container for ContainerInstance {
             ContainerInstance::Map(x) => x.to_import(op),
             ContainerInstance::Text(x) => x.to_import(op),
             ContainerInstance::Dyn(x) => x.to_import(op),
+            ContainerInstance::List(x) => x.to_import(op),
         }
     }
 }
@@ -104,6 +115,7 @@ impl ContainerRegistry {
         match id.container_type() {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
             ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
+            ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id))),
             _ => unimplemented!(),
         }
     }

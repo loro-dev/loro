@@ -4,7 +4,7 @@ use crate::{
     change::Change,
     configure::Configure,
     container::{
-        map::Map, registry::ContainerInstance, text::Text, ContainerID, ContainerIdRaw,
+        list::List, map::Map, registry::ContainerInstance, text::Text, ContainerID, ContainerIdRaw,
         ContainerType,
     },
     id::ClientID,
@@ -31,6 +31,17 @@ impl LoroCore {
 
     pub fn vv(&self) -> VersionVector {
         self.log_store.read().unwrap().get_vv().clone()
+    }
+
+    #[inline(always)]
+    pub fn get_list<I: Into<ContainerIdRaw>>(&mut self, id: I) -> List {
+        let id: ContainerIdRaw = id.into();
+        self.log_store
+            .write()
+            .unwrap()
+            .get_or_create_container(&id.with_type(ContainerType::List))
+            .clone()
+            .into()
     }
 
     #[inline(always)]

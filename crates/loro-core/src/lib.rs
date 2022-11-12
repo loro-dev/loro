@@ -36,7 +36,7 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op, OpType};
 
 pub(crate) type InternalString = DefaultAtom;
 
-pub use container::{map::Map, text::Text, Container, ContainerType};
+pub use container::{list::List, map::Map, text::Text, Container, ContainerType};
 pub use log_store::LogStore;
 pub use loro::LoroCore;
 pub use value::LoroValue;
