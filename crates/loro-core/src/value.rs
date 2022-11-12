@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
-use crate::{container::ContainerID, context::Context, Container};
+use crate::{container::ContainerID, context::Context, Container, id::ClientID};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, EnumAsInner)]
@@ -230,6 +230,12 @@ impl From<&str> for LoroValue {
 impl From<String> for LoroValue {
     fn from(v: String) -> Self {
         LoroValue::String(v.into())
+    }
+}
+
+impl From<ContainerID> for LoroValue {
+    fn from(v: ContainerID) -> Self {
+        LoroValue::Unresolved(Box::new(v))
     }
 }
 

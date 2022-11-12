@@ -1,3 +1,4 @@
+// TODO: refactor, extract common code with text
 use std::{
     ops::Range,
     sync::{Arc, Mutex},
@@ -26,7 +27,7 @@ use crate::{
     op::{Content, Op, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
-    LogStore, VersionVector,
+    InternalString, LogStore, VersionVector,
 };
 
 #[derive(Debug)]
@@ -172,6 +173,25 @@ impl ListContainer {
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
         Some(id)
+    }
+
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        obj: ContainerType,
+    ) -> ContainerID {
+        let m = ctx.log_store();
+        let mut store = m.write().unwrap();
+        let container_id = store.create_container(obj, self.id.clone());
+        // TODO: we can avoid this lock
+        drop(store);
+        self.insert(
+            ctx,
+            pos,
+            LoroValue::Unresolved(Box::new(container_id.clone())),
+        );
+        container_id
     }
 
     pub fn values_len(&self) -> usize {
@@ -320,7 +340,13 @@ impl Container for ListContainer {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             for op in change.ops.iter() {
-                if op.container == self_idx {
+                if op.container == self_idx
+                    && op
+                        .content
+                        .as_normal()
+                        .map(|x| x.as_list().is_some())
+                        .unwrap_or(false)
+                {
                     // TODO: convert op to local
                     self.tracker.apply(
                         ID {
@@ -444,6 +470,15 @@ impl List {
         value: V,
     ) -> Option<ID> {
         self.with_container(|x| x.insert(ctx, pos, value))
+    }
+
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        obj: ContainerType,
+    ) -> ContainerID {
+        self.with_container(|x| x.insert_obj(ctx, pos, obj))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {

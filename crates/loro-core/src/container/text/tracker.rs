@@ -241,8 +241,8 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
-        assert_eq!(*self.head_vv.get(&id.client_id).unwrap_or(&0), id.counter);
-        assert_eq!(*self.all_vv.get(&id.client_id).unwrap_or(&0), id.counter);
+        assert!(*self.head_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
+        assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         self.head_vv.set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
         match &content {

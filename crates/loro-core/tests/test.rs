@@ -12,11 +12,15 @@ fn list() {
     let mut list_b = loro_b.get_list("list");
     list_a.insert_batch(&loro_a, 0, vec![12.into(), "haha".into()]);
     list_b.insert_batch(&loro_b, 0, vec![123.into(), "kk".into()]);
+    let map_id = list_b.insert_obj(&loro_b, 1, loro_core::ContainerType::Map);
+    let mut map = loro_b.get_map(map_id);
+    map.insert(&loro_b, "map_b", 123);
     println!("{}", list_a.get_value().to_json());
+    println!("{}", list_b.get_value().to_json());
     loro_b.import(loro_a.export(loro_b.vv()));
     loro_a.import(loro_b.export(loro_a.vv()));
-    println!("{}", list_b.get_value().to_json());
-    println!("{}", list_a.get_value().to_json());
+    println!("{}", list_b.get_value_deep(&loro_b).to_json());
+    println!("{}", list_a.get_value_deep(&loro_b).to_json());
     assert_eq!(list_b.get_value(), list_a.get_value());
 }
 
