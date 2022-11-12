@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
-use crate::{container::ContainerID, context::Context, Container, id::ClientID};
+use crate::{container::ContainerID, context::Context, Container};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, EnumAsInner)]

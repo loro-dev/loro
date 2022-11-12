@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
+pub mod recursive;
 
 use crate::{
     array_mut_ref, container::registry::ContainerWrapper, debug_log, id::ClientID, LoroCore,
@@ -186,10 +187,7 @@ impl Actionable for Vec<LoroCore> {
                 let text = self[*site as usize].get_text("text");
                 let value = text.get_value();
                 let value = value.as_string().unwrap();
-                *pos %= value.len() + 1;
-                while !value.is_char_boundary(*pos) {
-                    *pos = (*pos + 1) % (value.len() + 1)
-                }
+                change_pos_to_char_boundary(pos, value);
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
@@ -202,15 +200,7 @@ impl Actionable for Vec<LoroCore> {
 
                 let text = text.get_value();
                 let str = text.as_string().unwrap();
-                *pos %= str.len() + 1;
-                while !str.is_char_boundary(*pos) {
-                    *pos = (*pos + 1) % str.len();
-                }
-
-                *len = (*len).min(str.len() - (*pos));
-                while !str.is_char_boundary(*pos + *len) {
-                    *len += 1;
-                }
+                change_delete_to_char_boundary(pos, len, str);
             }
             Action::Sync { from, to } => {
                 *from %= self.len() as u8;
@@ -218,6 +208,24 @@ impl Actionable for Vec<LoroCore> {
             }
             Action::SyncAll => {}
         }
+    }
+}
+
+pub fn change_delete_to_char_boundary(pos: &mut usize, len: &mut usize, str: &str) {
+    *pos %= str.len() + 1;
+    while !str.is_char_boundary(*pos) {
+        *pos = (*pos + 1) % str.len();
+    }
+    *len = (*len).min(str.len() - (*pos));
+    while !str.is_char_boundary(*pos + *len) {
+        *len += 1;
+    }
+}
+
+pub fn change_pos_to_char_boundary(pos: &mut usize, value: &str) {
+    *pos %= value.len() + 1;
+    while !value.is_char_boundary(*pos) {
+        *pos = (*pos + 1) % (value.len() + 1)
     }
 }
 

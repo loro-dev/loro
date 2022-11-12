@@ -443,7 +443,7 @@ fn check_import_change_valid(change: &Change<RemoteOp>) {
                 .and_then(|x| x.as_list())
                 .and_then(|x| x.as_insert())
             {
-                assert!(slice.as_raw_str().is_some())
+                assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
             }
         }
     }

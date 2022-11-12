@@ -47,3 +47,9 @@ name = "text"
 path = "fuzz_targets/text.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "recursive"
+path = "fuzz_targets/recursive.rs"
+test = false
+doc = false

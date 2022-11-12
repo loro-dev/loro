@@ -380,6 +380,7 @@ impl Text {
         self.with_container(|text| text.delete(ctx, pos, len))
     }
 
+    // TODO: can be len?
     pub fn text_len(&self) -> usize {
         self.with_container(|text| text.text_len())
     }
