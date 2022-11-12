@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
-    Ins { content: u32, pos: usize, site: u8 },
+    Ins { content: u16, pos: usize, site: u8 },
     Del { pos: usize, len: usize, site: u8 },
     Sync { from: u8, to: u8 },
     SyncAll,
