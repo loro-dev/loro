@@ -45,6 +45,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbtest"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d48cee94156b8405b421abf4dc77852a150448f2ece19293238693aa316c75ab"
+dependencies = [
+ "arbitrary",
+]
+
+[[package]]
 name = "arref"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,6 +599,7 @@ name = "loro-core"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "arbtest",
  "bit-vec",
  "color-backtrace",
  "colored",

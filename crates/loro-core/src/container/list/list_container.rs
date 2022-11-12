@@ -83,14 +83,9 @@ impl ListContainer {
         }
     }
 
-    pub fn insert_batch<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        values: Vec<LoroValue>,
-    ) -> Option<ID> {
+    pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
         if values.is_empty() {
-            return None;
+            return;
         }
 
         let store = ctx.log_store();
@@ -115,8 +110,6 @@ impl ListContainer {
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
         self.vv.set_last(last_id);
-
-        Some(id)
     }
 
     pub fn insert<C: Context, V: Into<LoroValue>>(
@@ -154,6 +147,10 @@ impl ListContainer {
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
         if len == 0 {
             return None;
+        }
+
+        if self.state.len() < pos + len {
+            panic!("deletion out of range");
         }
 
         let store = ctx.log_store();
@@ -252,6 +249,9 @@ impl Container for ListContainer {
                                 Some(span.end() as usize),
                             ),
                         },
+                        OpContent::Normal {
+                            content: Content::Container(_),
+                        } => {}
                         _ => unreachable!(),
                     }
                 }
@@ -284,6 +284,9 @@ impl Container for ListContainer {
                                             Some(span.end() as usize),
                                         ),
                                     },
+                                    OpContent::Normal {
+                                        content: Content::Container(_),
+                                    } => {}
                                     _ => unreachable!(),
                                 }
                             }
@@ -374,8 +377,8 @@ impl Container for ListContainer {
             format!("{:?}", latest_head).red(),
         );
         debug_log!(
-            "BEFORE EFFECT STATE={}",
-            self.get_value().as_string().unwrap()
+            "BEFORE EFFECT STATE={:?}",
+            self.get_value().as_list().unwrap()
         );
         for effect in self.tracker.iter_effects(path.right) {
             debug_log!("EFFECT: {:?}", &effect);
@@ -389,8 +392,8 @@ impl Container for ListContainer {
             debug_log!("AFTER EFFECT");
         }
         debug_log!(
-            "AFTER EFFECT STATE={}",
-            self.get_value().as_string().unwrap()
+            "AFTER EFFECT STATE={:?}",
+            self.get_value().as_list().unwrap()
         );
 
         self.head = latest_head;
@@ -454,12 +457,7 @@ pub struct List {
 }
 
 impl List {
-    pub fn insert_batch<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        values: Vec<LoroValue>,
-    ) -> Option<ID> {
+    pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
         self.with_container(|x| x.insert_batch(ctx, pos, values))
     }
 

@@ -61,19 +61,20 @@ impl From<FuzzValue> for LoroValue {
         match v {
             FuzzValue::Null => LoroValue::Null,
             FuzzValue::I32(i) => LoroValue::I32(i),
-            FuzzValue::Container(c) => unreachable!(),
+            FuzzValue::Container(_) => unreachable!(),
         }
     }
 }
 
 impl Tabled for Action {
-    const LENGTH: usize = 4;
+    const LENGTH: usize = 5;
 
     fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
         match self {
             Action::Sync { from, to } => vec![
                 "sync".into(),
                 format!("{} to {}", from, to).into(),
+                "".into(),
                 "".into(),
                 "".into(),
             ],
@@ -85,9 +86,10 @@ impl Tabled for Action {
                 value,
             } => vec![
                 "map".into(),
-                format!("site {} container {}", site, container_idx).into(),
-                format!("key {}", key).into(),
-                format!("value {:?}", value).into(),
+                format!("{}", site).into(),
+                format!("{}", container_idx).into(),
+                format!("{}", key).into(),
+                format!("{:?}", value).into(),
             ],
             Action::List {
                 site,
@@ -96,9 +98,10 @@ impl Tabled for Action {
                 value,
             } => vec![
                 "list".into(),
-                format!("site {} container {}", site, container_idx).into(),
-                format!("key {}", key).into(),
-                format!("value {:?}", value).into(),
+                format!("{}", site).into(),
+                format!("{}", container_idx).into(),
+                format!("{}", key).into(),
+                format!("{:?}", value).into(),
             ],
             Action::Text {
                 site,
@@ -108,15 +111,22 @@ impl Tabled for Action {
                 is_del,
             } => vec![
                 "text".into(),
-                format!("site {} container {}", site, container_idx).into(),
-                format!("pos {}", pos).into(),
-                format!("{}{}", if *is_del { "D" } else { "" }, value).into(),
+                format!("{}", site).into(),
+                format!("{}", container_idx).into(),
+                format!("{}", pos).into(),
+                format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
             ],
         }
     }
 
     fn headers() -> Vec<std::borrow::Cow<'static, str>> {
-        vec!["type".into(), "site".into(), "prop".into(), "value".into()]
+        vec![
+            "type".into(),
+            "site".into(),
+            "container".into(),
+            "prop".into(),
+            "value".into(),
+        ]
     }
 }
 
@@ -142,6 +152,9 @@ impl Actionable for Vec<Actor> {
             Action::Sync { from, to } => {
                 *from %= max_users;
                 *to %= max_users;
+                if to == from {
+                    *to = (*to + 1) % max_users;
+                }
             }
             Action::SyncAll => {}
             Action::Map {
@@ -165,6 +178,10 @@ impl Actionable for Vec<Actor> {
                     .get(*container_idx as usize)
                 {
                     *key %= list.values_len().max(1) as u8;
+                    if *value == FuzzValue::Null && list.values_len() == 0 {
+                        // no value, cannot delete
+                        *value = FuzzValue::I32(1);
+                    }
                 } else {
                     *value = FuzzValue::I32(1);
                     *key = 0;
@@ -282,10 +299,14 @@ impl Actionable for Vec<Actor> {
                 is_del,
             } => {
                 let actor = &mut self[*site as usize];
-                let container = actor
-                    .text_containers
-                    .get_mut(*container_idx as usize)
-                    .unwrap();
+                let container = actor.text_containers.get_mut(*container_idx as usize);
+                let container = if container.is_none() {
+                    let text = actor.loro.get_text("text");
+                    actor.text_containers.push(text);
+                    &mut actor.text_containers[0]
+                } else {
+                    container.unwrap()
+                };
                 if *is_del {
                     container.delete(&actor.loro, *pos as usize, *value as usize);
                 } else {
@@ -301,7 +322,17 @@ fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
     let b = site_b.get_text("text");
     let value_a = a.get_value();
     let value_b = b.get_value();
-    assert_eq!(value_a.as_string().unwrap(), value_b.as_string().unwrap());
+    assert_eq!(value_a, value_b);
+    let a = site_a.get_map("map");
+    let b = site_b.get_map("map");
+    let value_a = a.get_value();
+    let value_b = b.get_value();
+    assert_eq!(value_a, value_b);
+    let a = site_a.get_list("list");
+    let b = site_b.get_list("list");
+    let value_a = a.get_value();
+    let value_b = b.get_value();
+    assert_eq!(value_a, value_b);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -348,20 +379,81 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
 
 #[cfg(test)]
 mod failed_tests {
+    use crate::ContainerType;
+
     use super::test_multi_sites;
+    use super::Action;
     use super::Action::*;
     use super::FuzzValue::*;
+    use arbtest::arbitrary::{self, Unstructured};
+
+    fn prop(u: &mut Unstructured<'_>) -> arbitrary::Result<()> {
+        let xs = u.arbitrary::<Vec<Action>>()?;
+        if let Err(e) = std::panic::catch_unwind(|| {
+            test_multi_sites(2, xs.clone());
+        }) {
+            dbg!(xs);
+            println!("{:?}", e);
+            panic!()
+        } else {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test() {
+        arbtest::builder().budget_ms(50_000).run(prop)
+    }
 
     #[test]
     fn case_0() {
         test_multi_sites(
             8,
-            vec![List {
+            vec![Map {
                 site: 73,
                 container_idx: 73,
                 key: 73,
-                value: I32(1229539657),
+                value: Container(ContainerType::Text),
             }],
+        )
+    }
+
+    #[test]
+    fn case_1() {
+        test_multi_sites(
+            2,
+            vec![
+                List {
+                    site: 146,
+                    container_idx: 35,
+                    key: 60,
+                    value: I32(1075587454),
+                },
+                List {
+                    site: 82,
+                    container_idx: 250,
+                    key: 156,
+                    value: Null,
+                },
+                List {
+                    site: 21,
+                    container_idx: 203,
+                    key: 25,
+                    value: I32(-1482618442),
+                },
+                List {
+                    site: 137,
+                    container_idx: 220,
+                    key: 203,
+                    value: I32(-1999272877),
+                },
+                List {
+                    site: 40,
+                    container_idx: 65,
+                    key: 89,
+                    value: Null,
+                },
+            ],
         )
     }
 }

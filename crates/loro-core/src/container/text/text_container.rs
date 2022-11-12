@@ -96,6 +96,10 @@ impl TextContainer {
             return None;
         }
 
+        if self.state.len() < pos + len {
+            panic!("deletion out of range");
+        }
+
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();

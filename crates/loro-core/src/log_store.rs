@@ -289,6 +289,7 @@ impl LogStore {
             return;
         }
 
+        debug_log!("Client {} Apply {:?}", self.this_client_id, &change);
         for dep in &change.deps {
             if !self.contains(*dep) {
                 unimplemented!("need impl pending changes");
@@ -297,12 +298,13 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let change = self.change_to_imported_format(change);
-        let v = self
+        let changes = self
             .changes
             .entry(change.id.client_id)
             .or_insert_with(RleVecWithIndex::new);
-        v.push(change);
-        let change = v.vec().last().unwrap().clone();
+        changes.push(change);
+        // TODO: avoid this clone?
+        let change = changes.vec().last().unwrap().clone();
 
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, and updated self vv

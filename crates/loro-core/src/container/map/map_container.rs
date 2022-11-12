@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use fxhash::FxHashMap;
 
 use crate::{
+    change::Lamport,
     container::{
         registry::{ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
@@ -32,7 +33,6 @@ pub struct MapContainer {
 struct ValueSlot {
     value: LoroValue,
     order: TotalOrderStamp,
-    counter: Counter,
 }
 
 impl MapContainer {
@@ -62,6 +62,7 @@ impl MapContainer {
 
         let id = store.next_id_for(client_id);
         let counter = id.counter;
+        // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             counter: id.counter,
@@ -74,14 +75,7 @@ impl MapContainer {
             },
         }]);
 
-        self.state.insert(
-            key,
-            ValueSlot {
-                value,
-                order,
-                counter,
-            },
-        );
+        self.state.insert(key, ValueSlot { value, order });
     }
 
     pub fn insert_obj<C: Context>(
@@ -94,20 +88,31 @@ impl MapContainer {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
+        let container_id = store.create_container(obj, self_id.clone());
+        // TODO: store this value?
+        let id = store.next_id_for(client_id);
+        let counter = id.counter;
+        let container = store.get_container_idx(self_id).unwrap();
         let order = TotalOrderStamp {
             client_id,
             lamport: store.next_lamport(),
         };
 
-        let id = store.next_id_for(client_id);
-        let counter = id.counter;
-        let container_id = store.create_container(obj, self_id.clone());
+        store.append_local_ops(&[Op {
+            counter: id.counter,
+            container,
+            content: OpContent::Normal {
+                content: Content::Map(MapSet {
+                    key: key.clone(),
+                    value: container_id.clone().into(),
+                }),
+            },
+        }]);
         self.state.insert(
             key,
             ValueSlot {
                 value: LoroValue::Unresolved(Box::new(container_id.clone())),
                 order,
-                counter,
             },
         );
         container_id
@@ -130,12 +135,19 @@ impl Container for MapContainer {
     }
 
     fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
-        for RichOp { op, lamport, .. } in log.iter_ops_at_id_span(id_span, self.id.clone()) {
+        for RichOp {
+            op, lamport, start, ..
+        } in log.iter_ops_at_id_span(id_span, self.id.clone())
+        {
             match &op.content {
                 OpContent::Normal { content } => {
+                    if content.as_container().is_some() {
+                        continue;
+                    }
+
                     let v: &MapSet = content.as_map().unwrap();
                     let order = TotalOrderStamp {
-                        lamport,
+                        lamport: lamport + start as Lamport,
                         client_id: id_span.client_id,
                     };
                     if let Some(slot) = self.state.get_mut(&v.key) {
@@ -150,7 +162,6 @@ impl Container for MapContainer {
                             ValueSlot {
                                 value: v.value.clone(),
                                 order,
-                                counter: op.counter,
                             },
                         );
                     }

@@ -153,7 +153,6 @@ impl Tracker {
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
-            assert!(self.all_vv.includes_id(ID::new(*span.0, span.1.end - 1)));
             self.head_vv.set_end(ID::new(*span.0, span.1.end));
             let IdSpanQueryResult { inserts, deletes } = self
                 .id_to_cursor

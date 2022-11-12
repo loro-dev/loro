@@ -13,6 +13,7 @@ use rle::{
 };
 
 use crate::{
+    debug_log,
     id::{Counter, ID},
     span::{HasId, HasIdSpan, IdSpan},
 };
@@ -275,19 +276,6 @@ impl CursorMap {
             }
         }
 
-        if cfg!(test) {
-            let insert_len: usize = inserts.iter().map(|x| x.1.len).sum();
-            let del_len: usize = deletes.iter().map(|x| x.1.atom_len()).sum();
-            assert_eq!(
-                insert_len + del_len,
-                span.content_len(),
-                "inserts={:#?}\ndeletes={:#?}\nspan={:#?}",
-                &inserts,
-                &deletes,
-                span
-            );
-        }
-
         IdSpanQueryResult { inserts, deletes }
     }
 
@@ -304,10 +292,10 @@ impl CursorMap {
                     return Some(FirstCursorResult::Del(
                         span.id_start(),
                         del.slice(
-                            (span.id_start().counter - id.counter) as usize,
+                            (span.id_start().counter - id.counter).max(0) as usize,
                             del.atom_len(),
                         ),
-                    ))
+                    ));
                 }
             }
         }

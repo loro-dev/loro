@@ -194,6 +194,10 @@ impl Sliceable for RemoteOp {
     }
 }
 
+/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
+///
+/// `lamport` is the lamport of the returned op, to get the lamport of the sliced op, you need to use `lamport + start`
+///
 pub struct RichOp<'a> {
     pub op: &'a Op,
     pub lamport: Lamport,
