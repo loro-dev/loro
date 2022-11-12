@@ -281,20 +281,23 @@ impl CursorMap {
 
     pub fn get_first_cursors_at_id_span(&self, span: IdSpan) -> Option<FirstCursorResult> {
         for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
-            let id: ID = id.into();
+            let start_id: u128 = id.max(span.id_start().into());
+            let end_id: u128 = span.id_end().into();
+            let from = (start_id - id) as usize;
+            let max_len = (end_id - id) as usize;
+            let start_id = start_id.into();
             match marker {
                 Marker::Insert { .. } => {
                     if let Some(cursor) = marker.get_first_span(span) {
-                        return Some(FirstCursorResult::Ins(span.id_start(), cursor));
+                        // not need to change cursor here, because marker.get_first_span would do it
+                        return Some(FirstCursorResult::Ins(start_id, cursor));
                     }
                 }
                 Marker::Delete(del) => {
                     return Some(FirstCursorResult::Del(
-                        span.id_start(),
-                        del.slice(
-                            (span.id_start().counter - id.counter).max(0) as usize,
-                            del.atom_len(),
-                        ),
+                        start_id,
+                        // need to slice
+                        del.slice(from, del.atom_len().min(max_len)),
                     ));
                 }
             }
