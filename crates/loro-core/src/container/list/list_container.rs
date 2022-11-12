@@ -328,7 +328,7 @@ impl Container for ListContainer {
 
         // stage 1
         let path = store.find_path(&head, &latest_head);
-        debug_log!("path={:?}", &path.right);
+        debug_log!("path={:?}", &path);
         for iter in store.iter_partial(&head, path.right) {
             // TODO: avoid this clone
             let change = iter

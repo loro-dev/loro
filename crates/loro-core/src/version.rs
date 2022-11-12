@@ -367,6 +367,22 @@ impl VersionVector {
             });
         }
     }
+
+    pub fn intersection(&self, other: &VersionVector) -> VersionVector {
+        let mut ans = VersionVector::new();
+        for (client_id, &counter) in self.iter() {
+            if let Some(&other_counter) = other.get(client_id) {
+                if counter < other_counter {
+                    if counter != 0 {
+                        ans.insert(*client_id, counter);
+                    }
+                } else if other_counter != 0 {
+                    ans.insert(*client_id, other_counter);
+                }
+            }
+        }
+        ans
+    }
 }
 
 impl Default for VersionVector {

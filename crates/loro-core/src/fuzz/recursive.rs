@@ -387,10 +387,10 @@ mod failed_tests {
     use super::FuzzValue::*;
     use arbtest::arbitrary::{self, Unstructured};
 
-    fn prop(u: &mut Unstructured<'_>) -> arbitrary::Result<()> {
+    fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
         let xs = u.arbitrary::<Vec<Action>>()?;
         if let Err(e) = std::panic::catch_unwind(|| {
-            test_multi_sites(2, xs.clone());
+            test_multi_sites(site_num, xs.clone());
         }) {
             dbg!(xs);
             println!("{:?}", e);
@@ -402,7 +402,12 @@ mod failed_tests {
 
     #[test]
     fn test() {
-        arbtest::builder().budget_ms(50_000).run(prop)
+        arbtest::builder().budget_ms(50_000).run(|u| prop(u, 2))
+    }
+
+    #[test]
+    fn test_3sites() {
+        arbtest::builder().budget_ms(50_000).run(|u| prop(u, 3))
     }
 
     #[test]
@@ -418,42 +423,52 @@ mod failed_tests {
         )
     }
 
+    use super::ContainerType as C;
     #[test]
     fn case_1() {
         test_multi_sites(
-            2,
+            8,
             vec![
                 List {
-                    site: 146,
-                    container_idx: 35,
-                    key: 60,
-                    value: I32(1075587454),
+                    site: 123,
+                    container_idx: 123,
+                    key: 123,
+                    value: Null,
                 },
+                Text {
+                    site: 124,
+                    container_idx: 124,
+                    pos: 124,
+                    value: 1566380156,
+                    is_del: true,
+                },
+                Text {
+                    site: 67,
+                    container_idx: 67,
+                    pos: 67,
+                    value: 4294918979,
+                    is_del: true,
+                },
+                SyncAll,
+                SyncAll,
                 List {
-                    site: 82,
-                    container_idx: 250,
-                    key: 156,
+                    site: 0,
+                    container_idx: 10,
+                    key: 67,
                     value: Null,
                 },
                 List {
-                    site: 21,
-                    container_idx: 203,
-                    key: 25,
-                    value: I32(-1482618442),
-                },
-                List {
-                    site: 137,
-                    container_idx: 220,
-                    key: 203,
-                    value: I32(-1999272877),
-                },
-                List {
-                    site: 40,
-                    container_idx: 65,
-                    key: 89,
-                    value: Null,
+                    site: 123,
+                    container_idx: 123,
+                    key: 123,
+                    value: I32(2088565814),
                 },
             ],
         )
+    }
+
+    #[ctor::ctor]
+    fn init_color_backtrace() {
+        color_backtrace::install();
     }
 }
