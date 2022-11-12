@@ -28,7 +28,7 @@ pub enum Action {
         site: u8,
         container_idx: u8,
         pos: u8,
-        value: u32,
+        value: u16,
         is_del: bool,
     },
     Sync {
@@ -183,7 +183,9 @@ impl Actionable for Vec<Actor> {
                         *value = FuzzValue::I32(1);
                     }
                 } else {
-                    *value = FuzzValue::I32(1);
+                    if *value == FuzzValue::Null {
+                        *value = FuzzValue::I32(1);
+                    }
                     *key = 0;
                 }
             }
@@ -203,7 +205,7 @@ impl Actionable for Vec<Actor> {
                     *pos %= text.text_len().max(1) as u8;
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.text_len() as u32 - (*pos) as u32);
+                        *value = (*value).min(text.text_len() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;
@@ -310,7 +312,7 @@ impl Actionable for Vec<Actor> {
                 if *is_del {
                     container.delete(&actor.loro, *pos as usize, *value as usize);
                 } else {
-                    container.insert(&actor.loro, *pos as usize, &value.to_string());
+                    container.insert(&actor.loro, *pos as usize, &(value.to_string() + " "));
                 }
             }
         }
@@ -430,38 +432,35 @@ mod failed_tests {
             8,
             vec![
                 List {
-                    site: 123,
-                    container_idx: 123,
-                    key: 123,
+                    site: 49,
+                    container_idx: 209,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 64,
+                    container_idx: 45,
+                    key: 0,
+                    value: I32(2),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1229062019),
+                },
+                List {
+                    site: 73,
+                    container_idx: 0,
+                    key: 0,
                     value: Null,
                 },
-                Text {
-                    site: 124,
-                    container_idx: 124,
-                    pos: 124,
-                    value: 1566380156,
-                    is_del: true,
-                },
-                Text {
-                    site: 67,
-                    container_idx: 67,
-                    pos: 67,
-                    value: 4294918979,
-                    is_del: true,
-                },
-                SyncAll,
-                SyncAll,
                 List {
                     site: 0,
-                    container_idx: 10,
-                    key: 67,
+                    container_idx: 0,
+                    key: 0,
                     value: Null,
-                },
-                List {
-                    site: 123,
-                    container_idx: 123,
-                    key: 123,
-                    value: I32(2088565814),
                 },
             ],
         )

@@ -237,6 +237,7 @@ impl Container for ListContainer {
                     self.id.clone(),
                 ) {
                     let op = op.get_sliced();
+                    debug_log!("APPLY {:?}", &op);
                     match &op.content {
                         OpContent::Normal {
                             content: Content::List(op),
@@ -272,6 +273,7 @@ impl Container for ListContainer {
                             .slice(iter.slice.start as usize, iter.slice.end as usize);
                         for op in change.ops.iter() {
                             if op.container == self_idx {
+                                debug_log!("APPLY 1 {:?}", &op);
                                 match &op.content {
                                     OpContent::Normal {
                                         content: Content::List(op),
@@ -366,10 +368,8 @@ impl Container for ListContainer {
         // TODO: reduce computations
         let path = store.find_path(&self.head, &latest_head);
         debug_log!("BEFORE CHECKOUT");
-        // dbg!(&self.tracker);
         self.tracker.checkout(self.vv.clone());
         debug_log!("AFTER CHECKOUT");
-        // dbg!(&self.tracker);
         debug_log!(
             "[Stage 2]: Iterate path: {} from {} => {}",
             format!("{:?}", path.right).red(),

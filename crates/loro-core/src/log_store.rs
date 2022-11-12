@@ -95,6 +95,7 @@ impl LogStore {
 
     pub fn import(&mut self, mut changes: Vec<Change<RemoteOp>>) {
         let self_vv = self.vv();
+        // guarantee that changes are applied in causal order
         changes.sort_by_cached_key(|x| x.lamport);
         for change in changes
             .into_iter()
