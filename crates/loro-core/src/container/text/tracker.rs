@@ -153,16 +153,15 @@ impl Tracker {
         let mut cursors = Vec::with_capacity(spans.len());
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
-            self.head_vv.set_end(ID::new(*span.0, span.1.end));
+            let end_id = ID::new(*span.0, span.1.end);
+            self.head_vv.set_end(end_id);
             if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
                 if *all_end_ctr < span.1.end {
                     // there may be holes when there are multiple containers
                     *all_end_ctr = span.1.end;
                 }
-
-                if *all_end_ctr <= span.1.start {
-                    continue;
-                }
+            } else {
+                self.all_vv.set_end(end_id);
             }
 
             let IdSpanQueryResult { inserts, deletes } = self
