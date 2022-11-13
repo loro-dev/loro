@@ -472,10 +472,11 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
         })
         .is_err()
         {
-            return applied;
+            break;
         }
     }
 
+    println!("{}", applied.clone().table());
     applied
 }
 
@@ -556,7 +557,10 @@ pub fn minify_error(site_num: u8, actions: Vec<Action>) {
         actions.len(),
         minified.len()
     );
-    dbg!(minified);
+    dbg!(&minified);
+    if actions.len() > minified.len() {
+        minify_error(site_num, minified);
+    }
 }
 
 #[cfg(test)]
@@ -615,27 +619,53 @@ mod failed_tests {
                     site: 1,
                     container_idx: 0,
                     key: 0,
-                    value: I32(-11386928),
+                    value: Container(C::List),
                 },
-                Text {
-                    site: 3,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 51835,
-                    is_del: false,
-                },
-                Sync { from: 2, to: 3 },
                 List {
-                    site: 2,
+                    site: 4,
                     container_idx: 0,
                     key: 0,
-                    value: I32(1387113936),
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
                 },
                 List {
-                    site: 5,
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
                     container_idx: 0,
                     key: 0,
                     value: I32(1),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 4, to: 0 },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
+                    container_idx: 1,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
                 },
             ],
         )
@@ -645,33 +675,59 @@ mod failed_tests {
     #[test]
     fn case_1() {
         minify_error(
-            8,
+            5,
             vec![
                 List {
                     site: 1,
-                    container_idx: 246,
-                    key: 173,
-                    value: I32(-11386928),
-                },
-                Text {
-                    site: 123,
-                    container_idx: 123,
-                    pos: 123,
-                    value: 51835,
-                    is_del: false,
-                },
-                Sync { from: 42, to: 123 },
-                List {
-                    site: 82,
-                    container_idx: 173,
-                    key: 255,
-                    value: I32(1387113936),
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
                 },
                 List {
-                    site: 173,
-                    container_idx: 82,
-                    key: 82,
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 4, to: 0 },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
+                    container_idx: 1,
+                    key: 0,
                     value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
                 },
             ],
         )
