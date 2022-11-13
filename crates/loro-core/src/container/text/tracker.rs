@@ -132,11 +132,11 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    pub fn checkout(&mut self, vv: VersionVector) {
-        let diff = self.head_vv.diff(&vv);
+    pub fn checkout(&mut self, vv: &VersionVector) {
+        let diff = self.head_vv.diff(vv);
         self.retreat(&diff.left);
         self.forward(&diff.right);
-        debug_assert_eq!(self.head_vv, vv);
+        debug_assert_eq!(&self.head_vv, vv);
     }
 
     pub fn checkout_to_latest(&mut self) {

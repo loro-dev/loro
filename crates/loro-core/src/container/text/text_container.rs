@@ -22,7 +22,7 @@ use crate::{
     op::{Content, Op, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
-    LogStore, VersionVector,
+    LogStore,
 };
 
 use super::{
@@ -44,7 +44,6 @@ pub struct TextContainer {
     raw_str: StringPool,
     tracker: Tracker,
     head: SmallVec<[ID; 2]>,
-    vv: VersionVector,
 }
 
 impl TextContainer {
@@ -56,7 +55,6 @@ impl TextContainer {
             state: Default::default(),
             // TODO: should be eq to log_store frontier?
             head: Default::default(),
-            vv: Default::default(),
         }
     }
 
@@ -90,7 +88,6 @@ impl TextContainer {
         );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
-        self.vv = store.vv();
 
         Some(id)
     }
@@ -119,7 +116,6 @@ impl TextContainer {
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
-        self.vv = store.vv();
         Some(id)
     }
 
@@ -158,12 +154,13 @@ impl Container for TextContainer {
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
+        let vv = store.get_vv();
         if common_ancestors == self.head {
             let latest_head = smallvec![new_op_id];
             let path = store.find_path(&self.head, &latest_head);
             if path.right.len() == 1 {
                 // linear updates, we can apply them directly
-                let start = self.vv.get(&new_op_id.client_id).copied().unwrap_or(0);
+                let start = vv.get(&new_op_id.client_id).copied().unwrap_or(0);
                 for op in store.iter_ops_at_id_span(
                     IdSpan::new(new_op_id.client_id, start, new_op_id.counter + 1),
                     self.id.clone(),
@@ -186,7 +183,6 @@ impl Container for TextContainer {
                 }
 
                 self.head = latest_head;
-                self.vv.set_last(new_op_id);
                 return;
             } else {
                 let path: Vec<_> = store.iter_partial(&self.head, path.right).collect();
@@ -220,14 +216,13 @@ impl Container for TextContainer {
                     }
 
                     self.head = latest_head;
-                    self.vv.set_last(new_op_id);
                     return;
                 }
             }
         }
 
         let path_to_head = store.find_path(&common_ancestors, &self.head);
-        let mut common_ancestors_vv = self.vv.clone();
+        let mut common_ancestors_vv = vv.clone();
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.retain(|x| !common_ancestors_vv.includes_id(*x));
@@ -287,7 +282,7 @@ impl Container for TextContainer {
         let path = store.find_path(&self.head, &latest_head);
         debug_log!("BEFORE CHECKOUT");
         // dbg!(&self.tracker);
-        self.tracker.checkout(self.vv.clone());
+        self.tracker.checkout(vv);
         debug_log!("AFTER CHECKOUT");
         // dbg!(&self.tracker);
         debug_log!(
@@ -317,7 +312,6 @@ impl Container for TextContainer {
         );
 
         self.head = latest_head;
-        self.vv.set_last(new_op_id);
         debug_log!("--------------------------------");
     }
 
