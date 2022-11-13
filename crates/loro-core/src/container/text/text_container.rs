@@ -372,7 +372,15 @@ impl Container for TextContainer {
 }
 
 pub struct Text {
-    text: Arc<Mutex<ContainerInstance>>,
+    instance: Arc<Mutex<ContainerInstance>>,
+}
+
+impl Clone for Text {
+    fn clone(&self) -> Self {
+        Self {
+            instance: Arc::clone(&self.instance),
+        }
+    }
 }
 
 impl Text {
@@ -397,7 +405,7 @@ impl ContainerWrapper for Text {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.text.lock().unwrap();
+        let mut container_instance = self.instance.lock().unwrap();
         let map = container_instance.as_text_mut().unwrap();
         f(map)
     }
@@ -405,6 +413,6 @@ impl ContainerWrapper for Text {
 
 impl From<Arc<Mutex<ContainerInstance>>> for Text {
     fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
-        Text { text }
+        Text { instance: text }
     }
 }

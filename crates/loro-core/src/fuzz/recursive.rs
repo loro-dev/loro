@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
@@ -41,11 +43,8 @@ pub enum Action {
 struct Actor {
     site: ClientID,
     loro: LoroCore,
-    // TODO: use set and merge
     map_containers: Vec<Map>,
-    // TODO: use set and merge
     list_containers: Vec<List>,
-    // TODO: use set and merge
     text_containers: Vec<Text>,
 }
 
@@ -219,20 +218,115 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
-                let a = &mut a.loro;
-                let b = &mut b.loro;
-                a.import(b.export(a.vv()));
-                b.import(a.export(b.vv()));
+                let mut visited = HashSet::new();
+                a.map_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+                a.list_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+                a.text_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+
+                a.loro.import(b.loro.export(a.loro.vv()));
+                b.loro.import(a.loro.export(b.loro.vv()));
+
+                b.map_containers.iter().for_each(|x| {
+                    let id = x.id();
+                    if !visited.contains(&id) {
+                        visited.insert(id.clone());
+                        a.map_containers.push(a.loro.get_map(id))
+                    }
+                });
+                b.list_containers.iter().for_each(|x| {
+                    let id = x.id();
+                    if !visited.contains(&id) {
+                        visited.insert(id.clone());
+                        a.list_containers.push(a.loro.get_list(id))
+                    }
+                });
+                b.text_containers.iter().for_each(|x| {
+                    let id = x.id();
+                    if !visited.contains(&id) {
+                        visited.insert(id.clone());
+                        a.text_containers.push(a.loro.get_text(id))
+                    }
+                });
+
+                b.map_containers = a
+                    .map_containers
+                    .iter()
+                    .map(|x| b.loro.get_map(x.id()))
+                    .collect();
+                b.list_containers = a
+                    .list_containers
+                    .iter()
+                    .map(|x| b.loro.get_list(x.id()))
+                    .collect();
+                b.text_containers = a
+                    .text_containers
+                    .iter()
+                    .map(|x| b.loro.get_text(x.id()))
+                    .collect();
             }
             Action::SyncAll => {
+                let mut visited = HashSet::new();
+                let a = &mut self[0];
+                a.map_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+                a.list_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+                a.text_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
                     a.loro.import(b.loro.export(a.loro.vv()));
+                    b.map_containers.iter().for_each(|x| {
+                        let id = x.id();
+                        if !visited.contains(&id) {
+                            visited.insert(id.clone());
+                            a.map_containers.push(a.loro.get_map(id))
+                        }
+                    });
+                    b.list_containers.iter().for_each(|x| {
+                        let id = x.id();
+                        if !visited.contains(&id) {
+                            visited.insert(id.clone());
+                            a.list_containers.push(a.loro.get_list(id))
+                        }
+                    });
+                    b.text_containers.iter().for_each(|x| {
+                        let id = x.id();
+                        if !visited.contains(&id) {
+                            visited.insert(id.clone());
+                            a.text_containers.push(a.loro.get_text(id))
+                        }
+                    });
                 }
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
                     b.loro.import(a.loro.export(b.loro.vv()));
+                    b.map_containers = a
+                        .map_containers
+                        .iter()
+                        .map(|x| b.loro.get_map(x.id()))
+                        .collect();
+                    b.list_containers = a
+                        .list_containers
+                        .iter()
+                        .map(|x| b.loro.get_list(x.id()))
+                        .collect();
+                    b.text_containers = a
+                        .text_containers
+                        .iter()
+                        .map(|x| b.loro.get_text(x.id()))
+                        .collect();
                 }
             }
             Action::Map {
@@ -422,6 +516,35 @@ mod failed_tests {
                 key: 73,
                 value: Container(ContainerType::Text),
             }],
+        )
+    }
+
+    #[test]
+    fn case_2() {
+        test_multi_sites(
+            3,
+            vec![
+                Map {
+                    site: 16,
+                    container_idx: 74,
+                    key: 136,
+                    value: I32(1395990695),
+                },
+                Sync { from: 105, to: 39 },
+                Map {
+                    site: 30,
+                    container_idx: 16,
+                    key: 97,
+                    value: Null,
+                },
+                Text {
+                    site: 114,
+                    container_idx: 62,
+                    pos: 227,
+                    value: 58573,
+                    is_del: true,
+                },
+            ],
         )
     }
 

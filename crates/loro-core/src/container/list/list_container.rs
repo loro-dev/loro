@@ -27,7 +27,7 @@ use crate::{
     op::{Content, Op, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
-    InternalString, LogStore, VersionVector,
+    LogStore, VersionVector,
 };
 
 #[derive(Debug)]
@@ -453,7 +453,15 @@ impl Container for ListContainer {
 }
 
 pub struct List {
-    text: Arc<Mutex<ContainerInstance>>,
+    instance: Arc<Mutex<ContainerInstance>>,
+}
+
+impl Clone for List {
+    fn clone(&self) -> Self {
+        Self {
+            instance: Arc::clone(&self.instance),
+        }
+    }
 }
 
 impl List {
@@ -495,7 +503,7 @@ impl ContainerWrapper for List {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.text.lock().unwrap();
+        let mut container_instance = self.instance.lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
         f(list)
     }
@@ -503,6 +511,6 @@ impl ContainerWrapper for List {
 
 impl From<Arc<Mutex<ContainerInstance>>> for List {
     fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
-        List { text }
+        List { instance: text }
     }
 }

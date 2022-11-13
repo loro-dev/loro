@@ -198,7 +198,15 @@ impl Container for MapContainer {
 }
 
 pub struct Map {
-    map: Arc<Mutex<ContainerInstance>>,
+    instance: Arc<Mutex<ContainerInstance>>,
+}
+
+impl Clone for Map {
+    fn clone(&self) -> Self {
+        Self {
+            instance: Arc::clone(&self.instance),
+        }
+    }
 }
 
 impl Map {
@@ -232,7 +240,7 @@ impl ContainerWrapper for Map {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.map.lock().unwrap();
+        let mut container_instance = self.instance.lock().unwrap();
         let map = container_instance.as_map_mut().unwrap();
         f(map)
     }
@@ -240,6 +248,6 @@ impl ContainerWrapper for Map {
 
 impl From<Arc<Mutex<ContainerInstance>>> for Map {
     fn from(map: Arc<Mutex<ContainerInstance>>) -> Self {
-        Map { map }
+        Map { instance: map }
     }
 }
