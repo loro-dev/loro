@@ -19,7 +19,7 @@ fuzz-long TARGET:
 quick-fuzz:
   cargo fuzz run yata -- -max_total_time=10 -max_len=1000 & 
   cargo fuzz run text -- -max_total_time=10 -max_len=1000 &
-  cargo fuzz run text -- -max_total_time=10 -max_len=1000
+  cargo fuzz run recursive -- -max_total_time=10 -max_len=1000
 
 flame:
   cargo flamegraph --example text_sync --features=fuzzing --root
