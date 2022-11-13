@@ -240,7 +240,7 @@ impl Container for TextContainer {
             &self.head
         );
 
-        let head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
+        let tracker_head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
             debug_log!("NewTracker");
@@ -253,9 +253,9 @@ impl Container for TextContainer {
         };
 
         // stage 1
-        let path = store.find_path(&head, &latest_head);
+        let path = store.find_path(&tracker_head, &latest_head);
         debug_log!("path={:?}", &path.right);
-        for iter in store.iter_partial(&head, path.right) {
+        for iter in store.iter_partial(&tracker_head, path.right) {
             // TODO: avoid this clone
             let change = iter
                 .data
