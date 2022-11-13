@@ -52,7 +52,6 @@ wasm = ["wasm-bindgen", "js-sys"]
 json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
 fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
-proptest = ["fuzzing"]
 
 [[bench]]
 name = "text"

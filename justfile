@@ -9,7 +9,7 @@ test-all:
   just _quickfuzz
 
 test-prop:
-  cargo nextest run --features=proptest
+  RUSTFLAGS="--cfg=proptest" cargo nextest run --features=fuzzing
   
 _quickfuzz:
   cd crates/loro-core && just quick-fuzz
