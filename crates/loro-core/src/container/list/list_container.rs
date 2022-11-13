@@ -109,7 +109,7 @@ impl ListContainer {
         );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
+        self.vv = store.get_vv().clone();
     }
 
     pub fn insert<C: Context, V: Into<LoroValue>>(
@@ -139,7 +139,7 @@ impl ListContainer {
         );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
+        self.vv = store.get_vv().clone();
 
         Some(id)
     }
@@ -168,7 +168,7 @@ impl ListContainer {
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
+        self.vv = store.get_vv().clone();
         Some(id)
     }
 

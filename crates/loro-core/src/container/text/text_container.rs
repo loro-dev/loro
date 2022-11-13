@@ -16,7 +16,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    dag::DagUtils,
+    dag::{Dag, DagUtils},
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, OpContent, RemoteOp},
@@ -65,6 +65,10 @@ impl TextContainer {
             return None;
         }
 
+        if self.state.len() < pos {
+            panic!("insert index out of range");
+        }
+
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
@@ -86,7 +90,7 @@ impl TextContainer {
         );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
+        self.vv = store.vv();
 
         Some(id)
     }
@@ -115,7 +119,7 @@ impl TextContainer {
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
+        self.vv = store.vv();
         Some(id)
     }
 

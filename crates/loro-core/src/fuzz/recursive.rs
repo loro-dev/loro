@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -406,7 +406,7 @@ impl Actionable for Vec<Actor> {
                 if *is_del {
                     container.delete(&actor.loro, *pos as usize, *value as usize);
                 } else {
-                    container.insert(&actor.loro, *pos as usize, &(value.to_string() + " "));
+                    container.insert(&actor.loro, *pos as usize, &(format!("[{}]", value)));
                 }
             }
         }
@@ -448,7 +448,38 @@ fn check_synced(sites: &mut [Actor]) {
     }
 }
 
-pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
+pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        sites.push(Actor {
+            site: i as u64,
+            loro: LoroCore::new(Default::default(), Some(i as u64)),
+            map_containers: Default::default(),
+            list_containers: Default::default(),
+            text_containers: Default::default(),
+        });
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        let sites_ptr: *mut Vec<_> = &mut sites as *mut _;
+        if std::panic::catch_unwind(|| {
+            // SAFETY: Test
+            let sites = unsafe { &mut *sites_ptr };
+            sites.apply_action(&action.clone());
+        })
+        .is_err()
+        {
+            return applied;
+        }
+    }
+
+    applied
+}
+
+pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor {
@@ -473,10 +504,66 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
     check_synced(&mut sites);
 }
 
+pub fn minify_error(site_num: u8, actions: Vec<Action>) {
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+    }));
+
+    if std::panic::catch_unwind(|| test_multi_sites(site_num, &mut actions.clone())).is_ok() {
+        println!("No Error Found");
+        return;
+    }
+
+    let mut minified = actions.clone();
+    let mut candidates = Vec::new();
+    for i in 0..actions.len() {
+        let mut new = actions.clone();
+        new.remove(i);
+        candidates.push(new);
+    }
+
+    println!("Minifying...");
+    let start = Instant::now();
+    while let Some(candidate) = candidates.pop() {
+        if std::panic::catch_unwind(|| test_multi_sites(site_num, &mut candidate.clone())).is_err()
+        {
+            for i in 0..candidate.len() {
+                let mut new = candidate.clone();
+                new.remove(i);
+                candidates.push(new);
+            }
+            if candidate.len() < minified.len() {
+                minified = candidate;
+                println!("New min len={}", minified.len());
+            }
+            if candidates.len() > 40 {
+                candidates.drain(0..30);
+            }
+        }
+        if start.elapsed().as_secs() > 10 {
+            if minified.len() <= 4 {
+                break;
+            }
+        }
+        if start.elapsed().as_secs() > 60 {
+            break;
+        }
+    }
+
+    let minified = normalize(site_num, &mut minified);
+    println!(
+        "Old Length {}, New Length {}",
+        actions.len(),
+        minified.len()
+    );
+    dbg!(minified);
+}
+
 #[cfg(test)]
 mod failed_tests {
     use crate::ContainerType;
 
+    use super::minify_error;
     use super::test_multi_sites;
     use super::Action;
     use super::Action::*;
@@ -486,7 +573,7 @@ mod failed_tests {
     fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
         let xs = u.arbitrary::<Vec<Action>>()?;
         if let Err(e) = std::panic::catch_unwind(|| {
-            test_multi_sites(site_num, xs.clone());
+            test_multi_sites(site_num, &mut xs.clone());
         }) {
             dbg!(xs);
             println!("{:?}", e);
@@ -510,7 +597,7 @@ mod failed_tests {
     fn case_0() {
         test_multi_sites(
             8,
-            vec![Map {
+            &mut [Map {
                 site: 73,
                 container_idx: 73,
                 key: 73,
@@ -523,197 +610,7 @@ mod failed_tests {
     fn case_2() {
         test_multi_sites(
             3,
-            vec![
-                Map {
-                    site: 16,
-                    container_idx: 74,
-                    key: 136,
-                    value: I32(1395990695),
-                },
-                Sync { from: 105, to: 39 },
-                Map {
-                    site: 30,
-                    container_idx: 16,
-                    key: 97,
-                    value: Null,
-                },
-                Text {
-                    site: 114,
-                    container_idx: 62,
-                    pos: 227,
-                    value: 58573,
-                    is_del: true,
-                },
-            ],
-        )
-    }
-
-    use super::ContainerType as C;
-    #[test]
-    fn case_1() {
-        test_multi_sites(
-            8,
-            vec![
-                Text {
-                    site: 66,
-                    container_idx: 132,
-                    pos: 183,
-                    value: 112,
-                    is_del: false,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                SyncAll,
-                Text {
-                    site: 125,
-                    container_idx: 146,
-                    pos: 146,
-                    value: 37522,
-                    is_del: false,
-                },
-                Text {
-                    site: 109,
-                    container_idx: 123,
-                    pos: 123,
-                    value: 26135,
-                    is_del: true,
-                },
-                Text {
-                    site: 123,
-                    container_idx: 123,
-                    pos: 123,
-                    value: 31611,
-                    is_del: true,
-                },
-                Sync { from: 188, to: 188 },
-                Text {
-                    site: 118,
-                    container_idx: 118,
-                    pos: 118,
-                    value: 30326,
-                    is_del: false,
-                },
-                Sync { from: 123, to: 136 },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 136,
-                    value: I32(-2004318072),
-                },
-                Text {
-                    site: 136,
-                    container_idx: 136,
-                    pos: 136,
-                    value: 34952,
-                    is_del: false,
-                },
-                Text {
-                    site: 136,
-                    container_idx: 136,
-                    pos: 136,
-                    value: 31624,
-                    is_del: true,
-                },
-                Text {
-                    site: 123,
-                    container_idx: 123,
-                    pos: 65,
-                    value: 31611,
-                    is_del: false,
-                },
-                Text {
-                    site: 106,
-                    container_idx: 106,
-                    pos: 106,
-                    value: 27242,
-                    is_del: false,
-                },
-                Text {
-                    site: 106,
-                    container_idx: 106,
-                    pos: 106,
-                    value: 27242,
-                    is_del: true,
-                },
-                Text {
-                    site: 106,
-                    container_idx: 106,
-                    pos: 106,
-                    value: 37482,
-                    is_del: false,
-                },
-                List {
-                    site: 146,
-                    container_idx: 146,
-                    key: 146,
-                    value: I32(-1835887982),
-                },
-                Text {
-                    site: 146,
-                    container_idx: 146,
-                    pos: 146,
-                    value: 37522,
-                    is_del: false,
-                },
-                Text {
-                    site: 124,
-                    container_idx: 124,
-                    pos: 124,
-                    value: 31868,
-                    is_del: false,
-                },
-                Text {
-                    site: 124,
-                    container_idx: 124,
-                    pos: 124,
-                    value: 31868,
-                    is_del: false,
-                },
-                Map {
-                    site: 124,
-                    container_idx: 124,
-                    key: 124,
-                    value: I32(2088533116),
-                },
-                Text {
-                    site: 124,
-                    container_idx: 124,
-                    pos: 124,
-                    value: 31868,
-                    is_del: false,
-                },
-                Text {
-                    site: 63,
-                    container_idx: 235,
-                    pos: 235,
-                    value: 60395,
-                    is_del: true,
-                },
-                SyncAll,
-                Text {
-                    site: 251,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 37398,
-                    is_del: false,
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
+            &mut [
                 Map {
                     site: 0,
                     container_idx: 0,
@@ -722,59 +619,77 @@ mod failed_tests {
                 },
                 SyncAll,
                 Text {
-                    site: 125,
-                    container_idx: 146,
-                    pos: 146,
-                    value: 37522,
-                    is_del: false,
-                },
-                Text {
-                    site: 109,
-                    container_idx: 123,
-                    pos: 123,
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
                     value: 26135,
-                    is_del: true,
-                },
-                Text {
-                    site: 123,
-                    container_idx: 123,
-                    pos: 123,
-                    value: 31611,
-                    is_del: true,
-                },
-                Sync { from: 188, to: 188 },
-                Text {
-                    site: 118,
-                    container_idx: 118,
-                    pos: 118,
-                    value: 30326,
                     is_del: false,
                 },
-                Sync { from: 123, to: 136 },
-                Map {
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 31611,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 0 },
+                Text {
                     site: 0,
                     container_idx: 0,
-                    key: 136,
-                    value: I32(-2004318072),
-                },
-                Text {
-                    site: 136,
-                    container_idx: 136,
-                    pos: 136,
+                    pos: 4,
                     value: 34952,
                     is_del: false,
                 },
                 Text {
-                    site: 136,
-                    container_idx: 136,
-                    pos: 136,
-                    value: 31624,
-                    is_del: true,
+                    site: 1,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 31611,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    use super::ContainerType as C;
+    #[test]
+    fn case_1() {
+        minify_error(
+            3,
+            vec![
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(2105376125),
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 26135,
+                    is_del: false,
                 },
                 Text {
-                    site: 123,
-                    container_idx: 123,
-                    pos: 65,
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 31611,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 0 },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 4,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 5,
                     value: 31611,
                     is_del: false,
                 },
