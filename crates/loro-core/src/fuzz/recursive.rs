@@ -565,6 +565,7 @@ pub fn minify_error(site_num: u8, actions: Vec<Action>) {
 
 #[cfg(test)]
 mod failed_tests {
+    use crate::tests::PROPTEST_FACTOR_10;
     use crate::ContainerType;
 
     use super::minify_error;
@@ -589,12 +590,16 @@ mod failed_tests {
 
     #[test]
     fn test() {
-        arbtest::builder().budget_ms(50_000).run(|u| prop(u, 2))
+        arbtest::builder()
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .run(|u| prop(u, 2))
     }
 
     #[test]
     fn test_3sites() {
-        arbtest::builder().budget_ms(50_000).run(|u| prop(u, 3))
+        arbtest::builder()
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .run(|u| prop(u, 3))
     }
 
     #[test]
