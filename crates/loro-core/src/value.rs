@@ -142,10 +142,30 @@ impl<'de> Deserialize<'de> for LoroValue {
 }
 
 impl LoroValue {
-    pub(crate) fn resolve<C: Context>(&self, ctx: &C) -> Option<LoroValue> {
+    pub(crate) fn resolve_deep<C: Context>(&self, ctx: &C) -> Option<LoroValue> {
         if let Some(id) = self.as_unresolved() {
-            ctx.get_container(id)
-                .map(|container| container.lock().unwrap().get_value())
+            ctx.get_container(id).map(|container| {
+                let mut value = container.lock().unwrap().get_value();
+                match &mut value {
+                    LoroValue::List(list) => {
+                        for v in list.iter_mut() {
+                            if v.as_unresolved().is_some() {
+                                *v = v.resolve_deep(ctx).unwrap();
+                            }
+                        }
+                    }
+                    LoroValue::Map(map) => {
+                        for v in map.values_mut() {
+                            if v.as_unresolved().is_some() {
+                                *v = v.resolve_deep(ctx).unwrap();
+                            }
+                        }
+                    }
+                    LoroValue::Unresolved(_) => unreachable!(),
+                    _ => {}
+                }
+                value
+            })
         } else {
             None
         }

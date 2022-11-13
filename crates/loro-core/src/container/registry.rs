@@ -262,14 +262,14 @@ pub trait ContainerWrapper {
             LoroValue::List(list) => {
                 list.iter_mut().for_each(|x| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve(ctx).unwrap();
+                        *x = x.resolve_deep(ctx).unwrap();
                     }
                 });
             }
             LoroValue::Map(map) => {
                 map.iter_mut().for_each(|(_, x)| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve(ctx).unwrap();
+                        *x = x.resolve_deep(ctx).unwrap();
                     }
                 });
             }

@@ -5,6 +5,26 @@ use loro_core::{LoroCore, LoroValue};
 
 #[test]
 #[cfg(feature = "json")]
+fn example() {
+    use loro_core::ContainerType;
+
+    let mut doc = LoroCore::default();
+    let mut list = doc.get_list("list");
+    list.insert(&doc, 0, 123);
+    let map_id = list.insert_obj(&doc, 1, ContainerType::Map);
+    let mut map = doc.get_map(map_id);
+    let text = map.insert_obj(&doc, "map_b", ContainerType::Text);
+    let mut text = doc.get_text(text);
+    text.insert(&doc, 0, "world!");
+    text.insert(&doc, 0, "hello ");
+    assert_eq!(
+        r#"[123,{"map_b":"hello world!"}]"#,
+        list.get_value_deep(&doc).to_json()
+    );
+}
+
+#[test]
+#[cfg(feature = "json")]
 fn list() {
     let mut loro_a = LoroCore::default();
     let mut loro_b = LoroCore::default();
