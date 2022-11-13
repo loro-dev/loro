@@ -609,43 +609,33 @@ mod failed_tests {
     #[test]
     fn case_2() {
         test_multi_sites(
-            3,
+            8,
             &mut [
-                Map {
-                    site: 0,
+                List {
+                    site: 1,
                     container_idx: 0,
                     key: 0,
-                    value: I32(2105376125),
+                    value: I32(-11386928),
                 },
-                SyncAll,
                 Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 51835,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                List {
                     site: 2,
                     container_idx: 0,
-                    pos: 0,
-                    value: 26135,
-                    is_del: false,
+                    key: 0,
+                    value: I32(1387113936),
                 },
-                Text {
-                    site: 1,
+                List {
+                    site: 5,
                     container_idx: 0,
-                    pos: 0,
-                    value: 31611,
-                    is_del: false,
-                },
-                Sync { from: 1, to: 0 },
-                Text {
-                    site: 0,
-                    container_idx: 0,
-                    pos: 4,
-                    value: 34952,
-                    is_del: false,
-                },
-                Text {
-                    site: 1,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 31611,
-                    is_del: false,
+                    key: 0,
+                    value: I32(1),
                 },
             ],
         )
@@ -655,43 +645,33 @@ mod failed_tests {
     #[test]
     fn case_1() {
         minify_error(
-            3,
+            8,
             vec![
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(2105376125),
-                },
-                SyncAll,
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 26135,
-                    is_del: false,
-                },
-                Text {
+                List {
                     site: 1,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 31611,
-                    is_del: false,
-                },
-                Sync { from: 1, to: 0 },
-                Text {
-                    site: 0,
-                    container_idx: 0,
-                    pos: 4,
-                    value: 34952,
-                    is_del: false,
+                    container_idx: 246,
+                    key: 173,
+                    value: I32(-11386928),
                 },
                 Text {
-                    site: 1,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 31611,
+                    site: 123,
+                    container_idx: 123,
+                    pos: 123,
+                    value: 51835,
                     is_del: false,
+                },
+                Sync { from: 42, to: 123 },
+                List {
+                    site: 82,
+                    container_idx: 173,
+                    key: 255,
+                    value: I32(1387113936),
+                },
+                List {
+                    site: 173,
+                    container_idx: 82,
+                    key: 82,
+                    value: Null,
                 },
             ],
         )

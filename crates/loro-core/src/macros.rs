@@ -32,8 +32,8 @@ macro_rules! debug_log {
         if cfg!(test) {
             use ::colored::Colorize;
             let line = line!().to_string();
-            // print!("{}:{}\t", file!().purple(), line.purple());
-            // println!($($arg)*);
+            print!("{}:{}\t", file!().purple(), line.purple());
+            println!($($arg)*);
         }
     }};
 }
