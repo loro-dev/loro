@@ -1,7 +1,7 @@
-use std::{fmt::Display, ops::Range};
+use std::fmt::Display;
 
 use crate::{
-    container::text::text_content::{ListSlice, SliceRange},
+    container::text::text_content::SliceRange,
     id::Counter,
     span::{HasCounter, HasCounterSpan, IdSpan},
     ContentType, InsertContentTrait, ID,
@@ -193,7 +193,7 @@ impl HasLength for YSpan {
 pub mod test {
     use crate::{
         container::text::text_content::ListSlice,
-        op::{InsertContent, OpContent},
+        op::{Content, OpContent},
         ContentType, Op, ID,
     };
     use rle::{HasLength, RleVecWithIndex};
@@ -206,12 +206,12 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(1),
+                    slice: ListSlice::unknown_range(1),
                 })),
             },
             5,
@@ -219,12 +219,12 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 1)),
                     origin_right: None,
                     id: ID::new(0, 2),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(1),
+                    slice: ListSlice::unknown_range(1),
                 })),
             },
             5,
@@ -243,12 +243,12 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 1),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: None,
                     id: ID::new(0, 1),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(4),
+                    slice: ListSlice::unknown_range(4),
                 })),
             },
             5,
@@ -256,12 +256,12 @@ pub mod test {
         vec.push(Op::new(
             ID::new(0, 2),
             OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(YSpan {
+                content: Content::Dyn(Box::new(YSpan {
                     origin_left: Some(ID::new(0, 0)),
                     origin_right: Some(ID::new(0, 1)),
                     id: ID::new(0, 5),
                     status: Default::default(),
-                    slice: ListSlice::UnknownRange(4),
+                    slice: ListSlice::unknown_range(4),
                 })),
             },
             5,

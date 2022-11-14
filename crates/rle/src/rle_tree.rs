@@ -268,7 +268,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, SmallVec<[T; 2]>)>, _> =
+        let mut updates_map: HashMap<NonNull<_>, Vec<(_, SmallVec<[T; 2]>)>, _> =
             FxHashMap::default();
         for cursor in cursors {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
@@ -300,8 +300,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T, &Arg),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut cursor_map: HashMap<(NonNull<_>, usize), Vec<(&UnsafeCursor<T, A>, &Arg)>, _> =
-            FxHashMap::default();
+        let mut cursor_map: HashMap<_, Vec<(&UnsafeCursor<T, A>, &Arg)>, _> = FxHashMap::default();
         for (i, arg) in args.iter().enumerate() {
             let cursor = &cursor_groups[i];
             cursor_map
@@ -310,8 +309,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .push((cursor, arg));
         }
 
-        let mut updates_map: HashMap<NonNull<_>, Vec<(usize, SmallVec<[T; 2]>)>, _> =
-            FxHashMap::default();
+        let mut updates_map: HashMap<_, Vec<(_, SmallVec<[T; 2]>)>, _> = FxHashMap::default();
         for ((mut leaf, index), args) in cursor_map.iter() {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };
@@ -335,6 +333,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
+    #[allow(clippy::type_complexity)]
     fn update_with_gathered_map<F, M>(
         &mut self,
         iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, SmallVec<[T; 2]>)>, M>,

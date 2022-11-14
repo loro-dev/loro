@@ -9,6 +9,7 @@
 pub mod change;
 pub mod configure;
 pub mod container;
+pub mod context;
 pub mod dag;
 pub mod id;
 pub mod log_store;
@@ -35,10 +36,10 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op, OpType};
 
 pub(crate) type InternalString = DefaultAtom;
 
-pub use container::{Container, ContainerType};
+pub use container::{list::List, map::Map, text::Text, Container, ContainerType};
 pub use log_store::LogStore;
-pub use loro::*;
-pub use value::{InsertValue, LoroValue};
+pub use loro::LoroCore;
+pub use value::LoroValue;
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;

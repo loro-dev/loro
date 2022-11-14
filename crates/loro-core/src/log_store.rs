@@ -4,8 +4,7 @@
 mod iter;
 use std::{
     marker::PhantomPinned,
-    ops::Range,
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -17,13 +16,16 @@ use smallvec::SmallVec;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{manager::ContainerManager, Container, ContainerID},
+    container::{
+        registry::{ContainerInstance, ContainerRegistry},
+        Container, ContainerID,
+    },
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::RemoteOp,
+    op::{Content, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    Lamport, Op, Timestamp, VersionVector, ID,
+    ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
@@ -64,36 +66,24 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     frontier: SmallVec<[ID; 2]>,
     /// CRDT container manager
-    pub(crate) container: Weak<RwLock<ContainerManager>>,
-    to_self: Weak<RwLock<LogStore>>,
-    container_to_idx: FxHashMap<ContainerID, u32>,
-    idx_to_container: Vec<ContainerID>,
+    pub(crate) reg: ContainerRegistry,
     _pin: PhantomPinned,
 }
 
 impl LogStore {
-    pub(crate) fn new(
-        mut cfg: Configure,
-        client_id: Option<ClientID>,
-        container: Weak<RwLock<ContainerManager>>,
-    ) -> Arc<RwLock<Self>> {
+    pub(crate) fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
-        Arc::new_cyclic(|x| {
-            RwLock::new(Self {
-                cfg,
-                this_client_id,
-                changes: FxHashMap::default(),
-                latest_lamport: 0,
-                latest_timestamp: 0,
-                frontier: Default::default(),
-                container,
-                to_self: x.clone(),
-                vv: Default::default(),
-                idx_to_container: Default::default(),
-                container_to_idx: Default::default(),
-                _pin: PhantomPinned,
-            })
-        })
+        Arc::new(RwLock::new(Self {
+            cfg,
+            this_client_id,
+            changes: FxHashMap::default(),
+            latest_lamport: 0,
+            latest_timestamp: 0,
+            frontier: Default::default(),
+            vv: Default::default(),
+            reg: ContainerRegistry::new(),
+            _pin: PhantomPinned,
+        }))
     }
 
     #[inline]
@@ -105,6 +95,7 @@ impl LogStore {
 
     pub fn import(&mut self, mut changes: Vec<Change<RemoteOp>>) {
         let self_vv = self.vv();
+        // guarantee that changes are applied in causal order
         changes.sort_by_cached_key(|x| x.lamport);
         for change in changes
             .into_iter()
@@ -148,18 +139,13 @@ impl LogStore {
         }
     }
 
-    fn change_to_imported_format(
-        &mut self,
-        container_manager: &mut ContainerManager,
-        change: Change<RemoteOp>,
-    ) -> Change {
+    fn change_to_imported_format(&mut self, change: Change<RemoteOp>) -> Change {
         let mut new_ops = RleVec::new();
         for mut op in change.ops.into_iter() {
-            let container = container_manager
-                .get_or_create(&op.container, self.to_self.clone())
-                .unwrap();
+            let container = self.reg.get_or_create(&op.container);
+            let mut container = container.lock().unwrap();
             container.to_import(&mut op);
-            self.get_or_create_container_idx(&op.container);
+            drop(container);
             new_ops.push(op.convert(self));
         }
 
@@ -174,13 +160,10 @@ impl LogStore {
     }
 
     fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
-        let upgraded = self.container.upgrade().unwrap();
-        let container_manager = upgraded.read().unwrap();
         let mut ops = RleVec::new();
         for mut op in change.ops.into_iter() {
-            let container = container_manager
-                .get(&self.idx_to_container[op.container as usize])
-                .unwrap();
+            let container = self.reg.get_by_idx(op.container).unwrap();
+            let container = container.lock().unwrap();
             container.to_export(&mut op);
             ops.push(op.convert(self));
         }
@@ -193,6 +176,25 @@ impl LogStore {
             timestamp: change.timestamp,
             break_points: change.break_points,
         }
+    }
+
+    pub(crate) fn create_container(
+        &mut self,
+        container_type: ContainerType,
+        parent: ContainerID,
+    ) -> ContainerID {
+        let id = self.next_id();
+        let container_id = ContainerID::new_normal(id, container_type);
+        let parent_idx = self.get_container_idx(&parent).unwrap();
+        self.append_local_ops(&[Op::new(
+            id,
+            OpContent::Normal {
+                content: Content::Container(container_id.clone()),
+            },
+            parent_idx,
+        )]);
+        self.reg.get_or_create(&container_id);
+        container_id
     }
 
     #[inline(always)]
@@ -288,6 +290,7 @@ impl LogStore {
             return;
         }
 
+        debug_log!("Client {} Apply {:?}", self.this_client_id, &change);
         for dep in &change.deps {
             if !self.contains(*dep) {
                 unimplemented!("need impl pending changes");
@@ -295,15 +298,14 @@ impl LogStore {
         }
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let upgraded = self.container.upgrade().unwrap();
-        let mut container_manager = upgraded.write().unwrap();
-        let change = self.change_to_imported_format(&mut container_manager, change);
-        let v = self
+        let change = self.change_to_imported_format(change);
+        let changes = self
             .changes
             .entry(change.id.client_id)
             .or_insert_with(RleVecWithIndex::new);
-        v.push(change);
-        let change = v.vec().last().unwrap().clone();
+        changes.push(change);
+        // TODO: avoid this clone?
+        let change = changes.vec().last().unwrap().clone();
 
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, and updated self vv
@@ -313,16 +315,10 @@ impl LogStore {
         }
 
         for container in set {
-            let container = container_manager
-                .get_or_create(
-                    &self.idx_to_container[*container as usize],
-                    self.to_self.clone(),
-                )
-                .unwrap();
+            let mut container = self.reg.get_by_idx(*container).unwrap().lock().unwrap();
             container.apply(change.id_span(), self);
         }
 
-        drop(container_manager);
         self.vv.set_end(change.id_end());
         self.update_frontier(&change.deps, &[change.id_last()]);
 
@@ -395,25 +391,31 @@ impl LogStore {
                 .collect::<Vec<_>>()
                 .join(", "),
         );
+
+        self.reg.debug_inspect();
     }
 
+    // TODO: remove
+    #[inline(always)]
     pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<ContainerIdx> {
-        self.container_to_idx.get(container).copied()
+        self.reg.get_idx(container)
+    }
+
+    #[inline(always)]
+    pub fn get_or_create_container(
+        &mut self,
+        container: &ContainerID,
+    ) -> &Arc<Mutex<ContainerInstance>> {
+        self.reg.get_or_create(container)
+    }
+
+    #[inline(always)]
+    pub fn get_container(&self, container: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.reg.get(container)
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
-        if let Some(idx) = self.container_to_idx.get(container) {
-            *idx
-        } else {
-            let idx = self.container_to_idx.len() as u32;
-            self.container_to_idx.insert(container.clone(), idx);
-            self.idx_to_container.push(container.clone());
-            idx
-        }
-    }
-
-    pub(crate) fn get_container_id(&self, container: u32) -> &ContainerID {
-        &self.idx_to_container[container as usize]
+        self.reg.get_or_create_container_idx(container)
     }
 }
 
@@ -444,7 +446,7 @@ fn check_import_change_valid(change: &Change<RemoteOp>) {
                 .and_then(|x| x.as_list())
                 .and_then(|x| x.as_insert())
             {
-                assert!(slice.as_raw_str().is_some())
+                assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
             }
         }
     }

@@ -1,4 +1,6 @@
 pub(crate) mod string_pool;
-pub mod text_container;
+mod text_container;
+pub use text_container::Text;
+pub(crate) use text_container::TextContainer;
 pub mod text_content;
 pub mod tracker;

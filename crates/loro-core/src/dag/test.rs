@@ -647,7 +647,7 @@ mod find_path {
 
         #[test]
         fn proptest_path_large(
-            interactions in prop::collection::vec(gen_interaction(10), 0..2 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
+            interactions in prop::collection::vec(gen_interaction(10), 0..1 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10 + 10),
         ) {
             test_find_path(10, interactions)?;
         }
@@ -986,9 +986,9 @@ mod find_common_ancestors_proptest {
         }
 
         let mut expected = Vec::with_capacity(N);
-        for i in 0..N {
-            dags[i].push(1);
-            expected.push(dags[i].frontier[0]);
+        for dag in dags[0..N].iter_mut() {
+            dag.push(1);
+            expected.push(dag.frontier[0]);
         }
 
         for target in 0..N {

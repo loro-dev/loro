@@ -27,6 +27,7 @@ colored = "2.0.0"
 bit-vec = "0.6.3"
 wasm-bindgen = { version = "0.2.83", optional = true }
 js-sys = { version = "0.3.60", optional = true }
+serde_json = { version = "1.0.87", optional = true }
 
 [dev-dependencies]
 dhat = "0.3.1"
@@ -38,8 +39,8 @@ tabled = "0.10.0"
 color-backtrace = { version = "0.5" }
 ctor = "0.1.23"
 criterion = "0.4.0"
-serde_json = "1.0.87"
 flate2 = "1.0.24"
+arbtest = "0.2.0"
 
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
@@ -48,10 +49,9 @@ doctest = false
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]
-mem-prof = []
+json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
-fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled"]
-proptest = ["fuzzing"]
+fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
 
 [[bench]]
 name = "text"

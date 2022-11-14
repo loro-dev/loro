@@ -1,13 +1,19 @@
+use std::sync::{Arc, Mutex};
+
 use fxhash::FxHashMap;
 
 use crate::{
-    container::{Container, ContainerID, ContainerType},
+    change::Lamport,
+    container::{
+        registry::{ContainerInstance, ContainerWrapper},
+        Container, ContainerID, ContainerType,
+    },
+    context::Context,
     id::Counter,
-    log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, RichOp},
+    op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
-    value::{InsertValue, LoroValue},
+    value::LoroValue,
     version::TotalOrderStamp,
     InternalString, LogStore,
 };
@@ -21,29 +27,32 @@ use super::MapSet;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
-    store: LogStoreWeakRef,
 }
 
 #[derive(Debug)]
 struct ValueSlot {
-    value: InsertValue,
+    value: LoroValue,
     order: TotalOrderStamp,
-    counter: Counter,
 }
 
 impl MapContainer {
     #[inline]
-    pub(crate) fn new(id: ContainerID, store: LogStoreWeakRef) -> Self {
+    pub(crate) fn new(id: ContainerID) -> Self {
         MapContainer {
             id,
-            store,
             state: FxHashMap::default(),
         }
     }
 
-    pub fn insert(&mut self, key: InternalString, value: InsertValue) {
+    pub fn insert<C: Context, V: Into<LoroValue>>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+        value: V,
+    ) {
+        let value = value.into();
         let self_id = &self.id;
-        let m = self.store.upgrade().unwrap();
+        let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
@@ -53,31 +62,65 @@ impl MapContainer {
 
         let id = store.next_id_for(client_id);
         let counter = id.counter;
+        // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
             content: OpContent::Normal {
-                content: InsertContent::Dyn(Box::new(MapSet {
+                content: Content::Map(MapSet {
                     key: key.clone(),
                     value: value.clone(),
-                })),
+                }),
             },
         }]);
 
+        self.state.insert(key, ValueSlot { value, order });
+    }
+
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+        obj: ContainerType,
+    ) -> ContainerID {
+        let self_id = &self.id;
+        let m = ctx.log_store();
+        let mut store = m.write().unwrap();
+        let client_id = store.this_client_id;
+        let container_id = store.create_container(obj, self_id.clone());
+        // TODO: store this value?
+        let id = store.next_id_for(client_id);
+        let counter = id.counter;
+        let container = store.get_container_idx(self_id).unwrap();
+        let order = TotalOrderStamp {
+            client_id,
+            lamport: store.next_lamport(),
+        };
+
+        store.append_local_ops(&[Op {
+            counter: id.counter,
+            container,
+            content: OpContent::Normal {
+                content: Content::Map(MapSet {
+                    key: key.clone(),
+                    value: container_id.clone().into(),
+                }),
+            },
+        }]);
         self.state.insert(
             key,
             ValueSlot {
-                value,
+                value: LoroValue::Unresolved(Box::new(container_id.clone())),
                 order,
-                counter,
             },
         );
+        container_id
     }
 
     #[inline]
-    pub fn delete(&mut self, key: InternalString) {
-        self.insert(key, InsertValue::Null);
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
+        self.insert(ctx, key, LoroValue::Null);
     }
 }
 
@@ -92,12 +135,19 @@ impl Container for MapContainer {
     }
 
     fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
-        for RichOp { op, lamport, .. } in log.iter_ops_at_id_span(id_span, self.id.clone()) {
+        for RichOp {
+            op, lamport, start, ..
+        } in log.iter_ops_at_id_span(id_span, self.id.clone())
+        {
             match &op.content {
                 OpContent::Normal { content } => {
+                    if content.as_container().is_some() {
+                        continue;
+                    }
+
                     let v: &MapSet = content.as_map().unwrap();
                     let order = TotalOrderStamp {
-                        lamport,
+                        lamport: lamport + start as Lamport,
                         client_id: id_span.client_id,
                     };
                     if let Some(slot) = self.state.get_mut(&v.key) {
@@ -112,7 +162,6 @@ impl Container for MapContainer {
                             ValueSlot {
                                 value: v.value.clone(),
                                 order,
-                                counter: op.counter,
                             },
                         );
                     }
@@ -125,9 +174,18 @@ impl Container for MapContainer {
     fn get_value(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
-            map.insert(key.clone(), value.value.clone().into());
+            if let Some(container_id) = value.value.as_unresolved() {
+                map.insert(
+                    key.to_string(),
+                    // TODO: make a from
+                    LoroValue::Unresolved(container_id.clone()),
+                );
+            } else {
+                map.insert(key.to_string(), value.value.clone());
+            }
         }
-        LoroValue::Map(Box::new(map))
+
+        map.into()
     }
 
     fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {
@@ -137,4 +195,59 @@ impl Container for MapContainer {
     fn to_export(&self, _op: &mut Op) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
+}
+
+pub struct Map {
+    instance: Arc<Mutex<ContainerInstance>>,
+}
+
+impl Clone for Map {
+    fn clone(&self) -> Self {
+        Self {
+            instance: Arc::clone(&self.instance),
+        }
+    }
+}
+
+impl Map {
+    pub fn insert<C: Context, V: Into<LoroValue>>(&mut self, ctx: &C, key: &str, value: V) {
+        self.with_container(|map| {
+            map.insert(ctx, key.into(), value);
+        })
+    }
+
+    pub fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: &str,
+        obj: ContainerType,
+    ) -> ContainerID {
+        self.with_container(|map| map.insert_obj(ctx, key.into(), obj))
+    }
+
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) {
+        self.with_container(|map| {
+            map.delete(ctx, key.into());
+        })
+    }
+}
+
+impl ContainerWrapper for Map {
+    type Container = MapContainer;
+
+    #[inline(always)]
+    fn with_container<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R,
+    {
+        let mut container_instance = self.instance.lock().unwrap();
+        let map = container_instance.as_map_mut().unwrap();
+        f(map)
+    }
+}
+
+impl From<Arc<Mutex<ContainerInstance>>> for Map {
+    fn from(map: Arc<Mutex<ContainerInstance>>) -> Self {
+        Map { instance: map }
+    }
 }

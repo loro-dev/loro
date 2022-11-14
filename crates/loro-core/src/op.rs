@@ -54,7 +54,7 @@ impl Op {
     }
 
     #[inline]
-    pub(crate) fn new_insert_op(id: ID, container: u32, content: InsertContent) -> Self {
+    pub(crate) fn new_insert_op(id: ID, container: u32, content: Content) -> Self {
         Op::new(id, OpContent::Normal { content }, container)
     }
 
@@ -67,7 +67,7 @@ impl Op {
     }
 
     pub(crate) fn convert(self, log: &LogStore) -> RemoteOp {
-        let container = log.get_container_id(self.container).clone();
+        let container = log.reg.get_id(self.container).unwrap().clone();
         RemoteOp {
             counter: self.counter,
             container,
@@ -194,6 +194,10 @@ impl Sliceable for RemoteOp {
     }
 }
 
+/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
+///
+/// `lamport` is the lamport of the returned op, to get the lamport of the sliced op, you need to use `lamport + start`
+///
 pub struct RichOp<'a> {
     pub op: &'a Op,
     pub lamport: Lamport,

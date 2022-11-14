@@ -5,7 +5,7 @@ use crate::change::Lamport;
 use crate::id::ClientID;
 use crate::id::ContainerIdx;
 use crate::op::RichOp;
-use crate::span::HasCounter;
+
 use crate::span::HasId;
 use crate::span::IdSpan;
 

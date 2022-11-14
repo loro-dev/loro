@@ -10,7 +10,7 @@ use crate::Rle;
 use super::{
     arena::{Arena, VecTrait},
     cursor::SafeCursor,
-    tree_trait::RleTreeTrait,
+    tree_trait::{ArenaBoxedNode, ArenaVec, RleTreeTrait},
 };
 use enum_as_inner::EnumAsInner;
 mod internal_impl;
@@ -27,8 +27,7 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
     bump: &'a A::Arena,
     pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(super) children:
-        <A::Arena as Arena>::Vec<'a, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>,
+    pub(super) children: ArenaVec<'a, T, A, ArenaBoxedNode<'a, T, A>>,
     pub cache: A::InternalCache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,

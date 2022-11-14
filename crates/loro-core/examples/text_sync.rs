@@ -7,7 +7,7 @@ fn main() {
     use std::{io::Read, time::Instant};
 
     use flate2::read::GzDecoder;
-    use loro_core::LoroCore;
+    use loro_core::{LoroCore};
     use serde_json::Value;
 
     let mut d = GzDecoder::new(&RAW_DATA[..]);
@@ -21,8 +21,8 @@ fn main() {
     let mut loro_b = LoroCore::default();
     let mut loro_c = LoroCore::default();
     let start = Instant::now();
-    for (i, txn) in txns.unwrap().as_array().unwrap().into_iter().enumerate() {
-        let mut text = loro.get_or_create_root_text("text").unwrap();
+    for (i, txn) in txns.unwrap().as_array().unwrap().iter().enumerate() {
+        let mut text = loro.get_text("text");
         let patches = txn
             .as_object()
             .unwrap()
@@ -34,18 +34,18 @@ fn main() {
             let pos = patch[0].as_u64().unwrap() as usize;
             let del_here = patch[1].as_u64().unwrap() as usize;
             let ins_content = patch[2].as_str().unwrap();
-            text.delete(pos, del_here);
-            text.insert(pos, ins_content);
+            text.delete(&loro, pos, del_here);
+            text.insert(&loro, pos, ins_content);
         }
 
         drop(text);
-        let mut text = loro_b.get_or_create_root_text("text").unwrap();
+        let mut text = loro_b.get_text("text");
         for patch in patches {
             let pos = patch[0].as_u64().unwrap() as usize;
             let del_here = patch[1].as_u64().unwrap() as usize;
             let ins_content = patch[2].as_str().unwrap();
-            text.delete(pos, del_here);
-            text.insert(pos, ins_content);
+            text.delete(&loro_b, pos, del_here);
+            text.insert(&loro_b, pos, ins_content);
         }
         drop(text);
         if i % 10 == 0 {

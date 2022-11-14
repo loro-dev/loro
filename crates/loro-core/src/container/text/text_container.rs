@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -8,18 +11,18 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
-        list::list_op::{DeleteSpan, ListOp},
+        list::list_op::ListOp,
+        registry::{ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
     },
-    dag::DagUtils,
+    context::Context,
+    dag::{Dag, DagUtils},
     debug_log,
     id::{Counter, ID},
-    log_store::LogStoreWeakRef,
-    op::{InsertContent, Op, OpContent, RemoteOp},
-    smstring::SmString,
+    op::{Content, Op, OpContent, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
-    LogStore, VersionVector,
+    LogStore,
 };
 
 use super::{
@@ -37,43 +40,42 @@ struct DagNode {
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    log_store: LogStoreWeakRef,
     state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, HeapMode>>,
     raw_str: StringPool,
     tracker: Tracker,
-
     head: SmallVec<[ID; 2]>,
-    vv: VersionVector,
 }
 
 impl TextContainer {
-    pub(crate) fn new(id: ContainerID, log_store: LogStoreWeakRef) -> Self {
+    pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
-            log_store,
             raw_str: StringPool::default(),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
             // TODO: should be eq to log_store frontier?
             head: Default::default(),
-            vv: Default::default(),
         }
     }
 
-    pub fn insert(&mut self, pos: usize, text: &str) -> Option<ID> {
+    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
         if text.is_empty() {
             return None;
         }
 
-        let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write().unwrap();
+        if self.state.len() < pos {
+            panic!("insert index out of range");
+        }
+
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::Insert {
+                content: Content::List(ListOp::Insert {
                     slice: slice.into(),
                     pos,
                 }),
@@ -86,23 +88,26 @@ impl TextContainer {
         );
         store.append_local_ops(&[op]);
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
 
         Some(id)
     }
 
-    pub fn delete(&mut self, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
         if len == 0 {
             return None;
         }
 
-        let s = self.log_store.upgrade().unwrap();
-        let mut store = s.write().unwrap();
+        if self.state.len() < pos + len {
+            panic!("deletion out of range");
+        }
+
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
             id,
             OpContent::Normal {
-                content: InsertContent::List(ListOp::new_del(pos, len)),
+                content: Content::List(ListOp::new_del(pos, len)),
             },
             store.get_or_create_container_idx(&self.id),
         );
@@ -111,7 +116,6 @@ impl TextContainer {
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         self.head = smallvec![last_id];
-        self.vv.set_last(last_id);
         Some(id)
     }
 
@@ -150,12 +154,13 @@ impl Container for TextContainer {
         let new_op_id = id_span.id_last();
         // TODO: may reduce following two into one op
         let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
+        let vv = store.get_vv();
         if common_ancestors == self.head {
             let latest_head = smallvec![new_op_id];
             let path = store.find_path(&self.head, &latest_head);
             if path.right.len() == 1 {
                 // linear updates, we can apply them directly
-                let start = self.vv.get(&new_op_id.client_id).copied().unwrap_or(0);
+                let start = vv.get(&new_op_id.client_id).copied().unwrap_or(0);
                 for op in store.iter_ops_at_id_span(
                     IdSpan::new(new_op_id.client_id, start, new_op_id.counter + 1),
                     self.id.clone(),
@@ -163,7 +168,7 @@ impl Container for TextContainer {
                     let op = op.get_sliced();
                     match &op.content {
                         OpContent::Normal {
-                            content: InsertContent::List(op),
+                            content: Content::List(op),
                         } => match op {
                             ListOp::Insert { slice, pos } => {
                                 self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
@@ -178,7 +183,6 @@ impl Container for TextContainer {
                 }
 
                 self.head = latest_head;
-                self.vv.set_last(new_op_id);
                 return;
             } else {
                 let path: Vec<_> = store.iter_partial(&self.head, path.right).collect();
@@ -195,7 +199,7 @@ impl Container for TextContainer {
                             if op.container == self_idx {
                                 match &op.content {
                                     OpContent::Normal {
-                                        content: InsertContent::List(op),
+                                        content: Content::List(op),
                                     } => match op {
                                         ListOp::Insert { slice, pos } => self
                                             .state
@@ -212,14 +216,13 @@ impl Container for TextContainer {
                     }
 
                     self.head = latest_head;
-                    self.vv.set_last(new_op_id);
                     return;
                 }
             }
         }
 
         let path_to_head = store.find_path(&common_ancestors, &self.head);
-        let mut common_ancestors_vv = self.vv.clone();
+        let mut common_ancestors_vv = vv.clone();
         common_ancestors_vv.retreat(&path_to_head.right);
         let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
         latest_head.retain(|x| !common_ancestors_vv.includes_id(*x));
@@ -232,7 +235,7 @@ impl Container for TextContainer {
             &self.head
         );
 
-        let head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
+        let tracker_head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
             || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
         {
             debug_log!("NewTracker");
@@ -245,9 +248,9 @@ impl Container for TextContainer {
         };
 
         // stage 1
-        let path = store.find_path(&head, &latest_head);
+        let path = store.find_path(&tracker_head, &latest_head);
         debug_log!("path={:?}", &path.right);
-        for iter in store.iter_partial(&head, path.right) {
+        for iter in store.iter_partial(&tracker_head, path.right) {
             // TODO: avoid this clone
             let change = iter
                 .data
@@ -279,7 +282,7 @@ impl Container for TextContainer {
         let path = store.find_path(&self.head, &latest_head);
         debug_log!("BEFORE CHECKOUT");
         // dbg!(&self.tracker);
-        self.tracker.checkout(self.vv.clone());
+        self.tracker.checkout(vv);
         debug_log!("AFTER CHECKOUT");
         // dbg!(&self.tracker);
         debug_log!(
@@ -309,7 +312,6 @@ impl Container for TextContainer {
         );
 
         self.head = latest_head;
-        self.vv.set_last(new_op_id);
         debug_log!("--------------------------------");
     }
 
@@ -359,9 +361,56 @@ impl Container for TextContainer {
                 }
                 ListSlice::Slice(_) => unreachable!(),
                 ListSlice::Unknown(_) => unreachable!(),
+                ListSlice::RawData(_) => unreachable!(),
             } {
                 *slice = slice_range.into();
             }
         }
+    }
+}
+
+pub struct Text {
+    instance: Arc<Mutex<ContainerInstance>>,
+}
+
+impl Clone for Text {
+    fn clone(&self) -> Self {
+        Self {
+            instance: Arc::clone(&self.instance),
+        }
+    }
+}
+
+impl Text {
+    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
+        self.with_container(|x| x.insert(ctx, pos, text))
+    }
+
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
+        self.with_container(|text| text.delete(ctx, pos, len))
+    }
+
+    // TODO: can be len?
+    pub fn text_len(&self) -> usize {
+        self.with_container(|text| text.text_len())
+    }
+}
+
+impl ContainerWrapper for Text {
+    type Container = TextContainer;
+
+    fn with_container<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R,
+    {
+        let mut container_instance = self.instance.lock().unwrap();
+        let map = container_instance.as_text_mut().unwrap();
+        f(map)
+    }
+}
+
+impl From<Arc<Mutex<ContainerInstance>>> for Text {
+    fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
+        Text { instance: text }
     }
 }

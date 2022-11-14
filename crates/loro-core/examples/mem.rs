@@ -2,7 +2,7 @@
 // #[global_allocator]
 // static GLOBAL: Jemalloc = Jemalloc;
 
-#[cfg(feature = "mem-prof")]
+#[cfg(mem)]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -23,10 +23,10 @@ pub fn main() {
     drop(s);
     let txns = json.as_object().unwrap().get("txns");
     let start = Instant::now();
-    #[cfg(feature = "mem-prof")]
+    #[cfg(mem)]
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
-    let mut text = loro.get_or_create_root_text("text").unwrap();
+    let mut text = loro.get_text("text");
     for _i in 0..1 {
         for txn in txns.unwrap().as_array().unwrap() {
             let patches = txn
@@ -40,8 +40,8 @@ pub fn main() {
                 let pos = patch[0].as_u64().unwrap() as usize;
                 let del_here = patch[1].as_u64().unwrap() as usize;
                 let ins_content = patch[2].as_str().unwrap();
-                text.delete(pos, del_here);
-                text.insert(pos, ins_content);
+                text.delete(&loro, pos, del_here);
+                text.insert(&loro, pos, ins_content);
             }
 
             if start.elapsed().as_secs() > 10 {
@@ -51,10 +51,9 @@ pub fn main() {
     }
     drop(json);
     drop(d);
-    drop(text);
     #[cfg(feature = "fuzzing")]
     loro.debug_inspect();
-    #[cfg(feature = "mem-prof")]
+    #[cfg(mem)]
     drop(profiler);
     // e.advance().unwrap();
     // let new_new_heap = alloc_stats.read().unwrap();

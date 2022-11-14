@@ -11,12 +11,12 @@ use crate::{
     InternalString, LogStore, LoroValue, ID,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::{any::Any, fmt::Debug};
 
 mod container_content;
-pub mod manager;
+pub mod registry;
 
 pub mod list;
 pub mod map;
@@ -42,7 +42,7 @@ pub trait Container: Debug + Any + Unpin {
 /// the same [ContainerID] with conflict [ContainerType].
 ///
 /// This structure is really cheap to clone
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum ContainerID {
     /// Root container does not need a insert op to create. It can be created implicitly.
     Root {
@@ -53,6 +53,53 @@ pub enum ContainerID {
         id: ID,
         container_type: ContainerType,
     },
+}
+
+pub enum ContainerIdRaw {
+    Root { name: InternalString },
+    Normal { id: ID },
+}
+
+impl From<&str> for ContainerIdRaw {
+    fn from(s: &str) -> Self {
+        ContainerIdRaw::Root { name: s.into() }
+    }
+}
+
+impl From<ID> for ContainerIdRaw {
+    fn from(id: ID) -> Self {
+        ContainerIdRaw::Normal { id }
+    }
+}
+
+impl From<&ContainerID> for ContainerIdRaw {
+    fn from(id: &ContainerID) -> Self {
+        match id {
+            ContainerID::Root { name, .. } => ContainerIdRaw::Root { name: name.clone() },
+            ContainerID::Normal { id, .. } => ContainerIdRaw::Normal { id: *id },
+        }
+    }
+}
+
+impl From<ContainerID> for ContainerIdRaw {
+    fn from(id: ContainerID) -> Self {
+        match id {
+            ContainerID::Root { name, .. } => ContainerIdRaw::Root { name },
+            ContainerID::Normal { id, .. } => ContainerIdRaw::Normal { id },
+        }
+    }
+}
+
+impl ContainerIdRaw {
+    pub fn with_type(self, container_type: ContainerType) -> ContainerID {
+        match self {
+            ContainerIdRaw::Root { name } => ContainerID::Root {
+                name,
+                container_type,
+            },
+            ContainerIdRaw::Normal { id } => ContainerID::Normal { id, container_type },
+        }
+    }
 }
 
 impl ContainerID {

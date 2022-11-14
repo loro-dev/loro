@@ -3,10 +3,12 @@ use std::ops::Range;
 use enum_as_inner::EnumAsInner;
 use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
 
-use crate::smstring::SmString;
+use crate::{smstring::SmString, LoroValue};
 
-#[derive(PartialEq, Eq, Debug, EnumAsInner, Clone)]
+#[derive(PartialEq, Debug, EnumAsInner, Clone)]
 pub enum ListSlice {
+    // TODO: use Box<[LoroValue]> ?
+    RawData(Vec<LoroValue>),
     RawStr(SmString),
     Slice(SliceRange),
     Unknown(usize),
@@ -87,7 +89,7 @@ impl Mergable for SliceRange {
 
 impl ListSlice {
     #[inline(always)]
-    pub fn UnknownRange(len: usize) -> SliceRange {
+    pub fn unknown_range(len: usize) -> SliceRange {
         let start = UNKNOWN_START;
         let end = len as u32 + UNKNOWN_START;
         SliceRange(start..end)
@@ -113,6 +115,7 @@ impl HasLength for ListSlice {
             ListSlice::RawStr(s) => s.len(),
             ListSlice::Slice(x) => rle::HasLength::content_len(&x),
             ListSlice::Unknown(x) => *x,
+            ListSlice::RawData(x) => x.len(),
         }
     }
 }
@@ -123,6 +126,7 @@ impl Sliceable for ListSlice {
             ListSlice::RawStr(s) => ListSlice::RawStr(s.0[from..to].into()),
             ListSlice::Slice(x) => ListSlice::Slice(x.slice(from, to)),
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
+            ListSlice::RawData(x) => ListSlice::RawData(x[from..to].to_vec()),
         }
     }
 }

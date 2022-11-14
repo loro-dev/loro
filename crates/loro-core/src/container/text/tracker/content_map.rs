@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut, Range};
+use std::ops::{Deref, DerefMut};
 
 use rle::{
     rle_tree::{Position, SafeCursor, SafeCursorMut},

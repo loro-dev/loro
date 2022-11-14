@@ -1,2 +1,5 @@
 build:
   wasm-pack build --target web .
+
+test:
+  cd deno_test && deno run -A test.ts

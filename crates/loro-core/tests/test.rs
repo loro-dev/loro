@@ -1,33 +1,101 @@
 use ctor::ctor;
-use loro_core::container::Container;
-use loro_core::{InsertValue, LoroCore};
+
+use loro_core::container::registry::ContainerWrapper;
+use loro_core::{LoroCore, LoroValue};
 
 #[test]
+#[cfg(feature = "json")]
+fn example() {
+    use loro_core::ContainerType;
+
+    let mut doc = LoroCore::default();
+    let mut list = doc.get_list("list");
+    list.insert(&doc, 0, 123);
+    let map_id = list.insert_obj(&doc, 1, ContainerType::Map);
+    let mut map = doc.get_map(map_id);
+    let text = map.insert_obj(&doc, "map_b", ContainerType::Text);
+    let mut text = doc.get_text(text);
+    text.insert(&doc, 0, "world!");
+    text.insert(&doc, 0, "hello ");
+    assert_eq!(
+        r#"[123,{"map_b":"hello world!"}]"#,
+        list.get_value_deep(&doc).to_json()
+    );
+}
+
+#[test]
+#[cfg(feature = "json")]
+fn list() {
+    let mut loro_a = LoroCore::default();
+    let mut loro_b = LoroCore::default();
+    let mut list_a = loro_a.get_list("list");
+    let mut list_b = loro_b.get_list("list");
+    list_a.insert_batch(&loro_a, 0, vec![12.into(), "haha".into()]);
+    list_b.insert_batch(&loro_b, 0, vec![123.into(), "kk".into()]);
+    let map_id = list_b.insert_obj(&loro_b, 1, loro_core::ContainerType::Map);
+    let mut map = loro_b.get_map(map_id);
+    map.insert(&loro_b, "map_b", 123);
+    println!("{}", list_a.get_value().to_json());
+    println!("{}", list_b.get_value().to_json());
+    loro_b.import(loro_a.export(loro_b.vv()));
+    loro_a.import(loro_b.export(loro_a.vv()));
+    println!("{}", list_b.get_value_deep(&loro_b).to_json());
+    println!("{}", list_a.get_value_deep(&loro_b).to_json());
+    assert_eq!(list_b.get_value(), list_a.get_value());
+}
+
+#[test]
+#[cfg(feature = "json")]
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
-    let mut root = loro.get_or_create_root_map("root").unwrap();
-    root.insert("haha".into(), InsertValue::Double(1.2));
+    let mut root = loro.get_map("root");
+    root.insert(&loro, "haha", 1.2);
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
     assert_eq!(
         *value
             .as_map()
             .unwrap()
-            .get(&"haha".into())
+            .get("haha")
             .unwrap()
             .as_double()
             .unwrap(),
         1.2
     );
+    let map_id = root.insert_obj(&loro, "map", loro_core::ContainerType::Map);
+    drop(root);
+    let mut sub_map = loro.get_map(&map_id);
+    sub_map.insert(&loro, "sub", false);
+    drop(sub_map);
+    let root = loro.get_map("root");
+    let value = root.get_value();
+    assert_eq!(value.as_map().unwrap().len(), 2);
+    let map = value.as_map().unwrap();
+    assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
+    assert!(map.get("map").unwrap().as_unresolved().is_some());
+    println!("{}", value.to_json());
+
+    let deep_value = root.get_value_deep(&loro);
+    assert_eq!(deep_value.as_map().unwrap().len(), 2);
+    let map = deep_value.as_map().unwrap();
+    assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
+    let inner_map = map.get("map").unwrap().as_map().unwrap();
+    assert_eq!(inner_map.len(), 1);
+    assert_eq!(inner_map.get("sub").unwrap(), &LoroValue::Bool(false));
+    let json = deep_value.to_json();
+    // println!("{}", json);
+    let actual: LoroValue = serde_json::from_str(&json).unwrap();
+    // dbg!(&actual);
+    assert_eq!(actual, deep_value);
 }
 
 #[test]
 fn two_client_text_sync() {
     let mut store = LoroCore::new(Default::default(), Some(10));
-    let mut text_container = store.get_or_create_root_text("haha").unwrap();
-    text_container.insert(0, "012");
-    text_container.insert(1, "34");
-    text_container.insert(1, "56");
+    let mut text_container = store.get_text("haha");
+    text_container.insert(&store, 0, "012");
+    text_container.insert(&store, 1, "34");
+    text_container.insert(&store, 1, "56");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
@@ -36,34 +104,33 @@ fn two_client_text_sync() {
     let mut store_b = LoroCore::new(Default::default(), Some(11));
     let exported = store.export(Default::default());
     store_b.import(exported);
-    let mut text_container = store_b.get_or_create_root_text("haha").unwrap();
-    text_container.check();
+    let mut text_container = store_b.get_text("haha");
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
 
-    text_container.delete(0, 2);
-    text_container.insert(4, "789");
+    text_container.delete(&store_b, 0, 2);
+    text_container.insert(&store_b, 4, "789");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
     drop(text_container);
 
     store.import(store_b.export(store.vv()));
-    let mut text_container = store.get_or_create_root_text("haha").unwrap();
+    let mut text_container = store.get_text("haha");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
-    text_container.delete(0, 8);
-    text_container.insert(0, "abc");
+    text_container.delete(&store, 0, 8);
+    text_container.insert(&store, 0, "abc");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");
-    drop(text_container);
 
     store_b.import(store.export(Default::default()));
-    let mut text_container = store_b.get_or_create_root_text("haha").unwrap();
-    text_container.check();
+    let text_container = store_b.get_text("haha");
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");

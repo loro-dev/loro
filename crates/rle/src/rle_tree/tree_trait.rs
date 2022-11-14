@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, fmt::Debug, ops::Deref};
 
-use bumpalo::Bump;
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
 
 use crate::{rle_trait::HasIndex, HasLength, Rle};
@@ -69,6 +68,13 @@ impl<I> FindPosResult<I> {
         }
     }
 }
+
+#[allow(type_alias_bounds)]
+pub type ArenaVec<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Vec<'a, V>;
+#[allow(type_alias_bounds)]
+pub type ArenaBox<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Boxed<'a, V>;
+#[allow(type_alias_bounds)]
+pub type ArenaBoxedNode<'a, T, A: RleTreeTrait<T>> = ArenaBox<'a, T, A, Node<'a, T, A>>;
 
 pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;

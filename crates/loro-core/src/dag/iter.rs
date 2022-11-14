@@ -193,12 +193,6 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
     pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
-        for id in from.iter() {
-            if let Some(target) = target.get(&id.client_id) {
-                assert_eq!(target.start, id.counter + 1);
-            }
-        }
-
         let mut heap = BinaryHeap::new();
         for id in target.iter() {
             if id.1.content_len() > 0 {

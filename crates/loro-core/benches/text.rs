@@ -8,6 +8,7 @@ mod run {
     use super::*;
     use arbitrary::Unstructured;
     use flate2::read::GzDecoder;
+    use loro_core::container::registry::ContainerWrapper;
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action;
     use loro_core::LoroCore;
@@ -50,23 +51,25 @@ mod run {
         b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
-                let mut text = loro.get_or_create_root_text("text").unwrap();
-                for txn in txns.unwrap().as_array().unwrap() {
-                    let patches = txn
-                        .as_object()
-                        .unwrap()
-                        .get("patches")
-                        .unwrap()
-                        .as_array()
-                        .unwrap();
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(pos, del_here);
-                        text.insert(pos, ins_content);
+                let text = loro.get_text("text");
+                text.with_container(|text| {
+                    for txn in txns.unwrap().as_array().unwrap() {
+                        let patches = txn
+                            .as_object()
+                            .unwrap()
+                            .get("patches")
+                            .unwrap()
+                            .as_array()
+                            .unwrap();
+                        for patch in patches {
+                            let pos = patch[0].as_u64().unwrap() as usize;
+                            let del_here = patch[1].as_u64().unwrap() as usize;
+                            let ins_content = patch[2].as_str().unwrap();
+                            text.delete(&loro, pos, del_here);
+                            text.insert(&loro, pos, ins_content);
+                        }
                     }
-                }
+                })
             })
         });
 
@@ -76,23 +79,24 @@ mod run {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
                 for txn in txns.unwrap().as_array().unwrap() {
-                    let mut text = loro.get_or_create_root_text("text").unwrap();
-                    let patches = txn
-                        .as_object()
-                        .unwrap()
-                        .get("patches")
-                        .unwrap()
-                        .as_array()
-                        .unwrap();
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(pos, del_here);
-                        text.insert(pos, ins_content);
-                    }
+                    let text = loro.get_text("text");
+                    text.with_container(|text| {
+                        let patches = txn
+                            .as_object()
+                            .unwrap()
+                            .get("patches")
+                            .unwrap()
+                            .as_array()
+                            .unwrap();
+                        for patch in patches {
+                            let pos = patch[0].as_u64().unwrap() as usize;
+                            let del_here = patch[1].as_u64().unwrap() as usize;
+                            let ins_content = patch[2].as_str().unwrap();
+                            text.delete(&loro, pos, del_here);
+                            text.insert(&loro, pos, ins_content);
+                        }
+                    });
 
-                    drop(text);
                     loro_b.import(loro.export(loro_b.vv()));
                 }
             })
@@ -111,7 +115,7 @@ mod run {
                         break;
                     }
 
-                    let mut text = loro.get_or_create_root_text("text").unwrap();
+                    let mut text = loro.get_text("text");
                     let patches = txn
                         .as_object()
                         .unwrap()
@@ -123,20 +127,18 @@ mod run {
                         let pos = patch[0].as_u64().unwrap() as usize;
                         let del_here = patch[1].as_u64().unwrap() as usize;
                         let ins_content = patch[2].as_str().unwrap();
-                        text.delete(pos, del_here);
-                        text.insert(pos, ins_content);
+                        text.delete(&loro, pos, del_here);
+                        text.insert(&loro, pos, ins_content);
                     }
 
-                    drop(text);
-                    let mut text = loro_b.get_or_create_root_text("text").unwrap();
+                    let mut text = loro_b.get_text("text");
                     for patch in patches {
                         let pos = patch[0].as_u64().unwrap() as usize;
                         let del_here = patch[1].as_u64().unwrap() as usize;
                         let ins_content = patch[2].as_str().unwrap();
-                        text.delete(pos, del_here);
-                        text.insert(pos, ins_content);
+                        text.delete(&loro_b, pos, del_here);
+                        text.insert(&loro_b, pos, ins_content);
                     }
-                    drop(text);
                     loro_b.import(loro.export(loro_b.vv()));
                     loro.import(loro_b.export(loro.vv()));
                 }

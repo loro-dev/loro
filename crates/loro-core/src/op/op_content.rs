@@ -3,11 +3,11 @@ use rle::{HasLength, Mergable, Sliceable};
 
 use crate::{span::IdSpan, OpType};
 
-use super::InsertContent;
+use super::Content;
 
 #[derive(Debug, EnumAsInner)]
 pub(crate) enum OpContent {
-    Normal { content: InsertContent },
+    Normal { content: Content },
     Undo { target: IdSpan },
     Redo { target: IdSpan },
 }
@@ -39,12 +39,8 @@ impl Clone for OpContent {
             OpContent::Normal { content } => OpContent::Normal {
                 content: content.clone(),
             },
-            OpContent::Undo { target } => OpContent::Undo {
-                target: *target,
-            },
-            OpContent::Redo { target } => OpContent::Redo {
-                target: *target,
-            },
+            OpContent::Undo { target } => OpContent::Undo { target: *target },
+            OpContent::Redo { target } => OpContent::Redo { target: *target },
         }
     }
 }
