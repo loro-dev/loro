@@ -91,7 +91,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
         change_num += changes.merged_len();
     }
 
-    let (container_id_to_idx, containers) = store.reg.export();
+    let (_, containers) = store.reg.export();
     let mut changes = Vec::with_capacity(change_num);
     let mut ops = Vec::with_capacity(change_num);
     let mut keys = Vec::new();
@@ -115,9 +115,9 @@ fn encode_changes(store: &LogStore) -> Encoded {
                 ));
             }
 
-            let change = store.change_to_export_format(change);
-            for op in change.ops.into_iter() {
-                let container = *container_id_to_idx.get(&op.container).unwrap();
+            for op in change.ops.iter() {
+                let container = op.container;
+                let op = store.to_remote_op(op);
                 let content = op.content.into_normal().unwrap();
                 let (prop, value) = match content {
                     crate::op::Content::Container(_) => {
@@ -134,8 +134,8 @@ fn encode_changes(store: &LogStore) -> Encoded {
                         ListOp::Insert { slice, pos } => (
                             pos as usize,
                             match slice {
-                                ListSlice::RawData(v) => v.clone().into(),
-                                ListSlice::RawStr(s) => s.to_string().into(),
+                                ListSlice::RawData(v) => v.into(),
+                                ListSlice::RawStr(s) => s.as_str().into(),
                                 _ => unreachable!(),
                             },
                         ),

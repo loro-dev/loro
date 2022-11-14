@@ -330,7 +330,7 @@ impl Container for TextContainer {
         LoroValue::String(ans_str.into_boxed_str())
     }
 
-    fn to_export(&self, op: &mut Op) {
+    fn to_export(&self, op: &mut RemoteOp) {
         if let Some((slice, _pos)) = op
             .content
             .as_normal_mut()
