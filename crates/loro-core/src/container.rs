@@ -34,7 +34,7 @@ pub trait Container: Debug + Any + Unpin {
     // fn serialize(&self) -> Vec<u8>;
 
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
-    fn to_export(&self, op: &mut Op);
+    fn to_export(&self, op: &mut RemoteOp);
     fn to_import(&mut self, op: &mut RemoteOp);
 }
 

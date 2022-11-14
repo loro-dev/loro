@@ -162,12 +162,7 @@ impl LogStore {
     fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
-            let container = self.reg.get_by_idx(op.container).unwrap();
-            let container = container.lock().unwrap();
-            let mut op = op.clone();
-            // TODO: Merge below two op
-            container.to_export(&mut op);
-            ops.push(op.convert(self));
+            ops.push(self.to_remote_op(op));
         }
 
         Change {
@@ -177,6 +172,14 @@ impl LogStore {
             lamport: change.lamport,
             timestamp: change.timestamp,
         }
+    }
+
+    fn to_remote_op(&self, op: &Op) -> RemoteOp {
+        let container = self.reg.get_by_idx(op.container).unwrap();
+        let container = container.lock().unwrap();
+        let mut op = op.clone().convert(self);
+        container.to_export(&mut op);
+        op
     }
 
     pub(crate) fn create_container(

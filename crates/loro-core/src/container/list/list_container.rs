@@ -411,7 +411,7 @@ impl Container for ListContainer {
         values.into()
     }
 
-    fn to_export(&self, op: &mut Op) {
+    fn to_export(&self, op: &mut RemoteOp) {
         if let Some((slice, _pos)) = op
             .content
             .as_normal_mut()

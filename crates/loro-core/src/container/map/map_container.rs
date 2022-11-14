@@ -9,7 +9,6 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    id::Counter,
     op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
@@ -192,7 +191,7 @@ impl Container for MapContainer {
         todo!()
     }
 
-    fn to_export(&self, _op: &mut Op) {}
+    fn to_export(&self, _op: &mut RemoteOp) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
 }
