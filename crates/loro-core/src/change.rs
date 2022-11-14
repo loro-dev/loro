@@ -30,15 +30,6 @@ pub struct Change<O = Op> {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// if other changes dep on the middle of this change, we need to record a break point here.
-    /// So that we can iter the ops in the correct order.
-    ///
-    /// If some change deps on counter `t`, then there will be a break point at counter `t`.
-    /// - In that case we need to slice the change by counter range of [`start_counter`, `t` + 1)
-    ///
-    /// TODO: Need tests
-    /// Seems like we only need to record it when other changes dep on this change
-    pub(crate) break_points: SmallVec<[Counter; 2]>,
 }
 
 impl<O> Change<O> {
@@ -55,7 +46,6 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
-            break_points: SmallVec::new(),
         }
     }
 }
@@ -139,7 +129,6 @@ impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            break_points: self.break_points.clone(),
         }
     }
 }

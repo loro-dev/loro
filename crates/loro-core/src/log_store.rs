@@ -155,7 +155,6 @@ impl LogStore {
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,
-            break_points: change.break_points,
         }
     }
 
@@ -174,7 +173,6 @@ impl LogStore {
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,
-            break_points: change.break_points,
         }
     }
 
@@ -271,7 +269,6 @@ impl LogStore {
             ops: ops.into(),
             lamport,
             timestamp,
-            break_points: Default::default(),
         };
 
         self.latest_lamport = lamport + change.content_len() as u32 - 1;
