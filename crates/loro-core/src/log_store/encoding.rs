@@ -6,7 +6,7 @@ use crate::{
     change::{Lamport, Timestamp},
     container::{list::list_op::ListOp, map::MapSet, text::text_content::ListSlice, ContainerID},
     id::{ClientID, ContainerIdx, Counter},
-    ContainerType, InternalString, LogStore, LoroValue,
+    InternalString, LogStore, LoroValue,
 };
 
 type ClientIdx = u32;
@@ -16,7 +16,7 @@ type Containers = Vec<ContainerID>;
 #[columnar(vec, ser, de)]
 #[derive(Clone, Serialize, Deserialize)]
 struct ChangeEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle", original_type = "u32")]
     client_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i32")]
     counter: Counter,
@@ -24,16 +24,17 @@ struct ChangeEncoding {
     lamport: Lamport,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     timestamp: Timestamp,
+    #[columnar(original_type = "u32")]
+    op_len: u32,
 }
 
 #[columnar(vec, ser, de)]
 #[derive(Clone, Serialize, Deserialize)]
 struct OpEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    counter: Counter,
     #[columnar(original_type = "u32")]
     container: ContainerIdx,
     /// key index or insert/delete pos
+    #[columnar(strategy = "DeltaRle", original_type = "u32")]
     prop: usize,
     value: LoroValue,
 }
@@ -96,13 +97,14 @@ fn encode_changes(store: &LogStore) -> Encoded {
     let mut keys = Vec::new();
     let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
-    for (client_idx, (key, change_vec)) in store.changes.iter().enumerate() {
+    for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
             changes.push(ChangeEncoding {
                 client_idx: client_idx as ClientIdx,
                 counter: change.id.counter,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
+                op_len: change.ops.merged_len() as u32,
             });
 
             deps.push(DepsEncoding::new_len(change.deps.len()));
@@ -144,7 +146,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
                     crate::op::Content::Dyn(_) => unreachable!(),
                 };
                 ops.push(OpEncoding {
-                    counter: op.counter,
                     container,
                     prop,
                     value,

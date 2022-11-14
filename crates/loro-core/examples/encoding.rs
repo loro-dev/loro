@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{io::Read, time::Instant};
 
 use flate2::read::GzDecoder;
 use loro_core::{container::registry::ContainerWrapper, LoroCore};
@@ -31,6 +31,12 @@ fn main() {
             }
         }
     });
+    let start = Instant::now();
     let buf = loro.encode_snapshot();
-    println!("{} bytes", buf.len());
+    println!(
+        "{} bytes, overhead {} bytes. used {}ms",
+        buf.len(),
+        buf.len() - 182_315,
+        start.elapsed().as_millis()
+    );
 }
