@@ -1,6 +1,7 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
+mod encoding;
 mod iter;
 use std::{
     marker::PhantomPinned,
@@ -114,7 +115,7 @@ impl LogStore {
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
-            for change in changes {
+            for change in changes.iter() {
                 ans.push(self.change_to_export_format(change))
             }
         }
@@ -158,18 +159,20 @@ impl LogStore {
         }
     }
 
-    fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
+    fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
-        for mut op in change.ops.into_iter() {
+        for op in change.ops.iter() {
             let container = self.reg.get_by_idx(op.container).unwrap();
             let container = container.lock().unwrap();
+            let mut op = op.clone();
+            // TODO: Merge below two op
             container.to_export(&mut op);
             ops.push(op.convert(self));
         }
 
         Change {
             ops,
-            deps: change.deps,
+            deps: change.deps.clone(),
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,

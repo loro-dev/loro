@@ -183,6 +183,13 @@ impl ContainerRegistry {
             }
         }
     }
+
+    pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
+        (
+            &self.container_to_idx,
+            self.containers.iter().map(|x| x.id.clone()).collect(),
+        )
+    }
 }
 
 impl Default for ContainerRegistry {

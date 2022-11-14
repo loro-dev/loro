@@ -87,6 +87,11 @@ impl LoroCore {
         store.import(changes)
     }
 
+    pub fn encode_snapshot(&self) -> Vec<u8> {
+        let store = self.log_store.read().unwrap();
+        store.encode_snapshot()
+    }
+
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
