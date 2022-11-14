@@ -147,7 +147,9 @@ impl LogStore {
             let mut container = container.lock().unwrap();
             container.to_import(&mut op);
             drop(container);
-            new_ops.push(op.convert(self));
+            for op in op.convert(self) {
+                new_ops.push(op);
+            }
         }
 
         Change {
@@ -443,13 +445,14 @@ impl Dag for LogStore {
 fn check_import_change_valid(change: &Change<RemoteOp>) {
     if cfg!(test) {
         for op in change.ops.iter() {
-            if let Some((slice, _)) = op
-                .content
-                .as_normal()
-                .and_then(|x| x.as_list())
-                .and_then(|x| x.as_insert())
-            {
-                assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
+            for content in op.contents.iter() {
+                if let Some((slice, _)) = content
+                    .as_normal()
+                    .and_then(|x| x.as_list())
+                    .and_then(|x| x.as_insert())
+                {
+                    assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
+                }
             }
         }
     }

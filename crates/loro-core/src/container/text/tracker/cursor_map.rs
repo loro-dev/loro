@@ -13,7 +13,6 @@ use rle::{
 };
 
 use crate::{
-    debug_log,
     id::{Counter, ID},
     span::{HasId, HasIdSpan, IdSpan},
 };

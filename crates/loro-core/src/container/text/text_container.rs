@@ -16,7 +16,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    dag::{Dag, DagUtils},
+    dag::DagUtils,
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, OpContent, RemoteOp},
@@ -331,39 +331,41 @@ impl Container for TextContainer {
     }
 
     fn to_export(&self, op: &mut RemoteOp) {
-        if let Some((slice, _pos)) = op
-            .content
-            .as_normal_mut()
-            .and_then(|c| c.as_list_mut())
-            .and_then(|x| x.as_insert_mut())
-        {
-            if let Some(change) = if let ListSlice::Slice(ranges) = slice {
-                Some(self.raw_str.get_str(&ranges.0))
-            } else {
-                None
-            } {
-                *slice = ListSlice::RawStr(change);
+        for content in op.contents.iter_mut() {
+            if let Some((slice, _pos)) = content
+                .as_normal_mut()
+                .and_then(|c| c.as_list_mut())
+                .and_then(|x| x.as_insert_mut())
+            {
+                if let Some(change) = if let ListSlice::Slice(ranges) = slice {
+                    Some(self.raw_str.get_str(&ranges.0))
+                } else {
+                    None
+                } {
+                    *slice = ListSlice::RawStr(change);
+                }
             }
         }
     }
 
     fn to_import(&mut self, op: &mut RemoteOp) {
-        if let Some((slice, _pos)) = op
-            .content
-            .as_normal_mut()
-            .and_then(|c| c.as_list_mut())
-            .and_then(|x| x.as_insert_mut())
-        {
-            if let Some(slice_range) = match slice {
-                ListSlice::RawStr(s) => {
-                    let range = self.raw_str.alloc(s);
-                    Some(range)
+        for content in op.contents.iter_mut() {
+            if let Some((slice, _pos)) = content
+                .as_normal_mut()
+                .and_then(|c| c.as_list_mut())
+                .and_then(|x| x.as_insert_mut())
+            {
+                if let Some(slice_range) = match slice {
+                    ListSlice::RawStr(s) => {
+                        let range = self.raw_str.alloc(s);
+                        Some(range)
+                    }
+                    ListSlice::Slice(_) => unreachable!(),
+                    ListSlice::Unknown(_) => unreachable!(),
+                    ListSlice::RawData(_) => unreachable!(),
+                } {
+                    *slice = slice_range.into();
                 }
-                ListSlice::Slice(_) => unreachable!(),
-                ListSlice::Unknown(_) => unreachable!(),
-                ListSlice::RawData(_) => unreachable!(),
-            } {
-                *slice = slice_range.into();
             }
         }
     }
