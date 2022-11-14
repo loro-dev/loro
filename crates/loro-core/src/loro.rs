@@ -87,7 +87,7 @@ impl LoroCore {
         store.import(changes)
     }
 
-    #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
     }

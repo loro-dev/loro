@@ -127,7 +127,7 @@ impl TextContainer {
         self.tracker.check();
     }
 
-    #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
         println!(
             "Text Container {:?}, Raw String size={}, Tree=>\n",

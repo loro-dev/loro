@@ -28,9 +28,9 @@ mod content_map;
 mod cursor_map;
 mod effects_iter;
 mod y_span;
-#[cfg(not(feature = "fuzzing"))]
+#[cfg(not(feature = "test_utils"))]
 mod yata_impl;
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 pub mod yata_impl;
 
 /// A tracker for a single text, we can use it to calculate the effect of an operation on a text.
@@ -42,7 +42,7 @@ pub mod yata_impl;
 ///
 #[derive(Debug)]
 pub struct Tracker {
-    #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "test_utils")]
     client_id: ClientID,
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
@@ -80,7 +80,7 @@ impl Tracker {
         Tracker {
             content,
             id_to_cursor,
-            #[cfg(feature = "fuzzing")]
+            #[cfg(feature = "test_utils")]
             client_id: 0,
             head_vv: start_vv.clone(),
             all_vv: start_vv.clone(),

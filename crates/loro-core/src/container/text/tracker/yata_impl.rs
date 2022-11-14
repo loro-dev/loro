@@ -167,7 +167,7 @@ mod test {
     }
 }
 
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 pub mod fuzz {
     use std::borrow::Cow;
     use tabled::Tabled;
@@ -283,7 +283,7 @@ pub mod fuzz {
 
         fn new_container(client_id: usize) -> Self::Container {
             let mut tracker = Tracker::new(Default::default(), Counter::MAX / 2);
-            #[cfg(feature = "fuzzing")]
+            #[cfg(feature = "test_utils")]
             {
                 tracker.client_id = client_id as ClientID;
             }

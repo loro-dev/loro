@@ -175,7 +175,7 @@ impl ContainerRegistry {
         self.get_idx(id).unwrap()
     }
 
-    #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
         for ContainerAndId { container, id: _ } in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.lock().unwrap().deref_mut() {

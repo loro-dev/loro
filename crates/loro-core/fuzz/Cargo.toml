@@ -14,7 +14,7 @@ libfuzzer-sys = "0.4"
 
 [dependencies.loro-core]
 path = ".."
-features = ["fuzzing"]
+features = ["test_utils"]
 
 # Prevent this from interfering with workspaces
 [workspace]

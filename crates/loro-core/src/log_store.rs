@@ -370,7 +370,7 @@ impl LogStore {
         &self.vv
     }
 
-    #[cfg(feature = "fuzzing")]
+    #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
         println!(
             "LogStore:\n- Clients={}\n- Changes={}\n- Ops={}\n- Atoms={}",

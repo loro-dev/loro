@@ -2,14 +2,14 @@ build:
   cargo build
 
 test *FLAGS:
-  RUST_BACKTRACE=full cargo nextest run --features=fuzzing {{FLAGS}}
+  RUST_BACKTRACE=full cargo nextest run --features=test_utils {{FLAGS}}
 
 test-all:
-  cargo nextest run --features=fuzzing &
+  cargo nextest run --features=test_utils &
   just _quickfuzz
 
 test-prop:
-  RUSTFLAGS="--cfg=proptest" cargo nextest run --features=fuzzing
+  RUSTFLAGS="--cfg=proptest" cargo nextest run --features=test_utils
   
 _quickfuzz:
   cd crates/loro-core && just quick-fuzz
@@ -21,7 +21,7 @@ check-unsafe:
   env RUSTFLAGS="-Funsafe-code --cap-lints=warn" cargo check
 
 fix *FLAGS:
-  cargo clippy --fix --features=fuzzing {{FLAGS}}
+  cargo clippy --fix --features=test_utils {{FLAGS}}
 
 deny:
   cargo deny check

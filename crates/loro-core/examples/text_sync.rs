@@ -1,13 +1,13 @@
-#[cfg(not(feature = "fuzzing"))]
+#[cfg(not(feature = "test_utils"))]
 fn main() {}
 
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 fn main() {
     const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
     use std::{io::Read, time::Instant};
 
     use flate2::read::GzDecoder;
-    use loro_core::{LoroCore};
+    use loro_core::LoroCore;
     use serde_json::Value;
 
     let mut d = GzDecoder::new(&RAW_DATA[..]);

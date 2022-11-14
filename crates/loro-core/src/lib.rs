@@ -17,7 +17,7 @@ pub mod op;
 pub mod version;
 
 mod error;
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 pub mod fuzz;
 mod loro;
 mod smstring;

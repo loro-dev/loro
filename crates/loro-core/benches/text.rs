@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 const RAW_DATA: &[u8; 901823] = include_bytes!("automerge-paper.json.gz");
 
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 mod run {
     use std::io::Read;
 
@@ -148,8 +148,8 @@ mod run {
 }
 pub fn dumb(_c: &mut Criterion) {}
 
-#[cfg(feature = "fuzzing")]
+#[cfg(feature = "test_utils")]
 criterion_group!(benches, run::two_client_edits, run::b4);
-#[cfg(not(feature = "fuzzing"))]
+#[cfg(not(feature = "test_utils"))]
 criterion_group!(benches, dumb);
 criterion_main!(benches);

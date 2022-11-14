@@ -7,7 +7,7 @@ pub(crate) enum Slot {}
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,

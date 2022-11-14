@@ -22,10 +22,10 @@ quick-fuzz:
   cargo fuzz run recursive -- -max_total_time=10 -max_len=1000
 
 flame:
-  cargo flamegraph --example text_sync --features=fuzzing --root
+  cargo flamegraph --example text_sync --features=test_utils --root
 
 bench *FLAGS:
-  cargo bench --features fuzzing {{FLAGS}}
+  cargo bench --features test_utils {{FLAGS}}
 
 mem:
-  RUSTFLAGS="--cfg=mem" cargo run --example mem -r --features=fuzzing
+  RUSTFLAGS="--cfg=mem" cargo run --example mem -r --features=test_utils

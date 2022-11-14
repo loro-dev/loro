@@ -189,7 +189,7 @@ impl HasLength for YSpan {
     }
 }
 
-#[cfg(any(test, features = "fuzzing"))]
+#[cfg(any(test, features = "test_utils"))]
 pub mod test {
     use crate::{
         container::text::text_content::ListSlice,

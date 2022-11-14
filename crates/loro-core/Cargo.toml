@@ -30,6 +30,7 @@ js-sys = { version = "0.3.60", optional = true }
 serde_json = { version = "1.0.87", optional = true }
 
 [dev-dependencies]
+serde_json = "1.0.87"
 dhat = "0.3.1"
 rand = { version = "0.8.5" }
 proptest = "1.0.0"
@@ -51,7 +52,7 @@ doctest = false
 wasm = ["wasm-bindgen", "js-sys"]
 json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
-fuzzing = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
+test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
 
 [[bench]]
 name = "text"
