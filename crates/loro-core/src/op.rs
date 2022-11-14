@@ -80,12 +80,17 @@ impl Op {
 impl RemoteOp {
     pub(crate) fn convert(self, log: &mut LogStore) -> SmallVec<[Op; 1]> {
         let container = log.get_or_create_container_idx(&self.container);
+        let mut counter = self.counter;
         self.contents
             .into_iter()
-            .map(|content| Op {
-                counter: self.counter,
-                container,
-                content,
+            .map(|content| {
+                let ans = Op {
+                    counter,
+                    container,
+                    content,
+                };
+                counter += ans.atom_len() as Counter;
+                ans
             })
             .collect()
     }

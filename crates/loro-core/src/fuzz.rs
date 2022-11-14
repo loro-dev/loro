@@ -283,4 +283,31 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::Action::*;
+    use super::*;
+    #[test]
+    fn case0() {
+        test_multi_sites(
+            4,
+            vec![
+                Ins {
+                    content: 31800,
+                    pos: 723390690148040714,
+                    site: 137,
+                },
+                Ins {
+                    content: 2560,
+                    pos: 12826352382887627018,
+                    site: 178,
+                },
+                Sync { from: 178, to: 0 },
+                Ins {
+                    content: 35082,
+                    pos: 12876550765177602139,
+                    site: 178,
+                },
+            ],
+        )
+    }
+}
