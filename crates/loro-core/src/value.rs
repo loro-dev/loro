@@ -20,12 +20,6 @@ pub enum LoroValue {
     Unresolved(Box<ContainerID>),
 }
 
-#[derive(Serialize, Deserialize)]
-enum Test {
-    Unknown(ContainerID),
-    Map(FxHashMap<u32, usize>),
-}
-
 impl Serialize for LoroValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
