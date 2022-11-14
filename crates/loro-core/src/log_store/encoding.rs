@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     change::{Lamport, Timestamp},
     container::{list::list_op::ListOp, map::MapSet, text::text_content::ListSlice, ContainerID},
-    id::{ClientID, ContainerIdx, Counter},
-    InternalString, LogStore, LoroValue,
+    id::{ClientID, ContainerIdx, Counter, ID},
+    InternalString, LogStore, LoroValue, VersionVector,
 };
 
 type ClientIdx = u32;
@@ -181,5 +181,20 @@ fn decode_changes(encoded: Encoded) -> LogStore {
         keys,
     } = encoded;
 
+    // let mut frontiers = vv.clone(); // version vector of the doc
+    // for deps in change_deps_arr {
+    //     update_frontiers(&mut frontiers, deps);
+    // }
+
     todo!()
+}
+
+fn update_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
+    for dep in new_change_deps.iter() {
+        if let Some(last) = frontiers.get_last(dep.client_id) {
+            if last <= dep.counter {
+                frontiers.remove(&dep.client_id);
+            }
+        }
+    }
 }
