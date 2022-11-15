@@ -7,7 +7,6 @@ use columnar::{columnar, from_bytes, to_vec};
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
@@ -15,7 +14,7 @@ use crate::{
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
-        registry::{ContainerInstance, ContainerRegistry},
+        registry::ContainerRegistry,
         text::text_content::ListSlice,
         ContainerID,
     },

@@ -1,4 +1,3 @@
-use columnar::{from_bytes, to_vec};
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;

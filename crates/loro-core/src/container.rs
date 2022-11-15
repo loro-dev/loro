@@ -5,10 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{Op, RemoteOp},
-    span::IdSpan,
-    version::VersionVector,
-    InternalString, LogStore, LoroValue, ID,
+    op::RemoteOp, span::IdSpan, version::VersionVector, InternalString, LogStore, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};

@@ -16,7 +16,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    dag::{Dag, DagUtils},
+    dag::DagUtils,
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, OpContent, RemoteOp},

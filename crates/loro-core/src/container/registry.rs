@@ -115,7 +115,6 @@ impl ContainerRegistry {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
             ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
             ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id))),
-            _ => unimplemented!(),
         }
     }
 
