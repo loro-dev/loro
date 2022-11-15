@@ -409,17 +409,14 @@ impl Container for TextContainer {
                             });
                         }
                     }
-                    ListSlice::Unknown(u) => {
-                        let data = OpContent::Normal {
+                    this => {
+                        contents.push(OpContent::Normal {
                             content: Content::List(ListOp::Insert {
-                                slice: ListSlice::Unknown(*u),
+                                slice: this.clone(),
                                 pos: *pos,
                             }),
-                        };
-
-                        contents.push(data);
+                        });
                     }
-                    _ => unreachable!(),
                 }
             } else {
                 contents.push(content.clone());
