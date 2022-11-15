@@ -178,7 +178,7 @@ impl LogStore {
 
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
         let container = self.reg.get_by_idx(op.container).unwrap();
-        let container = container.lock().unwrap();
+        let mut container = container.lock().unwrap();
         let mut op = op.clone().convert(self);
         container.to_export(&mut op);
         op

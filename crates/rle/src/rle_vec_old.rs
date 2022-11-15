@@ -87,7 +87,7 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
 
     /// get a slice from `from` to `to` with atom indexes
     pub fn slice_iter(&self, from: usize, to: usize) -> SliceIterator<'_, T> {
-        if from == to {
+        if from == to || self.merged_len() == 0 {
             return SliceIterator::new_empty();
         }
 

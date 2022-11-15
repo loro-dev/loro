@@ -36,7 +36,7 @@ fn main() {
     println!(
         "{} bytes, overhead {} bytes. used {}ms",
         buf.len(),
-        buf.len() - 182_315,
+        0,
         start.elapsed().as_millis()
     );
 }

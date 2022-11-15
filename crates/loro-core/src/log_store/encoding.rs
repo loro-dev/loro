@@ -122,7 +122,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                 let op = store.to_remote_op(op);
                 for content in op.contents.into_iter() {
                     let content = content.into_normal().unwrap();
-                    let (prop, value) = match content {
+                    let (prop, gc, value) = match content {
                         crate::op::Content::Container(_) => {
                             todo!();
                         }
@@ -131,19 +131,22 @@ fn encode_changes(store: &LogStore) -> Encoded {
                                 keys.push(key);
                                 keys.len() - 1
                             }),
+                            0,
                             value,
                         ),
                         crate::op::Content::List(list) => match list {
                             ListOp::Insert { slice, pos } => (
                                 pos as usize,
+                                slice.as_unknown().copied().unwrap_or(0),
                                 match slice {
                                     ListSlice::RawData(v) => v.into(),
                                     ListSlice::RawStr(s) => s.as_str().into(),
+                                    ListSlice::Unknown(_) => LoroValue::Null,
                                     _ => unreachable!(),
                                 },
                             ),
                             ListOp::Delete(span) => {
-                                (span.pos as usize, LoroValue::I32(span.len as i32))
+                                (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                             }
                         },
                         crate::op::Content::Dyn(_) => unreachable!(),
@@ -152,7 +155,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                         container,
                         prop,
                         value,
-                        gc: 0,
+                        gc,
                     })
                 }
             }

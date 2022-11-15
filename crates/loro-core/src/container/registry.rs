@@ -68,7 +68,7 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.get_value(),
         }
     }
-    fn to_export(&self, op: &mut RemoteOp) {
+    fn to_export(&mut self, op: &mut RemoteOp) {
         match self {
             ContainerInstance::Map(x) => x.to_export(op),
             ContainerInstance::Text(x) => x.to_export(op),

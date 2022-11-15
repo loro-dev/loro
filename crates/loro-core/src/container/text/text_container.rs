@@ -5,7 +5,7 @@ use std::{
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree, Sliceable,
+    HasLength, RleTree, RleVec, Sliceable,
 };
 use smallvec::{smallvec, SmallVec};
 
@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    string_pool::StringPool,
+    string_pool::{Alive, StringPool},
     text_content::ListSlice,
     tracker::{Effect, Tracker},
 };
@@ -330,22 +330,63 @@ impl Container for TextContainer {
         LoroValue::String(ans_str.into_boxed_str())
     }
 
-    fn to_export(&self, op: &mut RemoteOp) {
+    fn to_export(&mut self, op: &mut RemoteOp) {
+        if self.raw_str.should_update_aliveness(self.text_len()) {
+            self.raw_str
+                .update_aliveness(self.state.iter().map(|x| x.as_ref().clone()))
+        }
+
+        let mut contents: RleVec<[OpContent; 1]> = RleVec::new();
         for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content
+            if let Some((slice, pos)) = content
                 .as_normal_mut()
                 .and_then(|c| c.as_list_mut())
                 .and_then(|x| x.as_insert_mut())
             {
-                if let Some(change) = if let ListSlice::Slice(ranges) = slice {
-                    Some(self.raw_str.get_str(&ranges.0))
-                } else {
-                    None
-                } {
-                    *slice = ListSlice::RawStr(change);
+                match slice {
+                    ListSlice::Slice(r) => {
+                        let s = self.raw_str.get_str(&r.0);
+                        let mut start = 0;
+                        for span in self.raw_str.get_aliveness(&r.0) {
+                            match span {
+                                Alive::True(span) => {
+                                    contents.push(OpContent::Normal {
+                                        content: Content::List(ListOp::Insert {
+                                            slice: ListSlice::RawStr(s[start..start + span].into()),
+                                            pos: *pos,
+                                        }),
+                                    });
+                                }
+                                Alive::False(span) => {
+                                    let v = OpContent::Normal {
+                                        content: Content::List(ListOp::Insert {
+                                            slice: ListSlice::Unknown(span),
+                                            pos: *pos,
+                                        }),
+                                    };
+                                    contents.push(v);
+                                }
+                            }
+
+                            start += span.atom_len();
+                        }
+                    }
+                    ListSlice::Unknown(u) => {
+                        let data = OpContent::Normal {
+                            content: Content::List(ListOp::Insert {
+                                slice: ListSlice::Unknown(*u),
+                                pos: *pos,
+                            }),
+                        };
+
+                        contents.push(data);
+                    }
+                    _ => {}
                 }
             }
         }
+
+        op.contents = contents;
     }
 
     fn to_import(&mut self, op: &mut RemoteOp) {
