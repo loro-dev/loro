@@ -1,6 +1,10 @@
-use std::{io::Read, time::Instant};
+use std::{
+    io::{Read, Write},
+    time::Instant,
+};
 
-use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::{read::GzDecoder, Compression};
 use loro_core::{configure::Configure, container::registry::ContainerWrapper, LoroCore};
 use serde_json::Value;
 const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
@@ -47,7 +51,7 @@ fn main() {
     let mut last = 100;
     let mut count = 0;
     let mut max_count = 0;
-    for byte in buf {
+    for &byte in buf.iter() {
         if byte == last {
             count += 1;
             if count > max_count {
@@ -60,4 +64,8 @@ fn main() {
     }
 
     println!("Longest continuous bytes length {}", max_count);
+    let mut e = GzEncoder::new(Vec::new(), Compression::new(6));
+    e.write_all(&buf).unwrap();
+    let result = e.finish().unwrap();
+    println!("GZipped Size {}", result.len());
 }
