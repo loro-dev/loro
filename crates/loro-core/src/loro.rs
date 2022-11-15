@@ -92,6 +92,11 @@ impl LoroCore {
         store.encode_snapshot()
     }
 
+    pub fn decode_snapshot(input: &[u8], client_id: Option<ClientID>, cfg: Configure) -> Self {
+        let log_store = LogStore::decode_snapshot(input, client_id, cfg);
+        Self { log_store }
+    }
+
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();

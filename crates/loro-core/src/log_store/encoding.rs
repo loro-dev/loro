@@ -1,12 +1,28 @@
-use columnar::{columnar, to_vec};
+use std::{
+    marker::PhantomPinned,
+    sync::{Arc, RwLock},
+};
+
+use columnar::{columnar, from_bytes, to_vec};
 use fxhash::FxHashMap;
+use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{Lamport, Timestamp},
-    container::{list::list_op::ListOp, map::MapSet, text::text_content::ListSlice, ContainerID},
+    change::{Change, ChangeMergeCfg, Lamport, Timestamp},
+    configure::Configure,
+    container::{
+        list::list_op::{DeleteSpan, ListOp},
+        map::MapSet,
+        registry::ContainerRegistry,
+        text::text_content::ListSlice,
+        ContainerID,
+    },
     id::{ClientID, ContainerIdx, Counter, ID},
-    InternalString, LogStore, LoroValue, VersionVector,
+    op::{Content, Op, OpContent},
+    smstring::SmString,
+    span::{HasIdSpan, HasLamportSpan},
+    ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
 
 type ClientIdx = u32;
@@ -47,7 +63,7 @@ struct OpEncoding {
 const NO_A_CLIENT: ClientIdx = ClientIdx::MAX;
 
 #[columnar(vec, ser, de)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 struct DepsEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     client_idx: ClientIdx,
@@ -178,16 +194,14 @@ fn encode_changes(store: &LogStore) -> Encoded {
     }
 }
 
-impl LogStore {
-    pub fn encode_snapshot(&self) -> Vec<u8> {
-        let encoded = encode_changes(self);
-        to_vec(&encoded).unwrap()
-    }
-}
-
-fn decode_changes(encoded: Encoded) -> LogStore {
+fn decode_changes(
+    encoded: Encoded,
+    client_id: Option<ClientID>,
+    mut cfg: Configure,
+) -> Arc<RwLock<LogStore>> {
+    let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
     let Encoded {
-        changes,
+        changes: change_encodings,
         ops,
         deps,
         clients,
@@ -195,12 +209,144 @@ fn decode_changes(encoded: Encoded) -> LogStore {
         keys,
     } = encoded;
 
-    // let mut frontiers = vv.clone(); // version vector of the doc
-    // for deps in change_deps_arr {
-    //     update_frontiers(&mut frontiers, deps);
-    // }
+    if change_encodings.is_empty() {
+        return LogStore::new(cfg, None);
+    }
 
-    todo!()
+    let mut container_reg = ContainerRegistry::new();
+    let mut op_iter = ops.into_iter();
+    let mut changes = FxHashMap::default();
+    let mut deps_iter = deps.into_iter();
+    for change_encoding in change_encodings {
+        let ChangeEncoding {
+            client_idx,
+            counter,
+            lamport,
+            timestamp,
+            op_len,
+        } = change_encoding;
+
+        let client_id = clients[client_idx as usize];
+        let mut ops = RleVec::<[Op; 2]>::new();
+        let deps_len = deps_iter.next().unwrap().counter_or_len as usize;
+        let deps = (0..deps_len)
+            .map(|_| {
+                let raw = deps_iter.next().unwrap();
+                ID::new(clients[raw.client_idx as usize], raw.counter_or_len)
+            })
+            .collect();
+
+        let mut op_counter = counter;
+        for op in op_iter.by_ref().take(op_len as usize) {
+            let OpEncoding {
+                container,
+                prop,
+                value,
+                gc,
+            } = op;
+            let container_id = containers[container as usize].clone();
+
+            container_reg.get_or_create(&container_id);
+
+            let container_type = container_id.container_type();
+            let content = match container_type {
+                ContainerType::Map => {
+                    let key = keys[prop as usize].clone();
+                    Content::Map(MapSet { key, value })
+                }
+                ContainerType::List | ContainerType::Text => {
+                    let pos = prop as usize;
+                    let list_op = match value {
+                        LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
+                            pos: pos as isize,
+                            len: len as isize,
+                        }),
+                        _ => {
+                            let slice = match value {
+                                LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
+                                LoroValue::List(v) => ListSlice::RawData(*v),
+                                _ => unreachable!(),
+                            };
+                            ListOp::Insert { slice, pos }
+                        }
+                    };
+                    Content::List(list_op)
+                }
+            };
+
+            let op = Op {
+                counter: op_counter,
+                container,
+                content: OpContent::Normal { content },
+            };
+
+            op_counter += op.content_len() as i32;
+            ops.push(op);
+        }
+
+        let change = Change {
+            id: ID { client_id, counter },
+            lamport,
+            timestamp,
+            ops,
+            deps,
+        };
+
+        changes
+            .entry(client_id)
+            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
+            .push(change);
+    }
+
+    let vv: VersionVector = changes
+        .iter()
+        .map(|(_, changes)| changes.last().unwrap().id_last())
+        .collect();
+
+    let mut frontier = vv.clone();
+    for (_, changes) in changes.iter() {
+        for change in changes.iter() {
+            update_frontiers(&mut frontier, &change.deps);
+        }
+    }
+
+    let latest_lamport = changes
+        .iter()
+        .map(|(_, changes)| changes.last().unwrap().lamport_last())
+        .max()
+        .unwrap();
+    let latest_timestamp = changes
+        .iter()
+        .map(|(_, changes)| changes.last().unwrap().timestamp)
+        .max()
+        .unwrap();
+    Arc::new(RwLock::new(LogStore {
+        changes,
+        vv,
+        cfg,
+        latest_lamport,
+        latest_timestamp,
+        this_client_id,
+        frontier: frontier.get_head(),
+        reg: container_reg,
+        _pin: PhantomPinned,
+    }))
+}
+
+impl LogStore {
+    pub fn encode_snapshot(&self) -> Vec<u8> {
+        let encoded = encode_changes(self);
+        to_vec(&encoded).unwrap()
+    }
+
+    pub fn decode_snapshot(
+        input: &[u8],
+        client_id: Option<ClientID>,
+        cfg: Configure,
+    ) -> Arc<RwLock<Self>> {
+        let encoded = from_bytes(&input).unwrap();
+        decode_changes(encoded, client_id, cfg)
+    }
 }
 
 fn update_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {

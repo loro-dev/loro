@@ -1,7 +1,7 @@
 use std::{io::Read, time::Instant};
 
 use flate2::read::GzDecoder;
-use loro_core::{container::registry::ContainerWrapper, LoroCore};
+use loro_core::{configure::Configure, container::registry::ContainerWrapper, LoroCore};
 use serde_json::Value;
 const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
 
@@ -39,4 +39,9 @@ fn main() {
         0,
         start.elapsed().as_millis()
     );
+
+    let loro = LoroCore::decode_snapshot(&buf, None, Configure::default());
+    let buf2 = loro.encode_snapshot();
+    println!("{} bytes", buf2.len());
+    assert_eq!(buf, buf2);
 }
