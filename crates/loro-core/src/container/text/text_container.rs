@@ -1,7 +1,4 @@
-use std::{
-    ops::Range,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -40,7 +37,7 @@ struct DagNode {
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, HeapMode>>,
+    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
     raw_str: StringPool,
     tracker: Tracker,
     head: SmallVec<[ID; 2]>,
@@ -71,7 +68,7 @@ impl TextContainer {
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
-        self.state.insert(pos, slice.clone());
+        self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
             OpContent::Normal {
@@ -172,8 +169,8 @@ impl Container for TextContainer {
                         } => match op {
                             ListOp::Insert { slice, pos } => {
                                 let v = match slice {
-                                    ListSlice::Slice(slice) => slice.clone().0,
-                                    ListSlice::Unknown(u) => ListSlice::unknown_range(*u).0,
+                                    ListSlice::Slice(slice) => slice.clone(),
+                                    ListSlice::Unknown(u) => ListSlice::unknown_range(*u),
                                     _ => unreachable!(),
                                 };
 
@@ -209,9 +206,9 @@ impl Container for TextContainer {
                                     } => match op {
                                         ListOp::Insert { slice, pos } => {
                                             let v = match slice {
-                                                ListSlice::Slice(slice) => slice.clone().0,
+                                                ListSlice::Slice(slice) => slice.clone(),
                                                 ListSlice::Unknown(u) => {
-                                                    ListSlice::unknown_range(*u).0
+                                                    ListSlice::unknown_range(*u)
                                                 }
                                                 _ => unreachable!(),
                                             };
@@ -315,8 +312,8 @@ impl Container for TextContainer {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
                     let v = match content {
-                        ListSlice::Slice(slice) => slice.clone().0,
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(u).0,
+                        ListSlice::Slice(slice) => slice.clone(),
+                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
                         _ => unreachable!(),
                     };
 
@@ -343,11 +340,11 @@ impl Container for TextContainer {
         let mut ans_str = String::new();
         for v in self.state.iter() {
             let content = v.as_ref();
-            if SliceRange::is_unknown(&SliceRange(content.clone())) {
+            if SliceRange::is_unknown(content) {
                 panic!("Unknown range when getting value");
             }
 
-            ans_str.push_str(&self.raw_str.get_str(content));
+            ans_str.push_str(&self.raw_str.get_str(&content.0));
         }
 
         LoroValue::String(ans_str.into_boxed_str())
@@ -356,7 +353,7 @@ impl Container for TextContainer {
     fn to_export(&mut self, op: &mut RemoteOp) {
         if self.raw_str.should_update_aliveness(self.text_len()) {
             self.raw_str
-                .update_aliveness(self.state.iter().map(|x| x.as_ref().clone()))
+                .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
         }
 
         let mut contents: RleVec<[OpContent; 1]> = RleVec::new();

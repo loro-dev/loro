@@ -253,6 +253,10 @@ impl<'a, T: HasLength> Iterator for SliceIterator<'a, T> {
     type Item = Slice<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.vec.is_empty() {
+            return None;
+        }
+
         let end_index = self.end_index.unwrap_or(self.vec.len() - 1);
         if self.cur_index == end_index {
             let elem = &self.vec[self.cur_index];

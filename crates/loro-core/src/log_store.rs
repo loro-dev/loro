@@ -296,7 +296,7 @@ impl LogStore {
             return;
         }
 
-        debug_log!("Client {} Apply {:?}", self.this_client_id, &change);
+        debug_log!("Client {} Apply {:#?}", self.this_client_id, &change);
         for dep in &change.deps {
             if !self.contains(*dep) {
                 unimplemented!("need impl pending changes");
