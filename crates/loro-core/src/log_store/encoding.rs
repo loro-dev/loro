@@ -42,6 +42,8 @@ struct ChangeEncoding {
     timestamp: Timestamp,
     #[columnar(original_type = "u32")]
     op_len: u32,
+    #[columnar(original_type = "u32")]
+    deps_len: u32,
 }
 
 #[columnar(vec, ser, de)]
@@ -59,30 +61,20 @@ struct OpEncoding {
     value: LoroValue,
 }
 
-// can use 0 to compress even further
-const NO_A_CLIENT: ClientIdx = ClientIdx::MAX;
-
 #[columnar(vec, ser, de)]
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct DepsEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     client_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    counter_or_len: Counter,
+    counter: Counter,
 }
 
 impl DepsEncoding {
-    fn new_len(len: usize) -> Self {
-        Self {
-            client_idx: NO_A_CLIENT,
-            counter_or_len: len as Counter,
-        }
-    }
-
-    fn new_id(client_idx: ClientIdx, counter: Counter) -> Self {
+    fn new(client_idx: ClientIdx, counter: Counter) -> Self {
         Self {
             client_idx,
-            counter_or_len: counter,
+            counter,
         }
     }
 }
@@ -120,9 +112,8 @@ fn encode_changes(store: &LogStore) -> Encoded {
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
-            deps.push(DepsEncoding::new_len(change.deps.len()));
             for dep in change.deps.iter() {
-                deps.push(DepsEncoding::new_id(
+                deps.push(DepsEncoding::new(
                     *client_id_to_idx.get(&dep.client_id).unwrap(),
                     dep.counter,
                 ));
@@ -187,6 +178,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                 counter: change.id.counter,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
+                deps_len: change.deps.len() as u32,
                 op_len,
             });
         }
@@ -232,15 +224,15 @@ fn decode_changes(
             lamport,
             timestamp,
             op_len,
+            deps_len,
         } = change_encoding;
 
         let client_id = clients[client_idx as usize];
         let mut ops = RleVec::<[Op; 2]>::new();
-        let deps_len = deps_iter.next().unwrap().counter_or_len as usize;
         let deps = (0..deps_len)
             .map(|_| {
                 let raw = deps_iter.next().unwrap();
-                ID::new(clients[raw.client_idx as usize], raw.counter_or_len)
+                ID::new(clients[raw.client_idx as usize], raw.counter)
             })
             .collect();
 
@@ -356,7 +348,7 @@ impl LogStore {
         client_id: Option<ClientID>,
         cfg: Configure,
     ) -> Arc<RwLock<Self>> {
-        let encoded = from_bytes(&input).unwrap();
+        let encoded = from_bytes(input).unwrap();
         decode_changes(encoded, client_id, cfg)
     }
 }
