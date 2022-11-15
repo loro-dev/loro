@@ -42,7 +42,7 @@ pub struct GcConfig {
 impl Default for GcConfig {
     fn default() -> Self {
         GcConfig {
-            gc: false,
+            gc: true,
             snapshot_interval: 6 * MONTH,
         }
     }

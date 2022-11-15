@@ -19,7 +19,7 @@ use crate::{
         ContainerID,
     },
     id::{ClientID, ContainerIdx, Counter, ID},
-    op::{Content, Op, OpContent},
+    op::{Content, Op, OpContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
@@ -120,14 +120,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
-            changes.push(ChangeEncoding {
-                client_idx: client_idx as ClientIdx,
-                counter: change.id.counter,
-                lamport: change.lamport,
-                timestamp: change.timestamp,
-                op_len: change.ops.merged_len() as u32,
-            });
-
             deps.push(DepsEncoding::new_len(change.deps.len()));
             for dep in change.deps.iter() {
                 deps.push(DepsEncoding::new_id(
@@ -136,9 +128,16 @@ fn encode_changes(store: &LogStore) -> Encoded {
                 ));
             }
 
+            let mut remote_ops: RleVec<[RemoteOp; 1]> = RleVec::with_capacity(change.ops.len());
+            let mut containers = Vec::with_capacity(change.ops.len());
             for op in change.ops.iter() {
-                let container = op.container;
+                containers.push(op.container);
                 let op = store.to_remote_op(op);
+                remote_ops.push(op);
+            }
+
+            let mut op_len = 0;
+            for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
                     let content = content.into_normal().unwrap();
                     let (prop, gc, value) = match content {
@@ -173,6 +172,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                         },
                         crate::op::Content::Dyn(_) => unreachable!(),
                     };
+                    op_len += 1;
                     ops.push(OpEncoding {
                         container,
                         prop,
@@ -181,6 +181,14 @@ fn encode_changes(store: &LogStore) -> Encoded {
                     })
                 }
             }
+
+            changes.push(ChangeEncoding {
+                client_idx: client_idx as ClientIdx,
+                counter: change.id.counter,
+                lamport: change.lamport,
+                timestamp: change.timestamp,
+                op_len,
+            });
         }
     }
 
