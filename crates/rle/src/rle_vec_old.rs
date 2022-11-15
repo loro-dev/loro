@@ -77,6 +77,10 @@ impl<T: Mergable<Cfg> + HasLength, Cfg> RleVecWithIndex<T, Cfg> {
             start -= 1;
         }
 
+        if start >= self.vec.len() {
+            start -= 1;
+        }
+
         let value = &self.vec[start];
         Some(SearchResult {
             element: value,

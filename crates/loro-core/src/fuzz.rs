@@ -287,6 +287,25 @@ mod test {
     use super::Action::*;
     use super::*;
     #[test]
+    fn case1() {
+        test_multi_sites(
+            8,
+            vec![
+                Ins {
+                    content: 10,
+                    pos: 17077660962493825161,
+                    site: 237,
+                },
+                Ins {
+                    content: 43521,
+                    pos: 826129116780120321,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn case0() {
         test_multi_sites(
             4,

@@ -399,6 +399,7 @@ impl Container for TextContainer {
                             start += span.atom_len();
                             pos_start += span.atom_len();
                         }
+                        assert_eq!(start, r.atom_len());
                     }
                     ListSlice::Unknown(u) => {
                         let data = OpContent::Normal {
@@ -410,7 +411,7 @@ impl Container for TextContainer {
 
                         contents.push(data);
                     }
-                    _ => {}
+                    _ => unreachable!(),
                 }
             } else {
                 contents.push(content.clone());

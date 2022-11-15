@@ -85,10 +85,21 @@ impl StringPool {
             return vec![Alive::True((range.end - range.start) as usize)];
         }
 
-        self.alive_ranges
+        let mut len = 0;
+        let mut ans: Vec<Alive> = self
+            .alive_ranges
             .slice_iter(range.start as usize, range.end as usize)
-            .map(|x| x.value.slice(x.start, x.end))
-            .collect()
+            .map(|x| {
+                len += x.end - x.start;
+                x.value.slice(x.start, x.end)
+            })
+            .collect();
+
+        if len < (range.end - range.start) as usize {
+            ans.push(Alive::True((range.end - range.start) as usize - len));
+        }
+
+        ans
     }
 
     pub fn update_aliveness<T>(&mut self, iter: T)
