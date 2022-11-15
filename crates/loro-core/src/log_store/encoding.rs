@@ -261,6 +261,10 @@ fn decode_changes(
                             pos: pos as isize,
                             len: len as isize,
                         }),
+                        LoroValue::Null => ListOp::Insert {
+                            pos,
+                            slice: ListSlice::Unknown(gc),
+                        },
                         _ => {
                             let slice = match value {
                                 LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
