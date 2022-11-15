@@ -36,14 +36,14 @@ const MONTH: u64 = 30 * 24 * 60 * 60;
 #[derive(Debug)]
 pub struct GcConfig {
     pub gc: bool,
-    pub interval: u64,
+    pub snapshot_interval: u64,
 }
 
 impl Default for GcConfig {
     fn default() -> Self {
         GcConfig {
             gc: false,
-            interval: 6 * MONTH,
+            snapshot_interval: 6 * MONTH,
         }
     }
 }
@@ -181,7 +181,7 @@ impl LogStore {
         let container = self.reg.get_by_idx(op.container).unwrap();
         let mut container = container.lock().unwrap();
         let mut op = op.clone().convert(self);
-        container.to_export(&mut op);
+        container.to_export(&mut op, self.cfg.gc.gc);
         op
     }
 

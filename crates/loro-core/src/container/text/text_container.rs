@@ -350,8 +350,8 @@ impl Container for TextContainer {
         LoroValue::String(ans_str.into_boxed_str())
     }
 
-    fn to_export(&mut self, op: &mut RemoteOp) {
-        if self.raw_str.should_update_aliveness(self.text_len()) {
+    fn to_export(&mut self, op: &mut RemoteOp, gc: bool) {
+        if gc && self.raw_str.should_update_aliveness(self.text_len()) {
             self.raw_str
                 .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
         }
@@ -370,33 +370,44 @@ impl Container for TextContainer {
                         }
 
                         let s = self.raw_str.get_str(&r.0);
-                        let mut start = 0;
-                        let mut pos_start = *pos;
-                        for span in self.raw_str.get_aliveness(&r.0) {
-                            match span {
-                                Alive::True(span) => {
-                                    contents.push(OpContent::Normal {
-                                        content: Content::List(ListOp::Insert {
-                                            slice: ListSlice::RawStr(s[start..start + span].into()),
-                                            pos: pos_start,
-                                        }),
-                                    });
+                        if gc {
+                            let mut start = 0;
+                            let mut pos_start = *pos;
+                            for span in self.raw_str.get_aliveness(&r.0) {
+                                match span {
+                                    Alive::True(span) => {
+                                        contents.push(OpContent::Normal {
+                                            content: Content::List(ListOp::Insert {
+                                                slice: ListSlice::RawStr(
+                                                    s[start..start + span].into(),
+                                                ),
+                                                pos: pos_start,
+                                            }),
+                                        });
+                                    }
+                                    Alive::False(span) => {
+                                        let v = OpContent::Normal {
+                                            content: Content::List(ListOp::Insert {
+                                                slice: ListSlice::Unknown(span),
+                                                pos: pos_start,
+                                            }),
+                                        };
+                                        contents.push(v);
+                                    }
                                 }
-                                Alive::False(span) => {
-                                    let v = OpContent::Normal {
-                                        content: Content::List(ListOp::Insert {
-                                            slice: ListSlice::Unknown(span),
-                                            pos: pos_start,
-                                        }),
-                                    };
-                                    contents.push(v);
-                                }
-                            }
 
-                            start += span.atom_len();
-                            pos_start += span.atom_len();
+                                start += span.atom_len();
+                                pos_start += span.atom_len();
+                            }
+                            assert_eq!(start, r.atom_len());
+                        } else {
+                            contents.push(OpContent::Normal {
+                                content: Content::List(ListOp::Insert {
+                                    slice: ListSlice::RawStr(s),
+                                    pos: *pos,
+                                }),
+                            });
                         }
-                        assert_eq!(start, r.atom_len());
                     }
                     ListSlice::Unknown(u) => {
                         let data = OpContent::Normal {

@@ -189,7 +189,7 @@ impl Container for MapContainer {
         todo!()
     }
 
-    fn to_export(&mut self, _op: &mut RemoteOp) {}
+    fn to_export(&mut self, _op: &mut RemoteOp, gc: bool) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
 }
