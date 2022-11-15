@@ -37,7 +37,9 @@ struct OpEncoding {
     #[columnar(strategy = "DeltaRle", original_type = "u32")]
     prop: usize,
     #[columnar(strategy = "Rle", original_type = "u32")]
+    // TODO: can be compressed
     gc: usize,
+    // FIXME
     value: LoroValue,
 }
 
@@ -79,6 +81,7 @@ struct Encoded {
     #[columnar(type = "vec")]
     deps: Vec<DepsEncoding>,
     clients: Clients,
+    // TODO: can be compressed
     containers: Containers,
     keys: Vec<InternalString>,
 }
