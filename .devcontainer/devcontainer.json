@@ -4,7 +4,7 @@
 	"features": {
 		"ghcr.io/devcontainers/features/node:1": {},
 		"ghcr.io/devcontainers-contrib/features/deno:1": {}
-	}
+	},
 
 	// Features to add to the dev container. More info: https://containers.dev/implementors/features.
 	// "features": {},
@@ -13,7 +13,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "rustc --version",
+	"postCreateCommand": "bash scripts/install-dev-tools.sh"
 
 	// Configure tool-specific properties.
 	// "customizations": {},
