@@ -27,7 +27,7 @@ use crate::{
 
 use super::{
     string_pool::{Alive, StringPool},
-    text_content::ListSlice,
+    text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
 };
 
@@ -171,7 +171,13 @@ impl Container for TextContainer {
                             content: Content::List(op),
                         } => match op {
                             ListOp::Insert { slice, pos } => {
-                                self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
+                                let v = match slice {
+                                    ListSlice::Slice(slice) => slice.clone().0,
+                                    ListSlice::Unknown(u) => ListSlice::unknown_range(*u).0,
+                                    _ => unreachable!(),
+                                };
+
+                                self.state.insert(*pos, v)
                             }
                             ListOp::Delete(span) => self.state.delete_range(
                                 Some(span.start() as usize),
@@ -201,9 +207,17 @@ impl Container for TextContainer {
                                     OpContent::Normal {
                                         content: Content::List(op),
                                     } => match op {
-                                        ListOp::Insert { slice, pos } => self
-                                            .state
-                                            .insert(*pos, slice.as_slice().unwrap().clone().0),
+                                        ListOp::Insert { slice, pos } => {
+                                            let v = match slice {
+                                                ListSlice::Slice(slice) => slice.clone().0,
+                                                ListSlice::Unknown(u) => {
+                                                    ListSlice::unknown_range(*u).0
+                                                }
+                                                _ => unreachable!(),
+                                            };
+
+                                            self.state.insert(*pos, v)
+                                        }
                                         ListOp::Delete(span) => self.state.delete_range(
                                             Some(span.start() as usize),
                                             Some(span.end() as usize),
@@ -300,8 +314,13 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    self.state
-                        .insert(pos, content.as_slice().unwrap().clone().0);
+                    let v = match content {
+                        ListSlice::Slice(slice) => slice.clone().0,
+                        ListSlice::Unknown(u) => ListSlice::unknown_range(u).0,
+                        _ => unreachable!(),
+                    };
+
+                    self.state.insert(pos, v)
                 }
             }
             debug_log!("AFTER EFFECT");
@@ -324,6 +343,10 @@ impl Container for TextContainer {
         let mut ans_str = String::new();
         for v in self.state.iter() {
             let content = v.as_ref();
+            if SliceRange::is_unknown(&SliceRange(content.clone())) {
+                panic!("Unknown range when getting value");
+            }
+
             ans_str.push_str(&self.raw_str.get_str(content));
         }
 
@@ -345,15 +368,20 @@ impl Container for TextContainer {
             {
                 match slice {
                     ListSlice::Slice(r) => {
+                        if r.is_unknown() {
+                            panic!("Unknown range in state");
+                        }
+
                         let s = self.raw_str.get_str(&r.0);
                         let mut start = 0;
+                        let mut pos_start = *pos;
                         for span in self.raw_str.get_aliveness(&r.0) {
                             match span {
                                 Alive::True(span) => {
                                     contents.push(OpContent::Normal {
                                         content: Content::List(ListOp::Insert {
                                             slice: ListSlice::RawStr(s[start..start + span].into()),
-                                            pos: *pos,
+                                            pos: pos_start,
                                         }),
                                     });
                                 }
@@ -361,7 +389,7 @@ impl Container for TextContainer {
                                     let v = OpContent::Normal {
                                         content: Content::List(ListOp::Insert {
                                             slice: ListSlice::Unknown(span),
-                                            pos: *pos,
+                                            pos: pos_start,
                                         }),
                                     };
                                     contents.push(v);
@@ -369,6 +397,7 @@ impl Container for TextContainer {
                             }
 
                             start += span.atom_len();
+                            pos_start += span.atom_len();
                         }
                     }
                     ListSlice::Unknown(u) => {
@@ -383,6 +412,8 @@ impl Container for TextContainer {
                     }
                     _ => {}
                 }
+            } else {
+                contents.push(content.clone());
             }
         }
 
@@ -401,8 +432,8 @@ impl Container for TextContainer {
                         let range = self.raw_str.alloc(s);
                         Some(range)
                     }
+                    ListSlice::Unknown(_) => None,
                     ListSlice::Slice(_) => unreachable!(),
-                    ListSlice::Unknown(_) => unreachable!(),
                     ListSlice::RawData(_) => unreachable!(),
                 } {
                     *slice = slice_range.into();

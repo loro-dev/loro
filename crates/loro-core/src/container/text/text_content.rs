@@ -99,6 +99,14 @@ impl ListSlice {
     pub fn is_unknown(range: &SliceRange) -> bool {
         range.is_unknown()
     }
+
+    pub fn to_range(&self) -> SliceRange {
+        match self {
+            ListSlice::Slice(slice) => slice.clone(),
+            ListSlice::Unknown(u) => SliceRange::new_unknown(*u as u32),
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub(super) fn new_unknown_text(len: usize) -> ListSlice {

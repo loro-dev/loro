@@ -19,6 +19,7 @@ use crate::{
     configure::Configure,
     container::{
         registry::{ContainerInstance, ContainerRegistry},
+        text::text_content::ListSlice,
         Container, ContainerID,
     },
     dag::Dag,
@@ -451,7 +452,10 @@ fn check_import_change_valid(change: &Change<RemoteOp>) {
                     .and_then(|x| x.as_list())
                     .and_then(|x| x.as_insert())
                 {
-                    assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
+                    assert!(matches!(
+                        slice,
+                        ListSlice::RawData(_) | ListSlice::RawStr(_) | ListSlice::Unknown(_)
+                    ))
                 }
             }
         }

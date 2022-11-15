@@ -140,7 +140,10 @@ fn encode_changes(store: &LogStore) -> Encoded {
                         crate::op::Content::List(list) => match list {
                             ListOp::Insert { slice, pos } => (
                                 pos as usize,
-                                slice.as_unknown().copied().unwrap_or(0),
+                                match &slice {
+                                    ListSlice::Unknown(v) => *v,
+                                    _ => 0,
+                                },
                                 match slice {
                                     ListSlice::RawData(v) => v.into(),
                                     ListSlice::RawStr(s) => s.as_str().into(),

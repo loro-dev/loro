@@ -100,11 +100,6 @@ impl StringPool {
         let mut deleted = 0;
         let mut data: Vec<Range<u32>> = iter.collect();
         data.sort_by_key(|x| x.start);
-        println!(
-            "data len={} size={}",
-            data.len(),
-            data.iter().map(|x| x.len()).sum::<usize>()
-        );
         for range in data {
             if range.start > last {
                 let len = (range.start - last) as usize;

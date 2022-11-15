@@ -605,13 +605,37 @@ mod failed_tests {
     #[test]
     fn case_0() {
         test_multi_sites(
-            8,
-            &mut [Map {
-                site: 73,
-                container_idx: 73,
-                key: 73,
-                value: Container(ContainerType::Text),
-            }],
+            3,
+            &mut [
+                Map {
+                    site: 139,
+                    container_idx: 198,
+                    key: 190,
+                    value: I32(533294902),
+                },
+                Text {
+                    site: 167,
+                    container_idx: 182,
+                    pos: 106,
+                    value: 20544,
+                    is_del: false,
+                },
+                Text {
+                    site: 99,
+                    container_idx: 33,
+                    pos: 126,
+                    value: 35453,
+                    is_del: false,
+                },
+                Text {
+                    site: 87,
+                    container_idx: 1,
+                    pos: 84,
+                    value: 5821,
+                    is_del: true,
+                },
+                Sync { from: 85, to: 226 },
+            ],
         )
     }
 
