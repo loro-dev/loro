@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Instant};
+use std::{collections::HashSet, fmt::Debug, panic::UnwindSafe, time::Instant};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -505,70 +505,12 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     check_synced(&mut sites);
 }
 
-pub fn minify_error(site_num: u8, actions: Vec<Action>) {
-    std::panic::set_hook(Box::new(|_info| {
-        // ignore panic output
-    }));
-
-    if std::panic::catch_unwind(|| test_multi_sites(site_num, &mut actions.clone())).is_ok() {
-        println!("No Error Found");
-        return;
-    }
-
-    let mut minified = actions.clone();
-    let mut candidates = Vec::new();
-    for i in 0..actions.len() {
-        let mut new = actions.clone();
-        new.remove(i);
-        candidates.push(new);
-    }
-
-    println!("Minifying...");
-    let start = Instant::now();
-    while let Some(candidate) = candidates.pop() {
-        if std::panic::catch_unwind(|| test_multi_sites(site_num, &mut candidate.clone())).is_err()
-        {
-            for i in 0..candidate.len() {
-                let mut new = candidate.clone();
-                new.remove(i);
-                candidates.push(new);
-            }
-            if candidate.len() < minified.len() {
-                minified = candidate;
-                println!("New min len={}", minified.len());
-            }
-            if candidates.len() > 40 {
-                candidates.drain(0..30);
-            }
-        }
-        if start.elapsed().as_secs() > 10 {
-            if minified.len() <= 4 {
-                break;
-            }
-        }
-        if start.elapsed().as_secs() > 60 {
-            break;
-        }
-    }
-
-    let minified = normalize(site_num, &mut minified);
-    println!(
-        "Old Length {}, New Length {}",
-        actions.len(),
-        minified.len()
-    );
-    dbg!(&minified);
-    if actions.len() > minified.len() {
-        minify_error(site_num, minified);
-    }
-}
-
 #[cfg(test)]
 mod failed_tests {
+    use crate::fuzz::minify_error;
     use crate::tests::PROPTEST_FACTOR_10;
-    use crate::ContainerType;
 
-    use super::minify_error;
+    use super::normalize;
     use super::test_multi_sites;
     use super::Action;
     use super::Action::*;
@@ -759,6 +701,8 @@ mod failed_tests {
                     value: Container(C::List),
                 },
             ],
+            test_multi_sites,
+            normalize,
         )
     }
 
