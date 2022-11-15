@@ -42,14 +42,14 @@ struct ChangeEncoding {
     timestamp: Timestamp,
     #[columnar(original_type = "u32")]
     op_len: u32,
-    #[columnar(original_type = "u32")]
+    #[columnar(strategy = "Rle", original_type = "u32")]
     deps_len: u32,
 }
 
 #[columnar(vec, ser, de)]
 #[derive(Clone, Serialize, Deserialize)]
 struct OpEncoding {
-    #[columnar(original_type = "u32")]
+    #[columnar(strategy = "Rle", original_type = "u32")]
     container: ContainerIdx,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle", original_type = "u32")]
@@ -57,7 +57,6 @@ struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     // TODO: can be compressed
     gc: usize,
-    // FIXME
     value: LoroValue,
 }
 

@@ -44,4 +44,20 @@ fn main() {
     let buf2 = loro.encode_snapshot();
     println!("{} bytes", buf2.len());
     assert_eq!(buf, buf2);
+    let mut last = 100;
+    let mut count = 0;
+    let mut max_count = 0;
+    for byte in buf {
+        if byte == last {
+            count += 1;
+            if count > max_count {
+                max_count = count;
+            }
+        } else {
+            count = 0;
+        }
+        last = byte;
+    }
+
+    println!("Longest continuous bytes length {}", max_count);
 }
