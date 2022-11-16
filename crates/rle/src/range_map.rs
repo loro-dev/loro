@@ -318,24 +318,23 @@ impl<
     }
 
     #[inline]
-    pub fn get_range(&self, start: Index, end: Index) -> Vec<&Value> {
-        let mut ans = Vec::new();
-        for value in self.tree.iter_range(start, Some(end)) {
-            ans.push(&value.as_tree_ref().value)
-        }
-        ans
+    pub fn get_range(&self, start: Index, end: Index) -> impl Iterator<Item = &Value> {
+        self.tree
+            .iter_range(start, Some(end))
+            .map(|x| &x.as_tree_ref().value)
     }
 
     /// TODO: need double check this method
     #[inline]
-    pub fn get_range_with_index(&self, start: Index, end: Index) -> Vec<(Index, &Value)> {
-        let mut ans = Vec::new();
-        for value in self.tree.iter_range(start, Some(end)) {
-            let value = value.as_tree_ref();
-            ans.push((value.index, &value.value));
-        }
-
-        ans
+    pub fn get_range_with_index(
+        &self,
+        start: Index,
+        end: Index,
+    ) -> impl Iterator<Item = (Index, &Value)> {
+        self.tree.iter_range(start, Some(end)).map(|x| {
+            let x = x.as_tree_ref();
+            (x.index, &x.value)
+        })
     }
 
     #[inline]
