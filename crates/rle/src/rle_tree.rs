@@ -259,6 +259,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
     }
 
+    /// the updated elements will only be notified when the leaf node is split
     pub fn update_at_cursors<U, F>(
         &mut self,
         cursors: &mut [UnsafeCursor<T, A>],
@@ -290,6 +291,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.update_with_gathered_map(updates_map, notify);
     }
 
+    /// the updated elements will only be notified when the leaf node is split
     pub fn update_at_cursors_with_args<U, F, Arg>(
         &mut self,
         cursor_groups: &[UnsafeCursor<T, A>],
