@@ -305,36 +305,33 @@ impl LogStore {
 
         // TODO: find a way to remove this clone? we don't need change in apply method actually
         let change = self.change_to_imported_format(change);
+        let change_id_span = change.id_span();
+        let change_deps = change.deps.clone();
+        let change_last_lamport = change.lamport_last();
+        let change_time = change.timestamp;
         let changes = self
             .changes
             .entry(change.id.client_id)
             .or_insert_with(RleVecWithIndex::new);
+        let mut set = FxHashSet::default();
+        for op in change.ops.iter() {
+            set.insert(op.container);
+        }
         changes.push(change);
-        // TODO: avoid this clone?
-        let change = changes.vec().last().unwrap().clone();
 
         // Apply ops.
         // NOTE: applying expects that log_store has store the Change, and updated self vv
-        let mut set = FxHashSet::default();
-        for op in change.ops.iter() {
-            set.insert(&op.container);
-        }
 
         for container in set {
-            let mut container = self.reg.get_by_idx(*container).unwrap().lock().unwrap();
-            container.apply(change.id_span(), self);
+            let mut container = self.reg.get_by_idx(container).unwrap().lock().unwrap();
+            container.apply(change_id_span, self);
         }
 
-        self.vv.set_end(change.id_end());
-        self.update_frontier(&change.deps, &[change.id_last()]);
+        self.vv.set_end(change_id_span.id_end());
+        self.update_frontier(&change_deps, &[change_id_span.id_last()]);
 
-        if change.lamport_last() > self.latest_lamport {
-            self.latest_lamport = change.lamport_last();
-        }
-
-        if change.timestamp > self.latest_timestamp {
-            self.latest_timestamp = change.timestamp;
-        }
+        self.latest_lamport = self.latest_lamport.max(change_last_lamport);
+        self.latest_timestamp = self.latest_timestamp.max(change_time);
     }
 
     #[inline]
