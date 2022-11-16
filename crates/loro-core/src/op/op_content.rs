@@ -92,5 +92,25 @@ impl Mergable for OpContent {
     where
         Self: Sized,
     {
+        match self {
+            OpContent::Normal { content } => match _other {
+                OpContent::Normal {
+                    content: ref other_content,
+                } => content.merge(other_content, _conf),
+                _ => unreachable!(),
+            },
+            OpContent::Undo { target } => match _other {
+                OpContent::Undo {
+                    target: ref other_target,
+                } => target.merge(other_target, _conf),
+                _ => unreachable!(),
+            },
+            OpContent::Redo { target } => match _other {
+                OpContent::Redo {
+                    target: ref other_target,
+                } => target.merge(other_target, _conf),
+                _ => unreachable!(),
+            },
+        }
     }
 }

@@ -601,11 +601,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     node.borrow_from_sibling(sibling, either, notify);
                 }
             } else {
-                if node.parent().unwrap().is_root() {
-                    continue;
-                }
-
-                unreachable!();
+                continue;
             }
 
             if to_delete {

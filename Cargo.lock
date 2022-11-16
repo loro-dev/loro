@@ -302,6 +302,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "columnar_derive",
+ "flate2",
  "itertools",
  "lazy_static",
  "postcard",

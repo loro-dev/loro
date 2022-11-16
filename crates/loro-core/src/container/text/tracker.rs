@@ -280,7 +280,7 @@ impl Tracker {
                             id,
                             *pos,
                             slice.content_len(),
-                            slice.as_slice().unwrap().clone(),
+                            slice.to_range(),
                         );
                         debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                         // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements

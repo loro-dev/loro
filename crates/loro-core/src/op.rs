@@ -5,11 +5,12 @@ use crate::{
     span::HasCounter,
     LogStore,
 };
-use rle::{HasIndex, HasLength, Mergable, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
 mod op_content;
 
 pub use insert_content::*;
+use smallvec::{smallvec, SmallVec};
 
 pub(crate) use self::op_content::OpContent;
 
@@ -40,7 +41,7 @@ pub struct Op {
 pub struct RemoteOp {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) content: OpContent,
+    pub(crate) contents: RleVec<[OpContent; 1]>,
 }
 
 impl Op {
@@ -71,20 +72,27 @@ impl Op {
         RemoteOp {
             counter: self.counter,
             container,
-            content: self.content,
+            contents: RleVec::from(smallvec![self.content]),
         }
     }
 }
 
 impl RemoteOp {
-    pub(crate) fn convert(self, log: &mut LogStore) -> Op {
+    pub(crate) fn convert(self, log: &mut LogStore) -> SmallVec<[Op; 1]> {
         let container = log.get_or_create_container_idx(&self.container);
-        let content = self.content;
-        Op {
-            counter: self.counter,
-            container,
-            content,
-        }
+        let mut counter = self.counter;
+        self.contents
+            .into_iter()
+            .map(|content| {
+                let ans = Op {
+                    counter,
+                    container,
+                    content,
+                };
+                counter += ans.atom_len() as Counter;
+                ans
+            })
+            .collect()
     }
 }
 
@@ -144,51 +152,34 @@ impl Sliceable for Op {
 impl Mergable for RemoteOp {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
         self.counter + self.content_len() as Counter == other.counter
-            && self.content.is_mergable(&other.content, cfg)
+            && other.contents.len() == 1
+            && self
+                .contents
+                .last()
+                .unwrap()
+                .is_mergable(other.contents.first().unwrap(), cfg)
             && self.container == other.container
     }
 
-    fn merge(&mut self, other: &Self, cfg: &()) {
-        match &mut self.content {
-            OpContent::Normal { content } => match &other.content {
-                OpContent::Normal {
-                    content: other_content,
-                } => {
-                    content.merge(other_content, cfg);
-                }
-                _ => unreachable!(),
-            },
-            OpContent::Undo { target, .. } => match &other.content {
-                OpContent::Undo {
-                    target: other_target,
-                    ..
-                } => target.merge(other_target, cfg),
-                _ => unreachable!(),
-            },
-            OpContent::Redo { target, .. } => match &other.content {
-                OpContent::Redo {
-                    target: other_target,
-                    ..
-                } => target.merge(other_target, cfg),
-                _ => unreachable!(),
-            },
+    fn merge(&mut self, other: &Self, _: &()) {
+        for content in other.contents.iter() {
+            self.contents.push(content.clone())
         }
     }
 }
 
 impl HasLength for RemoteOp {
     fn content_len(&self) -> usize {
-        self.content.content_len()
+        self.contents.iter().map(|x| x.atom_len()).sum()
     }
 }
 
 impl Sliceable for RemoteOp {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from);
-        let content: OpContent = self.content.slice(from, to);
         RemoteOp {
             counter: (self.counter + from as Counter),
-            content,
+            contents: self.contents.slice(from, to),
             container: self.container.clone(),
         }
     }

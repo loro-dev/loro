@@ -36,7 +36,7 @@ fn main() {
     println!(
         "{} bytes, overhead {} bytes. used {}ms",
         buf.len(),
-        buf.len() - 182_315,
+        0,
         start.elapsed().as_millis()
     );
 
@@ -44,4 +44,28 @@ fn main() {
     let buf2 = loro.encode_snapshot();
     println!("{} bytes", buf2.len());
     assert_eq!(buf, buf2);
+    let mut last = 100;
+    let mut count = 0;
+    let mut max_count = 0;
+    for &byte in buf.iter() {
+        if byte == last {
+            count += 1;
+            if count > max_count {
+                max_count = count;
+            }
+        } else {
+            count = 0;
+        }
+        last = byte;
+    }
+
+    println!("Longest continuous bytes length {}", max_count);
+    use columnar::{compress, CompressConfig};
+    let s = Instant::now();
+    let result = compress(&buf, &CompressConfig::default()).unwrap();
+    println!(
+        "GZipped Size {} time: {}ms",
+        result.len(),
+        s.elapsed().as_millis()
+    );
 }

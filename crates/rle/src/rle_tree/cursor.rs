@@ -373,6 +373,11 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
         // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { Some(Self(self.0.shift(shift)?, PhantomData)) }
     }
+
+    pub fn get_sliced(&self) -> T {
+        self.as_ref()
+            .slice(self.0.offset, self.0.offset + self.0.len)
+    }
 }
 
 impl<'tree, T: Rle, A: RleTreeTrait<T>, M> GetOp for RawSafeCursor<'tree, T, A, M> {

@@ -53,3 +53,9 @@ name = "recursive"
 path = "fuzz_targets/recursive.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "encode"
+path = "fuzz_targets/encode.rs"
+test = false
+doc = false

@@ -25,18 +25,18 @@ mod run {
 
         let mut gen = Unstructured::new(&bytes);
         let mut c = c.benchmark_group("sync");
-        let actions = gen.arbitrary::<[Action; 200]>().unwrap();
+        let mut actions = gen.arbitrary::<[Action; 200]>().unwrap();
         c.bench_function("random text edit 2 sites", |b| {
-            b.iter(|| test_multi_sites(2, actions.clone().into()))
+            b.iter(|| test_multi_sites(2, &mut actions))
         });
 
         c.bench_function("random text edit 8 sites", |b| {
-            b.iter(|| test_multi_sites(8, actions.clone().into()))
+            b.iter(|| test_multi_sites(8, &mut actions))
         });
-        let actions = gen.arbitrary::<[Action; 4000]>().unwrap();
+        let mut actions = gen.arbitrary::<[Action; 4000]>().unwrap();
         c.sample_size(10);
         c.bench_function("random text edit 8 sites long", |b| {
-            b.iter(|| test_multi_sites(8, actions.clone().into()))
+            b.iter(|| test_multi_sites(8, &mut actions))
         });
     }
 

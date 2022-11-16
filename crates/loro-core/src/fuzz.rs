@@ -1,3 +1,5 @@
+use std::{fmt::Debug, time::Instant};
+
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
@@ -263,7 +265,153 @@ pub fn test_single_client(mut actions: Vec<Action>) {
     }
 }
 
-pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
+pub fn test_single_client_encode(mut actions: Vec<Action>) {
+    let mut store = LoroCore::new(Default::default(), None);
+    let mut text_container = store.get_text("hello");
+    let mut ground_truth = String::new();
+    let mut applied = Vec::new();
+    for action in actions
+        .iter_mut()
+        .filter(|x| x.as_del().is_some() || x.as_ins().is_some())
+    {
+        ground_truth.preprocess(action);
+        applied.push(action.clone());
+        // println!("{}", (&applied).table());
+        ground_truth.apply_action(action);
+        match action {
+            Action::Ins { content, pos, .. } => {
+                text_container.insert(&store, *pos, &content.to_string());
+            }
+            Action::Del { pos, len, .. } => {
+                if text_container.text_len() == 0 {
+                    return;
+                }
+
+                text_container.delete(&store, *pos, *len);
+            }
+            _ => {}
+        }
+    }
+    let encode_bytes = store.encode_snapshot();
+    let store2 =
+        LoroCore::decode_snapshot(&encode_bytes, None, crate::configure::Configure::default());
+    let encode_bytes2 = store2.encode_snapshot();
+    assert_eq!(encode_bytes, encode_bytes2);
+}
+
+pub fn minify_error<T, F, N>(site_num: u8, actions: Vec<T>, f: F, normalize: N)
+where
+    F: Fn(u8, &mut [T]),
+    N: Fn(u8, &mut [T]) -> Vec<T>,
+    T: Clone + Debug,
+{
+    std::panic::set_hook(Box::new(|_info| {
+        // ignore panic output
+    }));
+
+    let f_ref: *const _ = &f;
+    let f_ref: usize = f_ref as usize;
+    let actions_clone = actions.clone();
+    let action_ref: usize = (&actions_clone) as *const _ as usize;
+    if std::panic::catch_unwind(|| {
+        // SAFETY: test
+        let f = unsafe { &*(f_ref as *const F) };
+        // SAFETY: test
+        let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+        f(site_num, actions_ref);
+    })
+    .is_ok()
+    {
+        println!("No Error Found");
+        return;
+    }
+
+    let mut minified = actions.clone();
+    let mut candidates = Vec::new();
+    for i in 0..actions.len() {
+        let mut new = actions.clone();
+        new.remove(i);
+        candidates.push(new);
+    }
+
+    println!("Minifying...");
+    let start = Instant::now();
+    while let Some(candidate) = candidates.pop() {
+        let f_ref: *const _ = &f;
+        let f_ref: usize = f_ref as usize;
+        let actions_clone = candidate.clone();
+        let action_ref: usize = (&actions_clone) as *const _ as usize;
+        if std::panic::catch_unwind(|| {
+            // SAFETY: test
+            let f = unsafe { &*(f_ref as *const F) };
+            // SAFETY: test
+            let actions_ref = unsafe { &mut *(action_ref as *mut Vec<T>) };
+            f(site_num, actions_ref);
+        })
+        .is_err()
+        {
+            for i in 0..candidate.len() {
+                let mut new = candidate.clone();
+                new.remove(i);
+                candidates.push(new);
+            }
+            if candidate.len() < minified.len() {
+                minified = candidate;
+                println!("New min len={}", minified.len());
+            }
+            if candidates.len() > 40 {
+                candidates.drain(0..30);
+            }
+        }
+        if start.elapsed().as_secs() > 10 {
+            if minified.len() <= 4 {
+                break;
+            }
+        }
+        if start.elapsed().as_secs() > 60 {
+            break;
+        }
+    }
+
+    let minified = normalize(site_num, &mut minified);
+    println!(
+        "Old Length {}, New Length {}",
+        actions.len(),
+        minified.len()
+    );
+    dbg!(&minified);
+    if actions.len() > minified.len() {
+        minify_error(site_num, minified, f, normalize);
+    }
+}
+
+pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        let sites_ptr: *mut Vec<_> = &mut sites as *mut _;
+        if std::panic::catch_unwind(|| {
+            // SAFETY: Test
+            let sites = unsafe { &mut *sites_ptr };
+            sites.apply_action(&action.clone());
+        })
+        .is_err()
+        {
+            break;
+        }
+    }
+
+    println!("{}", applied.clone().table());
+    applied
+}
+
+pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
@@ -283,4 +431,232 @@ pub fn test_multi_sites(site_num: u8, mut actions: Vec<Action>) {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::Action::*;
+    use super::*;
+    #[test]
+    fn case1() {
+        test_multi_sites(
+            8,
+            &mut vec![
+                Ins {
+                    content: 35108,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 18218,
+                    pos: 0,
+                    site: 7,
+                },
+                Ins {
+                    content: 35624,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 38400,
+                    pos: 0,
+                    site: 6,
+                },
+                Ins {
+                    content: 65280,
+                    pos: 2,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 5,
+                    site: 0,
+                },
+                Ins {
+                    content: 60672,
+                    pos: 0,
+                    site: 1,
+                },
+                Ins {
+                    content: 35072,
+                    pos: 1,
+                    site: 2,
+                },
+                Ins {
+                    content: 15035,
+                    pos: 3,
+                    site: 0,
+                },
+                Ins {
+                    content: 65280,
+                    pos: 0,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 201,
+                    pos: 2,
+                    site: 2,
+                },
+                Ins {
+                    content: 65377,
+                    pos: 3,
+                    site: 1,
+                },
+                Ins {
+                    content: 9988,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 14,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 11,
+                    site: 7,
+                },
+                Ins {
+                    content: 1070,
+                    pos: 0,
+                    site: 5,
+                },
+                Ins {
+                    content: 27421,
+                    pos: 7,
+                    site: 1,
+                },
+                Ins {
+                    content: 65121,
+                    pos: 22,
+                    site: 0,
+                },
+                Ins {
+                    content: 65462,
+                    pos: 1,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 0,
+                    site: 4,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 16,
+                    site: 0,
+                },
+                Ins {
+                    content: 65462,
+                    pos: 11,
+                    site: 2,
+                },
+                Ins {
+                    content: 48009,
+                    pos: 10,
+                    site: 0,
+                },
+                Ins {
+                    content: 23277,
+                    pos: 7,
+                    site: 0,
+                },
+                Ins {
+                    content: 60672,
+                    pos: 13,
+                    site: 1,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 2,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 2,
+                    site: 0,
+                },
+                Ins {
+                    content: 2606,
+                    pos: 0,
+                    site: 3,
+                },
+                Ins {
+                    content: 65270,
+                    pos: 10,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 65462,
+                    pos: 107,
+                    site: 4,
+                },
+                SyncAll,
+                Ins {
+                    content: 4626,
+                    pos: 98,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 0,
+                    pos: 0,
+                    site: 0,
+                },
+                Del {
+                    pos: 0,
+                    len: 147,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 146,
+                    site: 4,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn case0() {
+        test_multi_sites(
+            4,
+            &mut vec![
+                Ins {
+                    content: 31800,
+                    pos: 723390690148040714,
+                    site: 137,
+                },
+                Ins {
+                    content: 2560,
+                    pos: 12826352382887627018,
+                    site: 178,
+                },
+                Sync { from: 178, to: 0 },
+                Ins {
+                    content: 35082,
+                    pos: 12876550765177602139,
+                    site: 178,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn mini() {
+        minify_error(8, vec![], test_multi_sites, normalize)
+    }
+
+    #[test]
+    fn case_encode() {
+        test_single_client_encode(vec![Ins {
+            content: 49087,
+            pos: 4631600097073807295,
+            site: 191,
+        }])
+    }
+}

@@ -411,35 +411,37 @@ impl Container for ListContainer {
         values.into()
     }
 
-    fn to_export(&self, op: &mut RemoteOp) {
-        if let Some((slice, _pos)) = op
-            .content
-            .as_normal_mut()
-            .and_then(|c| c.as_list_mut())
-            .and_then(|x| x.as_insert_mut())
-        {
-            if let Some(change) = if let ListSlice::Slice(ranges) = slice {
-                Some(self.raw_data.slice(&ranges.0))
-            } else {
-                None
-            } {
-                *slice = ListSlice::RawData(change.to_vec());
+    fn to_export(&mut self, op: &mut RemoteOp, _gc: bool) {
+        for content in op.contents.iter_mut() {
+            if let Some((slice, _pos)) = content
+                .as_normal_mut()
+                .and_then(|c| c.as_list_mut())
+                .and_then(|x| x.as_insert_mut())
+            {
+                if let Some(change) = if let ListSlice::Slice(ranges) = slice {
+                    Some(self.raw_data.slice(&ranges.0))
+                } else {
+                    None
+                } {
+                    *slice = ListSlice::RawData(change.to_vec());
+                }
             }
         }
     }
 
     fn to_import(&mut self, op: &mut RemoteOp) {
-        if let Some((slice, _pos)) = op
-            .content
-            .as_normal_mut()
-            .and_then(|c| c.as_list_mut())
-            .and_then(|x| x.as_insert_mut())
-        {
-            if let Some(slice_range) = match std::mem::take(slice) {
-                ListSlice::RawData(data) => Some(self.raw_data.alloc_arr(data)),
-                _ => unreachable!(),
-            } {
-                *slice = slice_range.into();
+        for content in op.contents.iter_mut() {
+            if let Some((slice, _pos)) = content
+                .as_normal_mut()
+                .and_then(|c| c.as_list_mut())
+                .and_then(|x| x.as_insert_mut())
+            {
+                if let Some(slice_range) = match std::mem::take(slice) {
+                    ListSlice::RawData(data) => Some(self.raw_data.alloc_arr(data)),
+                    _ => unreachable!(),
+                } {
+                    *slice = slice_range.into();
+                }
             }
         }
     }
