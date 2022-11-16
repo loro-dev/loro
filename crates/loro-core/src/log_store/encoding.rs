@@ -51,9 +51,11 @@ struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     container: ContainerIdx,
     /// key index or insert/delete pos
-    prop: usize,
+    #[columnar(strategy = "DeltaRle")]
+    prop: usize, // 18225 bytes
     // TODO: can be compressed
     gc: usize,
+    // #[columnar(compress(level = 0))]
     value: LoroValue,
 }
 
@@ -85,7 +87,6 @@ struct Encoded {
     #[columnar(type = "vec")]
     deps: Vec<DepsEncoding>,
     clients: Clients,
-    // TODO: can be compressed
     containers: Containers,
     keys: Vec<InternalString>,
 }
@@ -206,13 +207,25 @@ fn decode_changes(
     } = encoded;
 
     if change_encodings.is_empty() {
-        return LogStore::new(cfg, None);
+        let store = LogStore::new(cfg, None);
+        if !containers.is_empty() {
+            let mut s = store.write().unwrap();
+            for container in containers.iter() {
+                s.get_or_create_container(container);
+            }
+            drop(s);
+        }
+        return store;
     }
 
     let mut container_reg = ContainerRegistry::new();
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
+    for container in containers.iter() {
+        container_reg.get_or_create(container);
+    }
+
     for change_encoding in change_encodings {
         let ChangeEncoding {
             client_idx,
@@ -241,8 +254,6 @@ fn decode_changes(
                 gc,
             } = op;
             let container_id = containers[container as usize].clone();
-
-            container_reg.get_or_create(&container_id);
 
             let container_type = container_id.container_type();
             let content = match container_type {

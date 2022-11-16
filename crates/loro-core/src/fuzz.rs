@@ -265,6 +265,40 @@ pub fn test_single_client(mut actions: Vec<Action>) {
     }
 }
 
+pub fn test_single_client_encode(mut actions: Vec<Action>) {
+    let mut store = LoroCore::new(Default::default(), None);
+    let mut text_container = store.get_text("hello");
+    let mut ground_truth = String::new();
+    let mut applied = Vec::new();
+    for action in actions
+        .iter_mut()
+        .filter(|x| x.as_del().is_some() || x.as_ins().is_some())
+    {
+        ground_truth.preprocess(action);
+        applied.push(action.clone());
+        // println!("{}", (&applied).table());
+        ground_truth.apply_action(action);
+        match action {
+            Action::Ins { content, pos, .. } => {
+                text_container.insert(&store, *pos, &content.to_string());
+            }
+            Action::Del { pos, len, .. } => {
+                if text_container.text_len() == 0 {
+                    return;
+                }
+
+                text_container.delete(&store, *pos, *len);
+            }
+            _ => {}
+        }
+    }
+    let encode_bytes = store.encode_snapshot();
+    let store2 =
+        LoroCore::decode_snapshot(&encode_bytes, None, crate::configure::Configure::default());
+    let encode_bytes2 = store2.encode_snapshot();
+    assert_eq!(encode_bytes, encode_bytes2);
+}
+
 pub fn minify_error<T, F, N>(site_num: u8, actions: Vec<T>, f: F, normalize: N)
 where
     F: Fn(u8, &mut [T]),
@@ -615,5 +649,14 @@ mod test {
     #[test]
     fn mini() {
         minify_error(8, vec![], test_multi_sites, normalize)
+    }
+
+    #[test]
+    fn case_encode() {
+        test_single_client_encode(vec![Ins {
+            content: 49087,
+            pos: 4631600097073807295,
+            site: 191,
+        }])
     }
 }

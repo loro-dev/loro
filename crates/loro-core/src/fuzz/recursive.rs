@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug, panic::UnwindSafe, time::Instant};
+use std::{collections::HashSet, fmt::Debug};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
