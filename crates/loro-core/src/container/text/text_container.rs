@@ -484,8 +484,8 @@ impl ContainerWrapper for Text {
         F: FnOnce(&mut Self::Container) -> R,
     {
         let mut container_instance = self.instance.lock().unwrap();
-        let map = container_instance.as_text_mut().unwrap();
-        f(map)
+        let text = container_instance.as_text_mut().unwrap();
+        f(text)
     }
 }
 
