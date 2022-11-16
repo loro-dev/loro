@@ -481,7 +481,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             }
         }
 
-        let mut new_children: Vec<_> = Vec::new();
+        let mut new_children: SmallVec<[_; 64]> = SmallVec::new();
         let mut self_children = std::mem::replace(
             &mut self.children,
             <<A::Arena as Arena>::Vec<'bump, _> as VecTrait<_>>::with_capacity_in(
