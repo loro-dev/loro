@@ -11,6 +11,24 @@ use rle::{
     HasLength, Mergable, Sliceable,
 };
 
+const MAX_CHILDREN_SIZE: usize = 16;
+pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, MAX_CHILDREN_SIZE, BumpMode>;
+
+/// 80 bytes
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YSpan {
+    // 16 bytes
+    pub id: ID,
+    // 8 bytes
+    pub status: Status,
+    // 24 bytes
+    pub origin_left: Option<ID>,
+    // 24 bytes
+    pub origin_right: Option<ID>,
+    // 8 bytes
+    pub slice: SliceRange,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Status {
     /// is this span from a future operation
@@ -65,21 +83,6 @@ impl Status {
     }
 }
 
-/// 80 bytes
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct YSpan {
-    // 16 bytes
-    pub id: ID,
-    // 8 bytes
-    pub status: Status,
-    // 24 bytes
-    pub origin_left: Option<ID>,
-    // 24 bytes
-    pub origin_right: Option<ID>,
-    // 8 bytes
-    pub slice: SliceRange,
-}
-
 #[test]
 fn y_span_size() {
     println!("{}", std::mem::size_of::<YSpan>());
@@ -94,8 +97,6 @@ pub enum StatusChange {
     Delete,
     UndoDelete,
 }
-
-pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, 8, BumpMode>;
 
 impl YSpan {
     /// this is the last id of the span, which is **included** by self
