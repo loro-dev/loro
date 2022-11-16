@@ -206,7 +206,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                     pos,
                     ..
                 } = A::find_pos_leaf(self, raw_index);
-                self._insert_at_pos(pos, child_index, offset, value, notify)
+                self._insert_at_pos(pos, child_index, offset, value, notify, false)
             }
         };
         self.with_cache_updated(result)
@@ -219,17 +219,27 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         offset: usize,
         value: T,
         notify: &mut F,
+        value_from_same_parent: bool,
     ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         let result = {
             if self.children.is_empty() {
-                notify(&value, self);
+                if !value_from_same_parent {
+                    notify(&value, self);
+                }
                 self.children.push(value);
                 Ok(())
             } else {
-                self._insert_at_pos(pos, child_index, offset, value, notify)
+                self._insert_at_pos(
+                    pos,
+                    child_index,
+                    offset,
+                    value,
+                    notify,
+                    value_from_same_parent,
+                )
             }
         };
         self.with_cache_updated(result)
@@ -286,7 +296,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                         left.merge(&right, &());
                         Ok(())
                     } else {
-                        self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify)
+                        self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify, true)
                     }
                 } else {
                     Ok(())
@@ -294,36 +304,56 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             } else if let Some(right) = right {
                 if target.is_mergable(&right, &()) {
                     target.merge(&right, &());
-                    self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify)
+                    self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify, true)
                 } else {
-                    let result =
-                        self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify);
+                    let result = self.insert_at_pos(
+                        Position::Start,
+                        child_index + 1,
+                        0,
+                        target,
+                        notify,
+                        true,
+                    );
                     if let Err(mut new) = result {
                         if self.children.len() >= child_index + 2 {
                             // insert one element should not cause Err
-                            self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify)
-                                .unwrap();
+                            self.insert_at_pos(
+                                Position::Start,
+                                child_index + 2,
+                                0,
+                                right,
+                                notify,
+                                true,
+                            )
+                            .unwrap();
                             Err(new)
                         } else {
                             let new_insert_index = child_index + 2 - self.children.len();
                             // insert one element should not cause Err
                             new.as_leaf_mut()
                                 .unwrap()
-                                .insert_at_pos(Position::Start, new_insert_index, 0, right, notify)
+                                .insert_at_pos(
+                                    Position::Start,
+                                    new_insert_index,
+                                    0,
+                                    right,
+                                    notify,
+                                    true,
+                                )
                                 .unwrap();
                             Err(new)
                         }
                     } else {
-                        self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify)
+                        self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify, true)
                     }
                 }
             } else {
-                self.insert_at_pos(pos, child_index + 1, offset, target, notify)
+                self.insert_at_pos(pos, child_index + 1, offset, target, notify, true)
             }
         } else {
             self.children[child_index] = target;
             if let Some(right) = right {
-                self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify)
+                self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify, true)
             } else {
                 Ok(())
             }
@@ -490,7 +520,6 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
         if new_children.len() <= A::MAX_CHILDREN_NUM {
             for child in new_children {
-                notify(&child, self);
                 self.children.push(child);
             }
 
@@ -501,7 +530,6 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
             let mut index = 0;
             for child in new_children.drain(..children_nums[index]) {
-                notify(&child, self);
                 self.children.push(child);
             }
 
@@ -560,6 +588,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         mut offset: usize,
         value: T,
         notify: &mut F,
+        value_from_same_parent: bool,
     ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
@@ -581,13 +610,15 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             // clean cut, should no split
             if prev.is_mergable(&value, &()) {
                 prev.merge(&value, &());
-                notify(prev, self_ptr);
+                if !value_from_same_parent {
+                    notify(prev, self_ptr);
+                }
                 return Ok(());
             }
         }
         let clean_cut = pos != Position::Middle;
         if clean_cut {
-            return self._insert_with_split(child_index, value, notify);
+            return self._insert_with_split(child_index, value, notify, false);
         }
         // need to split child
         let a = self.children[child_index].slice(0, offset);
@@ -597,8 +628,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             let mut next_node = self._split(notify);
             let next_leaf = next_node.as_leaf_mut().unwrap();
             if child_index < self.children.len() {
-                notify(&value, self_ptr);
-                notify(&b, self_ptr);
+                if !value_from_same_parent {
+                    notify(&value, self_ptr);
+                }
                 self.children.insert(child_index + 1, value);
                 self.children.insert(child_index + 2, b);
 
@@ -618,8 +650,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
             return Err(next_node);
         }
-        notify(&b, self);
-        notify(&value, self);
+        if !value_from_same_parent {
+            notify(&value, self);
+        }
         self.children.insert(child_index + 1, b);
         self.children.insert(child_index + 1, value);
         Ok(())
@@ -687,7 +720,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                 );
 
                 *end = left;
-                result = self._insert_with_split(del_end + 1, right, notify);
+                result = self._insert_with_split(del_end + 1, right, notify, true);
                 handled = true;
             }
         }
@@ -698,10 +731,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
                     self.children[del_start - 1].slice(0, del_relative_from);
             }
             if let Some(del_relative_to) = del_relative_to {
-                let self_ptr = self as *mut _;
                 let end = &mut self.children[del_end];
                 *end = end.slice(del_relative_to, end.atom_len());
-                notify(end, self_ptr);
             }
         }
 
@@ -722,6 +753,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         index: usize,
         value: T,
         notify: &mut F,
+        value_from_same_parent: bool,
     ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
@@ -729,7 +761,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         if self.children.len() == A::MAX_CHILDREN_NUM {
             let mut ans = self._split(notify);
             if index <= self.children.len() {
-                notify(&value, self);
+                if !value_from_same_parent {
+                    notify(&value, self);
+                }
                 self.children.insert(index, value);
             } else {
                 let leaf = ans.as_leaf_mut().unwrap();
@@ -739,7 +773,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
 
             Err(ans)
         } else {
-            notify(&value, self);
+            if !value_from_same_parent {
+                notify(&value, self);
+            }
             self.children.insert(index, value);
             Ok(())
         }
