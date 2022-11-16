@@ -12,6 +12,20 @@ use crate::{
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
 
+const MAX_CHILDREN_SIZE: usize = 32;
+type RangeMapTrait<Index, Value, TreeArena> =
+    GlobalTreeTrait<WithIndex<Value, Index>, MAX_CHILDREN_SIZE, TreeArena>;
+
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct RangeMap<
+    Index: GlobalIndex + 'static,
+    Value: Rle + ZeroElement + 'static,
+    TreeArena: Arena + 'static = HeapMode,
+> {
+    pub(crate) tree: RleTree<WithIndex<Value, Index>, RangeMapTrait<Index, Value, TreeArena>>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct WithIndex<Value, Index: GlobalIndex> {
     pub(crate) value: Value,
@@ -50,19 +64,6 @@ impl<Value: Rle, Index: GlobalIndex> HasIndex for WithIndex<Value, Index> {
     fn get_start_index(&self) -> Self::Int {
         self.index
     }
-}
-
-type RangeMapTrait<Index, Value, TreeArena> =
-    GlobalTreeTrait<WithIndex<Value, Index>, 32, TreeArena>;
-
-#[repr(transparent)]
-#[derive(Debug)]
-pub struct RangeMap<
-    Index: GlobalIndex + 'static,
-    Value: Rle + ZeroElement + 'static,
-    TreeArena: Arena + 'static = HeapMode,
-> {
-    pub(crate) tree: RleTree<WithIndex<Value, Index>, RangeMapTrait<Index, Value, TreeArena>>,
 }
 
 impl<
