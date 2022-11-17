@@ -29,7 +29,7 @@ wasm-bindgen = { version = "0.2.83", optional = true }
 js-sys = { version = "0.3.60", optional = true }
 serde_json = { version = "1.0.87", optional = true }
 arref = "0.1.0"
-columnar = { git = "https://github.com/loro-dev/columnar.git" }
+serde_columnar = { version = "0.1.0" }
 
 [dev-dependencies]
 serde_json = "1.0.87"
