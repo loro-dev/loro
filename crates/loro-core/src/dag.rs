@@ -340,9 +340,6 @@ where
 {
     let mut ans: FxHashMap<ClientID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
-    if a_ids.is_empty() {
-        print!("sadf");
-    }
     for id in a_ids {
         queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::A));
     }
