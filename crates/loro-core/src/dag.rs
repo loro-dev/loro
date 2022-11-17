@@ -35,21 +35,12 @@ use self::{
     mermaid::dag_to_mermaid,
 };
 
-// TODO: use HasId, HasLength
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];
 
     #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
         self.lamport() + c as Lamport - self.id_start().counter as Lamport
-    }
-}
-
-#[allow(clippy::ptr_arg)]
-fn reverse_path(path: &mut Vec<IdSpan>) {
-    path.reverse();
-    for span in path.iter_mut() {
-        span.counter.reverse();
     }
 }
 
@@ -310,31 +301,6 @@ impl<'a> OrdIdSpan<'a> {
     }
 
     #[inline]
-    fn from_dag_node_conservatively<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
-    where
-        D: DagNode + 'a,
-        F: Fn(ID) -> Option<&'a D>,
-    {
-        let span = get(id)?;
-        let span_id = span.id_start();
-        if span_id == id {
-            Some(OrdIdSpan {
-                id: span_id,
-                lamport: span.lamport(),
-                deps: Cow::Borrowed(span.deps()),
-                len: 1,
-            })
-        } else {
-            Some(OrdIdSpan {
-                id: span_id.inc(1),
-                lamport: span.lamport() + 1,
-                deps: Cow::Owned(vec![span_id]),
-                len: (id.counter - span_id.counter) as usize,
-            })
-        }
-    }
-
-    #[inline]
     fn get_min(&self) -> OrdIdSpan<'a> {
         OrdIdSpan {
             id: self.id,
@@ -514,27 +480,6 @@ where
     }
 
     ans
-}
-
-fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
-    frontier.retain(|x| {
-        if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
-            return false;
-        }
-
-        !new_node_deps
-            .iter()
-            .any(|y| y.client_id == x.client_id && y.counter >= x.counter)
-    });
-
-    // nodes from the same client with `counter < new_node_id.counter`
-    // are filtered out from frontier.
-    if frontier
-        .iter()
-        .all(|x| x.client_id != new_node_id.client_id)
-    {
-        frontier.push(new_node_id);
-    }
 }
 
 fn _find_common_ancestor_new<'a, F, D>(get: &'a F, left: &[ID], right: &[ID]) -> SmallVec<[ID; 2]>

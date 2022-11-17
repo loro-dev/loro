@@ -98,6 +98,7 @@ impl ID {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn is_connected_id(&self, other: &Self, self_len: usize) -> bool {
         self.client_id == other.client_id && self.counter + self_len as Counter == other.counter
     }

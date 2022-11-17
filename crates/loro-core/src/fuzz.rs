@@ -625,7 +625,7 @@ mod test {
     fn case0() {
         test_multi_sites(
             4,
-            &mut vec![
+            &mut [
                 Ins {
                     content: 31800,
                     pos: 723390690148040714,

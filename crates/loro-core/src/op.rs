@@ -54,11 +54,6 @@ impl Op {
         }
     }
 
-    #[inline]
-    pub(crate) fn new_insert_op(id: ID, container: u32, content: Content) -> Self {
-        Op::new(id, OpContent::Normal { content }, container)
-    }
-
     pub fn op_type(&self) -> OpType {
         match self.content {
             OpContent::Normal { .. } => OpType::Normal,

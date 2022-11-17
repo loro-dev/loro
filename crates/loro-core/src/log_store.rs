@@ -5,7 +5,7 @@ mod encoding;
 mod iter;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -47,9 +47,6 @@ impl Default for GcConfig {
         }
     }
 }
-
-pub(crate) type LogStoreRef = Arc<RwLock<LogStore>>;
-pub(crate) type LogStoreWeakRef = Weak<RwLock<LogStore>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -354,6 +351,7 @@ impl LogStore {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn iter_client_op(&self, client_id: ClientID) -> iter::ClientOpIter<'_> {
         iter::ClientOpIter {
             change_index: 0,
