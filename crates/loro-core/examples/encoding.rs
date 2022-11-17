@@ -60,12 +60,4 @@ fn main() {
     }
 
     println!("Longest continuous bytes length {}", max_count);
-    use columnar::{compress, CompressConfig};
-    let s = Instant::now();
-    let result = compress(&buf, &CompressConfig::default()).unwrap();
-    println!(
-        "GZipped Size {} time: {}ms",
-        result.len(),
-        s.elapsed().as_millis()
-    );
 }
