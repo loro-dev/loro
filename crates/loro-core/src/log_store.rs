@@ -187,6 +187,18 @@ impl LogStore {
             if are_frontiers_eq(&common_ancestors, &self.frontiers) {
                 // we may apply changes directly into state
                 let target_spans = next_vv.diff(&self.vv).left;
+                if target_spans.len() == 1 {
+                    let (client_id, span) = target_spans.iter().next().unwrap();
+                    for op in
+                        self.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end))
+                    {
+                        let container = container_map.get_mut(&op.op().container).unwrap();
+                        container.update_state_directly(&op);
+                    }
+
+                    break 'apply;
+                }
+
                 // TODO: can reuse this path
                 let causal_visit_path: Vec<_> =
                     self.iter_causal(&common_ancestors, target_spans).collect();
@@ -475,13 +487,8 @@ impl LogStore {
         }
     }
 
-    pub(crate) fn iter_ops_at_id_span(
-        &self,
-        id_span: IdSpan,
-        container: ContainerID,
-    ) -> iter::OpSpanIter<'_> {
-        let idx = self.get_container_idx(&container).unwrap();
-        iter::OpSpanIter::new(&self.changes, id_span, idx)
+    pub(crate) fn iter_ops_at_id_span(&self, id_span: IdSpan) -> iter::OpSpanIter<'_> {
+        iter::OpSpanIter::new(&self.changes, id_span)
     }
 
     #[inline(always)]

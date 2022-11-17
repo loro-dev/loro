@@ -230,8 +230,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             return None;
         }
 
-        let node_id = self.heap.pop().unwrap();
-        let node_id = node_id.id;
+        let node_id = self.heap.pop().unwrap().id;
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
         debug_assert_eq!(
             node_id.counter,
