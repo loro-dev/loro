@@ -1,6 +1,5 @@
 use ctor::ctor;
 
-pub mod tests;
 use loro_core::container::registry::ContainerWrapper;
 use loro_core::{LoroCore, LoroValue};
 

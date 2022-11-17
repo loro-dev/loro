@@ -649,12 +649,25 @@ mod test {
     #[test]
     fn case_two() {
         test_multi_sites(
-            2,
-            &mut [Ins {
-                content: 123,
-                pos: 0,
-                site: 1,
-            }],
+            3,
+            &mut [
+                Ins {
+                    content: 35108,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 0,
+                    site: 4,
+                },
+                SyncAll,
+                Ins {
+                    content: 65462,
+                    pos: 7,
+                    site: 4,
+                },
+            ],
         )
     }
 
