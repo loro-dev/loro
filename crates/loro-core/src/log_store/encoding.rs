@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use columnar::{columnar, from_bytes, to_vec};
+use columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
@@ -142,7 +142,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                         ),
                         crate::op::Content::List(list) => match list {
                             ListOp::Insert { slice, pos } => (
-                                pos as usize,
+                                pos,
                                 match &slice {
                                     ListSlice::Unknown(v) => *v,
                                     _ => 0,
@@ -258,11 +258,11 @@ fn decode_changes(
             let container_type = container_id.container_type();
             let content = match container_type {
                 ContainerType::Map => {
-                    let key = keys[prop as usize].clone();
+                    let key = keys[prop].clone();
                     Content::Map(MapSet { key, value })
                 }
                 ContainerType::List | ContainerType::Text => {
-                    let pos = prop as usize;
+                    let pos = prop;
                     let list_op = match value {
                         LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
                             pos: pos as isize,
@@ -310,8 +310,8 @@ fn decode_changes(
     }
 
     let vv: VersionVector = changes
-        .iter()
-        .map(|(_, changes)| changes.last().unwrap().id_last())
+        .values()
+        .map(|changes| changes.last().unwrap().id_last())
         .collect();
 
     let mut frontier = vv.clone();
@@ -322,13 +322,13 @@ fn decode_changes(
     }
 
     let latest_lamport = changes
-        .iter()
-        .map(|(_, changes)| changes.last().unwrap().lamport_last())
+        .values()
+        .map(|changes| changes.last().unwrap().lamport_last())
         .max()
         .unwrap();
     let latest_timestamp = changes
-        .iter()
-        .map(|(_, changes)| changes.last().unwrap().timestamp)
+        .values()
+        .map(|changes| changes.last().unwrap().timestamp)
         .max()
         .unwrap();
     Arc::new(RwLock::new(LogStore {
@@ -347,7 +347,7 @@ fn decode_changes(
 impl LogStore {
     pub fn encode_snapshot(&self) -> Vec<u8> {
         let encoded = encode_changes(self);
-        to_vec(&encoded).unwrap()
+        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
     }
 
     pub fn decode_snapshot(
@@ -355,7 +355,8 @@ impl LogStore {
         client_id: Option<ClientID>,
         cfg: Configure,
     ) -> Arc<RwLock<Self>> {
-        let encoded = from_bytes(input).unwrap();
+        let decompress_bytes = decompress(input).unwrap();
+        let encoded = from_bytes(&decompress_bytes).unwrap();
         decode_changes(encoded, client_id, cfg)
     }
 }
