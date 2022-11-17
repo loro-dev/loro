@@ -259,6 +259,13 @@ impl VersionVector {
         self.0.insert(id.client_id, id.counter + 1);
     }
 
+    #[inline]
+    pub fn get_last(&mut self, client_id: ClientID) -> Option<Counter> {
+        self.0
+            .get(&client_id)
+            .and_then(|&x| if x == 0 { None } else { Some(x - 1) })
+    }
+
     /// set the exclusive ending point. target id will NOT be included by self
     #[inline]
     pub fn set_end(&mut self, id: ID) {

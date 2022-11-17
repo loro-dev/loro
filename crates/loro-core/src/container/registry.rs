@@ -68,13 +68,12 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.get_value(),
         }
     }
-
-    fn to_export(&self, op: &mut crate::op::Op) {
+    fn to_export(&mut self, op: &mut RemoteOp, gc: bool) {
         match self {
-            ContainerInstance::Map(x) => x.to_export(op),
-            ContainerInstance::Text(x) => x.to_export(op),
-            ContainerInstance::Dyn(x) => x.to_export(op),
-            ContainerInstance::List(x) => x.to_export(op),
+            ContainerInstance::Map(x) => x.to_export(op, gc),
+            ContainerInstance::Text(x) => x.to_export(op, gc),
+            ContainerInstance::Dyn(x) => x.to_export(op, gc),
+            ContainerInstance::List(x) => x.to_export(op, gc),
         }
     }
 
@@ -116,7 +115,6 @@ impl ContainerRegistry {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
             ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
             ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id))),
-            _ => unimplemented!(),
         }
     }
 
@@ -182,6 +180,13 @@ impl ContainerRegistry {
                 x.debug_inspect()
             }
         }
+    }
+
+    pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
+        (
+            &self.container_to_idx,
+            self.containers.iter().map(|x| x.id.clone()).collect(),
+        )
     }
 }
 

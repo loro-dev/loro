@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{container::ContainerID, context::Context, Container};
 
@@ -24,121 +24,6 @@ pub enum LoroValue {
 enum Test {
     Unknown(ContainerID),
     Map(FxHashMap<u32, usize>),
-}
-
-impl Serialize for LoroValue {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            LoroValue::Null => serializer.serialize_none(),
-            LoroValue::Bool(b) => serializer.serialize_bool(*b),
-            LoroValue::Double(d) => serializer.serialize_f64(*d),
-            LoroValue::I32(i) => serializer.serialize_i32(*i),
-            LoroValue::String(s) => serializer.serialize_str(s),
-            LoroValue::List(l) => serializer.collect_seq(l.iter()),
-            LoroValue::Map(m) => serializer.collect_map(m.iter()),
-            LoroValue::Unresolved(id) => {
-                let mut state = serializer.serialize_struct("Unresolved", 1)?;
-                state.serialize_field("Unresolved", id)?;
-                state.end()
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for LoroValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct LoroValueVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
-            type Value = LoroValue;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a LoroValue")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::Null)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::Bool(v))
-            }
-
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::I32(v as i32))
-            }
-
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::I32(v as i32))
-            }
-
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::Double(v))
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::String(v.into()))
-            }
-
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(LoroValue::String(v.into()))
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut list = Vec::new();
-                while let Some(value) = seq.next_element()? {
-                    list.push(value);
-                }
-                Ok(LoroValue::List(list.into()))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let mut ans: FxHashMap<String, _> = FxHashMap::default();
-                let mut last_key = None;
-                while let Some((key, value)) = map.next_entry::<String, _>()? {
-                    last_key.get_or_insert_with(|| key.clone());
-                    ans.insert(key, value);
-                }
-
-                Ok(LoroValue::Map(ans.into()))
-            }
-        }
-
-        deserializer.deserialize_any(LoroValueVisitor)
-    }
 }
 
 impl LoroValue {
@@ -359,6 +244,202 @@ pub(crate) mod proptest {
             any::<bool>().prop_map(LoroValue::Bool),
             any::<String>().prop_map(|s| LoroValue::String(s.into())),
         ]
+    }
+}
+
+impl Serialize for LoroValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            // json type
+            match self {
+                LoroValue::Null => serializer.serialize_unit(),
+                LoroValue::Bool(b) => serializer.serialize_bool(*b),
+                LoroValue::Double(d) => serializer.serialize_f64(*d),
+                LoroValue::I32(i) => serializer.serialize_i32(*i),
+                LoroValue::String(s) => serializer.serialize_str(s),
+                LoroValue::List(l) => serializer.collect_seq(l.iter()),
+                LoroValue::Map(m) => serializer.collect_map(m.iter()),
+                LoroValue::Unresolved(id) => {
+                    let mut state = serializer.serialize_struct("Unresolved", 1)?;
+                    state.serialize_field("Unresolved", id)?;
+                    state.end()
+                }
+            }
+        } else {
+            // binary type
+            match self {
+                LoroValue::Null => serializer.serialize_unit_variant("LoroValue", 0, "Null"),
+                LoroValue::Bool(b) => {
+                    serializer.serialize_newtype_variant("LoroValue", 1, "Bool", b)
+                }
+                LoroValue::Double(d) => {
+                    serializer.serialize_newtype_variant("LoroValue", 2, "Double", d)
+                }
+                LoroValue::I32(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
+                LoroValue::String(s) => {
+                    serializer.serialize_newtype_variant("LoroValue", 4, "String", s)
+                }
+                LoroValue::List(l) => {
+                    serializer.serialize_newtype_variant("LoroValue", 5, "List", l)
+                }
+                LoroValue::Map(m) => serializer.serialize_newtype_variant("LoroValue", 6, "Map", m),
+                LoroValue::Unresolved(id) => {
+                    serializer.serialize_newtype_variant("LoroValue", 7, "Unresolved", id)
+                }
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LoroValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(LoroValueVisitor)
+        } else {
+            deserializer.deserialize_enum(
+                "LoroValue",
+                &[
+                    "Null",
+                    "Bool",
+                    "Double",
+                    "I32",
+                    "String",
+                    "List",
+                    "Map",
+                    "Unresolved",
+                ],
+                LoroValueEnumVisitor,
+            )
+        }
+    }
+}
+
+struct LoroValueVisitor;
+
+impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
+    type Value = LoroValue;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a LoroValue")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::Null)
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::Bool(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::I32(v as i32))
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::I32(v as i32))
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::Double(v))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::String(v.into()))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::String(v.into()))
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut list = Vec::new();
+        while let Some(value) = seq.next_element()? {
+            list.push(value);
+        }
+        Ok(LoroValue::List(list.into()))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut ans: FxHashMap<String, _> = FxHashMap::default();
+        let mut last_key = None;
+        while let Some((key, value)) = map.next_entry::<String, _>()? {
+            last_key.get_or_insert_with(|| key.clone());
+            ans.insert(key, value);
+        }
+
+        Ok(LoroValue::Map(ans.into()))
+    }
+}
+
+#[derive(Deserialize)]
+enum LoroValueFields {
+    Null,
+    Bool,
+    Double,
+    I32,
+    String,
+    List,
+    Map,
+    Unresolved,
+}
+
+struct LoroValueEnumVisitor;
+impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
+    type Value = LoroValue;
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a loro value")
+    }
+
+    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::EnumAccess<'de>,
+    {
+        match data.variant()? {
+            (LoroValueFields::Null, v) => {
+                v.unit_variant()?;
+                Ok(LoroValue::Null)
+            }
+            (LoroValueFields::Bool, v) => v.newtype_variant().map(LoroValue::Bool),
+            (LoroValueFields::Double, v) => v.newtype_variant().map(LoroValue::Double),
+            (LoroValueFields::I32, v) => v.newtype_variant().map(LoroValue::I32),
+            (LoroValueFields::String, v) => v.newtype_variant().map(LoroValue::String),
+            (LoroValueFields::List, v) => v.newtype_variant().map(LoroValue::List),
+            (LoroValueFields::Map, v) => v.newtype_variant().map(LoroValue::Map),
+            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Unresolved),
+        }
     }
 }
 

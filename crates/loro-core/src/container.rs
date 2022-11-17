@@ -5,10 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{Op, RemoteOp},
-    span::IdSpan,
-    version::VersionVector,
-    InternalString, LogStore, LoroValue, ID,
+    op::RemoteOp, span::IdSpan, version::VersionVector, InternalString, LogStore, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
@@ -34,7 +31,7 @@ pub trait Container: Debug + Any + Unpin {
     // fn serialize(&self) -> Vec<u8>;
 
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
-    fn to_export(&self, op: &mut Op);
+    fn to_export(&mut self, op: &mut RemoteOp, gc: bool);
     fn to_import(&mut self, op: &mut RemoteOp);
 }
 

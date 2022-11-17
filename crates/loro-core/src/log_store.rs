@@ -1,6 +1,7 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
+mod encoding;
 mod iter;
 use std::{
     marker::PhantomPinned,
@@ -18,6 +19,7 @@ use crate::{
     configure::Configure,
     container::{
         registry::{ContainerInstance, ContainerRegistry},
+        text::text_content::ListSlice,
         Container, ContainerID,
     },
     dag::Dag,
@@ -34,14 +36,14 @@ const MONTH: u64 = 30 * 24 * 60 * 60;
 #[derive(Debug)]
 pub struct GcConfig {
     pub gc: bool,
-    pub interval: u64,
+    pub snapshot_interval: u64,
 }
 
 impl Default for GcConfig {
     fn default() -> Self {
         GcConfig {
-            gc: false,
-            interval: 6 * MONTH,
+            gc: true,
+            snapshot_interval: 6 * MONTH,
         }
     }
 }
@@ -114,7 +116,7 @@ impl LogStore {
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
-            for change in changes {
+            for change in changes.iter() {
                 ans.push(self.change_to_export_format(change))
             }
         }
@@ -146,7 +148,9 @@ impl LogStore {
             let mut container = container.lock().unwrap();
             container.to_import(&mut op);
             drop(container);
-            new_ops.push(op.convert(self));
+            for op in op.convert(self) {
+                new_ops.push(op);
+            }
         }
 
         Change {
@@ -158,22 +162,27 @@ impl LogStore {
         }
     }
 
-    fn change_to_export_format(&self, change: Change) -> Change<RemoteOp> {
+    fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
-        for mut op in change.ops.into_iter() {
-            let container = self.reg.get_by_idx(op.container).unwrap();
-            let container = container.lock().unwrap();
-            container.to_export(&mut op);
-            ops.push(op.convert(self));
+        for op in change.ops.iter() {
+            ops.push(self.to_remote_op(op));
         }
 
         Change {
             ops,
-            deps: change.deps,
+            deps: change.deps.clone(),
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,
         }
+    }
+
+    fn to_remote_op(&self, op: &Op) -> RemoteOp {
+        let container = self.reg.get_by_idx(op.container).unwrap();
+        let mut container = container.lock().unwrap();
+        let mut op = op.clone().convert(self);
+        container.to_export(&mut op, self.cfg.gc.gc);
+        op
     }
 
     pub(crate) fn create_container(
@@ -287,7 +296,7 @@ impl LogStore {
             return;
         }
 
-        debug_log!("Client {} Apply {:?}", self.this_client_id, &change);
+        debug_log!("Client {} Apply {:#?}", self.this_client_id, &change);
         for dep in &change.deps {
             if !self.contains(*dep) {
                 unimplemented!("need impl pending changes");
@@ -437,13 +446,17 @@ impl Dag for LogStore {
 fn check_import_change_valid(change: &Change<RemoteOp>) {
     if cfg!(test) {
         for op in change.ops.iter() {
-            if let Some((slice, _)) = op
-                .content
-                .as_normal()
-                .and_then(|x| x.as_list())
-                .and_then(|x| x.as_insert())
-            {
-                assert!(slice.as_raw_str().is_some() || slice.as_raw_data().is_some())
+            for content in op.contents.iter() {
+                if let Some((slice, _)) = content
+                    .as_normal()
+                    .and_then(|x| x.as_list())
+                    .and_then(|x| x.as_insert())
+                {
+                    assert!(matches!(
+                        slice,
+                        ListSlice::RawData(_) | ListSlice::RawStr(_) | ListSlice::Unknown(_)
+                    ))
+                }
             }
         }
     }

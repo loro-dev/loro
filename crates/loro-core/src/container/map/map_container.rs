@@ -9,7 +9,6 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    id::Counter,
     op::{Content, Op, RichOp},
     op::{OpContent, RemoteOp},
     span::IdSpan,
@@ -61,7 +60,6 @@ impl MapContainer {
         };
 
         let id = store.next_id_for(client_id);
-        let counter = id.counter;
         // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
@@ -91,7 +89,6 @@ impl MapContainer {
         let container_id = store.create_container(obj, self_id.clone());
         // TODO: store this value?
         let id = store.next_id_for(client_id);
-        let counter = id.counter;
         let container = store.get_container_idx(self_id).unwrap();
         let order = TotalOrderStamp {
             client_id,
@@ -192,7 +189,7 @@ impl Container for MapContainer {
         todo!()
     }
 
-    fn to_export(&self, _op: &mut Op) {}
+    fn to_export(&mut self, _op: &mut RemoteOp, _gc: bool) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
 }
