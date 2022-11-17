@@ -277,7 +277,6 @@ impl Tracker {
                 let yspan =
                     self.content
                         .get_yspan_at_pos(id, *pos, slice.content_len(), slice.to_range());
-                debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
                 // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                 unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
             }
@@ -346,7 +345,7 @@ impl Tracker {
         )
     }
 
-    pub fn iter_effects(&mut self, target: IdSpanVector) -> EffectIter<'_> {
+    pub fn iter_effects(&mut self, target: &IdSpanVector) -> EffectIter<'_> {
         EffectIter::new(self, target)
     }
 

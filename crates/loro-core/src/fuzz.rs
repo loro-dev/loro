@@ -647,6 +647,18 @@ mod test {
     }
 
     #[test]
+    fn case_two() {
+        test_multi_sites(
+            2,
+            &mut [Ins {
+                content: 123,
+                pos: 0,
+                site: 1,
+            }],
+        )
+    }
+
+    #[test]
     fn mini() {
         minify_error(8, vec![], test_multi_sites, normalize)
     }

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use fxhash::FxHashMap;
 use rle::RleVecWithIndex;
@@ -6,10 +6,7 @@ use rle::RleVecWithIndex;
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
-    container::{
-        list::List, map::Map, registry::ContainerInstance, text::Text, ContainerID, ContainerIdRaw,
-        ContainerType,
-    },
+    container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
     id::ClientID,
     op::RemoteOp,
     LogStore, VersionVector,
@@ -65,17 +62,6 @@ impl LoroCore {
             .write()
             .unwrap()
             .get_or_create_container(&id.with_type(ContainerType::Text))
-            .clone()
-            .into()
-    }
-
-    #[inline(always)]
-    pub fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        self.log_store
-            .read()
-            .unwrap()
-            .get_container(id)
-            .unwrap()
             .clone()
             .into()
     }

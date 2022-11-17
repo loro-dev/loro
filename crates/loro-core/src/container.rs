@@ -5,7 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{Op, RemoteOp},
+    op::{Content, Op, RemoteOp},
     span::IdSpan,
     version::{IdSpanVector, VersionVector},
     InternalString, LogStore, LoroValue, ID,
@@ -29,9 +29,9 @@ pub trait Container: Debug + Any + Unpin {
     /// NOTE: this method expect that [LogStore] has store the Change
     fn apply(&mut self, id_span: IdSpan, log: &LogStore);
     fn update_state_directly(&mut self, op: &Op);
-    fn track_retreat(&mut self, op: &IdSpanVector);
-    fn track_forward(&mut self, op: &IdSpanVector);
-    fn track_apply(&mut self, op: &Op);
+    fn track_retreat(&mut self, spans: &IdSpanVector);
+    fn track_forward(&mut self, spans: &IdSpanVector);
+    fn track_apply(&mut self, id: ID, content: &Content);
     fn tracker_checkout(&mut self, vv: &VersionVector);
     fn get_value(&self) -> LoroValue;
     // TODO: need a custom serializer
@@ -39,7 +39,7 @@ pub trait Container: Debug + Any + Unpin {
     /// convert an op to export format. for example [ListSlice] should be convert to str before export
     fn to_export(&mut self, op: &mut RemoteOp, gc: bool);
     fn to_import(&mut self, op: &mut RemoteOp);
-    fn apply_tracked_op_from(&mut self, from: &VersionVector);
+    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

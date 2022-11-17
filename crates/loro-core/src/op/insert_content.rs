@@ -18,7 +18,7 @@ pub enum ContentType {
 }
 
 #[derive(EnumAsInner, Debug)]
-pub(crate) enum Content {
+pub enum Content {
     Container(ContainerID),
     Map(MapSet),
     List(ListOp),

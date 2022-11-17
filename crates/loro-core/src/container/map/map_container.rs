@@ -196,11 +196,15 @@ impl Container for MapContainer {
         todo!()
     }
 
-    fn track_apply(&mut self, op: &Op) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        from: &crate::VersionVector,
+        effect_spans: &IdSpanVector,
+    ) {
         todo!()
     }
 
-    fn apply_tracked_op_from(&mut self, from: &crate::VersionVector) {
+    fn track_apply(&mut self, id: crate::id::ID, content: &Content) {
         todo!()
     }
 }
@@ -237,6 +241,14 @@ impl Map {
         self.with_container(|map| {
             map.delete(ctx, key.into());
         })
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.instance.lock().unwrap().as_map().unwrap().id.clone()
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.instance.lock().unwrap().as_text().unwrap().get_value()
     }
 }
 

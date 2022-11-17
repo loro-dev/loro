@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
+    version::IdSpanVector,
 };
 use rle::{HasLength, Mergable, Slice, Sliceable};
 
@@ -212,6 +213,12 @@ impl IdSpan {
     #[inline]
     pub fn end_id(&self) -> ID {
         ID::new(self.client_id, self.counter.end())
+    }
+
+    pub fn to_id_span_vec(&self) -> IdSpanVector {
+        let mut out = IdSpanVector::default();
+        out.insert(self.client_id, self.counter);
+        out
     }
 }
 

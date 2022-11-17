@@ -340,6 +340,9 @@ where
 {
     let mut ans: FxHashMap<ClientID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
+    if a_ids.is_empty() {
+        print!("sadf");
+    }
     for id in a_ids {
         queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::A));
     }
@@ -435,10 +438,7 @@ where
             NodeType::Shared => {}
         }
 
-        if a_count == 0
-            && b_count == 0
-            && (!find_path || min.is_none() || &node <= min.as_ref().unwrap())
-        {
+        if a_count == 0 && b_count == 0 && (min.is_none() || &node <= min.as_ref().unwrap()) {
             if node_type != NodeType::Shared {
                 ans.clear();
             }

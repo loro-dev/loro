@@ -17,7 +17,7 @@ pub struct EffectIter<'a> {
 }
 
 impl<'a> EffectIter<'a> {
-    pub fn new(tracker: &'a mut Tracker, target: IdSpanVector) -> Self {
+    pub fn new(tracker: &'a mut Tracker, target: &IdSpanVector) -> Self {
         let spans = target
             .iter()
             .map(|(client, ctr)| IdSpan::new(*client, ctr.start, ctr.end))

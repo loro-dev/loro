@@ -299,7 +299,7 @@ impl Container for TextContainer {
             "BEFORE EFFECT STATE={}",
             self.get_value().as_string().unwrap()
         );
-        for effect in self.tracker.iter_effects(path.right) {
+        for effect in self.tracker.iter_effects(&path.right) {
             debug_log!("EFFECT: {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
@@ -324,8 +324,16 @@ impl Container for TextContainer {
         debug_log!("--------------------------------");
     }
 
-    fn tracker_checkout(&mut self, _vv: &crate::VersionVector) {
-        todo!()
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+        debug_log!("Tracker checkout {:?}", vv);
+        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
+            && self.tracker.all_vv() >= vv
+            && vv >= self.tracker.start_vv()
+        {
+            self.tracker.checkout(vv);
+        } else {
+            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+        }
     }
 
     // TODO: maybe we need to let this return Cow
@@ -406,6 +414,7 @@ impl Container for TextContainer {
     }
 
     fn to_import(&mut self, op: &mut RemoteOp) {
+        debug_log!("IMPORT {:#?}", &op);
         for content in op.contents.iter_mut() {
             if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 if let Some(slice_range) = match slice {
@@ -421,26 +430,87 @@ impl Container for TextContainer {
                 }
             }
         }
+        debug_log!("IMPORTED {:#?}", &op);
     }
 
     fn update_state_directly(&mut self, op: &Op) {
-        todo!()
+        match &op.content {
+            Content::List(op) => match op {
+                ListOp::Insert { slice, pos } => {
+                    let v = match slice {
+                        ListSlice::Slice(slice) => slice.clone(),
+                        ListSlice::Unknown(u) => ListSlice::unknown_range(*u),
+                        _ => unreachable!(),
+                    };
+
+                    self.state.insert(*pos, v)
+                }
+                ListOp::Delete(span) => self
+                    .state
+                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+            },
+            _ => unreachable!(),
+        }
     }
 
-    fn track_retreat(&mut self, op: &IdSpanVector) {
-        todo!()
+    fn track_retreat(&mut self, spans: &IdSpanVector) {
+        self.tracker.retreat(spans);
     }
 
-    fn track_forward(&mut self, op: &IdSpanVector) {
-        todo!()
+    fn track_forward(&mut self, spans: &IdSpanVector) {
+        self.tracker.forward(spans);
     }
 
-    fn track_apply(&mut self, op: &Op) {
-        todo!()
+    fn track_apply(&mut self, id: ID, content: &Content) {
+        debug_log!("TRACKER APPLY {} {:#?}", &id, &content);
+        debug_log!("Current ALL {:?}", &self.tracker.all_vv());
+        if self
+            .tracker
+            .all_vv()
+            .includes_id(id.inc(content.atom_len() as Counter - 1))
+        {
+            self.tracker
+                .forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            return;
+        }
+
+        if self.tracker.all_vv().includes_id(id) {
+            let this_ctr = self.tracker.all_vv().get(&id.client_id).unwrap();
+            let shift = this_ctr - id.counter;
+            self.tracker
+                .forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.tracker.apply(
+                id.inc(shift),
+                &content.slice(shift as usize, content.atom_len()),
+            );
+        } else {
+            self.tracker.apply(id, content)
+        }
     }
 
-    fn apply_tracked_op_from(&mut self, from: &crate::VersionVector) {
-        todo!()
+    fn apply_tracked_effects_from(
+        &mut self,
+        from: &crate::VersionVector,
+        effect_spans: &IdSpanVector,
+    ) {
+        self.tracker.checkout(from);
+        debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
+        for effect in self.tracker.iter_effects(effect_spans) {
+            debug_log!("APPLY EFFECT {:?}", &effect);
+            match effect {
+                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
+                Effect::Ins { pos, content } => {
+                    let v = match content {
+                        ListSlice::Slice(slice) => slice.clone(),
+                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
+                        _ => unreachable!(),
+                    };
+
+                    self.state.insert(pos, v)
+                }
+            }
+        }
+        debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());
     }
 }
 
@@ -457,6 +527,10 @@ impl Clone for Text {
 }
 
 impl Text {
+    pub fn id(&self) -> ContainerID {
+        self.instance.lock().unwrap().as_text().unwrap().id.clone()
+    }
+
     pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
         self.with_container(|x| x.insert(ctx, pos, text))
     }
@@ -468,6 +542,10 @@ impl Text {
     // TODO: can be len?
     pub fn text_len(&self) -> usize {
         self.with_container(|text| text.text_len())
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.instance.lock().unwrap().as_text().unwrap().get_value()
     }
 }
 

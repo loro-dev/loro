@@ -355,7 +355,7 @@ impl Container for ListContainer {
             "BEFORE EFFECT STATE={:?}",
             self.get_value().as_list().unwrap()
         );
-        for effect in self.tracker.iter_effects(path.right) {
+        for effect in self.tracker.iter_effects(&path.right) {
             debug_log!("EFFECT: {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
@@ -431,11 +431,15 @@ impl Container for ListContainer {
         todo!()
     }
 
-    fn track_apply(&mut self, op: &Op) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        from: &crate::VersionVector,
+        effect_spans: &IdSpanVector,
+    ) {
         todo!()
     }
 
-    fn apply_tracked_op_from(&mut self, from: &crate::VersionVector) {
+    fn track_apply(&mut self, id: ID, content: &Content) {
         todo!()
     }
 }

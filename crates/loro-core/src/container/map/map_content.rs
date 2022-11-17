@@ -4,7 +4,7 @@ use crate::{ContentType, InsertContentTrait, InternalString, LoroValue};
 
 // TODO: use imported and exported format to save the space
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct MapSet {
+pub struct MapSet {
     pub(crate) key: InternalString,
     pub(crate) value: LoroValue,
 }

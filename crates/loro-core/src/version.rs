@@ -350,6 +350,11 @@ impl VersionVector {
     }
 
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
+        if span.counter.min() == 0 {
+            self.remove(&span.client_id);
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&span.client_id) {
             if *counter > span.counter.min() {
                 *counter = span.counter.min();

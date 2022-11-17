@@ -10,8 +10,8 @@ use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
     context::Context,
-    id::ContainerIdx,
-    op::{Op, RemoteOp},
+    id::{ContainerIdx, ID},
+    op::{Content, Op, RemoteOp},
     span::IdSpan,
     version::IdSpanVector,
     LogStore, LoroValue, VersionVector,
@@ -22,6 +22,7 @@ use super::{
     ContainerType,
 };
 
+// TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
     Map(Box<MapContainer>),
@@ -44,8 +45,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(_) => ContainerType::Map,
             ContainerInstance::Text(_) => ContainerType::Text,
-            ContainerInstance::Dyn(x) => x.type_(),
             ContainerInstance::List(_) => ContainerType::List,
+            ContainerInstance::Dyn(x) => x.type_(),
         }
     }
 
@@ -94,23 +95,48 @@ impl Container for ContainerInstance {
     }
 
     fn update_state_directly(&mut self, op: &Op) {
-        todo!()
+        match self {
+            ContainerInstance::Map(x) => x.update_state_directly(op),
+            ContainerInstance::Text(x) => x.update_state_directly(op),
+            ContainerInstance::Dyn(x) => x.update_state_directly(op),
+            ContainerInstance::List(x) => x.update_state_directly(op),
+        }
     }
 
     fn track_retreat(&mut self, op: &IdSpanVector) {
-        todo!()
+        match self {
+            ContainerInstance::Map(x) => x.track_retreat(op),
+            ContainerInstance::Text(x) => x.track_retreat(op),
+            ContainerInstance::Dyn(x) => x.track_retreat(op),
+            ContainerInstance::List(x) => x.track_retreat(op),
+        }
     }
 
     fn track_forward(&mut self, op: &IdSpanVector) {
-        todo!()
+        match self {
+            ContainerInstance::Map(x) => x.track_forward(op),
+            ContainerInstance::Text(x) => x.track_forward(op),
+            ContainerInstance::Dyn(x) => x.track_forward(op),
+            ContainerInstance::List(x) => x.track_forward(op),
+        }
     }
 
-    fn track_apply(&mut self, op: &Op) {
-        todo!()
+    fn track_apply(&mut self, id: ID, content: &Content) {
+        match self {
+            ContainerInstance::Map(x) => x.track_apply(id, content),
+            ContainerInstance::Text(x) => x.track_apply(id, content),
+            ContainerInstance::Dyn(x) => x.track_apply(id, content),
+            ContainerInstance::List(x) => x.track_apply(id, content),
+        }
     }
 
-    fn apply_tracked_op_from(&mut self, from: &VersionVector) {
-        todo!()
+    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector) {
+        match self {
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(from, effect_spans),
+        }
     }
 }
 
