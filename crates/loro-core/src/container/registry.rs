@@ -8,7 +8,14 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::{OwningRef, OwningRefMut};
 
-use crate::{context::Context, id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
+use crate::{
+    context::Context,
+    id::ContainerIdx,
+    op::{Op, RemoteOp},
+    span::IdSpan,
+    version::IdSpanVector,
+    LogStore, LoroValue, VersionVector,
+};
 
 use super::{
     list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
@@ -51,12 +58,12 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn checkout_version(&mut self, vv: &crate::VersionVector) {
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
         match self {
-            ContainerInstance::Map(x) => x.checkout_version(vv),
-            ContainerInstance::Text(x) => x.checkout_version(vv),
-            ContainerInstance::Dyn(x) => x.checkout_version(vv),
-            ContainerInstance::List(x) => x.checkout_version(vv),
+            ContainerInstance::Map(x) => x.tracker_checkout(vv),
+            ContainerInstance::Text(x) => x.tracker_checkout(vv),
+            ContainerInstance::Dyn(x) => x.tracker_checkout(vv),
+            ContainerInstance::List(x) => x.tracker_checkout(vv),
         }
     }
 
@@ -84,6 +91,26 @@ impl Container for ContainerInstance {
             ContainerInstance::Dyn(x) => x.to_import(op),
             ContainerInstance::List(x) => x.to_import(op),
         }
+    }
+
+    fn update_state_directly(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn track_retreat(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_forward(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_apply(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn apply_tracked_op_from(&mut self, from: &VersionVector) {
+        todo!()
     }
 }
 

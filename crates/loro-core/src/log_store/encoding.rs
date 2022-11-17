@@ -18,6 +18,7 @@ use crate::{
         text::text_content::ListSlice,
         ContainerID,
     },
+    dag::remove_included_frontiers,
     id::{ClientID, ContainerIdx, Counter, ID},
     op::{Content, Op, RemoteOp},
     smstring::SmString,
@@ -316,7 +317,7 @@ fn decode_changes(
     let mut frontier = vv.clone();
     for (_, changes) in changes.iter() {
         for change in changes.iter() {
-            update_frontiers(&mut frontier, &change.deps);
+            remove_included_frontiers(&mut frontier, &change.deps);
         }
     }
 
@@ -337,7 +338,7 @@ fn decode_changes(
         latest_lamport,
         latest_timestamp,
         this_client_id,
-        frontier: frontier.get_head(),
+        frontiers: frontier.get_frontiers(),
         reg: container_reg,
         _pin: PhantomPinned,
     }))
@@ -356,15 +357,5 @@ impl LogStore {
     ) -> Arc<RwLock<Self>> {
         let encoded = from_bytes(input).unwrap();
         decode_changes(encoded, client_id, cfg)
-    }
-}
-
-fn update_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
-    for dep in new_change_deps.iter() {
-        if let Some(last) = frontiers.get_last(dep.client_id) {
-            if last <= dep.counter {
-                frontiers.remove(&dep.client_id);
-            }
-        }
     }
 }

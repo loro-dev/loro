@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex, RwLock};
 
+use fxhash::FxHashMap;
+use rle::RleVecWithIndex;
+
 use crate::{
-    change::Change,
+    change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{
         list::List, map::Map, registry::ContainerInstance, text::Text, ContainerID, ContainerIdRaw,
@@ -77,12 +80,18 @@ impl LoroCore {
             .into()
     }
 
-    pub fn export(&self, remote_vv: VersionVector) -> Vec<Change<RemoteOp>> {
+    pub fn export(
+        &self,
+        remote_vv: VersionVector,
+    ) -> FxHashMap<u64, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> {
         let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
-    pub fn import(&mut self, changes: Vec<Change<RemoteOp>>) {
+    pub fn import(
+        &mut self,
+        changes: FxHashMap<u64, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>,
+    ) {
         let mut store = self.log_store.write().unwrap();
         store.import(changes)
     }

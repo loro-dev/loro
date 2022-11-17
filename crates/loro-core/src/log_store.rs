@@ -5,7 +5,7 @@ mod encoding;
 mod iter;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -22,11 +22,12 @@ use crate::{
         text::text_content::ListSlice,
         Container, ContainerID,
     },
-    dag::Dag,
+    dag::{remove_included_frontiers, Dag, DagUtils},
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
     op::{Content, RemoteOp},
-    span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
+    span::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
+    version::are_frontiers_eq,
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
@@ -63,11 +64,13 @@ pub struct LogStore {
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
     pub(crate) this_client_id: ClientID,
-    frontier: SmallVec<[ID; 2]>,
+    frontiers: SmallVec<[ID; 2]>,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
     _pin: PhantomPinned,
 }
+
+type ContainerGuard<'a> = MutexGuard<'a, ContainerInstance>;
 
 impl LogStore {
     pub(crate) fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
@@ -78,7 +81,7 @@ impl LogStore {
             changes: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
-            frontier: Default::default(),
+            frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
             _pin: PhantomPinned,
@@ -92,29 +95,164 @@ impl LogStore {
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
-    pub fn import(&mut self, mut changes: Vec<Change<RemoteOp>>) {
-        let self_vv = self.vv();
-        // guarantee that changes are applied in causal order
-        changes.sort_by_cached_key(|x| x.lamport);
-        for change in changes
-            .into_iter()
-            .filter(|x| !self_vv.includes_id(x.id_last()))
-        {
-            check_import_change_valid(&change);
-            // TODO: cache pending changes
-            assert!(change.deps.iter().all(|x| self.vv().includes_id(*x)));
-            self.apply_remote_change(change)
+    pub fn import(
+        &mut self,
+        mut changes: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>,
+    ) {
+        // tailor changes
+        changes.retain(|_, v| !v.is_empty());
+        for (client_id, changes) in changes.iter_mut() {
+            let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
+            let other_start_ctr = changes.first().unwrap().ctr_start();
+            if other_start_ctr < self_end_ctr {
+                *changes = changes.slice(
+                    (self_end_ctr - other_start_ctr) as usize,
+                    changes.atom_len(),
+                );
+            } else if other_start_ctr > self_end_ctr {
+                unimplemented!("cache pending changes");
+            }
         }
+
+        // get related containers, and acquire their locks
+        let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
+        for (client_id, changes) in changes.iter() {
+            for change in changes.iter() {
+                for op in change.ops.iter() {
+                    if !container_map.contains_key(&op.container) {
+                        let guard = self.reg.get_or_create(&op.container).lock().unwrap();
+                        container_map
+                            // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
+                            .insert(op.container.clone(), unsafe { std::mem::transmute(guard) });
+                    }
+                }
+            }
+        }
+
+        // calculate latest frontiers
+        let mut next_vv: VersionVector = self.vv.clone();
+        let mut next_frontiers: VersionVector = self.frontiers.iter().map(|x| *x).collect();
+        for (_, changes) in changes.iter() {
+            next_frontiers.set_end(changes.last().unwrap().id_end());
+            next_vv.set_end(changes.last().unwrap().id_end());
+        }
+
+        // push changes to log stores
+        let cfg = self.get_change_merge_cfg();
+        for (client_id, mut changes) in changes.iter() {
+            let mut inner_changes = Vec::with_capacity(changes.len());
+            for change in changes.iter() {
+                remove_included_frontiers(&mut next_frontiers, &change.deps);
+                let change = self.change_to_imported_format(change, &mut container_map);
+                inner_changes.push(change);
+            }
+
+            let mut rle = self
+                .changes
+                .entry(*client_id)
+                .or_insert_with(|| RleVecWithIndex::new_cfg(cfg.clone()));
+            for change in inner_changes {
+                rle.push(change);
+            }
+        }
+
+        let mut container_map: FxHashMap<ContainerIdx, ContainerGuard> = container_map
+            .into_iter()
+            .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
+            .collect();
+
+        // apply changes to containers
+        'apply: {
+            let latest_frontiers = next_frontiers.get_frontiers();
+            // 0. calculate common ancestors
+            let common_ancestors = self.find_common_ancestor(&self.frontiers, &latest_frontiers);
+            if are_frontiers_eq(&common_ancestors, &self.frontiers) {
+                // we may apply changes directly into state
+                let target_spans = next_vv.diff(&self.vv).left;
+                // TODO: can reuse this path
+                let mut causal_visit_path = self.iter_causal(&common_ancestors, target_spans);
+                if causal_visit_path.all(|x| x.retreat.is_empty() && x.forward.is_empty()) {
+                    // can update containers state directly without consulting CRDT
+                    for iter in causal_visit_path {
+                        // TODO: avoid this clone? (make slice return Cow?)
+                        let change = iter
+                            .data
+                            .slice(iter.slice.start as usize, iter.slice.end as usize);
+                        for op in change.ops.iter() {
+                            let container = container_map.get_mut(&op.container).unwrap();
+                            container.update_state_directly(op);
+                        }
+                    }
+
+                    break 'apply;
+                }
+            }
+
+            // 1. record all the changes to the trackers
+            let mut common_ancestors_vv = self.vv.clone();
+            common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
+            for (_, container) in container_map.iter_mut() {
+                container.tracker_checkout(&common_ancestors_vv);
+            }
+
+            for iter in self.iter_causal(&common_ancestors, next_vv.diff(&common_ancestors_vv).left)
+            {
+                let change = iter
+                    .data
+                    .slice(iter.slice.start as usize, iter.slice.end as usize);
+                let containers: FxHashSet<ContainerIdx> =
+                    change.ops.iter().map(|x| x.container).collect();
+                for container in containers {
+                    let container = container_map.get_mut(&container).unwrap();
+                    container.track_retreat(&iter.retreat);
+                    container.track_forward(&iter.forward);
+                }
+
+                for op in change.ops.iter() {
+                    let container = container_map.get_mut(&op.container).unwrap();
+                    container.track_apply(op);
+                }
+            }
+
+            // 2. calculate and apply the effects to the state
+            for (_, container) in container_map.iter_mut() {
+                container.apply_tracked_op_from(&self.vv);
+            }
+        }
+
+        // update the rest of log store states
+        self.vv = next_vv;
+        self.frontiers = next_frontiers.get_frontiers();
+        self.latest_lamport = self
+            .changes
+            .iter()
+            .map(|(_, v)| v.last().unwrap().lamport_last())
+            .max()
+            .unwrap();
+        self.latest_timestamp = self
+            .changes
+            .iter()
+            .map(|(_, v)| v.last().unwrap().timestamp)
+            .max()
+            .unwrap();
     }
 
-    pub fn export(&self, remote_vv: &VersionVector) -> Vec<Change<RemoteOp>> {
-        let mut ans = Vec::default();
+    pub fn export(
+        &self,
+        remote_vv: &VersionVector,
+    ) -> FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> {
+        let mut ans: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> =
+            Default::default();
         let self_vv = self.vv();
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
-                ans.push(self.change_to_export_format(change))
+                let vec = ans
+                    .entry(change.id.client_id)
+                    .or_insert_with(|| RleVecWithIndex::new_cfg(self.get_change_merge_cfg()));
+
+                vec.push(self.change_to_export_format(change));
             }
         }
 
@@ -138,13 +276,17 @@ impl LogStore {
         }
     }
 
-    fn change_to_imported_format(&mut self, change: Change<RemoteOp>) -> Change {
+    fn change_to_imported_format(
+        &mut self,
+        change: &Change<RemoteOp>,
+        containers: &mut FxHashMap<ContainerID, ContainerGuard>,
+    ) -> Change {
         let mut new_ops = RleVec::new();
-        for mut op in change.ops.into_iter() {
-            let container = self.reg.get_or_create(&op.container);
-            let mut container = container.lock().unwrap();
+        for op in change.ops.iter() {
+            let container = containers.get_mut(&op.container).unwrap();
+            // TODO: avoid this clone
+            let mut op = op.clone();
             container.to_import(&mut op);
-            drop(container);
             for op in op.convert(self) {
                 new_ops.push(op);
             }
@@ -152,7 +294,7 @@ impl LogStore {
 
         Change {
             ops: new_ops,
-            deps: change.deps,
+            deps: change.deps.clone(),
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,
@@ -226,29 +368,14 @@ impl LogStore {
     }
 
     #[inline(always)]
-    pub fn frontier(&self) -> &[ID] {
-        &self.frontier
+    pub fn frontiers(&self) -> &[ID] {
+        &self.frontiers
     }
 
-    fn update_frontier(&mut self, clear: &[ID], new: &[ID]) {
-        self.frontier.retain(|x| {
-            !clear
-                .iter()
-                .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
-                && !new
-                    .iter()
-                    .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
-        });
-        for next in new.iter() {
-            if self
-                .frontier
-                .iter()
-                .any(|x| x.client_id == next.client_id && x.counter >= next.counter)
-            {
-                continue;
-            }
-
-            self.frontier.push(*next);
+    fn get_change_merge_cfg(&self) -> ChangeMergeCfg {
+        ChangeMergeCfg {
+            max_change_length: self.cfg.change.max_change_length,
+            max_change_interval: self.cfg.change.max_change_interval,
         }
     }
 
@@ -269,7 +396,7 @@ impl LogStore {
         let last_id = ID::new(self.this_client_id, last_ctr);
         let change = Change {
             id,
-            deps: std::mem::replace(&mut self.frontier, smallvec::smallvec![last_id]),
+            deps: std::mem::replace(&mut self.frontiers, smallvec::smallvec![last_id]),
             ops: ops.into(),
             lamport,
             timestamp,
@@ -278,58 +405,13 @@ impl LogStore {
         self.latest_lamport = lamport + change.content_len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
+        let cfg = self.get_change_merge_cfg();
         self.changes
             .entry(self.this_client_id)
-            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
+            .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
 
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
-    }
-
-    pub fn apply_remote_change(&mut self, change: Change<RemoteOp>) {
-        if self.contains(change.id_last()) {
-            return;
-        }
-
-        debug_log!("Client {} Apply {:#?}", self.this_client_id, &change);
-        for dep in &change.deps {
-            if !self.contains(*dep) {
-                unimplemented!("need impl pending changes");
-            }
-        }
-
-        // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let change = self.change_to_imported_format(change);
-        let changes = self
-            .changes
-            .entry(change.id.client_id)
-            .or_insert_with(RleVecWithIndex::new);
-        changes.push(change);
-        // TODO: avoid this clone?
-        let change = changes.vec().last().unwrap().clone();
-
-        // Apply ops.
-        // NOTE: applying expects that log_store has store the Change, and updated self vv
-        let mut set = FxHashSet::default();
-        for op in change.ops.iter() {
-            set.insert(&op.container);
-        }
-
-        for container in set {
-            let mut container = self.reg.get_by_idx(*container).unwrap().lock().unwrap();
-            container.apply(change.id_span(), self);
-        }
-
-        self.vv.set_end(change.id_end());
-        self.update_frontier(&change.deps, &[change.id_last()]);
-
-        if change.lamport_last() > self.latest_lamport {
-            self.latest_lamport = change.lamport_last();
-        }
-
-        if change.timestamp > self.latest_timestamp {
-            self.latest_timestamp = change.timestamp;
-        }
     }
 
     #[inline]
@@ -430,7 +512,7 @@ impl Dag for LogStore {
     }
 
     fn frontier(&self) -> &[ID] {
-        &self.frontier
+        &self.frontiers
     }
 
     fn vv(&self) -> crate::VersionVector {

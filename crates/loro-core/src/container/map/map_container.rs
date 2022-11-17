@@ -13,7 +13,7 @@ use crate::{
     op::{Content, Op, RichOp},
     span::IdSpan,
     value::LoroValue,
-    version::TotalOrderStamp,
+    version::{IdSpanVector, TotalOrderStamp},
     InternalString, LogStore,
 };
 
@@ -176,13 +176,33 @@ impl Container for MapContainer {
         map.into()
     }
 
-    fn checkout_version(&mut self, _vv: &crate::version::VersionVector) {
+    fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {
         todo!()
     }
 
     fn to_export(&mut self, _op: &mut RemoteOp, _gc: bool) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
+
+    fn update_state_directly(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn track_retreat(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_forward(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_apply(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn apply_tracked_op_from(&mut self, from: &crate::VersionVector) {
+        todo!()
+    }
 }
 
 pub struct Map {

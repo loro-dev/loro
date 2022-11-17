@@ -219,9 +219,9 @@ impl<T> Default for RleVecWithIndex<T> {
     }
 }
 
-impl<T: Mergable + HasLength> FromIterator<T> for RleVecWithIndex<T> {
+impl<T: Mergable<Cfg> + HasLength, Cfg: Default> FromIterator<T> for RleVecWithIndex<T, Cfg> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut vec = RleVecWithIndex::new();
+        let mut vec = RleVecWithIndex::new_with_conf(Default::default());
         for item in iter {
             vec.push(item);
         }
@@ -300,11 +300,14 @@ impl<T: Mergable<Cfg> + HasLength + Sliceable + Clone, Cfg> Mergable<Cfg>
     }
 }
 
-impl<T: Mergable + HasLength + Sliceable + Clone> Sliceable for RleVecWithIndex<T> {
+impl<T: Mergable<Cfg> + HasLength + Sliceable, Cfg: Clone> Sliceable for RleVecWithIndex<T, Cfg> {
     fn slice(&self, start: usize, end: usize) -> Self {
-        self.slice_iter(start, end)
-            .map(|x| x.into_inner())
-            .collect()
+        let mut ans = RleVecWithIndex::new_with_conf(self.cfg.clone());
+        for value in self.slice_iter(start, end).map(|x| x.into_inner()) {
+            ans.push(value);
+        }
+
+        ans
     }
 }
 

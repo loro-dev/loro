@@ -12,7 +12,7 @@ use crate::{
     span::{HasId, HasIdSpan, HasLamport},
 };
 use num::traits::AsPrimitive;
-use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, Rle, RleVec, Sliceable};
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -68,7 +68,7 @@ impl<O: Mergable + HasLength + HasIndex> HasLength for Change<O> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChangeMergeCfg {
     pub max_change_length: usize,
     pub max_change_interval: usize,
@@ -92,7 +92,7 @@ impl Default for ChangeMergeCfg {
     }
 }
 
-impl Mergable<ChangeMergeCfg> for Change {
+impl<O: Rle + HasIndex> Mergable<ChangeMergeCfg> for Change<O> {
     fn merge(&mut self, other: &Self, _: &ChangeMergeCfg) {
         self.ops.merge(&other.ops, &());
     }

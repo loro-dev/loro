@@ -80,6 +80,7 @@ pub(crate) trait DagUtils: Dag {
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]> {
+        // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
 
@@ -591,4 +592,14 @@ where
     }
 
     ans
+}
+
+pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
+    for dep in new_change_deps.iter() {
+        if let Some(last) = frontiers.get_last(dep.client_id) {
+            if last <= dep.counter {
+                frontiers.remove(&dep.client_id);
+            }
+        }
+    }
 }

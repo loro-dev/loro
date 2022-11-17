@@ -19,6 +19,7 @@ use crate::{
     op::{Content, Op, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
+    version::IdSpanVector,
     LogStore,
 };
 
@@ -247,7 +248,7 @@ impl Container for TextContainer {
         } else {
             debug_log!("OldTracker");
             self.tracker.checkout_to_latest();
-            self.tracker.all_vv().get_head()
+            self.tracker.all_vv().get_frontiers()
         };
 
         // stage 1
@@ -323,7 +324,7 @@ impl Container for TextContainer {
         debug_log!("--------------------------------");
     }
 
-    fn checkout_version(&mut self, _vv: &crate::VersionVector) {
+    fn tracker_checkout(&mut self, _vv: &crate::VersionVector) {
         todo!()
     }
 
@@ -420,6 +421,26 @@ impl Container for TextContainer {
                 }
             }
         }
+    }
+
+    fn update_state_directly(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn track_retreat(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_forward(&mut self, op: &IdSpanVector) {
+        todo!()
+    }
+
+    fn track_apply(&mut self, op: &Op) {
+        todo!()
+    }
+
+    fn apply_tracked_op_from(&mut self, from: &crate::VersionVector) {
+        todo!()
     }
 }
 
