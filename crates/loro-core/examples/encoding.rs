@@ -39,10 +39,10 @@ fn main() {
         0,
         start.elapsed().as_millis()
     );
-
+    let start = Instant::now();
     let loro = LoroCore::decode_snapshot(&buf, None, Configure::default());
+    println!("decode used {}ms", start.elapsed().as_millis());
     let buf2 = loro.encode_snapshot();
-    println!("{} bytes", buf2.len());
     assert_eq!(buf, buf2);
     let mut last = 100;
     let mut count = 0;

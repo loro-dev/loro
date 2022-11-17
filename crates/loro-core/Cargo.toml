@@ -58,3 +58,7 @@ test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
 [[bench]]
 name = "text"
 harness = false
+
+[[bench]]
+name = "encode"
+harness = false
