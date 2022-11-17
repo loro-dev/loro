@@ -476,17 +476,20 @@ mod test {
         map.set_large_range(10, V::new(10, 20, "a"));
         map.set_large_range(12, V::new(12, 15, "b"));
         // 10-12, 12-15, 15-20
-        assert_eq!(map.get_range(7, 8), Vec::<&V>::new());
-        assert_eq!(map.get_range(8, 12), vec![&V::new(10, 12, "a")]);
+        assert_eq!(map.get_range(7, 8).collect::<Vec<&V>>(), Vec::<&V>::new());
         assert_eq!(
-            map.get_range(14, 16),
+            map.get_range(8, 12).collect::<Vec<&V>>(),
+            vec![&V::new(10, 12, "a")]
+        );
+        assert_eq!(
+            map.get_range(14, 16).collect::<Vec<&V>>(),
             vec![&V::new(12, 15, "b"), &V::new(15, 20, "a")]
         );
 
         // 10-11, 11-12, 12-15, 15-20
         map.set_large_range(11, V::new(11, 12, "c"));
         assert_eq!(
-            map.get_range(9, 15),
+            map.get_range(9, 15).collect::<Vec<&V>>(),
             vec![
                 &V::new(10, 11, "a"),
                 &V::new(11, 12, "c"),
@@ -496,7 +499,10 @@ mod test {
 
         // 5-20
         map.set_large_range(5, V::new(5, 20, "k"));
-        assert_eq!(map.get_range(9, 15), vec![&V::new(5, 20, "k")]);
+        assert_eq!(
+            map.get_range(9, 15).collect::<Vec<&V>>(),
+            vec![&V::new(5, 20, "k")]
+        );
     }
 
     #[test]
@@ -505,17 +511,20 @@ mod test {
         map.set_small_range(10, V::new(10, 20, "a"));
         map.set_small_range(12, V::new(12, 15, "b"));
         // 10-12, 12-15, 15-20
-        assert_eq!(map.get_range(7, 8), Vec::<&V>::new());
-        assert_eq!(map.get_range(8, 12), vec![&V::new(10, 12, "a")]);
+        assert_eq!(map.get_range(7, 8).collect::<Vec<&V>>(), Vec::<&V>::new());
         assert_eq!(
-            map.get_range(14, 16),
+            map.get_range(8, 12).collect::<Vec<&V>>(),
+            vec![&V::new(10, 12, "a")]
+        );
+        assert_eq!(
+            map.get_range(14, 16).collect::<Vec<&V>>(),
             vec![&V::new(12, 15, "b"), &V::new(15, 20, "a")]
         );
 
         // 10-11, 11-12, 12-15, 15-20
         map.set_small_range(11, V::new(11, 12, "c"));
         assert_eq!(
-            map.get_range(9, 15),
+            map.get_range(9, 15).collect::<Vec<&V>>(),
             vec![
                 &V::new(10, 11, "a"),
                 &V::new(11, 12, "c"),
@@ -525,7 +534,10 @@ mod test {
 
         // 5-20
         map.set_small_range(5, V::new(5, 20, "k"));
-        assert_eq!(map.get_range(9, 15), vec![&V::new(5, 20, "k"),]);
+        assert_eq!(
+            map.get_range(9, 15).collect::<Vec<&V>>(),
+            vec![&V::new(5, 20, "k"),]
+        );
     }
 
     #[test]
@@ -536,7 +548,7 @@ mod test {
         map.set_small_range(20, V::new(20, 25, "c"));
         map.set_small_range(2, V::new(2, 23, "k"));
         assert_eq!(
-            map.get_range(0, 30),
+            map.get_range(0, 30).collect::<Vec<&V>>(),
             vec![
                 &V::new(0, 2, "a"),
                 &V::new(2, 23, "k"),
@@ -551,7 +563,7 @@ mod test {
         map.set_small_range(0, V::new(0, 5, "a"));
         map.set_small_range(1, V::new(1, 3, "b"));
         assert_eq!(
-            map.get_range(0, 30),
+            map.get_range(0, 30).collect::<Vec<&V>>(),
             vec![&V::new(0, 1, "a"), &V::new(1, 3, "b"), &V::new(3, 5, "a"),]
         );
 
@@ -559,7 +571,7 @@ mod test {
         map.set_small_range(0, V::new(0, 5, "a"));
         map.set_small_range(0, V::new(0, 3, "b"));
         assert_eq!(
-            map.get_range(0, 30),
+            map.get_range(0, 30).collect::<Vec<&V>>(),
             vec![&V::new(0, 3, "b"), &V::new(3, 5, "a"),]
         );
 
@@ -567,12 +579,12 @@ mod test {
         map.set_small_range(0, V::new(0, 5, "a"));
         map.set_small_range(3, V::new(3, 5, "b"));
         assert_eq!(
-            map.get_range(0, 30),
+            map.get_range(0, 30).collect::<Vec<&V>>(),
             vec![&V::new(0, 3, "a"), &V::new(3, 5, "b"),]
         );
         map.set_small_range(3, V::new(3, 6, "c"));
         assert_eq!(
-            map.get_range(0, 30),
+            map.get_range(0, 30).collect::<Vec<&V>>(),
             vec![&V::new(0, 3, "a"), &V::new(3, 6, "c")]
         );
     }
