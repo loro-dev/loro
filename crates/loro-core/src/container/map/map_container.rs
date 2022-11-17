@@ -11,7 +11,7 @@ use crate::{
     context::Context,
     op::RemoteOp,
     op::{Content, Op, RichOp},
-    span::IdSpan,
+    span::{HasLamport, IdSpan},
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
     InternalString, LogStore,
@@ -128,17 +128,15 @@ impl Container for MapContainer {
     }
 
     fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
-        for RichOp {
-            op, lamport, start, ..
-        } in log.iter_ops_at_id_span(id_span, self.id.clone())
-        {
-            if op.content.as_container().is_some() {
+        for rich_op in log.iter_ops_at_id_span(id_span, self.id.clone()) {
+            let content = rich_op.get_sliced().content;
+            if content.as_container().is_some() {
                 continue;
             }
 
-            let v: &MapSet = op.content.as_map().unwrap();
+            let v: &MapSet = content.as_map().unwrap();
             let order = TotalOrderStamp {
-                lamport: lamport + start as Lamport,
+                lamport: rich_op.lamport(),
                 client_id: id_span.client_id,
             };
             if let Some(slot) = self.state.get_mut(&v.key) {
@@ -184,7 +182,7 @@ impl Container for MapContainer {
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
 
-    fn update_state_directly(&mut self, op: &Op) {
+    fn update_state_directly(&mut self, op: &RichOp) {
         todo!()
     }
 
@@ -204,7 +202,7 @@ impl Container for MapContainer {
         todo!()
     }
 
-    fn track_apply(&mut self, id: crate::id::ID, content: &Content) {
+    fn track_apply(&mut self, op: &RichOp) {
         todo!()
     }
 }

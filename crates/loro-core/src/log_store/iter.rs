@@ -1,7 +1,5 @@
 use crate::Op;
 
-use crate::change::Lamport;
-
 use crate::id::ClientID;
 use crate::id::ContainerIdx;
 use crate::op::RichOp;
@@ -103,13 +101,7 @@ impl<'a> Iterator for OpSpanIter<'a> {
                 let start = (self.span.counter.min() - op.counter).max(0) as usize;
                 let end = ((self.span.counter.end() - op.counter) as usize).min(op.atom_len());
                 assert!(start < end, "{:?} {:#?}", self.span, op);
-                return Some(RichOp {
-                    op,
-                    start,
-                    end,
-                    lamport: (op.counter - change.id.counter) as Lamport + change.lamport,
-                    timestamp: change.timestamp,
-                });
+                return Some(RichOp::new_by_change(change, op));
             } else {
                 self.op_index = 0;
                 self.change_index += 1;

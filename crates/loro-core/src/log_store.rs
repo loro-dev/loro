@@ -24,7 +24,7 @@ use crate::{
     dag::{remove_included_frontiers, Dag, DagUtils},
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::{Content, RemoteOp},
+    op::{Content, RemoteOp, RichOp},
     span::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
     version::are_frontiers_eq,
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
@@ -198,12 +198,14 @@ impl LogStore {
                     // can update containers state directly without consulting CRDT
                     for iter in causal_visit_path {
                         // TODO: avoid this clone? (make slice return Cow?)
-                        let change = iter
-                            .data
-                            .slice(iter.slice.start as usize, iter.slice.end as usize);
+                        let start = iter.slice.start;
+                        let end = iter.slice.end;
+                        let change = iter.data;
                         for op in change.ops.iter() {
                             let container = container_map.get_mut(&op.container).unwrap();
-                            container.update_state_directly(op);
+                            container.update_state_directly(&RichOp::new_by_slice_on_change(
+                                &change, op, start, end,
+                            ));
                         }
                     }
 
@@ -226,9 +228,9 @@ impl LogStore {
 
             for iter in self.iter_causal(&common_ancestors, next_vv.diff(&common_ancestors_vv).left)
             {
-                let change = iter
-                    .data
-                    .slice(iter.slice.start as usize, iter.slice.end as usize);
+                let start = iter.slice.start;
+                let end = iter.slice.end;
+                let change = iter.data;
                 let containers: FxHashSet<ContainerIdx> =
                     change.ops.iter().map(|x| x.container).collect();
                 for container in containers {
@@ -240,13 +242,7 @@ impl LogStore {
                 debug_log!("iter {:#?}", &iter);
                 for op in change.ops.iter() {
                     let container = container_map.get_mut(&op.container).unwrap();
-                    container.track_apply(
-                        ID {
-                            client_id: change.id.client_id,
-                            counter: op.counter,
-                        },
-                        &op.content,
-                    );
+                    container.track_apply(&RichOp::new_by_slice_on_change(change, op, start, end));
                 }
             }
 

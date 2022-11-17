@@ -15,7 +15,7 @@ use crate::{
         list::list_op::ListOp,
         registry::{ContainerInstance, ContainerWrapper},
         text::{
-            text_content::ListSlice,
+            text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
         },
         Container, ContainerID, ContainerType,
@@ -24,8 +24,8 @@ use crate::{
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp},
-    span::{HasCounterSpan, HasIdSpan, IdSpan},
+    op::{Content, Op, RemoteOp, RichOp},
+    span::{HasCounterSpan, HasId, HasIdSpan, IdSpan},
     value::LoroValue,
     version::IdSpanVector,
     LogStore,
@@ -34,7 +34,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ListContainer {
     id: ContainerID,
-    state: RleTree<Range<u32>, CumulateTreeTrait<Range<u32>, 8, HeapMode>>,
+    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
     raw_data: Pool,
     tracker: Tracker,
     head: SmallVec<[ID; 2]>,
@@ -91,7 +91,7 @@ impl ListContainer {
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_data.alloc_arr(values);
-        self.state.insert(pos, slice.clone());
+        self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
             Content::List(ListOp::Insert {
@@ -118,7 +118,7 @@ impl ListContainer {
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_data.alloc(value);
-        self.state.insert(pos, slice.clone());
+        self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
             Content::List(ListOp::Insert {
@@ -232,7 +232,7 @@ impl Container for ListContainer {
                     match &op.content {
                         Content::List(op) => match op {
                             ListOp::Insert { slice, pos } => {
-                                self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
+                                self.state.insert(*pos, slice.as_slice().unwrap().clone())
                             }
                             ListOp::Delete(span) => self.state.delete_range(
                                 Some(span.start() as usize),
@@ -264,7 +264,7 @@ impl Container for ListContainer {
                                     Content::List(op) => match op {
                                         ListOp::Insert { slice, pos } => self
                                             .state
-                                            .insert(*pos, slice.as_slice().unwrap().clone().0),
+                                            .insert(*pos, slice.as_slice().unwrap().clone()),
                                         ListOp::Delete(span) => self.state.delete_range(
                                             Some(span.start() as usize),
                                             Some(span.end() as usize),
@@ -360,8 +360,7 @@ impl Container for ListContainer {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
-                    self.state
-                        .insert(pos, content.as_slice().unwrap().clone().0);
+                    self.state.insert(pos, content.as_slice().unwrap().clone());
                 }
             }
             debug_log!("AFTER EFFECT");
@@ -384,7 +383,7 @@ impl Container for ListContainer {
         let mut values = Vec::new();
         for range in self.state.iter() {
             let content = range.as_ref();
-            for value in self.raw_data.slice(content) {
+            for value in self.raw_data.slice(&content.0) {
                 values.push(value.clone());
             }
         }
@@ -419,16 +418,54 @@ impl Container for ListContainer {
         }
     }
 
-    fn update_state_directly(&mut self, op: &Op) {
-        todo!()
+    fn update_state_directly(&mut self, op: &RichOp) {
+        match &op.get_sliced().content {
+            Content::List(op) => match op {
+                ListOp::Insert { slice, pos } => {
+                    self.state.insert(*pos, slice.as_slice().unwrap().clone())
+                }
+                ListOp::Delete(span) => self
+                    .state
+                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+            },
+            Content::Container(_) => {}
+            _ => unreachable!(),
+        }
     }
 
-    fn track_retreat(&mut self, op: &IdSpanVector) {
-        todo!()
+    fn track_retreat(&mut self, spans: &IdSpanVector) {
+        self.tracker.retreat(spans);
     }
 
-    fn track_forward(&mut self, op: &IdSpanVector) {
-        todo!()
+    fn track_forward(&mut self, spans: &IdSpanVector) {
+        self.tracker.forward(spans);
+    }
+
+    fn track_apply(&mut self, rich_op: &RichOp) {
+        let content = rich_op.get_sliced().content;
+        let id = rich_op.id_start();
+        if self
+            .tracker
+            .all_vv()
+            .includes_id(id.inc(content.atom_len() as Counter - 1))
+        {
+            self.tracker
+                .forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            return;
+        }
+
+        if self.tracker.all_vv().includes_id(id) {
+            let this_ctr = self.tracker.all_vv().get(&id.client_id).unwrap();
+            let shift = this_ctr - id.counter;
+            self.tracker
+                .forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.tracker.apply(
+                id.inc(shift),
+                &content.slice(shift as usize, content.atom_len()),
+            );
+        } else {
+            self.tracker.apply(id, &content)
+        }
     }
 
     fn apply_tracked_effects_from(
@@ -436,11 +473,21 @@ impl Container for ListContainer {
         from: &crate::VersionVector,
         effect_spans: &IdSpanVector,
     ) {
-        todo!()
-    }
+        self.tracker.checkout(from);
+        for effect in self.tracker.iter_effects(effect_spans) {
+            match effect {
+                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
+                Effect::Ins { pos, content } => {
+                    let v = match content {
+                        ListSlice::Slice(slice) => slice.clone(),
+                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
+                        _ => unreachable!(),
+                    };
 
-    fn track_apply(&mut self, id: ID, content: &Content) {
-        todo!()
+                    self.state.insert(pos, v)
+                }
+            }
+        }
     }
 }
 

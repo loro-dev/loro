@@ -10,8 +10,8 @@ use owning_ref::{OwningRef, OwningRefMut};
 
 use crate::{
     context::Context,
-    id::{ContainerIdx, ID},
-    op::{Content, Op, RemoteOp},
+    id::ContainerIdx,
+    op::{RemoteOp, RichOp},
     span::IdSpan,
     version::IdSpanVector,
     LogStore, LoroValue, VersionVector,
@@ -94,7 +94,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn update_state_directly(&mut self, op: &Op) {
+    fn update_state_directly(&mut self, op: &RichOp) {
         match self {
             ContainerInstance::Map(x) => x.update_state_directly(op),
             ContainerInstance::Text(x) => x.update_state_directly(op),
@@ -121,12 +121,12 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn track_apply(&mut self, id: ID, content: &Content) {
+    fn track_apply(&mut self, op: &RichOp) {
         match self {
-            ContainerInstance::Map(x) => x.track_apply(id, content),
-            ContainerInstance::Text(x) => x.track_apply(id, content),
-            ContainerInstance::Dyn(x) => x.track_apply(id, content),
-            ContainerInstance::List(x) => x.track_apply(id, content),
+            ContainerInstance::Map(x) => x.track_apply(op),
+            ContainerInstance::Text(x) => x.track_apply(op),
+            ContainerInstance::Dyn(x) => x.track_apply(op),
+            ContainerInstance::List(x) => x.track_apply(op),
         }
     }
 

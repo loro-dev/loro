@@ -16,8 +16,8 @@ use crate::{
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp},
-    span::{HasCounterSpan, HasIdSpan, IdSpan},
+    op::{Content, Op, RemoteOp, RichOp},
+    span::{HasCounterSpan, HasId, HasIdSpan, IdSpan},
     value::LoroValue,
     version::IdSpanVector,
     LogStore,
@@ -324,18 +324,6 @@ impl Container for TextContainer {
         debug_log!("--------------------------------");
     }
 
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
-        debug_log!("Tracker checkout {:?}", vv);
-        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
-            && self.tracker.all_vv() >= vv
-            && vv >= self.tracker.start_vv()
-        {
-            self.tracker.checkout(vv);
-        } else {
-            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
-        }
-    }
-
     // TODO: maybe we need to let this return Cow
     fn get_value(&self) -> LoroValue {
         let mut ans_str = String::new();
@@ -433,8 +421,8 @@ impl Container for TextContainer {
         debug_log!("IMPORTED {:#?}", &op);
     }
 
-    fn update_state_directly(&mut self, op: &Op) {
-        match &op.content {
+    fn update_state_directly(&mut self, op: &RichOp) {
+        match &op.get_sliced().content {
             Content::List(op) => match op {
                 ListOp::Insert { slice, pos } => {
                     let v = match slice {
@@ -461,14 +449,25 @@ impl Container for TextContainer {
         self.tracker.forward(spans);
     }
 
-    fn track_apply(&mut self, id: ID, content: &Content) {
-        debug_log!("TRACKER APPLY {} {:#?}", &id, &content);
-        debug_log!("Current ALL {:?}", &self.tracker.all_vv());
-        if self
-            .tracker
-            .all_vv()
-            .includes_id(id.inc(content.atom_len() as Counter - 1))
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+        debug_log!("Tracker checkout {:?}", vv);
+        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
+            && self.tracker.all_vv() >= vv
+            && vv >= self.tracker.start_vv()
         {
+            self.tracker.checkout(vv);
+        } else {
+            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+        }
+    }
+
+    fn track_apply(&mut self, rich_op: &RichOp) {
+        let op = rich_op.get_sliced();
+        debug_log!("TRACKER APPLY {} {:#?}", &rich_op.id_start(), &op.content);
+        debug_log!("Current ALL {:?}", &self.tracker.all_vv());
+        let id = rich_op.id_start();
+        let content = op.content;
+        if self.tracker.all_vv().includes_id(rich_op.id_last()) {
             self.tracker
                 .forward(&id.to_span(content.atom_len()).to_id_span_vec());
             return;
@@ -484,7 +483,7 @@ impl Container for TextContainer {
                 &content.slice(shift as usize, content.atom_len()),
             );
         } else {
-            self.tracker.apply(id, content)
+            self.tracker.apply(id, &content)
         }
     }
 

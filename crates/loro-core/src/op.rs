@@ -1,8 +1,8 @@
 use crate::{
-    change::{Lamport, Timestamp},
+    change::{Change, Lamport, Timestamp},
     container::ContainerID,
-    id::{ContainerIdx, Counter, ID},
-    span::HasCounter,
+    id::{ClientID, ContainerIdx, Counter, ID},
+    span::{HasCounter, HasId, HasLamport},
     LogStore,
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
@@ -39,6 +39,17 @@ pub struct RemoteOp {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
     pub(crate) contents: RleVec<[Content; 1]>,
+}
+
+/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
+#[derive(Debug, Clone)]
+pub struct RichOp<'a> {
+    op: &'a Op,
+    client_id: ClientID,
+    lamport: Lamport,
+    timestamp: Timestamp,
+    start: usize,
+    end: usize,
 }
 
 impl Op {
@@ -146,24 +157,6 @@ impl Sliceable for RemoteOp {
     }
 }
 
-/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
-///
-/// `lamport` is the lamport of the returned op, to get the lamport of the sliced op, you need to use `lamport + start`
-///
-pub struct RichOp<'a> {
-    pub op: &'a Op,
-    pub lamport: Lamport,
-    pub timestamp: Timestamp,
-    pub start: usize,
-    pub end: usize,
-}
-
-impl<'a> RichOp<'a> {
-    pub fn get_sliced(&self) -> Op {
-        self.op.slice(self.start, self.end)
-    }
-}
-
 impl HasIndex for Op {
     type Int = Counter;
 
@@ -189,5 +182,89 @@ impl HasCounter for Op {
 impl HasCounter for RemoteOp {
     fn ctr_start(&self) -> Counter {
         self.counter
+    }
+}
+
+impl<'a> HasId for RichOp<'a> {
+    fn id_start(&self) -> ID {
+        ID {
+            client_id: self.client_id,
+            counter: self.op.counter + self.start as Counter,
+        }
+    }
+}
+
+impl<'a> HasLength for RichOp<'a> {
+    fn content_len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
+impl<'a> HasLamport for RichOp<'a> {
+    fn lamport(&self) -> Lamport {
+        self.lamport + self.start as Lamport
+    }
+}
+
+impl<'a> RichOp<'a> {
+    pub fn new(op: &'a Op, client_id: ClientID, lamport: Lamport, timestamp: Timestamp) -> Self {
+        RichOp {
+            op,
+            client_id,
+            lamport,
+            timestamp,
+            start: 0,
+            end: op.content_len(),
+        }
+    }
+
+    pub fn new_by_change(change: &Change<Op>, op: &'a Op) -> Self {
+        let diff = op.counter - change.id.counter;
+        RichOp {
+            op,
+            client_id: change.id.client_id,
+            lamport: change.lamport + diff as Lamport,
+            timestamp: change.timestamp,
+            start: 0,
+            end: op.atom_len(),
+        }
+    }
+
+    pub fn new_by_slice_on_change(change: &Change<Op>, op: &'a Op, start: i32, end: i32) -> Self {
+        let op_index_in_change = op.counter - change.id.counter;
+        let op_slice_start = (start - op_index_in_change).max(0);
+        let op_slice_end = (end - op_index_in_change).max(0).min(op.atom_len() as i32);
+        RichOp {
+            op,
+            client_id: change.id.client_id,
+            lamport: change.lamport + op_index_in_change as Lamport,
+            timestamp: change.timestamp,
+            start: op_slice_start as usize,
+            end: op_slice_end as usize,
+        }
+    }
+
+    pub fn get_sliced(&self) -> Op {
+        self.op.slice(self.start, self.end)
+    }
+
+    pub fn op(&self) -> &Op {
+        self.op
+    }
+
+    pub fn client_id(&self) -> u64 {
+        self.client_id
+    }
+
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    pub fn end(&self) -> usize {
+        self.end
     }
 }
