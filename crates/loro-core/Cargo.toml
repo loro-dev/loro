@@ -63,3 +63,7 @@ harness = false
 [[bench]]
 name = "list"
 harness = false
+
+[[bench]]
+name = "encode"
+harness = false
