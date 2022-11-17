@@ -154,6 +154,11 @@ impl ContainerRegistry {
         self.containers.len() as ContainerIdx
     }
 
+    pub(crate) fn register(&mut self, id: &ContainerID) {
+        let container = self.create(id.clone());
+        self.insert(id.clone(), container);
+    }
+
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {
         if !self.container_to_idx.contains_key(id) {
             let container = self.create(id.clone());

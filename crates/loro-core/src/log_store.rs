@@ -200,7 +200,7 @@ impl LogStore {
             },
             parent_idx,
         )]);
-        self.reg.get_or_create(&container_id);
+        self.reg.register(&container_id);
         container_id
     }
 
@@ -407,7 +407,6 @@ impl LogStore {
         self.reg.get_idx(container)
     }
 
-    #[inline(always)]
     pub fn get_or_create_container(
         &mut self,
         container: &ContainerID,

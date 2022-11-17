@@ -223,7 +223,7 @@ fn decode_changes(
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
     for container in containers.iter() {
-        container_reg.get_or_create(container);
+        container_reg.register(container);
     }
 
     for change_encoding in change_encodings {
