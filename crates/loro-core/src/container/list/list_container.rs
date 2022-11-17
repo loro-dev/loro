@@ -21,14 +21,11 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    dag::DagUtils,
-    debug_log,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::{HasCounterSpan, HasId, HasIdSpan, IdSpan},
+    span::{HasCounterSpan, HasId},
     value::LoroValue,
     version::IdSpanVector,
-    LogStore,
 };
 
 #[derive(Debug)]
@@ -209,175 +206,6 @@ impl Container for ListContainer {
         ContainerType::Text
     }
 
-    // TODO: move main logic to tracker module
-    fn apply(&mut self, id_span: IdSpan, store: &LogStore) {
-        debug_log!("APPLY ENTRY client={}", store.this_client_id);
-        let self_idx = store.get_container_idx(&self.id).unwrap();
-        let new_op_id = id_span.id_last();
-        // TODO: may reduce following two into one op
-        let common_ancestors = store.find_common_ancestor(&[new_op_id], &self.head);
-        let vv = store.get_vv();
-        if common_ancestors == self.head {
-            let latest_head = smallvec![new_op_id];
-            let path = store.find_path(&self.head, &latest_head);
-            if path.right.len() == 1 {
-                // linear updates, we can apply them directly
-                let start = vv.get(&new_op_id.client_id).copied().unwrap_or(0);
-                for op in store.iter_ops_at_id_span(
-                    IdSpan::new(new_op_id.client_id, start, new_op_id.counter + 1),
-                    self.id.clone(),
-                ) {
-                    let op = op.get_sliced();
-                    debug_log!("APPLY {:?}", &op);
-                    match &op.content {
-                        Content::List(op) => match op {
-                            ListOp::Insert { slice, pos } => {
-                                self.state.insert(*pos, slice.as_slice().unwrap().clone())
-                            }
-                            ListOp::Delete(span) => self.state.delete_range(
-                                Some(span.start() as usize),
-                                Some(span.end() as usize),
-                            ),
-                        },
-                        Content::Container(_) => {}
-                        _ => unreachable!(),
-                    }
-                }
-
-                self.head = latest_head;
-                return;
-            } else {
-                let path: Vec<_> = store.iter_causal(&self.head, path.right).collect();
-                if path
-                    .iter()
-                    .all(|x| x.forward.is_empty() && x.retreat.is_empty())
-                {
-                    // if we don't need to retreat or forward, we can update the state directly
-                    for iter in path {
-                        let change = iter
-                            .data
-                            .slice(iter.slice.start as usize, iter.slice.end as usize);
-                        for op in change.ops.iter() {
-                            if op.container == self_idx {
-                                debug_log!("APPLY 1 {:?}", &op);
-                                match &op.content {
-                                    Content::List(op) => match op {
-                                        ListOp::Insert { slice, pos } => self
-                                            .state
-                                            .insert(*pos, slice.as_slice().unwrap().clone()),
-                                        ListOp::Delete(span) => self.state.delete_range(
-                                            Some(span.start() as usize),
-                                            Some(span.end() as usize),
-                                        ),
-                                    },
-                                    Content::Container(_) => {}
-                                    _ => unreachable!(),
-                                }
-                            }
-                        }
-                    }
-
-                    self.head = latest_head;
-                    return;
-                }
-            }
-        }
-
-        let path_to_head = store.find_path(&common_ancestors, &self.head);
-        let mut common_ancestors_vv = vv.clone();
-        common_ancestors_vv.retreat(&path_to_head.right);
-        let mut latest_head: SmallVec<[ID; 2]> = self.head.clone();
-        latest_head.retain(|x| !common_ancestors_vv.includes_id(*x));
-        latest_head.push(new_op_id);
-        // println!("{}", store.mermaid());
-        debug_log!(
-            "START FROM HEADS={:?} new_op_id={} self.head={:?}",
-            &common_ancestors,
-            new_op_id,
-            &self.head
-        );
-
-        let tracker_head = if (common_ancestors.is_empty() && !self.tracker.start_vv().is_empty())
-            || !common_ancestors.iter().all(|x| self.tracker.contains(*x))
-        {
-            debug_log!("NewTracker");
-            self.tracker = Tracker::new(common_ancestors_vv, Counter::MAX / 2);
-            common_ancestors
-        } else {
-            debug_log!("OldTracker");
-            self.tracker.checkout_to_latest();
-            self.tracker.all_vv().get_frontiers()
-        };
-
-        // stage 1
-        let path = store.find_path(&tracker_head, &latest_head);
-        debug_log!("path={:?}", &path);
-        for iter in store.iter_causal(&tracker_head, path.right) {
-            // TODO: avoid this clone
-            let change = iter
-                .data
-                .slice(iter.slice.start as usize, iter.slice.end as usize);
-            debug_log!(
-                "Stage1 retreat:{} forward:{}\n{}",
-                format!("{:?}", &iter.retreat).red(),
-                format!("{:?}", &iter.forward).red(),
-                format!("{:#?}", &change).blue(),
-            );
-            self.tracker.retreat(&iter.retreat);
-            self.tracker.forward(&iter.forward);
-            for op in change.ops.iter() {
-                if op.container == self_idx && op.content.as_list().is_some() {
-                    // TODO: convert op to local
-                    self.tracker.apply(
-                        ID {
-                            client_id: change.id.client_id,
-                            counter: op.counter,
-                        },
-                        &op.content,
-                    )
-                }
-            }
-        }
-
-        // stage 2
-        // TODO: reduce computations
-        let path = store.find_path(&self.head, &latest_head);
-        debug_log!("BEFORE CHECKOUT");
-        self.tracker.checkout(vv);
-        debug_log!("AFTER CHECKOUT");
-        debug_log!(
-            "[Stage 2]: Iterate path: {} from {} => {}",
-            format!("{:?}", path.right).red(),
-            format!("{:?}", self.head).red(),
-            format!("{:?}", latest_head).red(),
-        );
-        debug_log!(
-            "BEFORE EFFECT STATE={:?}",
-            self.get_value().as_list().unwrap()
-        );
-        for effect in self.tracker.iter_effects(&path.right) {
-            debug_log!("EFFECT: {:?}", &effect);
-            match effect {
-                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => {
-                    self.state.insert(pos, content.as_slice().unwrap().clone());
-                }
-            }
-            debug_log!("AFTER EFFECT");
-        }
-        debug_log!(
-            "AFTER EFFECT STATE={:?}",
-            self.get_value().as_list().unwrap()
-        );
-
-        self.head = latest_head;
-        debug_log!("--------------------------------");
-    }
-
-    fn tracker_checkout(&mut self, _vv: &crate::VersionVector) {
-        todo!()
-    }
-
     // TODO: maybe we need to let this return Cow
     fn get_value(&self) -> LoroValue {
         let mut values = Vec::new();
@@ -441,8 +269,23 @@ impl Container for ListContainer {
         self.tracker.forward(spans);
     }
 
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
+            && self.tracker.all_vv() >= vv
+            && vv >= self.tracker.start_vv()
+        {
+            self.tracker.checkout(vv);
+        } else {
+            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+        }
+    }
+
     fn track_apply(&mut self, rich_op: &RichOp) {
         let content = rich_op.get_sliced().content;
+        if content.as_container().is_some() {
+            return;
+        }
+
         let id = rich_op.id_start();
         if self
             .tracker

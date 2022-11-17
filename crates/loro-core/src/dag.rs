@@ -96,10 +96,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
-        debug_log!(
-            "{}",
-            format!("FINDPATH from={:?} to={:?}", from, to).green()
-        );
         if from == to {
             return ans;
         }
@@ -157,7 +153,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
             true,
         );
 
-        // dbg!(from, to, &ans);
         ans
     }
 

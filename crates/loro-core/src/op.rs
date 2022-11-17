@@ -231,8 +231,11 @@ impl<'a> RichOp<'a> {
     }
 
     pub fn new_by_slice_on_change(change: &Change<Op>, op: &'a Op, start: i32, end: i32) -> Self {
+        debug_assert!(end > start);
         let op_index_in_change = op.counter - change.id.counter;
-        let op_slice_start = (start - op_index_in_change).max(0);
+        let op_slice_start = (start - op_index_in_change)
+            .max(0)
+            .min(op.atom_len() as i32);
         let op_slice_end = (end - op_index_in_change).max(0).min(op.atom_len() as i32);
         RichOp {
             op,

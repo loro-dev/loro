@@ -27,7 +27,6 @@ pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
     /// NOTE: this method expect that [LogStore] has store the Change
-    fn apply(&mut self, id_span: IdSpan, log: &LogStore);
     fn get_value(&self) -> LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;

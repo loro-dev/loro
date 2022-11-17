@@ -50,15 +50,6 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
-        match self {
-            ContainerInstance::Map(x) => x.apply(id_span, log),
-            ContainerInstance::Text(x) => x.apply(id_span, log),
-            ContainerInstance::Dyn(x) => x.apply(id_span, log),
-            ContainerInstance::List(x) => x.apply(id_span, log),
-        }
-    }
-
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
@@ -193,13 +184,15 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: ContainerID, container: ContainerInstance) {
+    fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
         let idx = self.next_idx();
         self.container_to_idx.insert(id.clone(), idx);
         self.containers.push(ContainerAndId {
             container: Arc::new(Mutex::new(container)),
             id,
         });
+
+        idx
     }
 
     #[inline(always)]
@@ -223,12 +216,12 @@ impl ContainerRegistry {
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
-        if !self.container_to_idx.contains_key(id) {
+        if let Some(idx) = self.container_to_idx.get(id) {
+            *idx
+        } else {
             let container = self.create(id.clone());
-            self.insert(id.clone(), container);
+            self.insert(id.clone(), container)
         }
-
-        self.get_idx(id).unwrap()
     }
 
     #[cfg(feature = "test_utils")]

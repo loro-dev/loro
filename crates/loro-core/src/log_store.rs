@@ -99,11 +99,10 @@ impl LogStore {
         mut changes: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>,
     ) {
         debug_log!(
-            "======================================================LOGSTORE CLIENT =============================================={} IMPORT CHANGES {:#?}=============================================================================================",
+            "======================================================LOGSTORE CLIENT {} ====== IMPORT CHANGES {:#?}",
             self.this_client_id,
             &changes
         );
-        debug_log!("---------------------- FRONTIERS = {:?}", self.frontiers());
         // tailor changes
         changes.retain(|_, v| !v.is_empty());
         if changes.is_empty() {
@@ -127,6 +126,7 @@ impl LogStore {
             }
         }
 
+        changes.retain(|_, v| !v.is_empty());
         // get related containers, and acquire their locks
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         for (_, changes) in changes.iter() {
@@ -176,7 +176,6 @@ impl LogStore {
 
         // apply changes to containers
         'apply: {
-            debug_log!("LOGSTORE APPLY",);
             let latest_frontiers = next_frontiers.get_frontiers();
             // 0. calculate common ancestors
             debug_log!(
@@ -197,15 +196,18 @@ impl LogStore {
                 {
                     // can update containers state directly without consulting CRDT
                     for iter in causal_visit_path {
-                        // TODO: avoid this clone? (make slice return Cow?)
                         let start = iter.slice.start;
                         let end = iter.slice.end;
                         let change = iter.data;
+
                         for op in change.ops.iter() {
+                            let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
+                            if rich_op.atom_len() == 0 {
+                                continue;
+                            }
+
                             let container = container_map.get_mut(&op.container).unwrap();
-                            container.update_state_directly(&RichOp::new_by_slice_on_change(
-                                &change, op, start, end,
-                            ));
+                            container.update_state_directly(&rich_op);
                         }
                     }
 
@@ -214,14 +216,8 @@ impl LogStore {
             }
 
             // 1. record all the changes to the trackers
-            debug_log!("------------------------------------------------------------------ LOGSTORE STAGE 1",);
             let mut common_ancestors_vv = self.vv.clone();
             common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
-            debug_log!(
-                "common_ancestors = {:?} common_ancestors_vv = {:?}",
-                &common_ancestors,
-                &common_ancestors_vv
-            );
             for (_, container) in container_map.iter_mut() {
                 container.tracker_checkout(&common_ancestors_vv);
             }
@@ -231,18 +227,22 @@ impl LogStore {
                 let start = iter.slice.start;
                 let end = iter.slice.end;
                 let change = iter.data;
-                let containers: FxHashSet<ContainerIdx> =
-                    change.ops.iter().map(|x| x.container).collect();
-                for container in containers {
-                    let container = container_map.get_mut(&container).unwrap();
+                debug_log!("iter {:#?}", &iter);
+                for (_, container) in container_map.iter_mut() {
+                    // TODO: perf: can give a hint here, to cache needless retreat and forward
                     container.track_retreat(&iter.retreat);
                     container.track_forward(&iter.forward);
                 }
 
-                debug_log!("iter {:#?}", &iter);
                 for op in change.ops.iter() {
-                    let container = container_map.get_mut(&op.container).unwrap();
-                    container.track_apply(&RichOp::new_by_slice_on_change(change, op, start, end));
+                    let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
+                    if rich_op.atom_len() == 0 {
+                        continue;
+                    }
+
+                    if let Some(container) = container_map.get_mut(&op.container) {
+                        container.track_apply(&rich_op);
+                    }
                 }
             }
 

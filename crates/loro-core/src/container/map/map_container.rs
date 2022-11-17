@@ -34,6 +34,7 @@ struct ValueSlot {
     order: TotalOrderStamp,
 }
 
+// FIXME: make map container support checkout to certain version
 impl MapContainer {
     #[inline]
     pub(crate) fn new(id: ContainerID) -> Self {
@@ -127,36 +128,6 @@ impl Container for MapContainer {
         ContainerType::Map
     }
 
-    fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
-        for rich_op in log.iter_ops_at_id_span(id_span, self.id.clone()) {
-            let content = rich_op.get_sliced().content;
-            if content.as_container().is_some() {
-                continue;
-            }
-
-            let v: &MapSet = content.as_map().unwrap();
-            let order = TotalOrderStamp {
-                lamport: rich_op.lamport(),
-                client_id: id_span.client_id,
-            };
-            if let Some(slot) = self.state.get_mut(&v.key) {
-                if slot.order < order {
-                    // TODO: can avoid this clone
-                    slot.value = v.value.clone();
-                    slot.order = order;
-                }
-            } else {
-                self.state.insert(
-                    v.key.to_owned(),
-                    ValueSlot {
-                        value: v.value.clone(),
-                        order,
-                    },
-                );
-            }
-        }
-    }
-
     fn get_value(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
@@ -174,36 +145,47 @@ impl Container for MapContainer {
         map.into()
     }
 
-    fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {
-        todo!()
-    }
+    fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {}
 
     fn to_export(&mut self, _op: &mut RemoteOp, _gc: bool) {}
 
     fn to_import(&mut self, _op: &mut RemoteOp) {}
 
     fn update_state_directly(&mut self, op: &RichOp) {
-        todo!()
+        let content = op.get_sliced().content;
+        if content.as_container().is_some() {
+            return;
+        }
+
+        let v: &MapSet = content.as_map().unwrap();
+        let order = TotalOrderStamp {
+            lamport: op.lamport(),
+            client_id: op.client_id(),
+        };
+        if let Some(slot) = self.state.get_mut(&v.key) {
+            if slot.order < order {
+                slot.value = v.value.clone();
+                slot.order = order;
+            }
+        } else {
+            self.state.insert(
+                v.key.to_owned(),
+                ValueSlot {
+                    value: v.value.clone(),
+                    order,
+                },
+            );
+        }
     }
 
-    fn track_retreat(&mut self, op: &IdSpanVector) {
-        todo!()
-    }
+    fn track_retreat(&mut self, _: &IdSpanVector) {}
 
-    fn track_forward(&mut self, op: &IdSpanVector) {
-        todo!()
-    }
+    fn track_forward(&mut self, _: &IdSpanVector) {}
 
-    fn apply_tracked_effects_from(
-        &mut self,
-        from: &crate::VersionVector,
-        effect_spans: &IdSpanVector,
-    ) {
-        todo!()
-    }
+    fn apply_tracked_effects_from(&mut self, _: &crate::VersionVector, _: &IdSpanVector) {}
 
     fn track_apply(&mut self, op: &RichOp) {
-        todo!()
+        self.update_state_directly(op);
     }
 }
 
@@ -246,7 +228,7 @@ impl Map {
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.instance.lock().unwrap().as_text().unwrap().get_value()
+        self.instance.lock().unwrap().as_map().unwrap().get_value()
     }
 }
 
