@@ -749,6 +749,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
+ "arref",
  "bit-vec",
  "color-backtrace",
  "colored",
