@@ -280,8 +280,6 @@ impl Container for TextContainer {
             debug_log!("NEW Tracker");
             self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
-
-        dbg!(&self.tracker);
     }
 
     fn track_apply(&mut self, rich_op: &RichOp) {
