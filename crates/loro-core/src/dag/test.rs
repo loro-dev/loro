@@ -180,6 +180,27 @@ impl TestDag {
         }
     }
 
+    fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
+        frontier.retain(|x| {
+            if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
+                return false;
+            }
+
+            !new_node_deps
+                .iter()
+                .any(|y| y.client_id == x.client_id && y.counter >= x.counter)
+        });
+
+        // nodes from the same client with `counter < new_node_id.counter`
+        // are filtered out from frontier.
+        if frontier
+            .iter()
+            .all(|x| x.client_id != new_node_id.client_id)
+        {
+            frontier.push(new_node_id);
+        }
+    }
+
     fn _try_push_node(
         &mut self,
         node: &TestNode,
@@ -194,7 +215,7 @@ impl TestDag {
             pending.push((client_id, i));
             return true;
         }
-        update_frontier(&mut self.frontier, node.id_last(), &node.deps);
+        Self::update_frontier(&mut self.frontier, node.id_last(), &node.deps);
         let contains_start = self.contains(node.id_start());
         let arr = self.nodes.entry(client_id).or_default();
         if contains_start {

@@ -7,12 +7,9 @@ use crate::{
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 mod insert_content;
-mod op_content;
 
 pub use insert_content::*;
 use smallvec::{smallvec, SmallVec};
-
-pub(crate) use self::op_content::OpContent;
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,31 +31,23 @@ pub enum OpType {
 pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
-    pub(crate) content: OpContent,
+    pub(crate) content: Content,
 }
 
 #[derive(Debug, Clone)]
 pub struct RemoteOp {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) contents: RleVec<[OpContent; 1]>,
+    pub(crate) contents: RleVec<[Content; 1]>,
 }
 
 impl Op {
     #[inline]
-    pub(crate) fn new(id: ID, content: OpContent, container: u32) -> Self {
+    pub(crate) fn new(id: ID, content: Content, container: u32) -> Self {
         Op {
             counter: id.counter,
             content,
             container,
-        }
-    }
-
-    pub fn op_type(&self) -> OpType {
-        match self.content {
-            OpContent::Normal { .. } => OpType::Normal,
-            OpContent::Undo { .. } => OpType::Undo,
-            OpContent::Redo { .. } => OpType::Redo,
         }
     }
 
@@ -94,35 +83,12 @@ impl RemoteOp {
 impl Mergable for Op {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
         self.counter + self.content_len() as Counter == other.counter
-            && self.content.is_mergable(&other.content, cfg)
             && self.container == other.container
+            && self.content.is_mergable(&other.content, cfg)
     }
 
     fn merge(&mut self, other: &Self, cfg: &()) {
-        match &mut self.content {
-            OpContent::Normal { content } => match &other.content {
-                OpContent::Normal {
-                    content: other_content,
-                } => {
-                    content.merge(other_content, cfg);
-                }
-                _ => unreachable!(),
-            },
-            OpContent::Undo { target, .. } => match &other.content {
-                OpContent::Undo {
-                    target: other_target,
-                    ..
-                } => target.merge(other_target, cfg),
-                _ => unreachable!(),
-            },
-            OpContent::Redo { target, .. } => match &other.content {
-                OpContent::Redo {
-                    target: other_target,
-                    ..
-                } => target.merge(other_target, cfg),
-                _ => unreachable!(),
-            },
-        }
+        self.content.merge(&other.content, cfg)
     }
 }
 
@@ -135,7 +101,7 @@ impl HasLength for Op {
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from);
-        let content: OpContent = self.content.slice(from, to);
+        let content: Content = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
             content,

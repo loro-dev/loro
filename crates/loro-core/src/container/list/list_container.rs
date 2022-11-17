@@ -24,7 +24,7 @@ use crate::{
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, OpContent, RemoteOp},
+    op::{Content, Op, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore,
@@ -93,12 +93,10 @@ impl ListContainer {
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
-            OpContent::Normal {
-                content: Content::List(ListOp::Insert {
-                    slice: slice.into(),
-                    pos,
-                }),
-            },
+            Content::List(ListOp::Insert {
+                slice: slice.into(),
+                pos,
+            }),
             store.get_or_create_container_idx(&self.id),
         );
         let last_id = ID::new(
@@ -122,12 +120,10 @@ impl ListContainer {
         self.state.insert(pos, slice.clone());
         let op = Op::new(
             id,
-            OpContent::Normal {
-                content: Content::List(ListOp::Insert {
-                    slice: slice.into(),
-                    pos,
-                }),
-            },
+            Content::List(ListOp::Insert {
+                slice: slice.into(),
+                pos,
+            }),
             store.get_or_create_container_idx(&self.id),
         );
         let last_id = ID::new(
@@ -154,9 +150,7 @@ impl ListContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            OpContent::Normal {
-                content: Content::List(ListOp::new_del(pos, len)),
-            },
+            Content::List(ListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -235,9 +229,7 @@ impl Container for ListContainer {
                     let op = op.get_sliced();
                     debug_log!("APPLY {:?}", &op);
                     match &op.content {
-                        OpContent::Normal {
-                            content: Content::List(op),
-                        } => match op {
+                        Content::List(op) => match op {
                             ListOp::Insert { slice, pos } => {
                                 self.state.insert(*pos, slice.as_slice().unwrap().clone().0)
                             }
@@ -246,9 +238,7 @@ impl Container for ListContainer {
                                 Some(span.end() as usize),
                             ),
                         },
-                        OpContent::Normal {
-                            content: Content::Container(_),
-                        } => {}
+                        Content::Container(_) => {}
                         _ => unreachable!(),
                     }
                 }
@@ -270,9 +260,7 @@ impl Container for ListContainer {
                             if op.container == self_idx {
                                 debug_log!("APPLY 1 {:?}", &op);
                                 match &op.content {
-                                    OpContent::Normal {
-                                        content: Content::List(op),
-                                    } => match op {
+                                    Content::List(op) => match op {
                                         ListOp::Insert { slice, pos } => self
                                             .state
                                             .insert(*pos, slice.as_slice().unwrap().clone().0),
@@ -281,9 +269,7 @@ impl Container for ListContainer {
                                             Some(span.end() as usize),
                                         ),
                                     },
-                                    OpContent::Normal {
-                                        content: Content::Container(_),
-                                    } => {}
+                                    Content::Container(_) => {}
                                     _ => unreachable!(),
                                 }
                             }
@@ -339,13 +325,7 @@ impl Container for ListContainer {
             self.tracker.retreat(&iter.retreat);
             self.tracker.forward(&iter.forward);
             for op in change.ops.iter() {
-                if op.container == self_idx
-                    && op
-                        .content
-                        .as_normal()
-                        .map(|x| x.as_list().is_some())
-                        .unwrap_or(false)
-                {
+                if op.container == self_idx && op.content.as_list().is_some() {
                     // TODO: convert op to local
                     self.tracker.apply(
                         ID {
@@ -413,11 +393,7 @@ impl Container for ListContainer {
 
     fn to_export(&mut self, op: &mut RemoteOp, _gc: bool) {
         for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content
-                .as_normal_mut()
-                .and_then(|c| c.as_list_mut())
-                .and_then(|x| x.as_insert_mut())
-            {
+            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 if let Some(change) = if let ListSlice::Slice(ranges) = slice {
                     Some(self.raw_data.slice(&ranges.0))
                 } else {
@@ -431,11 +407,7 @@ impl Container for ListContainer {
 
     fn to_import(&mut self, op: &mut RemoteOp) {
         for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content
-                .as_normal_mut()
-                .and_then(|c| c.as_list_mut())
-                .and_then(|x| x.as_insert_mut())
-            {
+            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 if let Some(slice_range) = match std::mem::take(slice) {
                     ListSlice::RawData(data) => Some(self.raw_data.alloc_arr(data)),
                     _ => unreachable!(),

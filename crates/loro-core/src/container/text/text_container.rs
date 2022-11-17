@@ -16,7 +16,7 @@ use crate::{
     dag::DagUtils,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, OpContent, RemoteOp},
+    op::{Content, Op, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     value::LoroValue,
     LogStore,
@@ -71,12 +71,10 @@ impl TextContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            OpContent::Normal {
-                content: Content::List(ListOp::Insert {
-                    slice: slice.into(),
-                    pos,
-                }),
-            },
+            Content::List(ListOp::Insert {
+                slice: slice.into(),
+                pos,
+            }),
             store.get_or_create_container_idx(&self.id),
         );
         let last_id = ID::new(
@@ -103,9 +101,7 @@ impl TextContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            OpContent::Normal {
-                content: Content::List(ListOp::new_del(pos, len)),
-            },
+            Content::List(ListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -164,9 +160,7 @@ impl Container for TextContainer {
                 ) {
                     let op = op.get_sliced();
                     match &op.content {
-                        OpContent::Normal {
-                            content: Content::List(op),
-                        } => match op {
+                        Content::List(op) => match op {
                             ListOp::Insert { slice, pos } => {
                                 let v = match slice {
                                     ListSlice::Slice(slice) => slice.clone(),
@@ -201,9 +195,7 @@ impl Container for TextContainer {
                         for op in change.ops.iter() {
                             if op.container == self_idx {
                                 match &op.content {
-                                    OpContent::Normal {
-                                        content: Content::List(op),
-                                    } => match op {
+                                    Content::List(op) => match op {
                                         ListOp::Insert { slice, pos } => {
                                             let v = match slice {
                                                 ListSlice::Slice(slice) => slice.clone(),
@@ -356,13 +348,9 @@ impl Container for TextContainer {
                 .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
         }
 
-        let mut contents: RleVec<[OpContent; 1]> = RleVec::new();
+        let mut contents: RleVec<[Content; 1]> = RleVec::new();
         for content in op.contents.iter_mut() {
-            if let Some((slice, pos)) = content
-                .as_normal_mut()
-                .and_then(|c| c.as_list_mut())
-                .and_then(|x| x.as_insert_mut())
-            {
+            if let Some((slice, pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 match slice {
                     ListSlice::Slice(r) => {
                         if r.is_unknown() {
@@ -376,22 +364,16 @@ impl Container for TextContainer {
                             for span in self.raw_str.get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
-                                        contents.push(OpContent::Normal {
-                                            content: Content::List(ListOp::Insert {
-                                                slice: ListSlice::RawStr(
-                                                    s[start..start + span].into(),
-                                                ),
-                                                pos: pos_start,
-                                            }),
-                                        });
+                                        contents.push(Content::List(ListOp::Insert {
+                                            slice: ListSlice::RawStr(s[start..start + span].into()),
+                                            pos: pos_start,
+                                        }));
                                     }
                                     Alive::False(span) => {
-                                        let v = OpContent::Normal {
-                                            content: Content::List(ListOp::Insert {
-                                                slice: ListSlice::Unknown(span),
-                                                pos: pos_start,
-                                            }),
-                                        };
+                                        let v = Content::List(ListOp::Insert {
+                                            slice: ListSlice::Unknown(span),
+                                            pos: pos_start,
+                                        });
                                         contents.push(v);
                                     }
                                 }
@@ -401,21 +383,17 @@ impl Container for TextContainer {
                             }
                             assert_eq!(start, r.atom_len());
                         } else {
-                            contents.push(OpContent::Normal {
-                                content: Content::List(ListOp::Insert {
-                                    slice: ListSlice::RawStr(s),
-                                    pos: *pos,
-                                }),
-                            });
+                            contents.push(Content::List(ListOp::Insert {
+                                slice: ListSlice::RawStr(s),
+                                pos: *pos,
+                            }));
                         }
                     }
                     this => {
-                        contents.push(OpContent::Normal {
-                            content: Content::List(ListOp::Insert {
-                                slice: this.clone(),
-                                pos: *pos,
-                            }),
-                        });
+                        contents.push(Content::List(ListOp::Insert {
+                            slice: this.clone(),
+                            pos: *pos,
+                        }));
                     }
                 }
             } else {
@@ -428,11 +406,7 @@ impl Container for TextContainer {
 
     fn to_import(&mut self, op: &mut RemoteOp) {
         for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content
-                .as_normal_mut()
-                .and_then(|c| c.as_list_mut())
-                .and_then(|x| x.as_insert_mut())
-            {
+            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 if let Some(slice_range) = match slice {
                     ListSlice::RawStr(s) => {
                         let range = self.raw_str.alloc(s);

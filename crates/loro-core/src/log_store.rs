@@ -25,7 +25,7 @@ use crate::{
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::{Content, OpContent, RemoteOp},
+    op::{Content, RemoteOp},
     span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
@@ -192,9 +192,7 @@ impl LogStore {
         let parent_idx = self.get_container_idx(&parent).unwrap();
         self.append_local_ops(&[Op::new(
             id,
-            OpContent::Normal {
-                content: Content::Container(container_id.clone()),
-            },
+            Content::Container(container_id.clone()),
             parent_idx,
         )]);
         self.reg.register(&container_id);
@@ -444,11 +442,7 @@ fn check_import_change_valid(change: &Change<RemoteOp>) {
     if cfg!(test) {
         for op in change.ops.iter() {
             for content in op.contents.iter() {
-                if let Some((slice, _)) = content
-                    .as_normal()
-                    .and_then(|x| x.as_list())
-                    .and_then(|x| x.as_insert())
-                {
+                if let Some((slice, _)) = content.as_list().and_then(|x| x.as_insert()) {
                     assert!(matches!(
                         slice,
                         ListSlice::RawData(_) | ListSlice::RawStr(_) | ListSlice::Unknown(_)

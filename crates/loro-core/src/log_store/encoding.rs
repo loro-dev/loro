@@ -19,7 +19,7 @@ use crate::{
         ContainerID,
     },
     id::{ClientID, ContainerIdx, Counter, ID},
-    op::{Content, Op, OpContent, RemoteOp},
+    op::{Content, Op, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
@@ -127,7 +127,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
             let mut op_len = 0;
             for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
-                    let content = content.into_normal().unwrap();
                     let (prop, gc, value) = match content {
                         crate::op::Content::Container(_) => {
                             todo!();
@@ -288,7 +287,7 @@ fn decode_changes(
             let op = Op {
                 counter: op_counter,
                 container,
-                content: OpContent::Normal { content },
+                content,
             };
 
             op_counter += op.content_len() as i32;

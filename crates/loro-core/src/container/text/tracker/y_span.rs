@@ -191,11 +191,7 @@ impl HasLength for YSpan {
 
 #[cfg(any(test, features = "test_utils"))]
 pub mod test {
-    use crate::{
-        container::text::text_content::ListSlice,
-        op::{Content, OpContent},
-        ContentType, Op, ID,
-    };
+    use crate::{container::text::text_content::ListSlice, op::Content, ContentType, Op, ID};
     use rle::{HasLength, RleVecWithIndex};
 
     use super::YSpan;
@@ -205,34 +201,30 @@ pub mod test {
         let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            OpContent::Normal {
-                content: Content::Dyn(Box::new(YSpan {
-                    origin_left: Some(ID::new(0, 0)),
-                    origin_right: None,
-                    id: ID::new(0, 1),
-                    status: Default::default(),
-                    slice: ListSlice::unknown_range(1),
-                })),
-            },
+            Content::Dyn(Box::new(YSpan {
+                origin_left: Some(ID::new(0, 0)),
+                origin_right: None,
+                id: ID::new(0, 1),
+                status: Default::default(),
+                slice: ListSlice::unknown_range(1),
+            })),
             5,
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            OpContent::Normal {
-                content: Content::Dyn(Box::new(YSpan {
-                    origin_left: Some(ID::new(0, 1)),
-                    origin_right: None,
-                    id: ID::new(0, 2),
-                    status: Default::default(),
-                    slice: ListSlice::unknown_range(1),
-                })),
-            },
+            Content::Dyn(Box::new(YSpan {
+                origin_left: Some(ID::new(0, 1)),
+                origin_right: None,
+                id: ID::new(0, 2),
+                status: Default::default(),
+                slice: ListSlice::unknown_range(1),
+            })),
             5,
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0).unwrap();
-        assert_eq!(merged.content.as_normal().unwrap().id(), ContentType::Text);
-        let text_content = merged.content.as_normal().unwrap().as_dyn().unwrap();
+        assert_eq!(merged.content.id(), ContentType::Text);
+        let text_content = merged.content.as_dyn().unwrap();
         dbg!(&merged);
         assert_eq!(text_content.content_len(), 2);
     }
@@ -242,28 +234,24 @@ pub mod test {
         let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            OpContent::Normal {
-                content: Content::Dyn(Box::new(YSpan {
-                    origin_left: Some(ID::new(0, 0)),
-                    origin_right: None,
-                    id: ID::new(0, 1),
-                    status: Default::default(),
-                    slice: ListSlice::unknown_range(4),
-                })),
-            },
+            Content::Dyn(Box::new(YSpan {
+                origin_left: Some(ID::new(0, 0)),
+                origin_right: None,
+                id: ID::new(0, 1),
+                status: Default::default(),
+                slice: ListSlice::unknown_range(4),
+            })),
             5,
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            OpContent::Normal {
-                content: Content::Dyn(Box::new(YSpan {
-                    origin_left: Some(ID::new(0, 0)),
-                    origin_right: Some(ID::new(0, 1)),
-                    id: ID::new(0, 5),
-                    status: Default::default(),
-                    slice: ListSlice::unknown_range(4),
-                })),
-            },
+            Content::Dyn(Box::new(YSpan {
+                origin_left: Some(ID::new(0, 0)),
+                origin_right: Some(ID::new(0, 1)),
+                id: ID::new(0, 5),
+                status: Default::default(),
+                slice: ListSlice::unknown_range(4),
+            })),
             5,
         ));
         assert_eq!(vec.merged_len(), 2);

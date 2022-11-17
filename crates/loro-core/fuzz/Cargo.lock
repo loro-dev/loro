@@ -493,6 +493,7 @@ name = "loro-core"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "arref",
  "bit-vec",
  "colored",
  "columnar",

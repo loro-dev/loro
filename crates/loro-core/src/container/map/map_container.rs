@@ -9,8 +9,8 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
+    op::RemoteOp,
     op::{Content, Op, RichOp},
-    op::{OpContent, RemoteOp},
     span::IdSpan,
     value::LoroValue,
     version::TotalOrderStamp,
@@ -65,12 +65,10 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: OpContent::Normal {
-                content: Content::Map(MapSet {
-                    key: key.clone(),
-                    value: value.clone(),
-                }),
-            },
+            content: Content::Map(MapSet {
+                key: key.clone(),
+                value: value.clone(),
+            }),
         }]);
 
         self.state.insert(key, ValueSlot { value, order });
@@ -98,12 +96,10 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: OpContent::Normal {
-                content: Content::Map(MapSet {
-                    key: key.clone(),
-                    value: container_id.clone().into(),
-                }),
-            },
+            content: Content::Map(MapSet {
+                key: key.clone(),
+                value: container_id.clone().into(),
+            }),
         }]);
         self.state.insert(
             key,
@@ -136,34 +132,29 @@ impl Container for MapContainer {
             op, lamport, start, ..
         } in log.iter_ops_at_id_span(id_span, self.id.clone())
         {
-            match &op.content {
-                OpContent::Normal { content } => {
-                    if content.as_container().is_some() {
-                        continue;
-                    }
+            if op.content.as_container().is_some() {
+                continue;
+            }
 
-                    let v: &MapSet = content.as_map().unwrap();
-                    let order = TotalOrderStamp {
-                        lamport: lamport + start as Lamport,
-                        client_id: id_span.client_id,
-                    };
-                    if let Some(slot) = self.state.get_mut(&v.key) {
-                        if slot.order < order {
-                            // TODO: can avoid this clone
-                            slot.value = v.value.clone();
-                            slot.order = order;
-                        }
-                    } else {
-                        self.state.insert(
-                            v.key.to_owned(),
-                            ValueSlot {
-                                value: v.value.clone(),
-                                order,
-                            },
-                        );
-                    }
+            let v: &MapSet = op.content.as_map().unwrap();
+            let order = TotalOrderStamp {
+                lamport: lamport + start as Lamport,
+                client_id: id_span.client_id,
+            };
+            if let Some(slot) = self.state.get_mut(&v.key) {
+                if slot.order < order {
+                    // TODO: can avoid this clone
+                    slot.value = v.value.clone();
+                    slot.order = order;
                 }
-                _ => unreachable!(),
+            } else {
+                self.state.insert(
+                    v.key.to_owned(),
+                    ValueSlot {
+                        value: v.value.clone(),
+                        order,
+                    },
+                );
             }
         }
     }

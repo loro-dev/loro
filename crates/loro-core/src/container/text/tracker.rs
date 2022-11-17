@@ -5,7 +5,7 @@ use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
     id::{Counter, ID},
-    op::OpContent,
+    op::Content,
     span::{HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
@@ -266,52 +266,41 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
+    pub(crate) fn apply(&mut self, id: ID, content: &Content) {
         assert!(*self.head_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         self.head_vv.set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
-        match &content {
-            crate::op::OpContent::Normal { content } => {
-                let text_content = content.as_list().expect("Content is not for list");
-                match text_content {
-                    ListOp::Insert { slice, pos } => {
-                        let yspan = self.content.get_yspan_at_pos(
-                            id,
-                            *pos,
-                            slice.content_len(),
-                            slice.to_range(),
-                        );
-                        debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
-                        // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-                        unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
-                    }
-                    ListOp::Delete(span) => {
-                        let mut spans = self
-                            .content
-                            .get_active_id_spans(span.start() as usize, span.atom_len());
-                        debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
-                        self.update_spans(&spans, StatusChange::Delete);
+        let text_content = content.as_list().expect("Content is not for list");
+        match text_content {
+            ListOp::Insert { slice, pos } => {
+                let yspan =
+                    self.content
+                        .get_yspan_at_pos(id, *pos, slice.content_len(), slice.to_range());
+                debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
+                // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
+                unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
+            }
+            ListOp::Delete(span) => {
+                let mut spans = self
+                    .content
+                    .get_active_id_spans(span.start() as usize, span.atom_len());
+                debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
+                self.update_spans(&spans, StatusChange::Delete);
 
-                        if span.is_reversed() && span.atom_len() > 1 {
-                            spans.reverse();
-                            // SAFETY: we don't change the size of the span
-                            unsafe {
-                                for span in spans.iter_mut() {
-                                    span.reverse();
-                                }
-                            }
+                if span.is_reversed() && span.atom_len() > 1 {
+                    spans.reverse();
+                    // SAFETY: we don't change the size of the span
+                    unsafe {
+                        for span in spans.iter_mut() {
+                            span.reverse();
                         }
-
-                        self.id_to_cursor.set_small_range(
-                            (id).into(),
-                            cursor_map::Marker::Delete(Box::new(spans)),
-                        );
                     }
                 }
+
+                self.id_to_cursor
+                    .set_small_range((id).into(), cursor_map::Marker::Delete(Box::new(spans)));
             }
-            crate::op::OpContent::Undo { .. } => todo!(),
-            crate::op::OpContent::Redo { .. } => todo!(),
         }
     }
 
