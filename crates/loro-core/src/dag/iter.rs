@@ -176,7 +176,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
 /// Visit every span in the target IdSpanVector.
 /// It's guaranteed that the spans are visited in causal order, and each span is visited only once.
 /// When visiting a span, we will checkout to the version where the span was created
-pub(crate) struct DagPartialIter<'a, Dag> {
+pub(crate) struct DagCausalIter<'a, Dag> {
     dag: &'a Dag,
     frontier: SmallVec<[ID; 2]>,
     target: IdSpanVector,
@@ -191,7 +191,7 @@ pub(crate) struct IterReturn<'a, T> {
     pub slice: Range<Counter>,
 }
 
-impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
+impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
         let mut heap = BinaryHeap::new();
         for id in target.iter() {
@@ -215,7 +215,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagPartialIter<'a, D> {
     }
 }
 
-impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagPartialIter<'a, D> {
+impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
     type Item = IterReturn<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {

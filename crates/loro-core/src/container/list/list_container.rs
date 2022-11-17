@@ -256,7 +256,7 @@ impl Container for ListContainer {
                 self.head = latest_head;
                 return;
             } else {
-                let path: Vec<_> = store.iter_partial(&self.head, path.right).collect();
+                let path: Vec<_> = store.iter_causal(&self.head, path.right).collect();
                 if path
                     .iter()
                     .all(|x| x.forward.is_empty() && x.retreat.is_empty())
@@ -325,7 +325,7 @@ impl Container for ListContainer {
         // stage 1
         let path = store.find_path(&tracker_head, &latest_head);
         debug_log!("path={:?}", &path);
-        for iter in store.iter_partial(&tracker_head, path.right) {
+        for iter in store.iter_causal(&tracker_head, path.right) {
             // TODO: avoid this clone
             let change = iter
                 .data

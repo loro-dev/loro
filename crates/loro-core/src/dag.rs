@@ -31,7 +31,7 @@ use crate::{
 };
 
 use self::{
-    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV, DagPartialIter},
+    iter::{iter_dag, iter_dag_with_vv, DagCausalIter, DagIterator, DagIteratorVV},
     mermaid::dag_to_mermaid,
 };
 
@@ -72,7 +72,7 @@ pub(crate) trait DagUtils: Dag {
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
-    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
     fn iter(&self) -> DagIterator<'_, Self::Node>
@@ -178,11 +178,11 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     #[inline(always)]
-    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized,
     {
-        DagPartialIter::new(self, from.into(), target)
+        DagCausalIter::new(self, from.into(), target)
     }
 
     #[inline(always)]

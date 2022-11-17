@@ -1152,7 +1152,7 @@ mod dag_partial_iter {
                     forward,
                     retreat,
                     slice,
-                } in a.iter_partial(&[node.id], diff_spans.clone())
+                } in a.iter_causal(&[node.id], diff_spans.clone())
                 {
                     let sliced = data.slice(slice.start as usize, slice.end as usize);
                     {
