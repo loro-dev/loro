@@ -3,10 +3,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
+use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
