@@ -657,15 +657,14 @@ mod test {
                     site: 2,
                 },
                 Ins {
-                    content: 4626,
+                    content: 18218,
                     pos: 0,
-                    site: 4,
+                    site: 7,
                 },
-                SyncAll,
                 Ins {
-                    content: 65462,
-                    pos: 7,
-                    site: 4,
+                    content: 65280,
+                    pos: 2,
+                    site: 7,
                 },
             ],
         )
@@ -673,7 +672,191 @@ mod test {
 
     #[test]
     fn mini() {
-        minify_error(8, vec![], test_multi_sites, normalize)
+        minify_error(
+            8,
+            vec![
+                Ins {
+                    content: 35108,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 18218,
+                    pos: 0,
+                    site: 7,
+                },
+                Ins {
+                    content: 35624,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 38400,
+                    pos: 0,
+                    site: 6,
+                },
+                Ins {
+                    content: 65280,
+                    pos: 2,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 5,
+                    site: 0,
+                },
+                Ins {
+                    content: 60672,
+                    pos: 0,
+                    site: 1,
+                },
+                Ins {
+                    content: 35072,
+                    pos: 1,
+                    site: 2,
+                },
+                Ins {
+                    content: 15035,
+                    pos: 3,
+                    site: 0,
+                },
+                Ins {
+                    content: 65280,
+                    pos: 0,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 201,
+                    pos: 2,
+                    site: 2,
+                },
+                Ins {
+                    content: 65377,
+                    pos: 3,
+                    site: 1,
+                },
+                Ins {
+                    content: 9988,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 14,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 11,
+                    site: 7,
+                },
+                Ins {
+                    content: 1070,
+                    pos: 0,
+                    site: 5,
+                },
+                Ins {
+                    content: 27421,
+                    pos: 7,
+                    site: 1,
+                },
+                Ins {
+                    content: 65121,
+                    pos: 22,
+                    site: 0,
+                },
+                Ins {
+                    content: 65462,
+                    pos: 1,
+                    site: 0,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 0,
+                    site: 4,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 16,
+                    site: 0,
+                },
+                Ins {
+                    content: 65462,
+                    pos: 11,
+                    site: 2,
+                },
+                Ins {
+                    content: 48009,
+                    pos: 10,
+                    site: 0,
+                },
+                Ins {
+                    content: 23277,
+                    pos: 7,
+                    site: 0,
+                },
+                Ins {
+                    content: 60672,
+                    pos: 13,
+                    site: 1,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 2,
+                    site: 7,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 2,
+                    site: 0,
+                },
+                Ins {
+                    content: 2606,
+                    pos: 0,
+                    site: 3,
+                },
+                Ins {
+                    content: 65270,
+                    pos: 10,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 65462,
+                    pos: 107,
+                    site: 4,
+                },
+                SyncAll,
+                Ins {
+                    content: 4626,
+                    pos: 98,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 0,
+                    pos: 0,
+                    site: 0,
+                },
+                Del {
+                    pos: 0,
+                    len: 147,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 146,
+                    site: 4,
+                },
+            ],
+            test_multi_sites,
+            normalize,
+        )
     }
 
     #[test]

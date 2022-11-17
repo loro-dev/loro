@@ -77,7 +77,8 @@ impl<'a> Iterator for EffectIter<'a> {
                     let pos = unsafe { cursor.get_index() };
                     let len = cursor.len;
                     *delete_op_id = delete_op_id.inc(cursor.len as Counter);
-                    self.tracker.head_vv.set_end(*delete_op_id);
+                    self.tracker.current_vv.set_end(*delete_op_id);
+                    self.tracker.cached_fake_current_vv.set_end(*delete_op_id);
                     let length = -self.tracker.update_cursors(cursor, StatusChange::Delete);
                     assert!(length >= 0);
                     if length > 0 {
@@ -107,7 +108,12 @@ impl<'a> Iterator for EffectIter<'a> {
                             // SAFETY: cursor is valid here
                             let content = unsafe { cursor.get_sliced().slice };
                             let len = cursor.len;
-                            self.tracker.head_vv.set_end(id.inc(cursor.len as Counter));
+                            self.tracker
+                                .current_vv
+                                .set_end(id.inc(cursor.len as Counter));
+                            self.tracker
+                                .cached_fake_current_vv
+                                .set_end(id.inc(cursor.len as Counter));
                             let length_diff = self
                                 .tracker
                                 .update_cursors(cursor, StatusChange::SetAsCurrent);

@@ -49,7 +49,8 @@ pub struct Tracker {
     /// latest applied ops version vector
     all_vv: VersionVector,
     /// current content version vector
-    head_vv: VersionVector,
+    current_vv: VersionVector,
+    cached_fake_current_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -82,7 +83,8 @@ impl Tracker {
             id_to_cursor,
             #[cfg(feature = "test_utils")]
             client_id: 0,
-            head_vv: start_vv.clone(),
+            current_vv: start_vv.clone(),
+            cached_fake_current_vv: start_vv.clone(),
             all_vv: start_vv.clone(),
             start_vv,
         }
@@ -97,13 +99,8 @@ impl Tracker {
         &self.all_vv
     }
 
-    #[inline]
-    pub fn head_vv(&self) -> &VersionVector {
-        &self.head_vv
-    }
-
     pub fn contains(&self, id: ID) -> bool {
-        !self.start_vv.includes_id(id) && self.all_vv.includes_id(id)
+        !self.cached_fake_current_vv.includes_id(id) && self.all_vv.includes_id(id)
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
@@ -133,19 +130,26 @@ impl Tracker {
     }
 
     pub fn checkout(&mut self, vv: &VersionVector) {
-        let diff = self.head_vv.diff(vv);
-        self.retreat(&diff.left);
-        self.forward(&diff.right);
-        debug_assert_eq!(&self.head_vv, vv);
+        self.cached_fake_current_vv = vv.clone();
     }
 
-    pub fn checkout_to_latest(&mut self) {
-        let diff = self.head_vv.diff(&self.all_vv);
-        self.forward(&diff.right);
-        debug_assert_eq!(self.head_vv, self.all_vv);
+    fn real_checkout(&mut self) {
+        if self.current_vv == self.cached_fake_current_vv {
+            return;
+        }
+
+        let diff = self.current_vv.diff(&self.cached_fake_current_vv);
+        self.real_retreat(&diff.left);
+        self.real_forward(&diff.right);
+        debug_assert_eq!(&self.current_vv, &self.cached_fake_current_vv);
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
+        self.cached_fake_current_vv.forward(spans);
+        self.all_vv.forward(spans);
+    }
+
+    fn real_forward(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
         }
@@ -154,7 +158,7 @@ impl Tracker {
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let end_id = ID::new(*span.0, span.1.end);
-            self.head_vv.set_end(end_id);
+            self.current_vv.set_end(end_id);
             if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
                 let all_end = *all_end_ctr;
                 if all_end < span.1.end {
@@ -204,6 +208,11 @@ impl Tracker {
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
+        self.cached_fake_current_vv.retreat(spans);
+        self.all_vv.forward(spans);
+    }
+
+    fn real_retreat(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
         }
@@ -212,7 +221,7 @@ impl Tracker {
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let span_start = ID::new(*span.0, span.1.start);
-            self.head_vv.set_end(span_start);
+            self.current_vv.set_end(span_start);
             if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
                 let all_end = *all_end_ctr;
                 if all_end < span.1.start {
@@ -267,9 +276,13 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     pub(crate) fn apply(&mut self, id: ID, content: &Content) {
-        assert!(*self.head_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
+        self.real_checkout();
+        assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
-        self.head_vv.set_end(id.inc(content.content_len() as i32));
+        self.current_vv
+            .set_end(id.inc(content.content_len() as i32));
+        self.cached_fake_current_vv
+            .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
         let text_content = content.as_list().expect("Content is not for list");
         match text_content {
@@ -346,6 +359,7 @@ impl Tracker {
     }
 
     pub fn iter_effects(&mut self, target: &IdSpanVector) -> EffectIter<'_> {
+        self.real_checkout();
         EffectIter::new(self, target)
     }
 
