@@ -2,6 +2,7 @@
 //!
 //!
 mod encoding;
+mod import;
 mod iter;
 use std::{
     marker::PhantomPinned,
@@ -48,6 +49,9 @@ impl Default for GcConfig {
     }
 }
 
+type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
+type RemoteClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>;
+
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
 ///
@@ -57,7 +61,7 @@ impl Default for GcConfig {
 ///
 /// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
 pub struct LogStore {
-    changes: FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
+    changes: ClientChanges,
     vv: VersionVector,
     cfg: Configure,
     latest_lamport: Lamport,
@@ -92,195 +96,6 @@ impl LogStore {
         self.changes
             .get(&id.client_id)
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
-    }
-
-    pub fn import(
-        &mut self,
-        mut changes: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>,
-    ) {
-        debug_log!(
-            "======================================================LOGSTORE CLIENT {} ====== IMPORT CHANGES {:#?}",
-            self.this_client_id,
-            &changes
-        );
-        // tailor changes
-        changes.retain(|_, v| !v.is_empty());
-        if changes.is_empty() {
-            return;
-        }
-
-        for (client_id, changes) in changes.iter_mut() {
-            let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
-            let other_start_ctr = changes.first().unwrap().ctr_start();
-            match other_start_ctr.cmp(&self_end_ctr) {
-                std::cmp::Ordering::Less => {
-                    *changes = changes.slice(
-                        (self_end_ctr - other_start_ctr) as usize,
-                        changes.atom_len(),
-                    );
-                }
-                std::cmp::Ordering::Equal => {}
-                std::cmp::Ordering::Greater => {
-                    unimplemented!("cache pending changes");
-                }
-            }
-        }
-
-        changes.retain(|_, v| !v.is_empty());
-        // get related containers, and acquire their locks
-        let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
-        for (_, changes) in changes.iter() {
-            for change in changes.iter() {
-                for op in change.ops.iter() {
-                    if !container_map.contains_key(&op.container) {
-                        let guard = self.reg.get_or_create(&op.container).lock().unwrap();
-                        container_map
-                            // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
-                            .insert(op.container.clone(), unsafe { std::mem::transmute(guard) });
-                    }
-                }
-            }
-        }
-
-        // calculate latest frontiers
-        let mut next_vv: VersionVector = self.vv.clone();
-        let mut next_frontiers: VersionVector = self.frontiers.iter().copied().collect();
-        for (_, changes) in changes.iter() {
-            next_frontiers.set_end(changes.last().unwrap().id_end());
-            next_vv.set_end(changes.last().unwrap().id_end());
-        }
-
-        // push changes to log stores
-        let cfg = self.get_change_merge_cfg();
-        for (client_id, changes) in changes.iter() {
-            let mut inner_changes = Vec::with_capacity(changes.len());
-            for change in changes.iter() {
-                remove_included_frontiers(&mut next_frontiers, &change.deps);
-                let change = self.change_to_imported_format(change, &mut container_map);
-                inner_changes.push(change);
-            }
-
-            let rle = self
-                .changes
-                .entry(*client_id)
-                .or_insert_with(|| RleVecWithIndex::new_cfg(cfg.clone()));
-            for change in inner_changes {
-                rle.push(change);
-            }
-        }
-
-        let mut container_map: FxHashMap<ContainerIdx, ContainerGuard> = container_map
-            .into_iter()
-            .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
-            .collect();
-
-        // apply changes to containers
-        'apply: {
-            let latest_frontiers = next_frontiers.get_frontiers();
-            // 0. calculate common ancestors
-            debug_log!(
-                "FIND COMMON ANCESTORS self={:?} latest={:?}",
-                &self.frontiers,
-                &latest_frontiers
-            );
-            let common_ancestors = self.find_common_ancestor(&self.frontiers, &latest_frontiers);
-            if are_frontiers_eq(&common_ancestors, &self.frontiers) {
-                // we may apply changes directly into state
-                let target_spans = next_vv.diff(&self.vv).left;
-                if target_spans.len() == 1 {
-                    let (client_id, span) = target_spans.iter().next().unwrap();
-                    for op in
-                        self.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end))
-                    {
-                        let container = container_map.get_mut(&op.op().container).unwrap();
-                        container.update_state_directly(&op);
-                    }
-
-                    break 'apply;
-                }
-
-                // TODO: can reuse this path
-                let causal_visit_path: Vec<_> =
-                    self.iter_causal(&common_ancestors, target_spans).collect();
-                if causal_visit_path
-                    .iter()
-                    .all(|x| x.retreat.is_empty() && x.forward.is_empty())
-                {
-                    // can update containers state directly without consulting CRDT
-                    for iter in causal_visit_path {
-                        let start = iter.slice.start;
-                        let end = iter.slice.end;
-                        let change = iter.data;
-
-                        for op in change.ops.iter() {
-                            let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
-                            if rich_op.atom_len() == 0 {
-                                continue;
-                            }
-
-                            let container = container_map.get_mut(&op.container).unwrap();
-                            container.update_state_directly(&rich_op);
-                        }
-                    }
-
-                    break 'apply;
-                }
-            }
-
-            // 1. record all the changes to the trackers
-            let mut common_ancestors_vv = self.vv.clone();
-            common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
-            for (_, container) in container_map.iter_mut() {
-                container.tracker_checkout(&common_ancestors_vv);
-            }
-
-            for iter in self.iter_causal(&common_ancestors, next_vv.diff(&common_ancestors_vv).left)
-            {
-                let start = iter.slice.start;
-                let end = iter.slice.end;
-                let change = iter.data;
-                debug_log!("iter {:#?}", &iter);
-                for (_, container) in container_map.iter_mut() {
-                    // TODO: perf: can give a hint here, to cache needless retreat and forward
-                    container.track_retreat(&iter.retreat);
-                    container.track_forward(&iter.forward);
-                }
-
-                for op in change.ops.iter() {
-                    let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
-                    if rich_op.atom_len() == 0 {
-                        continue;
-                    }
-
-                    if let Some(container) = container_map.get_mut(&op.container) {
-                        container.track_apply(&rich_op);
-                    }
-                }
-            }
-
-            // 2. calculate and apply the effects to the state
-            debug_log!("LOGSTORE STAGE 2",);
-            let path = next_vv.diff(&self.vv).left;
-            for (_, container) in container_map.iter_mut() {
-                container.apply_tracked_effects_from(&self.vv, &path);
-            }
-        }
-
-        // update the rest of log store states
-        self.vv = next_vv;
-        self.frontiers = next_frontiers.get_frontiers();
-        self.latest_lamport = self
-            .changes
-            .iter()
-            .map(|(_, v)| v.last().unwrap().lamport_last())
-            .max()
-            .unwrap();
-        self.latest_timestamp = self
-            .changes
-            .iter()
-            .map(|(_, v)| v.last().unwrap().timestamp)
-            .max()
-            .unwrap();
     }
 
     pub fn export(
