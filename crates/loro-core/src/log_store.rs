@@ -106,6 +106,10 @@ impl LogStore {
         debug_log!("---------------------- FRONTIERS = {:?}", self.frontiers());
         // tailor changes
         changes.retain(|_, v| !v.is_empty());
+        if changes.is_empty() {
+            return;
+        }
+
         for (client_id, changes) in changes.iter_mut() {
             let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
             let other_start_ctr = changes.first().unwrap().ctr_start();
