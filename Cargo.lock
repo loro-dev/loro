@@ -299,6 +299,7 @@ dependencies = [
 [[package]]
 name = "columnar"
 version = "0.1.0"
+source = "git+https://github.com/loro-dev/columnar.git#d29bf7f8b6a75ad3dc94d59b500707df8f748b53"
 dependencies = [
  "bincode",
  "columnar_derive",
@@ -313,6 +314,7 @@ dependencies = [
 [[package]]
 name = "columnar_derive"
 version = "0.1.0"
+source = "git+https://github.com/loro-dev/columnar.git#d29bf7f8b6a75ad3dc94d59b500707df8f748b53"
 dependencies = [
  "darling",
  "proc-macro2 1.0.47",
