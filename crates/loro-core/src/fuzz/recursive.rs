@@ -41,7 +41,6 @@ pub enum Action {
 }
 
 struct Actor {
-    site: ClientID,
     loro: LoroCore,
     map_containers: Vec<Map>,
     list_containers: Vec<List>,
@@ -176,8 +175,8 @@ impl Actionable for Vec<Actor> {
                     .list_containers
                     .get(*container_idx as usize)
                 {
-                    *key %= (list.values_len() as u8).max(1);
-                    if *value == FuzzValue::Null && list.values_len() == 0 {
+                    *key %= (list.len() as u8).max(1);
+                    if *value == FuzzValue::Null && list.len() == 0 {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -201,10 +200,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.text_len() as u8).max(1);
+                    *pos %= (text.len() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.text_len() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;
@@ -452,7 +451,6 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor {
-            site: i as u64,
             loro: LoroCore::new(Default::default(), Some(i as u64)),
             map_containers: Default::default(),
             list_containers: Default::default(),
@@ -484,7 +482,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor {
-            site: i as u64,
             loro: LoroCore::new(Default::default(), Some(i as u64)),
             map_containers: Default::default(),
             list_containers: Default::default(),
@@ -549,34 +546,34 @@ mod failed_tests {
         test_multi_sites(
             3,
             &mut [
-                Map {
-                    site: 139,
-                    container_idx: 198,
-                    key: 190,
-                    value: I32(533294902),
-                },
                 Text {
-                    site: 167,
-                    container_idx: 182,
-                    pos: 106,
-                    value: 20544,
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 0,
                     is_del: false,
                 },
                 Text {
-                    site: 99,
-                    container_idx: 33,
-                    pos: 126,
-                    value: 35453,
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 39064,
                     is_del: false,
                 },
-                Text {
-                    site: 87,
-                    container_idx: 1,
-                    pos: 84,
-                    value: 5821,
-                    is_del: true,
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1616928864),
                 },
-                Sync { from: 85, to: 226 },
             ],
         )
     }
@@ -648,57 +645,33 @@ mod failed_tests {
         minify_error(
             5,
             vec![
-                List {
-                    site: 1,
+                Text {
+                    site: 2,
                     container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 4,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
                 SyncAll,
-                List {
-                    site: 1,
-                    container_idx: 1,
-                    key: 0,
-                    value: Container(C::List),
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 39064,
+                    is_del: false,
                 },
                 List {
                     site: 1,
                     container_idx: 0,
                     key: 0,
-                    value: Container(C::List),
-                },
-                Sync { from: 1, to: 0 },
-                List {
-                    site: 4,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1),
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                Sync { from: 4, to: 0 },
-                Sync { from: 1, to: 0 },
-                List {
-                    site: 4,
-                    container_idx: 1,
-                    key: 0,
-                    value: Null,
-                },
-                List {
-                    site: 1,
-                    container_idx: 1,
-                    key: 0,
-                    value: Container(C::List),
+                    value: I32(1616928864),
                 },
             ],
             test_multi_sites,

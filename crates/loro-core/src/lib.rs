@@ -3,7 +3,6 @@
 //!
 //!
 //!
-#![allow(dead_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 pub mod change;
@@ -32,11 +31,12 @@ pub use error::LoroError;
 pub(crate) mod macros;
 pub(crate) use change::{Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
-pub(crate) use op::{ContentType, InsertContentTrait, Op, OpType};
+pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
 pub(crate) type InternalString = DefaultAtom;
+pub(crate) use container::Container;
 
-pub use container::{list::List, map::Map, text::Text, Container, ContainerType};
+pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use log_store::LogStore;
 pub use loro::LoroCore;
 pub use value::LoroValue;

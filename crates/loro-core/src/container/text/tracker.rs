@@ -1,12 +1,12 @@
-use rle::{rle_tree::UnsafeCursor, HasLength};
+use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
     id::{Counter, ID},
-    op::OpContent,
-    span::{HasIdSpan, IdSpan},
+    op::{Content, RichOp},
+    span::{HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
 };
@@ -49,7 +49,12 @@ pub struct Tracker {
     /// latest applied ops version vector
     all_vv: VersionVector,
     /// current content version vector
-    head_vv: VersionVector,
+    current_vv: VersionVector,
+    /// The pretend current content version vector.
+    ///
+    /// Because sometimes we don't actually need to checkout to the version.
+    /// So we may cache the changes then applying them when we really need to.
+    cached_fake_current_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -82,7 +87,8 @@ impl Tracker {
             id_to_cursor,
             #[cfg(feature = "test_utils")]
             client_id: 0,
-            head_vv: start_vv.clone(),
+            current_vv: start_vv.clone(),
+            cached_fake_current_vv: start_vv.clone(),
             all_vv: start_vv.clone(),
             start_vv,
         }
@@ -97,13 +103,8 @@ impl Tracker {
         &self.all_vv
     }
 
-    #[inline]
-    pub fn head_vv(&self) -> &VersionVector {
-        &self.head_vv
-    }
-
     pub fn contains(&self, id: ID) -> bool {
-        !self.start_vv.includes_id(id) && self.all_vv.includes_id(id)
+        !self.cached_fake_current_vv.includes_id(id) && self.all_vv.includes_id(id)
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
@@ -133,19 +134,50 @@ impl Tracker {
     }
 
     pub fn checkout(&mut self, vv: &VersionVector) {
-        let diff = self.head_vv.diff(vv);
-        self.retreat(&diff.left);
-        self.forward(&diff.right);
-        debug_assert_eq!(&self.head_vv, vv);
+        self.cached_fake_current_vv = vv.clone();
     }
 
-    pub fn checkout_to_latest(&mut self) {
-        let diff = self.head_vv.diff(&self.all_vv);
-        self.forward(&diff.right);
-        debug_assert_eq!(self.head_vv, self.all_vv);
+    fn real_checkout(&mut self) {
+        if self.current_vv == self.cached_fake_current_vv {
+            return;
+        }
+
+        let diff = self.current_vv.diff(&self.cached_fake_current_vv);
+        self.real_retreat(&diff.left);
+        self.real_forward(&diff.right);
+        debug_assert_eq!(&self.current_vv, &self.cached_fake_current_vv);
     }
 
     pub fn forward(&mut self, spans: &IdSpanVector) {
+        self.cached_fake_current_vv.forward(spans);
+        self.all_vv.forward(spans);
+    }
+
+    pub fn track_apply(&mut self, rich_op: &RichOp) {
+        let content = rich_op.get_sliced().content;
+        let id = rich_op.id_start();
+        if self
+            .all_vv()
+            .includes_id(id.inc(content.atom_len() as Counter - 1))
+        {
+            self.forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            return;
+        }
+
+        if self.all_vv().includes_id(id) {
+            let this_ctr = self.all_vv().get(&id.client_id).unwrap();
+            let shift = this_ctr - id.counter;
+            self.forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.apply(
+                id.inc(shift),
+                &content.slice(shift as usize, content.atom_len()),
+            );
+        } else {
+            self.apply(id, &content)
+        }
+    }
+
+    fn real_forward(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
         }
@@ -154,7 +186,7 @@ impl Tracker {
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let end_id = ID::new(*span.0, span.1.end);
-            self.head_vv.set_end(end_id);
+            self.current_vv.set_end(end_id);
             if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
                 let all_end = *all_end_ctr;
                 if all_end < span.1.end {
@@ -204,6 +236,11 @@ impl Tracker {
     }
 
     pub fn retreat(&mut self, spans: &IdSpanVector) {
+        self.cached_fake_current_vv.retreat(spans);
+        self.all_vv.forward(spans);
+    }
+
+    fn real_retreat(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
         }
@@ -212,7 +249,7 @@ impl Tracker {
         let mut args = Vec::with_capacity(spans.len());
         for span in spans.iter() {
             let span_start = ID::new(*span.0, span.1.start);
-            self.head_vv.set_end(span_start);
+            self.current_vv.set_end(span_start);
             if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
                 let all_end = *all_end_ctr;
                 if all_end < span.1.start {
@@ -266,52 +303,44 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    pub(crate) fn apply(&mut self, id: ID, content: &OpContent) {
-        assert!(*self.head_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
+    fn apply(&mut self, id: ID, content: &Content) {
+        self.real_checkout();
+        assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
-        self.head_vv.set_end(id.inc(content.content_len() as i32));
+        self.current_vv
+            .set_end(id.inc(content.content_len() as i32));
+        self.cached_fake_current_vv
+            .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
-        match &content {
-            crate::op::OpContent::Normal { content } => {
-                let text_content = content.as_list().expect("Content is not for list");
-                match text_content {
-                    ListOp::Insert { slice, pos } => {
-                        let yspan = self.content.get_yspan_at_pos(
-                            id,
-                            *pos,
-                            slice.content_len(),
-                            slice.to_range(),
-                        );
-                        debug_log!("INSERT YSPAN={}", format!("{:#?}", &yspan).red());
-                        // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-                        unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
-                    }
-                    ListOp::Delete(span) => {
-                        let mut spans = self
-                            .content
-                            .get_active_id_spans(span.start() as usize, span.atom_len());
-                        debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
-                        self.update_spans(&spans, StatusChange::Delete);
+        let text_content = content.as_list().expect("Content is not for list");
+        match text_content {
+            ListOp::Insert { slice, pos } => {
+                let yspan =
+                    self.content
+                        .get_yspan_at_pos(id, *pos, slice.content_len(), slice.to_range());
+                // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
+                unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
+            }
+            ListOp::Delete(span) => {
+                let mut spans = self
+                    .content
+                    .get_active_id_spans(span.start() as usize, span.atom_len());
+                debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
+                self.update_spans(&spans, StatusChange::Delete);
 
-                        if span.is_reversed() && span.atom_len() > 1 {
-                            spans.reverse();
-                            // SAFETY: we don't change the size of the span
-                            unsafe {
-                                for span in spans.iter_mut() {
-                                    span.reverse();
-                                }
-                            }
+                if span.is_reversed() && span.atom_len() > 1 {
+                    spans.reverse();
+                    // SAFETY: we don't change the size of the span
+                    unsafe {
+                        for span in spans.iter_mut() {
+                            span.reverse();
                         }
-
-                        self.id_to_cursor.set_small_range(
-                            (id).into(),
-                            cursor_map::Marker::Delete(Box::new(spans)),
-                        );
                     }
                 }
+
+                self.id_to_cursor
+                    .set_small_range((id).into(), cursor_map::Marker::Delete(Box::new(spans)));
             }
-            crate::op::OpContent::Undo { .. } => todo!(),
-            crate::op::OpContent::Redo { .. } => todo!(),
         }
     }
 
@@ -357,7 +386,9 @@ impl Tracker {
         )
     }
 
-    pub fn iter_effects(&mut self, target: IdSpanVector) -> EffectIter<'_> {
+    pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
+        self.checkout(from);
+        self.real_checkout();
         EffectIter::new(self, target)
     }
 

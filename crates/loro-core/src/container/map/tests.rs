@@ -7,8 +7,6 @@ use fxhash::FxHashMap;
 use proptest::prelude::*;
 use proptest::proptest;
 
-use crate::container::registry::ContainerWrapper;
-
 use crate::{fx_map, LoroCore, LoroValue};
 
 #[test]

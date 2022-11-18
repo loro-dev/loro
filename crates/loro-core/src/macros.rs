@@ -23,11 +23,6 @@ macro_rules! fx_map {
 
 #[macro_export]
 macro_rules! debug_log {
-    () => {
-        // if cfg!(test) {
-        // $crate::print!("\n")
-        // }
-    };
     ($($arg:tt)*) => {{
         if cfg!(test) {
             use ::colored::Colorize;
@@ -36,6 +31,11 @@ macro_rules! debug_log {
             println!($($arg)*);
         }
     }};
+    () => {
+        // if cfg!(test) {
+        // $crate::print!("\n")
+        // }
+    };
 }
 
 #[macro_export]

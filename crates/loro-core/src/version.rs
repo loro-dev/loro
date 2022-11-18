@@ -233,7 +233,7 @@ impl VersionVector {
     }
 
     #[inline]
-    pub fn get_head(&self) -> SmallVec<[ID; 2]> {
+    pub fn get_frontiers(&self) -> SmallVec<[ID; 2]> {
         self.iter()
             .filter_map(|(client_id, &counter)| {
                 if counter > 0 {
@@ -350,6 +350,11 @@ impl VersionVector {
     }
 
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
+        if span.counter.min() == 0 {
+            self.remove(&span.client_id);
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&span.client_id) {
             if *counter > span.counter.min() {
                 *counter = span.counter.min();
@@ -434,6 +439,20 @@ impl FromIterator<ID> for VersionVector {
 pub(crate) struct TotalOrderStamp {
     pub(crate) lamport: Lamport,
     pub(crate) client_id: ClientID,
+}
+
+pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut a: SmallVec<[ID; 10]> = a.into();
+    let mut b: SmallVec<[ID; 10]> = b.into();
+
+    a.sort();
+    b.sort();
+
+    a == b
 }
 
 #[cfg(test)]

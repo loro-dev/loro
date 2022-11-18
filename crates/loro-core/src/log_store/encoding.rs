@@ -18,8 +18,9 @@ use crate::{
         text::text_content::ListSlice,
         ContainerID,
     },
+    dag::remove_included_frontiers,
     id::{ClientID, ContainerIdx, Counter, ID},
-    op::{Content, Op, OpContent, RemoteOp},
+    op::{Content, Op, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
@@ -127,11 +128,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
             let mut op_len = 0;
             for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
-                    let content = content.into_normal().unwrap();
                     let (prop, gc, value) = match content {
-                        crate::op::Content::Container(_) => {
-                            todo!();
-                        }
                         crate::op::Content::Map(MapSet { key, value }) => (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key);
@@ -223,7 +220,7 @@ fn decode_changes(
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
     for container in containers.iter() {
-        container_reg.get_or_create(container);
+        container_reg.register(container);
     }
 
     for change_encoding in change_encodings {
@@ -288,7 +285,7 @@ fn decode_changes(
             let op = Op {
                 counter: op_counter,
                 container,
-                content: OpContent::Normal { content },
+                content,
             };
 
             op_counter += op.content_len() as i32;
@@ -317,7 +314,7 @@ fn decode_changes(
     let mut frontier = vv.clone();
     for (_, changes) in changes.iter() {
         for change in changes.iter() {
-            update_frontiers(&mut frontier, &change.deps);
+            remove_included_frontiers(&mut frontier, &change.deps);
         }
     }
 
@@ -338,7 +335,7 @@ fn decode_changes(
         latest_lamport,
         latest_timestamp,
         this_client_id,
-        frontier: frontier.get_head(),
+        frontiers: frontier.get_frontiers(),
         reg: container_reg,
         _pin: PhantomPinned,
     }))
@@ -358,15 +355,5 @@ impl LogStore {
         let decompress_bytes = decompress(input).unwrap();
         let encoded = from_bytes(&decompress_bytes).unwrap();
         decode_changes(encoded, client_id, cfg)
-    }
-}
-
-fn update_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
-    for dep in new_change_deps.iter() {
-        if let Some(last) = frontiers.get_last(dep.client_id) {
-            if last <= dep.counter {
-                frontiers.remove(&dep.client_id);
-            }
-        }
     }
 }

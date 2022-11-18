@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use enum_as_inner::EnumAsInner;
-use rle::{rle_tree::tree_trait::CumulateTreeTrait, HasLength, Mergable, Sliceable};
+use rle::{HasLength, Mergable, Sliceable};
 
 use crate::{smstring::SmString, LoroValue};
 
@@ -160,5 +160,3 @@ impl Mergable for ListSlice {
         }
     }
 }
-
-pub(super) type ListSliceTreeTrait = CumulateTreeTrait<ListSlice, 8>;

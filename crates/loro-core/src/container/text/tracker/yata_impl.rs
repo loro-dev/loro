@@ -226,7 +226,9 @@ pub mod fuzz {
 
     impl TestFramework for YataImpl {
         fn integrate(container: &mut Self::Container, op: Self::OpUnit) {
-            container.head_vv.set_end(op.id.inc(op.atom_len() as i32));
+            container
+                .current_vv
+                .set_end(op.id.inc(op.atom_len() as i32));
             // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
             unsafe { crdt_list::yata::integrate::<Self>(container, op) };
         }
@@ -234,18 +236,18 @@ pub mod fuzz {
         #[inline]
         fn can_integrate(container: &Self::Container, op: &Self::OpUnit) -> bool {
             if let Some(value) = op.origin_left {
-                if !value.is_unknown() && !container.head_vv.includes_id(value) {
+                if !value.is_unknown() && !container.current_vv.includes_id(value) {
                     return false;
                 }
             }
 
             if let Some(value) = op.origin_right {
-                if !value.is_unknown() && !container.head_vv.includes_id(value) {
+                if !value.is_unknown() && !container.current_vv.includes_id(value) {
                     return false;
                 }
             }
 
-            if op.id.counter != 0 && !container.head_vv.includes_id(op.id.inc(-1)) {
+            if op.id.counter != 0 && !container.current_vv.includes_id(op.id.inc(-1)) {
                 return false;
             }
 
@@ -300,7 +302,7 @@ pub mod fuzz {
             let ans = container.content.get_yspan_at_pos(
                 ID::new(
                     container.client_id,
-                    *container.head_vv.get(&container.client_id).unwrap_or(&0),
+                    *container.current_vv.get(&container.client_id).unwrap_or(&0),
                 ),
                 pos % container.content.len(),
                 len,

@@ -2,13 +2,14 @@
 //!
 //!
 mod encoding;
+mod import;
 mod iter;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 
@@ -19,14 +20,13 @@ use crate::{
     configure::Configure,
     container::{
         registry::{ContainerInstance, ContainerRegistry},
-        text::text_content::ListSlice,
         Container, ContainerID,
     },
     dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::{Content, OpContent, RemoteOp},
-    span::{HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
+    op::RemoteOp,
+    span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
@@ -48,8 +48,8 @@ impl Default for GcConfig {
     }
 }
 
-pub(crate) type LogStoreRef = Arc<RwLock<LogStore>>;
-pub(crate) type LogStoreWeakRef = Weak<RwLock<LogStore>>;
+type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
+type RemoteClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -60,17 +60,19 @@ pub(crate) type LogStoreWeakRef = Weak<RwLock<LogStore>>;
 ///
 /// TODO: Refactor we need to move the things about the current state out of LogStore (container, latest_lamport, ..)
 pub struct LogStore {
-    changes: FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
+    changes: ClientChanges,
     vv: VersionVector,
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
     pub(crate) this_client_id: ClientID,
-    frontier: SmallVec<[ID; 2]>,
+    frontiers: SmallVec<[ID; 2]>,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
     _pin: PhantomPinned,
 }
+
+type ContainerGuard<'a> = MutexGuard<'a, ContainerInstance>;
 
 impl LogStore {
     pub(crate) fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
@@ -81,7 +83,7 @@ impl LogStore {
             changes: FxHashMap::default(),
             latest_lamport: 0,
             latest_timestamp: 0,
-            frontier: Default::default(),
+            frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
             _pin: PhantomPinned,
@@ -95,32 +97,26 @@ impl LogStore {
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
-    pub fn import(&mut self, mut changes: Vec<Change<RemoteOp>>) {
-        let self_vv = self.vv();
-        // guarantee that changes are applied in causal order
-        changes.sort_by_cached_key(|x| x.lamport);
-        for change in changes
-            .into_iter()
-            .filter(|x| !self_vv.includes_id(x.id_last()))
-        {
-            check_import_change_valid(&change);
-            // TODO: cache pending changes
-            assert!(change.deps.iter().all(|x| self.vv().includes_id(*x)));
-            self.apply_remote_change(change)
-        }
-    }
-
-    pub fn export(&self, remote_vv: &VersionVector) -> Vec<Change<RemoteOp>> {
-        let mut ans = Vec::default();
+    pub fn export(
+        &self,
+        remote_vv: &VersionVector,
+    ) -> FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> {
+        let mut ans: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> =
+            Default::default();
         let self_vv = self.vv();
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
-                ans.push(self.change_to_export_format(change))
+                let vec = ans
+                    .entry(change.id.client_id)
+                    .or_insert_with(|| RleVecWithIndex::new_cfg(self.get_change_merge_cfg()));
+
+                vec.push(self.change_to_export_format(change));
             }
         }
 
+        debug_log!("export {:#?}", &ans);
         ans
     }
 
@@ -141,13 +137,17 @@ impl LogStore {
         }
     }
 
-    fn change_to_imported_format(&mut self, change: Change<RemoteOp>) -> Change {
+    fn change_to_imported_format(
+        &mut self,
+        change: &Change<RemoteOp>,
+        containers: &mut FxHashMap<ContainerID, ContainerGuard>,
+    ) -> Change {
         let mut new_ops = RleVec::new();
-        for mut op in change.ops.into_iter() {
-            let container = self.reg.get_or_create(&op.container);
-            let mut container = container.lock().unwrap();
+        for op in change.ops.iter() {
+            let container = containers.get_mut(&op.container).unwrap();
+            // TODO: avoid this clone
+            let mut op = op.clone();
             container.to_import(&mut op);
-            drop(container);
             for op in op.convert(self) {
                 new_ops.push(op);
             }
@@ -155,7 +155,7 @@ impl LogStore {
 
         Change {
             ops: new_ops,
-            deps: change.deps,
+            deps: change.deps.clone(),
             id: change.id,
             lamport: change.lamport,
             timestamp: change.timestamp,
@@ -185,22 +185,10 @@ impl LogStore {
         op
     }
 
-    pub(crate) fn create_container(
-        &mut self,
-        container_type: ContainerType,
-        parent: ContainerID,
-    ) -> ContainerID {
+    pub(crate) fn create_container(&mut self, container_type: ContainerType) -> ContainerID {
         let id = self.next_id();
         let container_id = ContainerID::new_normal(id, container_type);
-        let parent_idx = self.get_container_idx(&parent).unwrap();
-        self.append_local_ops(&[Op::new(
-            id,
-            OpContent::Normal {
-                content: Content::Container(container_id.clone()),
-            },
-            parent_idx,
-        )]);
-        self.reg.get_or_create(&container_id);
+        self.reg.register(&container_id);
         container_id
     }
 
@@ -231,29 +219,14 @@ impl LogStore {
     }
 
     #[inline(always)]
-    pub fn frontier(&self) -> &[ID] {
-        &self.frontier
+    pub fn frontiers(&self) -> &[ID] {
+        &self.frontiers
     }
 
-    fn update_frontier(&mut self, clear: &[ID], new: &[ID]) {
-        self.frontier.retain(|x| {
-            !clear
-                .iter()
-                .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
-                && !new
-                    .iter()
-                    .any(|y| x.client_id == y.client_id && x.counter <= y.counter)
-        });
-        for next in new.iter() {
-            if self
-                .frontier
-                .iter()
-                .any(|x| x.client_id == next.client_id && x.counter >= next.counter)
-            {
-                continue;
-            }
-
-            self.frontier.push(*next);
+    fn get_change_merge_cfg(&self) -> ChangeMergeCfg {
+        ChangeMergeCfg {
+            max_change_length: self.cfg.change.max_change_length,
+            max_change_interval: self.cfg.change.max_change_interval,
         }
     }
 
@@ -274,7 +247,7 @@ impl LogStore {
         let last_id = ID::new(self.this_client_id, last_ctr);
         let change = Change {
             id,
-            deps: std::mem::replace(&mut self.frontier, smallvec::smallvec![last_id]),
+            deps: std::mem::replace(&mut self.frontiers, smallvec::smallvec![last_id]),
             ops: ops.into(),
             lamport,
             timestamp,
@@ -283,55 +256,13 @@ impl LogStore {
         self.latest_lamport = lamport + change.content_len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
+        let cfg = self.get_change_merge_cfg();
         self.changes
             .entry(self.this_client_id)
-            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
+            .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
 
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
-    }
-
-    pub fn apply_remote_change(&mut self, change: Change<RemoteOp>) {
-        if self.contains(change.id_last()) {
-            return;
-        }
-
-        debug_log!("Client {} Apply {:#?}", self.this_client_id, &change);
-        for dep in &change.deps {
-            if !self.contains(*dep) {
-                unimplemented!("need impl pending changes");
-            }
-        }
-
-        // TODO: find a way to remove this clone? we don't need change in apply method actually
-        let change = self.change_to_imported_format(change);
-        let change_id_span = change.id_span();
-        let change_deps = change.deps.clone();
-        let change_last_lamport = change.lamport_last();
-        let change_time = change.timestamp;
-        let changes = self
-            .changes
-            .entry(change.id.client_id)
-            .or_insert_with(RleVecWithIndex::new);
-        let mut set = FxHashSet::default();
-        for op in change.ops.iter() {
-            set.insert(op.container);
-        }
-        changes.push(change);
-
-        // Apply ops.
-        // NOTE: applying expects that log_store has store the Change, and updated self vv
-
-        for container in set {
-            let mut container = self.reg.get_by_idx(container).unwrap().lock().unwrap();
-            container.apply(change_id_span, self);
-        }
-
-        self.vv.set_end(change_id_span.id_end());
-        self.update_frontier(&change_deps, &[change_id_span.id_last()]);
-
-        self.latest_lamport = self.latest_lamport.max(change_last_lamport);
-        self.latest_timestamp = self.latest_timestamp.max(change_time);
     }
 
     #[inline]
@@ -351,6 +282,7 @@ impl LogStore {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn iter_client_op(&self, client_id: ClientID) -> iter::ClientOpIter<'_> {
         iter::ClientOpIter {
             change_index: 0,
@@ -359,13 +291,8 @@ impl LogStore {
         }
     }
 
-    pub(crate) fn iter_ops_at_id_span(
-        &self,
-        id_span: IdSpan,
-        container: ContainerID,
-    ) -> iter::OpSpanIter<'_> {
-        let idx = self.get_container_idx(&container).unwrap();
-        iter::OpSpanIter::new(&self.changes, id_span, idx)
+    pub(crate) fn iter_ops_at_id_span(&self, id_span: IdSpan) -> iter::OpSpanIter<'_> {
+        iter::OpSpanIter::new(&self.changes, id_span)
     }
 
     #[inline(always)]
@@ -404,7 +331,6 @@ impl LogStore {
         self.reg.get_idx(container)
     }
 
-    #[inline(always)]
     pub fn get_or_create_container(
         &mut self,
         container: &ContainerID,
@@ -432,29 +358,10 @@ impl Dag for LogStore {
     }
 
     fn frontier(&self) -> &[ID] {
-        &self.frontier
+        &self.frontiers
     }
 
     fn vv(&self) -> crate::VersionVector {
         self.vv.clone()
-    }
-}
-
-fn check_import_change_valid(change: &Change<RemoteOp>) {
-    if cfg!(test) {
-        for op in change.ops.iter() {
-            for content in op.contents.iter() {
-                if let Some((slice, _)) = content
-                    .as_normal()
-                    .and_then(|x| x.as_list())
-                    .and_then(|x| x.as_insert())
-                {
-                    assert!(matches!(
-                        slice,
-                        ListSlice::RawData(_) | ListSlice::RawStr(_) | ListSlice::Unknown(_)
-                    ))
-                }
-            }
-        }
     }
 }

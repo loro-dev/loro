@@ -24,32 +24,22 @@ mod test;
 
 use crate::{
     change::Lamport,
-    debug_log,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{IdSpanVector, VersionVector, VersionVectorDiff},
 };
 
 use self::{
-    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV, DagPartialIter},
+    iter::{iter_dag, iter_dag_with_vv, DagCausalIter, DagIterator, DagIteratorVV},
     mermaid::dag_to_mermaid,
 };
 
-// TODO: use HasId, HasLength
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
     fn deps(&self) -> &[ID];
 
     #[inline]
     fn get_lamport_from_counter(&self, c: Counter) -> Lamport {
         self.lamport() + c as Lamport - self.id_start().counter as Lamport
-    }
-}
-
-#[allow(clippy::ptr_arg)]
-fn reverse_path(path: &mut Vec<IdSpan>) {
-    path.reverse();
-    for span in path.iter_mut() {
-        span.counter.reverse();
     }
 }
 
@@ -72,7 +62,7 @@ pub(crate) trait DagUtils: Dag {
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
-    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
     fn iter(&self) -> DagIterator<'_, Self::Node>
@@ -89,6 +79,7 @@ pub(crate) trait DagUtils: Dag {
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
     fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]> {
+        // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
 
@@ -104,10 +95,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
-        debug_log!(
-            "{}",
-            format!("FINDPATH from={:?} to={:?}", from, to).green()
-        );
         if from == to {
             return ans;
         }
@@ -165,7 +152,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
             true,
         );
 
-        // dbg!(from, to, &ans);
         ans
     }
 
@@ -178,11 +164,11 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     #[inline(always)]
-    fn iter_partial(&self, from: &[ID], target: IdSpanVector) -> DagPartialIter<'_, Self>
+    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized,
     {
-        DagPartialIter::new(self, from.into(), target)
+        DagCausalIter::new(self, from.into(), target)
     }
 
     #[inline(always)]
@@ -307,31 +293,6 @@ impl<'a> OrdIdSpan<'a> {
             deps: Cow::Borrowed(span.deps()),
             len: (id.counter - span_id.counter) as usize + 1,
         })
-    }
-
-    #[inline]
-    fn from_dag_node_conservatively<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
-    where
-        D: DagNode + 'a,
-        F: Fn(ID) -> Option<&'a D>,
-    {
-        let span = get(id)?;
-        let span_id = span.id_start();
-        if span_id == id {
-            Some(OrdIdSpan {
-                id: span_id,
-                lamport: span.lamport(),
-                deps: Cow::Borrowed(span.deps()),
-                len: 1,
-            })
-        } else {
-            Some(OrdIdSpan {
-                id: span_id.inc(1),
-                lamport: span.lamport() + 1,
-                deps: Cow::Owned(vec![span_id]),
-                len: (id.counter - span_id.counter) as usize,
-            })
-        }
     }
 
     #[inline]
@@ -468,10 +429,7 @@ where
             NodeType::Shared => {}
         }
 
-        if a_count == 0
-            && b_count == 0
-            && (!find_path || min.is_none() || &node <= min.as_ref().unwrap())
-        {
+        if a_count == 0 && b_count == 0 && (min.is_none() || &node <= min.as_ref().unwrap()) {
             if node_type != NodeType::Shared {
                 ans.clear();
             }
@@ -514,27 +472,6 @@ where
     }
 
     ans
-}
-
-fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
-    frontier.retain(|x| {
-        if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
-            return false;
-        }
-
-        !new_node_deps
-            .iter()
-            .any(|y| y.client_id == x.client_id && y.counter >= x.counter)
-    });
-
-    // nodes from the same client with `counter < new_node_id.counter`
-    // are filtered out from frontier.
-    if frontier
-        .iter()
-        .all(|x| x.client_id != new_node_id.client_id)
-    {
-        frontier.push(new_node_id);
-    }
 }
 
 fn _find_common_ancestor_new<'a, F, D>(get: &'a F, left: &[ID], right: &[ID]) -> SmallVec<[ID; 2]>
@@ -646,4 +583,14 @@ where
     }
 
     ans
+}
+
+pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
+    for dep in new_change_deps.iter() {
+        if let Some(last) = frontiers.get_last(dep.client_id) {
+            if last <= dep.counter {
+                frontiers.remove(&dep.client_id);
+            }
+        }
+    }
 }

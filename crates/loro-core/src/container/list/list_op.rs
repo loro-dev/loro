@@ -6,7 +6,7 @@ use rle::{HasLength, Mergable, Sliceable};
 use crate::container::text::text_content::ListSlice;
 
 #[derive(EnumAsInner, Debug, Clone)]
-pub(crate) enum ListOp {
+pub enum ListOp {
     Insert { slice: ListSlice, pos: usize },
     Delete(DeleteSpan),
 }
@@ -18,7 +18,7 @@ pub(crate) enum ListOp {
 ///
 /// pos: 5, len: -3 eq a range of (2, 5]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DeleteSpan {
+pub struct DeleteSpan {
     pub pos: isize,
     pub len: isize,
 }

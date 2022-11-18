@@ -4,10 +4,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use loro_core::{
-    container::{registry::ContainerWrapper, ContainerID},
-    LoroCore,
-};
+use loro_core::{container::ContainerID, LoroCore};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

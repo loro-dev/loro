@@ -1,20 +1,27 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Mutex, RwLockWriteGuard},
 };
 
 use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
-use owning_ref::{OwningRef, OwningRefMut};
+use owning_ref::OwningRefMut;
 
-use crate::{context::Context, id::ContainerIdx, op::RemoteOp, span::IdSpan, LogStore, LoroValue};
+use crate::{
+    context::Context,
+    id::ContainerIdx,
+    op::{RemoteOp, RichOp},
+    version::IdSpanVector,
+    LoroValue, VersionVector,
+};
 
 use super::{
     list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
     ContainerType,
 };
 
+// TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
     Map(Box<MapContainer>),
@@ -37,26 +44,17 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(_) => ContainerType::Map,
             ContainerInstance::Text(_) => ContainerType::Text,
-            ContainerInstance::Dyn(x) => x.type_(),
             ContainerInstance::List(_) => ContainerType::List,
+            ContainerInstance::Dyn(x) => x.type_(),
         }
     }
 
-    fn apply(&mut self, id_span: IdSpan, log: &LogStore) {
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
         match self {
-            ContainerInstance::Map(x) => x.apply(id_span, log),
-            ContainerInstance::Text(x) => x.apply(id_span, log),
-            ContainerInstance::Dyn(x) => x.apply(id_span, log),
-            ContainerInstance::List(x) => x.apply(id_span, log),
-        }
-    }
-
-    fn checkout_version(&mut self, vv: &crate::VersionVector) {
-        match self {
-            ContainerInstance::Map(x) => x.checkout_version(vv),
-            ContainerInstance::Text(x) => x.checkout_version(vv),
-            ContainerInstance::Dyn(x) => x.checkout_version(vv),
-            ContainerInstance::List(x) => x.checkout_version(vv),
+            ContainerInstance::Map(x) => x.tracker_checkout(vv),
+            ContainerInstance::Text(x) => x.tracker_checkout(vv),
+            ContainerInstance::Dyn(x) => x.tracker_checkout(vv),
+            ContainerInstance::List(x) => x.tracker_checkout(vv),
         }
     }
 
@@ -83,6 +81,51 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.to_import(op),
             ContainerInstance::Dyn(x) => x.to_import(op),
             ContainerInstance::List(x) => x.to_import(op),
+        }
+    }
+
+    fn update_state_directly(&mut self, op: &RichOp) {
+        match self {
+            ContainerInstance::Map(x) => x.update_state_directly(op),
+            ContainerInstance::Text(x) => x.update_state_directly(op),
+            ContainerInstance::Dyn(x) => x.update_state_directly(op),
+            ContainerInstance::List(x) => x.update_state_directly(op),
+        }
+    }
+
+    fn track_retreat(&mut self, op: &IdSpanVector) {
+        match self {
+            ContainerInstance::Map(x) => x.track_retreat(op),
+            ContainerInstance::Text(x) => x.track_retreat(op),
+            ContainerInstance::Dyn(x) => x.track_retreat(op),
+            ContainerInstance::List(x) => x.track_retreat(op),
+        }
+    }
+
+    fn track_forward(&mut self, op: &IdSpanVector) {
+        match self {
+            ContainerInstance::Map(x) => x.track_forward(op),
+            ContainerInstance::Text(x) => x.track_forward(op),
+            ContainerInstance::Dyn(x) => x.track_forward(op),
+            ContainerInstance::List(x) => x.track_forward(op),
+        }
+    }
+
+    fn track_apply(&mut self, op: &RichOp) {
+        match self {
+            ContainerInstance::Map(x) => x.track_apply(op),
+            ContainerInstance::Text(x) => x.track_apply(op),
+            ContainerInstance::Dyn(x) => x.track_apply(op),
+            ContainerInstance::List(x) => x.track_apply(op),
+        }
+    }
+
+    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector) {
+        match self {
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(from, effect_spans),
         }
     }
 }
@@ -140,18 +183,25 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: ContainerID, container: ContainerInstance) {
+    fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
         let idx = self.next_idx();
         self.container_to_idx.insert(id.clone(), idx);
         self.containers.push(ContainerAndId {
             container: Arc::new(Mutex::new(container)),
             id,
         });
+
+        idx
     }
 
     #[inline(always)]
     fn next_idx(&self) -> ContainerIdx {
         self.containers.len() as ContainerIdx
+    }
+
+    pub(crate) fn register(&mut self, id: &ContainerID) {
+        let container = self.create(id.clone());
+        self.insert(id.clone(), container);
     }
 
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {
@@ -165,12 +215,12 @@ impl ContainerRegistry {
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
-        if !self.container_to_idx.contains_key(id) {
+        if let Some(idx) = self.container_to_idx.get(id) {
+            *idx
+        } else {
             let container = self.create(id.clone());
-            self.insert(id.clone(), container);
+            self.insert(id.clone(), container)
         }
-
-        self.get_idx(id).unwrap()
     }
 
     #[cfg(feature = "test_utils")]
@@ -200,23 +250,11 @@ pub struct ContainerRefMut<'a, T> {
     value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>,
 }
 
-pub struct ContainerRef<'a, T> {
-    value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>,
-}
-
 impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>>
     for ContainerRefMut<'a, T>
 {
     fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
         ContainerRefMut { value }
-    }
-}
-
-impl<'a, T> From<OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>>
-    for ContainerRef<'a, T>
-{
-    fn from(value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
-        ContainerRef { value }
     }
 }
 

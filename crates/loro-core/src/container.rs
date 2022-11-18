@@ -5,34 +5,69 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::RemoteOp, span::IdSpan, version::VersionVector, InternalString, LogStore, LoroValue, ID,
+    op::{RemoteOp, RichOp},
+    version::{IdSpanVector, VersionVector},
+    InternalString, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
 
 use std::{any::Any, fmt::Debug};
 
-mod container_content;
 pub mod registry;
 
 pub mod list;
 pub mod map;
 pub mod text;
-pub use container_content::*;
+
+#[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+pub enum ContainerType {
+    /// See [`crate::text::TextContent`]
+    Text,
+    Map,
+    List,
+    // TODO: Users can define their own container types.
+    // Custom(u16),
+}
 
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
-    /// NOTE: this method expect that [LogStore] has store the Change
-    fn apply(&mut self, id_span: IdSpan, log: &LogStore);
-    fn checkout_version(&mut self, vv: &VersionVector);
     fn get_value(&self) -> LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;
 
-    /// convert an op to export format. for example [ListSlice] should be convert to str before export
+    /// convert an op content to exported format that includes the raw data
     fn to_export(&mut self, op: &mut RemoteOp, gc: bool);
+
+    /// convert an op content to compact imported format
     fn to_import(&mut self, op: &mut RemoteOp);
+
+    /// Apply the effect of the op directly to the state.
+    fn update_state_directly(&mut self, op: &RichOp);
+
+    /// Tracker need to retreat in order to apply the op.
+    /// TODO: can be merged into checkout
+    fn track_retreat(&mut self, spans: &IdSpanVector);
+
+    /// Tracker need to forward in order to apply the op.
+    /// TODO: can be merged into checkout
+    fn track_forward(&mut self, spans: &IdSpanVector);
+
+    /// Tracker need to checkout to target version in order to apply the op.
+    fn tracker_checkout(&mut self, vv: &VersionVector);
+
+    /// Apply the op to the tracker.
+    ///
+    /// Here we have not updated the container state yet. Because we
+    /// need to calculate the effect of the op for [crate::List] and
+    /// [crate::Text] by using tracker.  
+    fn track_apply(&mut self, op: &RichOp);
+
+    /// Make tracker iterate over the target spans and apply the calculated
+    /// effects to the container state
+    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

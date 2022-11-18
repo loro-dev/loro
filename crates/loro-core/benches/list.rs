@@ -39,14 +39,14 @@ mod run {
                         let mut text = actor.get_text(container.to_string().as_str());
                         text.insert(
                             actor,
-                            (action.pos as usize) % text.text_len().max(1),
+                            (action.pos as usize) % text.len().max(1),
                             action.value.to_string().as_str(),
                         );
                     } else {
                         let mut list = actor.get_list(container.to_string().as_str());
                         list.insert(
                             actor,
-                            (action.pos as usize) % list.values_len().max(1),
+                            (action.pos as usize) % list.len().max(1),
                             action.value.to_string().as_str(),
                         );
                     }
