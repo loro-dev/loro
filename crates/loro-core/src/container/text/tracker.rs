@@ -1,12 +1,12 @@
-use rle::{rle_tree::UnsafeCursor, HasLength};
+use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
     id::{Counter, ID},
-    op::Content,
-    span::{HasIdSpan, IdSpan},
+    op::{Content, RichOp},
+    span::{HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
 };
@@ -149,6 +149,30 @@ impl Tracker {
         self.all_vv.forward(spans);
     }
 
+    pub fn track_apply(&mut self, rich_op: &RichOp) {
+        let content = rich_op.get_sliced().content;
+        let id = rich_op.id_start();
+        if self
+            .all_vv()
+            .includes_id(id.inc(content.atom_len() as Counter - 1))
+        {
+            self.forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            return;
+        }
+
+        if self.all_vv().includes_id(id) {
+            let this_ctr = self.all_vv().get(&id.client_id).unwrap();
+            let shift = this_ctr - id.counter;
+            self.forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.apply(
+                id.inc(shift),
+                &content.slice(shift as usize, content.atom_len()),
+            );
+        } else {
+            self.apply(id, &content)
+        }
+    }
+
     fn real_forward(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
@@ -275,7 +299,7 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    pub(crate) fn apply(&mut self, id: ID, content: &Content) {
+    fn apply(&mut self, id: ID, content: &Content) {
         self.real_checkout();
         assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
@@ -358,7 +382,8 @@ impl Tracker {
         )
     }
 
-    pub fn iter_effects(&mut self, target: &IdSpanVector) -> EffectIter<'_> {
+    pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
+        self.checkout(from);
         self.real_checkout();
         EffectIter::new(self, target)
     }

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree, RleVec, Sliceable,
+    HasLength, RleTree, RleVec,
 };
 
 use crate::{
@@ -15,7 +15,6 @@ use crate::{
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::{HasId, HasIdSpan},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -264,28 +263,7 @@ impl Container for TextContainer {
     }
 
     fn track_apply(&mut self, rich_op: &RichOp) {
-        let op = rich_op.get_sliced();
-        debug_log!("TRACKER APPLY {} {:#?}", &rich_op.id_start(), &op.content);
-        let id = rich_op.id_start();
-        let content = op.content;
-        if self.tracker.all_vv().includes_id(rich_op.id_last()) {
-            self.tracker
-                .forward(&id.to_span(content.atom_len()).to_id_span_vec());
-            return;
-        }
-
-        if self.tracker.all_vv().includes_id(id) {
-            let this_ctr = self.tracker.all_vv().get(&id.client_id).unwrap();
-            let shift = this_ctr - id.counter;
-            self.tracker
-                .forward(&id.to_span(shift as usize).to_id_span_vec());
-            self.tracker.apply(
-                id.inc(shift),
-                &content.slice(shift as usize, content.atom_len()),
-            );
-        } else {
-            self.tracker.apply(id, &content)
-        }
+        self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
@@ -293,9 +271,8 @@ impl Container for TextContainer {
         from: &crate::VersionVector,
         effect_spans: &IdSpanVector,
     ) {
-        self.tracker.checkout(from);
         debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
-        for effect in self.tracker.iter_effects(effect_spans) {
+        for effect in self.tracker.iter_effects(from, effect_spans) {
             debug_log!("APPLY EFFECT {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),

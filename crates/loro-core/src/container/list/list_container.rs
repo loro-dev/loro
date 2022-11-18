@@ -6,7 +6,7 @@ use std::{
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree, Sliceable,
+    RleTree,
 };
 
 use crate::{
@@ -22,7 +22,6 @@ use crate::{
     context::Context,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::HasId,
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -264,30 +263,7 @@ impl Container for ListContainer {
     }
 
     fn track_apply(&mut self, rich_op: &RichOp) {
-        let content = rich_op.get_sliced().content;
-        let id = rich_op.id_start();
-        if self
-            .tracker
-            .all_vv()
-            .includes_id(id.inc(content.atom_len() as Counter - 1))
-        {
-            self.tracker
-                .forward(&id.to_span(content.atom_len()).to_id_span_vec());
-            return;
-        }
-
-        if self.tracker.all_vv().includes_id(id) {
-            let this_ctr = self.tracker.all_vv().get(&id.client_id).unwrap();
-            let shift = this_ctr - id.counter;
-            self.tracker
-                .forward(&id.to_span(shift as usize).to_id_span_vec());
-            self.tracker.apply(
-                id.inc(shift),
-                &content.slice(shift as usize, content.atom_len()),
-            );
-        } else {
-            self.tracker.apply(id, &content)
-        }
+        self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
@@ -295,8 +271,7 @@ impl Container for ListContainer {
         from: &crate::VersionVector,
         effect_spans: &IdSpanVector,
     ) {
-        self.tracker.checkout(from);
-        for effect in self.tracker.iter_effects(effect_spans) {
+        for effect in self.tracker.iter_effects(from, effect_spans) {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
                 Effect::Ins { pos, content } => {
