@@ -8,7 +8,6 @@ use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     HasLength, RleTree, Sliceable,
 };
-use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
@@ -23,7 +22,7 @@ use crate::{
     context::Context,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::{HasCounterSpan, HasId},
+    span::HasId,
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -34,7 +33,6 @@ pub struct ListContainer {
     state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
     raw_data: Pool,
     tracker: Tracker,
-    head: SmallVec<[ID; 2]>,
 }
 
 #[derive(Debug, Default)]
@@ -74,8 +72,6 @@ impl ListContainer {
             raw_data: Pool::default(),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
-            // TODO: should be eq to log_store frontier?
-            head: Default::default(),
         }
     }
 
@@ -97,12 +93,7 @@ impl ListContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        let last_id = ID::new(
-            store.this_client_id,
-            op.counter + op.atom_len() as Counter - 1,
-        );
         store.append_local_ops(&[op]);
-        self.head = smallvec![last_id];
     }
 
     pub fn insert<C: Context, V: Into<LoroValue>>(
@@ -124,12 +115,7 @@ impl ListContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        let last_id = ID::new(
-            store.this_client_id,
-            op.counter + op.atom_len() as Counter - 1,
-        );
         store.append_local_ops(&[op]);
-        self.head = smallvec![last_id];
 
         Some(id)
     }
@@ -152,10 +138,8 @@ impl ListContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        let last_id = ID::new(store.this_client_id, op.ctr_last());
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
-        self.head = smallvec![last_id];
         Some(id)
     }
 

@@ -4,7 +4,6 @@ use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     HasLength, RleTree, RleVec, Sliceable,
 };
-use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
@@ -16,7 +15,7 @@ use crate::{
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::{HasCounterSpan, HasId, HasIdSpan},
+    span::{HasId, HasIdSpan},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -33,7 +32,6 @@ pub struct TextContainer {
     state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
     raw_str: StringPool,
     tracker: Tracker,
-    head: SmallVec<[ID; 2]>,
 }
 
 impl TextContainer {
@@ -43,8 +41,6 @@ impl TextContainer {
             raw_str: StringPool::default(),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
-            // TODO: should be eq to log_store frontier?
-            head: Default::default(),
         }
     }
 
@@ -70,12 +66,7 @@ impl TextContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        let last_id = ID::new(
-            store.this_client_id,
-            op.counter + op.atom_len() as Counter - 1,
-        );
         store.append_local_ops(&[op]);
-        self.head = smallvec![last_id];
 
         Some(id)
     }
@@ -98,10 +89,8 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        let last_id = ID::new(store.this_client_id, op.ctr_last());
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
-        self.head = smallvec![last_id];
         Some(id)
     }
 
