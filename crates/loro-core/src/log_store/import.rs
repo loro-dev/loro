@@ -19,6 +19,22 @@ use crate::{
 use super::{ContainerGuard, RemoteClientChanges};
 
 impl LogStore {
+    /// Import remote clients' changes into the local log store.
+    ///
+    /// # How does it work
+    ///
+    /// > The core algorithm is in the [`LogStore::apply`] method.
+    ///
+    /// - First, we remove all the changes that are already included in the local log store.
+    /// And cache the changes whose dependencies are not included.
+    /// - Then, we append the changes to the local log store.
+    /// - Apply
+    ///   - Check whether we can apply the change directly by testing whether self.frontiers == common ancestors.
+    ///     If so, we apply the change directly and return.
+    ///   - Otherwise
+    ///     - Stage 1: we iterate over the new changes by causal order, and record them to the tracker.
+    ///     - Stage 2: we calculate the effects of the new changes, and apply them to the state.
+    /// - Update the rest of the log store state.
     pub fn import(&mut self, mut changes: RemoteClientChanges) {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
             return;
@@ -149,8 +165,9 @@ impl LogStore {
             let end = iter.slice.end;
             let change = iter.data;
             debug_log!("iter {:#?}", &iter);
+            // TODO: perf: we can make iter_causal returns target vv and only
+            // checkout the related container to the target vv
             for (_, container) in container_map.iter_mut() {
-                // TODO: perf: can give a hint here, to cache needless retreat and forward
                 container.track_retreat(&iter.retreat);
                 container.track_forward(&iter.forward);
             }
@@ -173,6 +190,7 @@ impl LogStore {
         }
     }
 
+    /// get the locks of the containers to avoid repeated acquiring and releasing the locks
     fn lock_related_containers(
         &mut self,
         changes: &RemoteClientChanges,

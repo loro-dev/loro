@@ -50,6 +50,10 @@ pub struct Tracker {
     all_vv: VersionVector,
     /// current content version vector
     current_vv: VersionVector,
+    /// The pretend current content version vector.
+    ///
+    /// Because sometimes we don't actually need to checkout to the version.
+    /// So we may cache the changes then applying them when we really need to.
     cached_fake_current_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,

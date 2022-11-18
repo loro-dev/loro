@@ -34,18 +34,39 @@ pub enum ContainerType {
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
-    /// NOTE: this method expect that [LogStore] has store the Change
     fn get_value(&self) -> LoroValue;
     // TODO: need a custom serializer
     // fn serialize(&self) -> Vec<u8>;
-    /// convert an op to export format. for example [ListSlice] should be convert to str before export
+
+    /// convert an op content to exported format that includes the raw data
     fn to_export(&mut self, op: &mut RemoteOp, gc: bool);
+
+    /// convert an op content to compact imported format
     fn to_import(&mut self, op: &mut RemoteOp);
+
+    /// Apply the effect of the op directly to the state.
     fn update_state_directly(&mut self, op: &RichOp);
+
+    /// Tracker need to retreat in order to apply the op.
+    /// TODO: can be merged into checkout
     fn track_retreat(&mut self, spans: &IdSpanVector);
+
+    /// Tracker need to forward in order to apply the op.
+    /// TODO: can be merged into checkout
     fn track_forward(&mut self, spans: &IdSpanVector);
-    fn track_apply(&mut self, op: &RichOp);
+
+    /// Tracker need to checkout to target version in order to apply the op.
     fn tracker_checkout(&mut self, vv: &VersionVector);
+
+    /// Apply the op to the tracker.
+    ///
+    /// Here we have not updated the container state yet. Because we
+    /// need to calculate the effect of the op for [crate::List] and
+    /// [crate::Text] by using tracker.  
+    fn track_apply(&mut self, op: &RichOp);
+
+    /// Make tracker iterate over the target spans and apply the calculated
+    /// effects to the container state
     fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector);
 }
 
