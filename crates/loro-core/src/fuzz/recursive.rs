@@ -7,9 +7,7 @@ use tabled::{TableIteratorExt, Tabled};
 use crate::{
     array_mut_ref,
     container::{registry::ContainerWrapper, ContainerID},
-    debug_log,
-    id::ClientID,
-    ContainerType, List, LoroCore, LoroValue, Map, Text,
+    debug_log, ContainerType, List, LoroCore, LoroValue, Map, Text,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -176,7 +174,7 @@ impl Actionable for Vec<Actor> {
                     .get(*container_idx as usize)
                 {
                     *key %= (list.len() as u8).max(1);
-                    if *value == FuzzValue::Null && list.len() == 0 {
+                    if *value == FuzzValue::Null && list.is_empty() {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -336,12 +334,12 @@ impl Actionable for Vec<Actor> {
             } => {
                 let actor = &mut self[*site as usize];
                 let container = actor.map_containers.get_mut(*container_idx as usize);
-                let container = if container.is_none() {
+                let container = if let Some(container) = container {
+                    container
+                } else {
                     let map = actor.loro.get_map("map");
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
-                } else {
-                    container.unwrap()
                 };
 
                 match value {
@@ -370,6 +368,7 @@ impl Actionable for Vec<Actor> {
                     actor.list_containers.push(list);
                     &mut actor.list_containers[0]
                 } else {
+                    #[allow(clippy::unnecessary_unwrap)]
                     container.unwrap()
                 };
 
@@ -395,12 +394,12 @@ impl Actionable for Vec<Actor> {
             } => {
                 let actor = &mut self[*site as usize];
                 let container = actor.text_containers.get_mut(*container_idx as usize);
-                let container = if container.is_none() {
+                let container = if let Some(container) = container {
+                    container
+                } else {
                     let text = actor.loro.get_text("text");
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
-                } else {
-                    container.unwrap()
                 };
                 if *is_del {
                     container.delete(&actor.loro, *pos as usize, *value as usize);
@@ -463,6 +462,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
         sites.preprocess(action);
         applied.push(action.clone());
         let sites_ptr: *mut Vec<_> = &mut sites as *mut _;
+        #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: Test
             let sites = unsafe { &mut *sites_ptr };

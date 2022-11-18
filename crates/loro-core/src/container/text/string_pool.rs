@@ -67,6 +67,7 @@ impl StringPool {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub fn slice(&self, range: Range<u32>) -> &str {
         std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap()
     }

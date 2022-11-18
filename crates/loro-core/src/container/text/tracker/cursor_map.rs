@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{node::LeafNode, Position, SafeCursor, UnsafeCursor},
     HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
@@ -114,32 +114,6 @@ impl Marker {
                     .collect()
             }
             Marker::Delete(_) => unreachable!(),
-        }
-    }
-
-    /// # Safety
-    ///
-    /// It's safe when you are sure that the returned cursor is the only reference to the target yspan tree
-    pub unsafe fn as_cursor_mut(
-        &mut self,
-        id: ID,
-    ) -> Option<SafeCursorMut<'static, YSpan, YSpanTreeTrait>> {
-        match self {
-            Marker::Insert { ptr, len: _ } => {
-                let node = ptr.as_ref();
-                let position = node.children().iter().position(|x| x.contain_id(id))?;
-                let child = &node.children()[position];
-                let start_counter = child.id.counter;
-                let offset = id.counter - start_counter;
-                Some(SafeCursorMut::new(
-                    *ptr,
-                    position,
-                    offset as usize,
-                    Position::from_offset(offset as isize, child.atom_len()),
-                    0,
-                ))
-            }
-            Marker::Delete(_) => None,
         }
     }
 }

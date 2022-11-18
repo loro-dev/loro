@@ -1,13 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
 use rle::{
-    rle_tree::{Position, SafeCursor, SafeCursorMut},
+    rle_tree::{Position, SafeCursor},
     HasLength, RleTree, RleVecWithLen,
 };
 
 use crate::{container::text::text_content::SliceRange, id::ID, span::IdSpan};
 
-use super::y_span::{StatusChange, YSpan, YSpanTreeTrait};
+use super::y_span::{YSpan, YSpanTreeTrait};
 
 /// It stores all the [YSpan] data, including the deleted/undo ones
 ///
@@ -121,6 +121,7 @@ impl ContentMap {
         ans
     }
 
+    #[allow(unused)]
     pub fn get_id_spans(&self, pos: usize, len: usize) -> RleVecWithLen<[IdSpan; 2]> {
         let mut ans = RleVecWithLen::new();
         for cursor in self.iter_range(pos, Some(pos + len)) {
@@ -148,15 +149,5 @@ impl Deref for ContentMap {
 impl DerefMut for ContentMap {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-pub(super) fn change_status(
-    cursor: &mut SafeCursorMut<'_, YSpan, YSpanTreeTrait>,
-    change: StatusChange,
-) {
-    let value = cursor.as_mut();
-    if value.status.apply(change) {
-        cursor.update_cache_recursively();
     }
 }

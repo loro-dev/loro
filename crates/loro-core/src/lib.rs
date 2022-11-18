@@ -20,7 +20,6 @@ mod error;
 pub mod fuzz;
 mod loro;
 mod smstring;
-mod snapshot;
 mod span;
 #[cfg(test)]
 pub mod tests;

@@ -47,7 +47,7 @@ mod run {
         let json: Value = serde_json::from_str(&s).unwrap();
         let txns = json.as_object().unwrap().get("txns");
         println!("{}", txns.unwrap().as_array().unwrap().len());
-        let mut b = c.benchmark_group("directapply");
+        let mut b = c.benchmark_group("direct_apply");
         b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();

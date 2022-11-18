@@ -1,5 +1,15 @@
 {
-  "cSpell.words": ["Leeeon", "smstring", "thiserror", "yspan"],
+  "cSpell.words": [
+    "arbtest",
+    "flate",
+    "Leeeon",
+    "LOGSTORE",
+    "Peritext",
+    "smstring",
+    "thiserror",
+    "txns",
+    "yspan"
+  ],
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },

@@ -4,9 +4,7 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 
-use crate::{
-    array_mut_ref, container::registry::ContainerWrapper, debug_log, id::ClientID, LoroCore,
-};
+use crate::{array_mut_ref, debug_log, id::ClientID, LoroCore};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -181,7 +179,7 @@ impl Actionable for Vec<LoroCore> {
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
                 let text = self[*site as usize].get_text("text");
-                if text.len() == 0 {
+                if text.is_empty() {
                     *len = 0;
                     *pos = 0;
                     return;
@@ -248,7 +246,7 @@ pub fn test_single_client(mut actions: Vec<Action>) {
                 text_container.insert(&store, *pos, &content.to_string());
             }
             Action::Del { pos, len, .. } => {
-                if text_container.len() == 0 {
+                if text_container.is_empty() {
                     return;
                 }
 
@@ -313,6 +311,7 @@ where
     let f_ref: usize = f_ref as usize;
     let actions_clone = actions.clone();
     let action_ref: usize = (&actions_clone) as *const _ as usize;
+    #[allow(clippy::blocks_in_if_conditions)]
     if std::panic::catch_unwind(|| {
         // SAFETY: test
         let f = unsafe { &*(f_ref as *const F) };
@@ -341,6 +340,7 @@ where
         let f_ref: usize = f_ref as usize;
         let actions_clone = candidate.clone();
         let action_ref: usize = (&actions_clone) as *const _ as usize;
+        #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: test
             let f = unsafe { &*(f_ref as *const F) };
@@ -394,6 +394,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
         sites.preprocess(action);
         applied.push(action.clone());
         let sites_ptr: *mut Vec<_> = &mut sites as *mut _;
+        #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: Test
             let sites = unsafe { &mut *sites_ptr };

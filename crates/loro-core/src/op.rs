@@ -11,14 +11,6 @@ mod content;
 pub use content::*;
 use smallvec::{smallvec, SmallVec};
 
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpType {
-    Normal,
-    Undo,
-    Redo,
-}
-
 /// Operation is a unit of change.
 ///
 /// It has 3 types:

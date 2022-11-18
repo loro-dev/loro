@@ -109,14 +109,6 @@ impl ListSlice {
     }
 }
 
-pub(super) fn new_unknown_text(len: usize) -> ListSlice {
-    ListSlice::Unknown(len)
-}
-
-pub(super) fn is_unknown_text(a: &ListSlice) -> bool {
-    a.as_unknown().is_some()
-}
-
 impl HasLength for ListSlice {
     fn content_len(&self) -> usize {
         match self {
