@@ -41,7 +41,6 @@ pub enum Action {
 }
 
 struct Actor {
-    site: ClientID,
     loro: LoroCore,
     map_containers: Vec<Map>,
     list_containers: Vec<List>,
@@ -452,7 +451,6 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor {
-            site: i as u64,
             loro: LoroCore::new(Default::default(), Some(i as u64)),
             map_containers: Default::default(),
             list_containers: Default::default(),
@@ -484,7 +482,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor {
-            site: i as u64,
             loro: LoroCore::new(Default::default(), Some(i as u64)),
             map_containers: Default::default(),
             list_containers: Default::default(),

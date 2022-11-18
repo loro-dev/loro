@@ -3,12 +3,10 @@ use std::any::{Any, TypeId};
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::container::{list::list_op::ListOp, map::MapSet, ContainerID};
+use crate::container::{list::list_op::ListOp, map::MapSet};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ContentType {
-    /// See [`crate::container::ContainerContent`]
-    Container,
     /// See [`crate::container::text::TextContent`]
     Text,
     /// See [`crate::container::map::MapInsertContent`]
@@ -19,7 +17,6 @@ pub enum ContentType {
 
 #[derive(EnumAsInner, Debug)]
 pub enum Content {
-    Container(ContainerID),
     Map(MapSet),
     List(ListOp),
     Dyn(Box<dyn InsertContentTrait>),
@@ -31,7 +28,6 @@ impl Clone for Content {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Dyn(arg0) => Self::Dyn(arg0.clone_content()),
-            Content::Container(arg0) => Self::Container(arg0.clone()),
         }
     }
 }
@@ -42,7 +38,6 @@ impl Content {
             Self::Map(_) => ContentType::Map,
             Self::List(_) => ContentType::Text,
             Self::Dyn(arg0) => arg0.id(),
-            Self::Container(_) => ContentType::Container,
         }
     }
 }
@@ -101,7 +96,6 @@ impl HasLength for Content {
             Content::Map(x) => x.content_len(),
             Content::Dyn(x) => x.content_len(),
             Content::List(x) => x.content_len(),
-            Content::Container(_) => 1,
         }
     }
 }
@@ -112,7 +106,6 @@ impl Sliceable for Content {
             Content::Map(x) => Content::Map(x.slice(from, to)),
             Content::Dyn(x) => Content::Dyn(x.slice_content(from, to)),
             Content::List(x) => Content::List(x.slice(from, to)),
-            Content::Container(x) => Content::Container(x.clone()),
         }
     }
 }
@@ -126,7 +119,6 @@ impl Mergable for Content {
             (Content::Map(x), Content::Map(y)) => x.is_mergable(y, &()),
             (Content::List(x), Content::List(y)) => x.is_mergable(y, &()),
             (Content::Dyn(x), Content::Dyn(y)) => x.is_mergable_content(&**y),
-            (Content::Container(_), _) => false,
             _ => false,
         }
     }
@@ -145,7 +137,6 @@ impl Mergable for Content {
                 _ => unreachable!(),
             },
             Content::Dyn(x) => x.merge_content(&**_other.as_dyn().unwrap()),
-            Content::Container(_) => unreachable!(),
         }
     }
 }

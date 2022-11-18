@@ -13,11 +13,10 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    dag::DagUtils,
     debug_log,
     id::{Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
-    span::{HasCounterSpan, HasId, HasIdSpan, IdSpan},
+    span::{HasCounterSpan, HasId, HasIdSpan},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -27,12 +26,6 @@ use super::{
     text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
 };
-
-#[derive(Clone, Debug)]
-struct DagNode {
-    id: IdSpan,
-    deps: SmallVec<[ID; 2]>,
-}
 
 #[derive(Debug)]
 pub struct TextContainer {

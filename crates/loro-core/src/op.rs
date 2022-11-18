@@ -6,9 +6,9 @@ use crate::{
     LogStore,
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
-mod insert_content;
+mod content;
 
-pub use insert_content::*;
+pub use content::*;
 use smallvec::{smallvec, SmallVec};
 
 #[non_exhaustive]

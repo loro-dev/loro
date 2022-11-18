@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 
@@ -22,10 +22,10 @@ use crate::{
         registry::{ContainerInstance, ContainerRegistry},
         Container, ContainerID,
     },
-    dag::{Dag, DagUtils},
+    dag::Dag,
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::{Content, RemoteOp},
+    op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
@@ -185,19 +185,9 @@ impl LogStore {
         op
     }
 
-    pub(crate) fn create_container(
-        &mut self,
-        container_type: ContainerType,
-        parent: ContainerID,
-    ) -> ContainerID {
+    pub(crate) fn create_container(&mut self, container_type: ContainerType) -> ContainerID {
         let id = self.next_id();
         let container_id = ContainerID::new_normal(id, container_type);
-        let parent_idx = self.get_container_idx(&parent).unwrap();
-        self.append_local_ops(&[Op::new(
-            id,
-            Content::Container(container_id.clone()),
-            parent_idx,
-        )]);
         self.reg.register(&container_id);
         container_id
     }

@@ -167,7 +167,7 @@ impl ListContainer {
     ) -> ContainerID {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
-        let container_id = store.create_container(obj, self.id.clone());
+        let container_id = store.create_container(obj);
         // TODO: we can avoid this lock
         drop(store);
         self.insert(
@@ -256,7 +256,6 @@ impl Container for ListContainer {
                     .state
                     .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
             },
-            Content::Container(_) => {}
             _ => unreachable!(),
         }
     }
@@ -282,10 +281,6 @@ impl Container for ListContainer {
 
     fn track_apply(&mut self, rich_op: &RichOp) {
         let content = rich_op.get_sliced().content;
-        if content.as_container().is_some() {
-            return;
-        }
-
         let id = rich_op.id_start();
         if self
             .tracker

@@ -283,7 +283,7 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
                 text_container.insert(&store, *pos, &content.to_string());
             }
             Action::Del { pos, len, .. } => {
-                if text_container.len() == 0 {
+                if text_container.is_empty() {
                     return;
                 }
 

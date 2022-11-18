@@ -1,18 +1,19 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Mutex, RwLockWriteGuard},
 };
 
 use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
-use owning_ref::{OwningRef, OwningRefMut};
+use owning_ref::OwningRefMut;
 
 use crate::{
     context::Context,
     id::ContainerIdx,
     op::{RemoteOp, RichOp},
-    version::IdSpanVector, LoroValue, VersionVector,
+    version::IdSpanVector,
+    LoroValue, VersionVector,
 };
 
 use super::{
@@ -249,23 +250,11 @@ pub struct ContainerRefMut<'a, T> {
     value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>,
 }
 
-pub struct ContainerRef<'a, T> {
-    value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>,
-}
-
 impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>>
     for ContainerRefMut<'a, T>
 {
     fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
         ContainerRefMut { value }
-    }
-}
-
-impl<'a, T> From<OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>>
-    for ContainerRef<'a, T>
-{
-    fn from(value: OwningRef<RwLockReadGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
-        ContainerRef { value }
     }
 }
 

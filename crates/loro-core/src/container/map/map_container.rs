@@ -84,7 +84,7 @@ impl MapContainer {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
-        let container_id = store.create_container(obj, self_id.clone());
+        let container_id = store.create_container(obj);
         // TODO: store this value?
         let id = store.next_id_for(client_id);
         let container = store.get_container_idx(self_id).unwrap();
@@ -152,10 +152,6 @@ impl Container for MapContainer {
 
     fn update_state_directly(&mut self, op: &RichOp) {
         let content = op.get_sliced().content;
-        if content.as_container().is_some() {
-            return;
-        }
-
         let v: &MapSet = content.as_map().unwrap();
         let order = TotalOrderStamp {
             lamport: op.lamport(),

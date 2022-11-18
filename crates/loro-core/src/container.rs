@@ -10,17 +10,26 @@ use crate::{
     InternalString, LoroValue, ID,
 };
 
+use arbitrary::Arbitrary;
 use serde::{Deserialize, Serialize};
 
 use std::{any::Any, fmt::Debug};
 
-mod container_content;
 pub mod registry;
 
 pub mod list;
 pub mod map;
 pub mod text;
-pub use container_content::*;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, Arbitrary)]
+pub enum ContainerType {
+    /// See [`crate::text::TextContent`]
+    Text,
+    Map,
+    List,
+    // TODO: Users can define their own container types.
+    // Custom(u16),
+}
 
 pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;

@@ -215,7 +215,7 @@ impl IdSpan {
         ID::new(self.client_id, self.counter.end())
     }
 
-    pub fn to_id_span_vec(&self) -> IdSpanVector {
+    pub fn to_id_span_vec(self) -> IdSpanVector {
         let mut out = IdSpanVector::default();
         out.insert(self.client_id, self.counter);
         out

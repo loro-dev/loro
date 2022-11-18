@@ -129,9 +129,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
             for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
                     let (prop, gc, value) = match content {
-                        crate::op::Content::Container(_) => {
-                            todo!();
-                        }
                         crate::op::Content::Map(MapSet { key, value }) => (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key);

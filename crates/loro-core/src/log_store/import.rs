@@ -1,24 +1,16 @@
-use crate::{LogStore};
-use std::{
-    ops::ControlFlow,
-    sync::{MutexGuard},
-};
+use crate::LogStore;
+use std::{ops::ControlFlow, sync::MutexGuard};
 
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVecWithIndex, Sliceable};
 
-
-
 use crate::{
-    container::{
-        registry::{ContainerInstance},
-        Container, ContainerID,
-    },
-    dag::{remove_included_frontiers, Dag, DagUtils},
+    container::{registry::ContainerInstance, Container, ContainerID},
+    dag::{remove_included_frontiers, DagUtils},
     debug_log,
-    id::{ContainerIdx},
-    op::{RichOp},
+    id::ContainerIdx,
+    op::RichOp,
     span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},
     version::are_frontiers_eq,
     VersionVector,
