@@ -10,7 +10,6 @@ use crate::{
     InternalString, LoroValue, ID,
 };
 
-use arbitrary::Arbitrary;
 use serde::{Deserialize, Serialize};
 
 use std::{any::Any, fmt::Debug};
@@ -21,7 +20,8 @@ pub mod list;
 pub mod map;
 pub mod text;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize, Arbitrary)]
+#[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,
