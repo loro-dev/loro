@@ -176,18 +176,18 @@ impl Actionable for Vec<LoroCore> {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
                 let text = self[*site as usize].get_text("text");
-                change_pos_to_char_boundary(pos, text.text_len());
+                change_pos_to_char_boundary(pos, text.len());
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
                 let text = self[*site as usize].get_text("text");
-                if text.text_len() == 0 {
+                if text.len() == 0 {
                     *len = 0;
                     *pos = 0;
                     return;
                 }
 
-                change_delete_to_char_boundary(pos, len, text.text_len());
+                change_delete_to_char_boundary(pos, len, text.len());
             }
             Action::Sync { from, to } => {
                 *from %= self.len() as u8;
@@ -248,7 +248,7 @@ pub fn test_single_client(mut actions: Vec<Action>) {
                 text_container.insert(&store, *pos, &content.to_string());
             }
             Action::Del { pos, len, .. } => {
-                if text_container.text_len() == 0 {
+                if text_container.len() == 0 {
                     return;
                 }
 
@@ -283,7 +283,7 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
                 text_container.insert(&store, *pos, &content.to_string());
             }
             Action::Del { pos, len, .. } => {
-                if text_container.text_len() == 0 {
+                if text_container.len() == 0 {
                     return;
                 }
 

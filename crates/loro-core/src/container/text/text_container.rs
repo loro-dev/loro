@@ -357,13 +357,17 @@ impl Text {
         self.with_container(|text| text.delete(ctx, pos, len))
     }
 
-    // TODO: can be len?
-    pub fn text_len(&self) -> usize {
+    pub fn get_value(&self) -> LoroValue {
+        self.instance.lock().unwrap().as_text().unwrap().get_value()
+    }
+
+    pub fn len(&self) -> usize {
         self.with_container(|text| text.text_len())
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        self.instance.lock().unwrap().as_text().unwrap().get_value()
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

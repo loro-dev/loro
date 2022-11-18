@@ -373,8 +373,13 @@ impl List {
         self.with_container(|text| text.delete(ctx, pos, len))
     }
 
-    pub fn values_len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.with_container(|text| text.values_len())
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

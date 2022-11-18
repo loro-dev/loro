@@ -176,8 +176,8 @@ impl Actionable for Vec<Actor> {
                     .list_containers
                     .get(*container_idx as usize)
                 {
-                    *key %= (list.values_len() as u8).max(1);
-                    if *value == FuzzValue::Null && list.values_len() == 0 {
+                    *key %= (list.len() as u8).max(1);
+                    if *value == FuzzValue::Null && list.len() == 0 {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -201,10 +201,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.text_len() as u8).max(1);
+                    *pos %= (text.len() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.text_len() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;

@@ -10,7 +10,7 @@ use crate::{
     context::Context,
     op::RemoteOp,
     op::{Content, Op, RichOp},
-    span::{HasLamport},
+    span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
     InternalString,
@@ -228,6 +228,15 @@ impl Map {
 
     pub fn get_value(&self) -> LoroValue {
         self.instance.lock().unwrap().as_map().unwrap().get_value()
+    }
+
+    pub fn len(&self) -> usize {
+        self.with_container(|map| map.state.len())
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
