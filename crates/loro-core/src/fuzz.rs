@@ -363,10 +363,8 @@ where
                 candidates.drain(0..30);
             }
         }
-        if start.elapsed().as_secs() > 10 {
-            if minified.len() <= 4 {
-                break;
-            }
+        if start.elapsed().as_secs() > 10 && minified.len() <= 4 {
+            break;
         }
         if start.elapsed().as_secs() > 60 {
             break;

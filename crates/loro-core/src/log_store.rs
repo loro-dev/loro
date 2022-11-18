@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 
@@ -22,12 +22,11 @@ use crate::{
         registry::{ContainerInstance, ContainerRegistry},
         Container, ContainerID,
     },
-    dag::{remove_included_frontiers, Dag, DagUtils},
+    dag::{Dag, DagUtils},
     debug_log,
     id::{ClientID, ContainerIdx, Counter},
-    op::{Content, RemoteOp, RichOp},
-    span::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
-    version::are_frontiers_eq,
+    op::{Content, RemoteOp},
+    span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 

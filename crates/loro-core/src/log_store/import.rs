@@ -1,28 +1,25 @@
-use crate::{LogStore, LoroCore};
+use crate::{LogStore};
 use std::{
-    marker::PhantomPinned,
     ops::ControlFlow,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{MutexGuard},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 
-use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
+use rle::{HasLength, RleVecWithIndex, Sliceable};
 
-use smallvec::SmallVec;
+
 
 use crate::{
-    change::{Change, ChangeMergeCfg},
-    configure::Configure,
     container::{
-        registry::{ContainerInstance, ContainerRegistry},
+        registry::{ContainerInstance},
         Container, ContainerID,
     },
     dag::{remove_included_frontiers, Dag, DagUtils},
     debug_log,
-    id::{ClientID, ContainerIdx, Counter},
-    op::{Content, RemoteOp, RichOp},
-    span::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan},
+    id::{ContainerIdx},
+    op::{RichOp},
+    span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},
     version::are_frontiers_eq,
     VersionVector,
 };

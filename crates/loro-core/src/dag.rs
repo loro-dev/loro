@@ -24,7 +24,6 @@ mod test;
 
 use crate::{
     change::Lamport,
-    debug_log,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{IdSpanVector, VersionVector, VersionVectorDiff},

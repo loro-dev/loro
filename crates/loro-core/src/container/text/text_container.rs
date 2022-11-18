@@ -20,7 +20,6 @@ use crate::{
     span::{HasCounterSpan, HasId, HasIdSpan, IdSpan},
     value::LoroValue,
     version::IdSpanVector,
-    LogStore,
 };
 
 use super::{

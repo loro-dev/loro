@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use fxhash::FxHashMap;
 
 use crate::{
-    change::Lamport,
     container::{
         registry::{ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
@@ -11,10 +10,10 @@ use crate::{
     context::Context,
     op::RemoteOp,
     op::{Content, Op, RichOp},
-    span::{HasLamport, IdSpan},
+    span::{HasLamport},
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
-    InternalString, LogStore,
+    InternalString,
 };
 
 use super::MapSet;

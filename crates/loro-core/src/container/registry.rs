@@ -12,9 +12,7 @@ use crate::{
     context::Context,
     id::ContainerIdx,
     op::{RemoteOp, RichOp},
-    span::IdSpan,
-    version::IdSpanVector,
-    LogStore, LoroValue, VersionVector,
+    version::IdSpanVector, LoroValue, VersionVector,
 };
 
 use super::{

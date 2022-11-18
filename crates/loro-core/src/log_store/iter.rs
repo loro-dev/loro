@@ -1,7 +1,7 @@
 use crate::Op;
 
 use crate::id::ClientID;
-use crate::id::ContainerIdx;
+
 use crate::op::RichOp;
 
 use crate::span::HasId;
