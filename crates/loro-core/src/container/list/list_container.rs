@@ -20,7 +20,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    id::{Counter, ID},
+    id::{ClientID, Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
     value::LoroValue,
     version::IdSpanVector,
@@ -290,19 +290,31 @@ impl Container for ListContainer {
 
 pub struct List {
     instance: Arc<Mutex<ContainerInstance>>,
+    client_id: ClientID,
 }
 
 impl Clone for List {
     fn clone(&self) -> Self {
         Self {
             instance: Arc::clone(&self.instance),
+            client_id: self.client_id,
         }
     }
 }
 
 impl List {
+    pub(crate) fn from_instance(
+        instance: Arc<Mutex<ContainerInstance>>,
+        client_id: ClientID,
+    ) -> Self {
+        Self {
+            instance,
+            client_id,
+        }
+    }
+
     pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
-        self.with_container(|x| x.insert_batch(ctx, pos, values))
+        self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
     }
 
     pub fn insert<C: Context, V: Into<LoroValue>>(
@@ -311,7 +323,7 @@ impl List {
         pos: usize,
         value: V,
     ) -> Option<ID> {
-        self.with_container(|x| x.insert(ctx, pos, value))
+        self.with_container_checked(ctx, |x| x.insert(ctx, pos, value))
     }
 
     pub fn insert_obj<C: Context>(
@@ -320,11 +332,11 @@ impl List {
         pos: usize,
         obj: ContainerType,
     ) -> ContainerID {
-        self.with_container(|x| x.insert_obj(ctx, pos, obj))
+        self.with_container_checked(ctx, |x| x.insert_obj(ctx, pos, obj))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
-        self.with_container(|text| text.delete(ctx, pos, len))
+        self.with_container_checked(ctx, |text| text.delete(ctx, pos, len))
     }
 
     pub fn len(&self) -> usize {
@@ -348,10 +360,8 @@ impl ContainerWrapper for List {
         let list = container_instance.as_list_mut().unwrap();
         f(list)
     }
-}
 
-impl From<Arc<Mutex<ContainerInstance>>> for List {
-    fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
-        List { instance: text }
+    fn client_id(&self) -> ClientID {
+        self.client_id
     }
 }

@@ -10,7 +10,7 @@ use owning_ref::OwningRefMut;
 
 use crate::{
     context::Context,
-    id::ContainerIdx,
+    id::{ClientID, ContainerIdx},
     op::{RemoteOp, RichOp},
     version::IdSpanVector,
     LoroValue, VersionVector,
@@ -290,6 +290,23 @@ pub trait ContainerWrapper {
     fn with_container<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Self::Container) -> R;
+
+    fn with_container_checked<C: Context, F, R>(&self, ctx: &C, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Container) -> R,
+    {
+        let store_client_id = ctx.log_store().read().unwrap().this_client_id();
+        if store_client_id != self.client_id() {
+            panic!(
+                "Context's client_id({}) does not match Container's client_id({})",
+                store_client_id,
+                self.client_id()
+            );
+        }
+        self.with_container(f)
+    }
+
+    fn client_id(&self) -> ClientID;
 
     fn id(&self) -> ContainerID {
         self.with_container(|x| x.id().clone())

@@ -13,7 +13,7 @@ use crate::{
     },
     context::Context,
     debug_log,
-    id::{Counter, ID},
+    id::{ClientID, Counter, ID},
     op::{Content, Op, RemoteOp, RichOp},
     value::LoroValue,
     version::IdSpanVector,
@@ -293,27 +293,39 @@ impl Container for TextContainer {
 
 pub struct Text {
     instance: Arc<Mutex<ContainerInstance>>,
+    client_id: ClientID,
 }
 
 impl Clone for Text {
     fn clone(&self) -> Self {
         Self {
             instance: Arc::clone(&self.instance),
+            client_id: self.client_id,
         }
     }
 }
 
 impl Text {
+    pub(crate) fn from_instance(
+        instance: Arc<Mutex<ContainerInstance>>,
+        client_id: ClientID,
+    ) -> Self {
+        Self {
+            instance,
+            client_id,
+        }
+    }
+
     pub fn id(&self) -> ContainerID {
         self.instance.lock().unwrap().as_text().unwrap().id.clone()
     }
 
     pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
-        self.with_container(|x| x.insert(ctx, pos, text))
+        self.with_container_checked(ctx, |x| x.insert(ctx, pos, text))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
-        self.with_container(|text| text.delete(ctx, pos, len))
+        self.with_container_checked(ctx, |text| text.delete(ctx, pos, len))
     }
 
     pub fn get_value(&self) -> LoroValue {
@@ -341,10 +353,8 @@ impl ContainerWrapper for Text {
         let text = container_instance.as_text_mut().unwrap();
         f(text)
     }
-}
 
-impl From<Arc<Mutex<ContainerInstance>>> for Text {
-    fn from(text: Arc<Mutex<ContainerInstance>>) -> Self {
-        Text { instance: text }
+    fn client_id(&self) -> crate::id::ClientID {
+        self.client_id
     }
 }
