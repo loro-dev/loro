@@ -39,6 +39,16 @@ impl ListOp {
     }
 }
 
+impl InnerListOp {
+    pub fn new_del(pos: usize, len: usize) -> Self {
+        assert!(len != 0);
+        Self::Delete(DeleteSpan {
+            pos: pos as isize,
+            len: len as isize,
+        })
+    }
+}
+
 impl HasLength for DeleteSpan {
     fn content_len(&self) -> usize {
         self.len.unsigned_abs()
@@ -232,6 +242,68 @@ impl Sliceable for ListOp {
                 pos: *pos + from,
             },
             ListOp::Delete(span) => ListOp::Delete(span.slice(from, to)),
+        }
+    }
+}
+
+impl Mergable for InnerListOp {
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        match self {
+            InnerListOp::Insert { pos, slice } => match _other {
+                InnerListOp::Insert {
+                    pos: other_pos,
+                    slice: other_slice,
+                } => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
+                _ => false,
+            },
+            &InnerListOp::Delete(span) => match _other {
+                InnerListOp::Delete(other_span) => span.is_mergable(other_span, &()),
+                _ => false,
+            },
+        }
+    }
+
+    fn merge(&mut self, _other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        match self {
+            InnerListOp::Insert { slice, .. } => match _other {
+                InnerListOp::Insert {
+                    slice: other_slice, ..
+                } => {
+                    slice.merge(other_slice, &());
+                }
+                _ => unreachable!(),
+            },
+            InnerListOp::Delete(span) => match _other {
+                InnerListOp::Delete(other_span) => span.merge(other_span, &()),
+                _ => unreachable!(),
+            },
+        }
+    }
+}
+
+impl HasLength for InnerListOp {
+    fn content_len(&self) -> usize {
+        match self {
+            InnerListOp::Insert { slice, .. } => slice.content_len(),
+            InnerListOp::Delete(span) => span.atom_len(),
+        }
+    }
+}
+
+impl Sliceable for InnerListOp {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        match self {
+            InnerListOp::Insert { slice, pos } => InnerListOp::Insert {
+                slice: slice.slice(from, to),
+                pos: *pos + from,
+            },
+            InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
         }
     }
 }

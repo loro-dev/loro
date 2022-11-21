@@ -5,12 +5,13 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    op::{RemoteOp, RichOp},
+    op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
     InternalString, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use std::{any::Any, fmt::Debug};
 
@@ -40,10 +41,10 @@ pub trait Container: Debug + Any + Unpin {
     // fn serialize(&self) -> Vec<u8>;
 
     /// convert an op content to exported format that includes the raw data
-    fn to_export(&mut self, op: &mut RemoteOp, gc: bool);
+    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]>;
 
     /// convert an op content to compact imported format
-    fn to_import(&mut self, op: &mut RemoteOp);
+    fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
     /// Apply the effect of the op directly to the state.
     fn update_state_directly(&mut self, op: &RichOp);

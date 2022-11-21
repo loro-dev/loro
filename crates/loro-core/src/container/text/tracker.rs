@@ -2,10 +2,10 @@ use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
-    container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
+    container::{list::list_op::InnerListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
     id::{Counter, ID},
-    op::{RemoteContent, RichOp},
+    op::{InnerContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
@@ -303,7 +303,7 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    fn apply(&mut self, id: ID, content: &RemoteContent) {
+    fn apply(&mut self, id: ID, content: &InnerContent) {
         self.real_checkout();
         assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
@@ -314,14 +314,14 @@ impl Tracker {
         self.all_vv.set_end(id.inc(content.content_len() as i32));
         let text_content = content.as_list().expect("Content is not for list");
         match text_content {
-            ListOp::Insert { slice, pos } => {
+            InnerListOp::Insert { slice, pos } => {
                 let yspan =
                     self.content
-                        .get_yspan_at_pos(id, *pos, slice.content_len(), slice.to_range());
+                        .get_yspan_at_pos(id, *pos, slice.content_len(), slice.clone());
                 // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
                 unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
             }
-            ListOp::Delete(span) => {
+            InnerListOp::Delete(span) => {
                 let mut spans = self
                     .content
                     .get_active_id_spans(span.start() as usize, span.atom_len());

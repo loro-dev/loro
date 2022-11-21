@@ -7,11 +7,12 @@ use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
 use owning_ref::OwningRefMut;
+use smallvec::SmallVec;
 
 use crate::{
     context::Context,
     id::ContainerIdx,
-    op::{RemoteOp, RichOp},
+    op::{RemoteContent, RichOp},
     version::IdSpanVector,
     LoroValue, VersionVector,
 };
@@ -66,23 +67,6 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.get_value(),
         }
     }
-    fn to_export(&mut self, op: &mut RemoteOp, gc: bool) {
-        match self {
-            ContainerInstance::Map(x) => x.to_export(op, gc),
-            ContainerInstance::Text(x) => x.to_export(op, gc),
-            ContainerInstance::Dyn(x) => x.to_export(op, gc),
-            ContainerInstance::List(x) => x.to_export(op, gc),
-        }
-    }
-
-    fn to_import(&mut self, op: &mut RemoteOp) {
-        match self {
-            ContainerInstance::Map(x) => x.to_import(op),
-            ContainerInstance::Text(x) => x.to_import(op),
-            ContainerInstance::Dyn(x) => x.to_import(op),
-            ContainerInstance::List(x) => x.to_import(op),
-        }
-    }
 
     fn update_state_directly(&mut self, op: &RichOp) {
         match self {
@@ -126,6 +110,28 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.apply_tracked_effects_from(from, effect_spans),
             ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(from, effect_spans),
             ContainerInstance::List(x) => x.apply_tracked_effects_from(from, effect_spans),
+        }
+    }
+
+    fn to_export(
+        &mut self,
+        content: crate::op::InnerContent,
+        gc: bool,
+    ) -> SmallVec<[RemoteContent; 1]> {
+        match self {
+            ContainerInstance::Map(x) => x.to_export(content, gc),
+            ContainerInstance::Text(x) => x.to_export(content, gc),
+            ContainerInstance::Dyn(x) => x.to_export(content, gc),
+            ContainerInstance::List(x) => x.to_export(content, gc),
+        }
+    }
+
+    fn to_import(&mut self, content: crate::op::RemoteContent) -> crate::op::InnerContent {
+        match self {
+            ContainerInstance::Map(x) => x.to_import(content),
+            ContainerInstance::Text(x) => x.to_import(content),
+            ContainerInstance::Dyn(x) => x.to_import(content),
+            ContainerInstance::List(x) => x.to_import(content),
         }
     }
 }

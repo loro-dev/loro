@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::pool::Pool;
+use super::{super::pool::Pool, InnerMapSet};
 use fxhash::FxHashMap;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
@@ -9,8 +10,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    op::RemoteOp,
-    op::{Op, RemoteContent, RichOp},
+    op::{InnerContent, Op, RemoteContent, RichOp},
     span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
@@ -31,7 +31,7 @@ pub struct MapContainer {
 
 #[derive(Debug)]
 struct ValueSlot {
-    value: LoroValue,
+    value: u32,
     order: TotalOrderStamp,
 }
 
@@ -53,8 +53,8 @@ impl MapContainer {
         value: V,
     ) {
         let value = value.into();
-        let value_index = self.pool.alloc(value).start as i32;
-        let value = LoroValue::I32(value_index);
+        let value_index = self.pool.alloc(value).start;
+        let value = value_index;
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -70,9 +70,9 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: RemoteContent::Map(MapSet {
+            content: InnerContent::Map(InnerMapSet {
                 key: key.clone(),
-                value: value.clone(),
+                value,
             }),
         }]);
 
@@ -90,8 +90,8 @@ impl MapContainer {
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let container_id = store.create_container(obj);
-        let value_index = self.pool.alloc(container_id.clone()).start as i32;
-        let value = LoroValue::I32(value_index);
+        let value_index = self.pool.alloc(container_id.clone()).start;
+        let value = value_index;
         // TODO: store this value?
         let id = store.next_id_for(client_id);
         let container = store.get_container_idx(self_id).unwrap();
@@ -103,9 +103,9 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: RemoteContent::Map(MapSet {
+            content: InnerContent::Map(InnerMapSet {
+                value,
                 key: key.clone(),
-                value: value.clone(),
             }),
         }]);
         self.state.insert(key, ValueSlot { value, order });
@@ -131,7 +131,7 @@ impl Container for MapContainer {
     fn get_value(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
-            let index = *value.value.as_i32().unwrap() as u32;
+            let index = value.value;
             let value = self.pool.slice(&(index..index + 1))[0].clone();
             if let Some(container_id) = value.as_unresolved() {
                 map.insert(
@@ -149,27 +149,33 @@ impl Container for MapContainer {
 
     fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {}
 
-    fn to_export(&mut self, op: &mut RemoteOp, _gc: bool) {
-        for content in op.contents.iter_mut() {
-            if let Some(set) = content.as_map_mut() {
-                let index = *set.value.as_i32().unwrap() as u32;
-                set.value = self.pool.slice(&(index..index + 1))[0].clone();
-            }
+    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
+        if let Ok(set) = content.into_map() {
+            let index = set.value;
+            let value = self.pool.slice(&(index..index + 1))[0].clone();
+            return smallvec![RemoteContent::Map(MapSet {
+                key: set.key.clone(),
+                value,
+            })];
         }
+
+        unreachable!()
     }
 
-    fn to_import(&mut self, op: &mut RemoteOp) {
-        for content in op.contents.iter_mut() {
-            if let Some(set) = content.as_map_mut() {
-                let index = self.pool.alloc(std::mem::take(&mut set.value));
-                set.value = LoroValue::I32(index.start as i32);
-            }
+    fn to_import(&mut self, mut content: RemoteContent) -> InnerContent {
+        if let Some(set) = content.as_map_mut() {
+            let index = self.pool.alloc(std::mem::take(&mut set.value));
+            return InnerContent::Map(InnerMapSet {
+                key: set.key.clone(),
+                value: index.start,
+            });
         }
+        unreachable!()
     }
 
     fn update_state_directly(&mut self, op: &RichOp) {
         let content = op.get_sliced().content;
-        let v: &MapSet = content.as_map().unwrap();
+        let v: &InnerMapSet = content.as_map().unwrap();
         let order = TotalOrderStamp {
             lamport: op.lamport(),
             client_id: op.client_id(),

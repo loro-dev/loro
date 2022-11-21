@@ -1,6 +1,6 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::ContainerID,
+    container::{registry::ContainerInstance, Container, ContainerID},
     id::{ClientID, ContainerIdx, Counter, ID},
     span::{HasCounter, HasId, HasLamport},
     LogStore,
@@ -9,7 +9,7 @@ use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 mod content;
 
 pub use content::*;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 /// Operation is a unit of change.
 ///
@@ -23,7 +23,7 @@ use smallvec::{smallvec, SmallVec};
 pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
-    pub(crate) content: RemoteContent,
+    pub(crate) content: InnerContent,
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub struct RichOp<'a> {
 
 impl Op {
     #[inline]
-    pub(crate) fn new(id: ID, content: RemoteContent, container: u32) -> Self {
+    pub(crate) fn new(id: ID, content: InnerContent, container: u32) -> Self {
         Op {
             counter: id.counter,
             content,
@@ -54,27 +54,29 @@ impl Op {
         }
     }
 
-    pub(crate) fn convert(self, log: &LogStore) -> RemoteOp {
-        let container = log.reg.get_id(self.container).unwrap().clone();
+    pub(crate) fn convert(self, container: &mut ContainerInstance, gc: bool) -> RemoteOp {
         RemoteOp {
             counter: self.counter,
-            container,
-            contents: RleVec::from(smallvec![self.content]),
+            container: container.id().clone(),
+            contents: RleVec::from(container.to_export(self.content, gc)),
         }
     }
 }
 
 impl RemoteOp {
-    pub(crate) fn convert(self, log: &mut LogStore) -> SmallVec<[Op; 1]> {
-        let container = log.get_or_create_container_idx(&self.container);
+    pub(crate) fn convert(
+        self,
+        container: &mut ContainerInstance,
+        container_idx: u32,
+    ) -> SmallVec<[Op; 1]> {
         let mut counter = self.counter;
         self.contents
             .into_iter()
             .map(|content| {
                 let ans = Op {
                     counter,
-                    container,
-                    content,
+                    container: container_idx,
+                    content: container.to_import(content),
                 };
                 counter += ans.atom_len() as Counter;
                 ans
@@ -104,7 +106,7 @@ impl HasLength for Op {
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from);
-        let content: RemoteContent = self.content.slice(from, to);
+        let content: InnerContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
             content,
