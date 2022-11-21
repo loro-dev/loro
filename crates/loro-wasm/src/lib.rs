@@ -102,21 +102,21 @@ impl LoroMap {
     pub fn get_text(&mut self, ctx: &mut Loro, key: &str) -> LoroText {
         let id = self.0.insert_obj(&ctx.0, key, ContainerType::Text);
         let text = ctx.deref().get_container(&id).unwrap();
-        LoroText(text.into())
+        LoroText(Text::from_instance(text, ctx.deref().client_id()))
     }
 
     #[wasm_bindgen(js_name = "getMap")]
     pub fn get_map(&mut self, ctx: &mut Loro, key: &str) -> LoroMap {
         let id = self.0.insert_obj(ctx.deref_mut(), key, ContainerType::Map);
         let map = ctx.deref().get_container(&id).unwrap();
-        LoroMap(map.into())
+        LoroMap(Map::from_instance(map, ctx.deref().client_id()))
     }
 
     #[wasm_bindgen(js_name = "getList")]
     pub fn get_list(&mut self, ctx: &mut Loro, key: &str) -> LoroList {
         let id = self.0.insert_obj(ctx.deref_mut(), key, ContainerType::List);
         let list = ctx.deref().get_container(&id).unwrap();
-        LoroList(list.into())
+        LoroList(List::from_instance(list, ctx.deref().client_id()))
     }
 }
 
@@ -150,7 +150,7 @@ impl LoroList {
             .0
             .insert_obj(ctx.deref_mut(), index, ContainerType::Text);
         let text = ctx.deref().get_container(&id).unwrap();
-        LoroText(text.into())
+        LoroText(Text::from_instance(text, ctx.deref().client_id()))
     }
 
     #[wasm_bindgen(js_name = "getMap")]
@@ -159,7 +159,7 @@ impl LoroList {
             .0
             .insert_obj(ctx.deref_mut(), index, ContainerType::Map);
         let map = ctx.deref().get_container(&id).unwrap();
-        LoroMap(map.into())
+        LoroMap(Map::from_instance(map, ctx.deref().client_id()))
     }
 
     #[wasm_bindgen(js_name = "getList")]
@@ -168,7 +168,7 @@ impl LoroList {
             .0
             .insert_obj(ctx.deref_mut(), index, ContainerType::List);
         let list = ctx.deref().get_container(&id).unwrap();
-        LoroList(list.into())
+        LoroList(List::from_instance(list, ctx.deref().client_id()))
     }
 }
 

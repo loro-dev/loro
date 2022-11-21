@@ -291,10 +291,7 @@ impl Clone for Text {
 }
 
 impl Text {
-    pub(crate) fn from_instance(
-        instance: Arc<Mutex<ContainerInstance>>,
-        client_id: ClientID,
-    ) -> Self {
+    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         Self {
             instance,
             client_id,

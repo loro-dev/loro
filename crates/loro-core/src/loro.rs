@@ -29,6 +29,10 @@ impl LoroCore {
         }
     }
 
+    pub fn client_id(&self) -> ClientID {
+        self.log_store.read().unwrap().this_client_id()
+    }
+
     pub fn vv(&self) -> VersionVector {
         self.log_store.read().unwrap().get_vv().clone()
     }
