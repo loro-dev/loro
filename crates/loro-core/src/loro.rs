@@ -36,34 +36,34 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_list<I: Into<ContainerIdRaw>>(&mut self, id: I) -> List {
         let id: ContainerIdRaw = id.into();
-        self.log_store
-            .write()
-            .unwrap()
+        let mut store = self.log_store.write().unwrap();
+        let instance = store
             .get_or_create_container(&id.with_type(ContainerType::List))
-            .clone()
-            .into()
+            .clone();
+        let cid = store.this_client_id();
+        List::from_instance(instance, cid)
     }
 
     #[inline(always)]
     pub fn get_map<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Map {
         let id: ContainerIdRaw = id.into();
-        self.log_store
-            .write()
-            .unwrap()
+        let mut store = self.log_store.write().unwrap();
+        let instance = store
             .get_or_create_container(&id.with_type(ContainerType::Map))
-            .clone()
-            .into()
+            .clone();
+        let cid = store.this_client_id();
+        Map::from_instance(instance, cid)
     }
 
     #[inline(always)]
     pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Text {
         let id: ContainerIdRaw = id.into();
-        self.log_store
-            .write()
-            .unwrap()
+        let mut store = self.log_store.write().unwrap();
+        let instance = store
             .get_or_create_container(&id.with_type(ContainerType::Text))
-            .clone()
-            .into()
+            .clone();
+        let cid = store.this_client_id();
+        Text::from_instance(instance, cid)
     }
 
     pub fn export(
