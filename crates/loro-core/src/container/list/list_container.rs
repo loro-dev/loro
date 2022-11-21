@@ -251,15 +251,7 @@ impl Container for ListContainer {
         for effect in self.tracker.iter_effects(from, effect_spans) {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => {
-                    let v = match content {
-                        ListSlice::Slice(slice) => slice.clone(),
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
-                        _ => unreachable!(),
-                    };
-
-                    self.state.insert(pos, v)
-                }
+                Effect::Ins { pos, content } => self.state.insert(pos, content),
             }
         }
     }

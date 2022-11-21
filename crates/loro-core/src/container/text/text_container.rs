@@ -269,15 +269,7 @@ impl Container for TextContainer {
             debug_log!("APPLY EFFECT {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => {
-                    let v = match content {
-                        ListSlice::Slice(slice) => slice.clone(),
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
-                        _ => unreachable!(),
-                    };
-
-                    self.state.insert(pos, v)
-                }
+                Effect::Ins { pos, content } => self.state.insert(pos, content),
             }
         }
         debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());
