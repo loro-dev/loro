@@ -136,6 +136,17 @@ fn two_client_text_sync() {
     assert_eq!(&**value, "abc");
 }
 
+#[test]
+#[should_panic]
+fn test_recursive_should_panic() {
+    let mut store_a = LoroCore::new(Default::default(), Some(1));
+    let mut store_b = LoroCore::new(Default::default(), Some(2));
+    let mut text_a = store_a.get_text("text_a");
+    let mut text_b = store_b.get_text("text_b");
+    text_a.insert(&store_a, 0, "012");
+    text_b.insert(&store_a, 1, "34");
+}
+
 #[ctor]
 fn init_color_backtrace() {
     color_backtrace::install();

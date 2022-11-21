@@ -10,6 +10,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
+    id::ClientID,
     op::{InnerContent, Op, RemoteContent, RichOp},
     span::HasLamport,
     value::LoroValue,
@@ -209,19 +210,31 @@ impl Container for MapContainer {
 
 pub struct Map {
     instance: Arc<Mutex<ContainerInstance>>,
+    client_id: ClientID,
 }
 
 impl Clone for Map {
     fn clone(&self) -> Self {
         Self {
             instance: Arc::clone(&self.instance),
+            client_id: self.client_id,
         }
     }
 }
 
 impl Map {
+    pub(crate) fn from_instance(
+        instance: Arc<Mutex<ContainerInstance>>,
+        client_id: ClientID,
+    ) -> Self {
+        Self {
+            instance,
+            client_id,
+        }
+    }
+
     pub fn insert<C: Context, V: Into<LoroValue>>(&mut self, ctx: &C, key: &str, value: V) {
-        self.with_container(|map| {
+        self.with_container_checked(ctx, |map| {
             map.insert(ctx, key.into(), value);
         })
     }
@@ -232,11 +245,11 @@ impl Map {
         key: &str,
         obj: ContainerType,
     ) -> ContainerID {
-        self.with_container(|map| map.insert_obj(ctx, key.into(), obj))
+        self.with_container_checked(ctx, |map| map.insert_obj(ctx, key.into(), obj))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) {
-        self.with_container(|map| {
+        self.with_container_checked(ctx, |map| {
             map.delete(ctx, key.into());
         })
     }
@@ -271,10 +284,8 @@ impl ContainerWrapper for Map {
         let map = container_instance.as_map_mut().unwrap();
         f(map)
     }
-}
 
-impl From<Arc<Mutex<ContainerInstance>>> for Map {
-    fn from(map: Arc<Mutex<ContainerInstance>>) -> Self {
-        Map { instance: map }
+    fn client_id(&self) -> ClientID {
+        self.client_id
     }
 }
