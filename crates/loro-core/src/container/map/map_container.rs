@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use super::super::pool::Pool;
 use fxhash::FxHashMap;
 
 use crate::{
@@ -25,6 +26,7 @@ use super::MapSet;
 pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
+    pool: Pool,
 }
 
 #[derive(Debug)]
@@ -40,6 +42,7 @@ impl MapContainer {
         MapContainer {
             id,
             state: FxHashMap::default(),
+            pool: Pool::default(),
         }
     }
 
@@ -50,6 +53,8 @@ impl MapContainer {
         value: V,
     ) {
         let value = value.into();
+        let value_index = self.pool.alloc(value).start as i32;
+        let value = LoroValue::I32(value_index);
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -85,6 +90,8 @@ impl MapContainer {
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
         let container_id = store.create_container(obj);
+        let value_index = self.pool.alloc(container_id.clone()).start as i32;
+        let value = LoroValue::I32(value_index);
         // TODO: store this value?
         let id = store.next_id_for(client_id);
         let container = store.get_container_idx(self_id).unwrap();
@@ -98,16 +105,10 @@ impl MapContainer {
             container,
             content: Content::Map(MapSet {
                 key: key.clone(),
-                value: container_id.clone().into(),
+                value: value.clone(),
             }),
         }]);
-        self.state.insert(
-            key,
-            ValueSlot {
-                value: LoroValue::Unresolved(Box::new(container_id.clone())),
-                order,
-            },
-        );
+        self.state.insert(key, ValueSlot { value, order });
         container_id
     }
 
@@ -130,14 +131,16 @@ impl Container for MapContainer {
     fn get_value(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for (key, value) in self.state.iter() {
-            if let Some(container_id) = value.value.as_unresolved() {
+            let index = *value.value.as_i32().unwrap() as u32;
+            let value = self.pool.slice(&(index..index + 1))[0].clone();
+            if let Some(container_id) = value.as_unresolved() {
                 map.insert(
                     key.to_string(),
                     // TODO: make a from
                     LoroValue::Unresolved(container_id.clone()),
                 );
             } else {
-                map.insert(key.to_string(), value.value.clone());
+                map.insert(key.to_string(), value);
             }
         }
 
@@ -146,9 +149,23 @@ impl Container for MapContainer {
 
     fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {}
 
-    fn to_export(&mut self, _op: &mut RemoteOp, _gc: bool) {}
+    fn to_export(&mut self, op: &mut RemoteOp, _gc: bool) {
+        for content in op.contents.iter_mut() {
+            if let Some(set) = content.as_map_mut() {
+                let index = *set.value.as_i32().unwrap() as u32;
+                set.value = self.pool.slice(&(index..index + 1))[0].clone();
+            }
+        }
+    }
 
-    fn to_import(&mut self, _op: &mut RemoteOp) {}
+    fn to_import(&mut self, op: &mut RemoteOp) {
+        for content in op.contents.iter_mut() {
+            if let Some(set) = content.as_map_mut() {
+                let index = self.pool.alloc(std::mem::take(&mut set.value));
+                set.value = LoroValue::I32(index.start as i32);
+            }
+        }
+    }
 
     fn update_state_directly(&mut self, op: &RichOp) {
         let content = op.get_sliced().content;
