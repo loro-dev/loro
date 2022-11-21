@@ -10,7 +10,7 @@ use crate::{
     },
     context::Context,
     op::RemoteOp,
-    op::{Content, Op, RichOp},
+    op::{Op, RemoteContent, RichOp},
     span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
@@ -70,7 +70,7 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: Content::Map(MapSet {
+            content: RemoteContent::Map(MapSet {
                 key: key.clone(),
                 value: value.clone(),
             }),
@@ -103,7 +103,7 @@ impl MapContainer {
         store.append_local_ops(&[Op {
             counter: id.counter,
             container,
-            content: Content::Map(MapSet {
+            content: RemoteContent::Map(MapSet {
                 key: key.clone(),
                 value: value.clone(),
             }),

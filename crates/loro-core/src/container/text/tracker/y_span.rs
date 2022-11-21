@@ -192,7 +192,7 @@ impl HasLength for YSpan {
 
 #[cfg(any(test, features = "test_utils"))]
 pub mod test {
-    use crate::{container::text::text_content::ListSlice, op::Content, ContentType, Op, ID};
+    use crate::{container::text::text_content::ListSlice, op::RemoteContent, ContentType, Op, ID};
     use rle::{HasLength, RleVecWithIndex};
 
     use super::YSpan;
@@ -202,7 +202,7 @@ pub mod test {
         let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            Content::Dyn(Box::new(YSpan {
+            RemoteContent::Dyn(Box::new(YSpan {
                 origin_left: Some(ID::new(0, 0)),
                 origin_right: None,
                 id: ID::new(0, 1),
@@ -213,7 +213,7 @@ pub mod test {
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            Content::Dyn(Box::new(YSpan {
+            RemoteContent::Dyn(Box::new(YSpan {
                 origin_left: Some(ID::new(0, 1)),
                 origin_right: None,
                 id: ID::new(0, 2),
@@ -235,7 +235,7 @@ pub mod test {
         let mut vec: RleVecWithIndex<Op> = RleVecWithIndex::new();
         vec.push(Op::new(
             ID::new(0, 1),
-            Content::Dyn(Box::new(YSpan {
+            RemoteContent::Dyn(Box::new(YSpan {
                 origin_left: Some(ID::new(0, 0)),
                 origin_right: None,
                 id: ID::new(0, 1),
@@ -246,7 +246,7 @@ pub mod test {
         ));
         vec.push(Op::new(
             ID::new(0, 2),
-            Content::Dyn(Box::new(YSpan {
+            RemoteContent::Dyn(Box::new(YSpan {
                 origin_left: Some(ID::new(0, 0)),
                 origin_right: Some(ID::new(0, 1)),
                 id: ID::new(0, 5),

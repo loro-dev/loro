@@ -20,7 +20,7 @@ use crate::{
     },
     dag::remove_included_frontiers,
     id::{ClientID, ContainerIdx, Counter, ID},
-    op::{Content, Op, RemoteOp},
+    op::{Op, RemoteContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
@@ -129,7 +129,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
             for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
                     let (prop, gc, value) = match content {
-                        crate::op::Content::Map(MapSet { key, value }) => (
+                        crate::op::RemoteContent::Map(MapSet { key, value }) => (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key);
                                 keys.len() - 1
@@ -137,7 +137,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                             0,
                             value,
                         ),
-                        crate::op::Content::List(list) => match list {
+                        crate::op::RemoteContent::List(list) => match list {
                             ListOp::Insert { slice, pos } => (
                                 pos,
                                 match &slice {
@@ -155,7 +155,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                                 (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                             }
                         },
-                        crate::op::Content::Dyn(_) => unreachable!(),
+                        crate::op::RemoteContent::Dyn(_) => unreachable!(),
                     };
                     op_len += 1;
                     ops.push(OpEncoding {
@@ -256,7 +256,7 @@ fn decode_changes(
             let content = match container_type {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
-                    Content::Map(MapSet { key, value })
+                    RemoteContent::Map(MapSet { key, value })
                 }
                 ContainerType::List | ContainerType::Text => {
                     let pos = prop;
@@ -278,7 +278,7 @@ fn decode_changes(
                             ListOp::Insert { slice, pos }
                         }
                     };
-                    Content::List(list_op)
+                    RemoteContent::List(list_op)
                 }
             };
 

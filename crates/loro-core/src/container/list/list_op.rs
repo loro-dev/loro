@@ -3,11 +3,17 @@ use std::ops::Range;
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 
-use crate::container::text::text_content::ListSlice;
+use crate::container::text::text_content::{ListSlice, SliceRange};
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum ListOp {
     Insert { slice: ListSlice, pos: usize },
+    Delete(DeleteSpan),
+}
+
+#[derive(EnumAsInner, Debug, Clone)]
+pub enum InnerListOp {
+    Insert { slice: SliceRange, pos: usize },
     Delete(DeleteSpan),
 }
 

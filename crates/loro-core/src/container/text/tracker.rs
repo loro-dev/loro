@@ -5,7 +5,7 @@ use crate::{
     container::{list::list_op::ListOp, text::tracker::yata_impl::YataImpl},
     debug_log,
     id::{Counter, ID},
-    op::{Content, RichOp},
+    op::{RemoteContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
     VersionVector,
@@ -303,7 +303,7 @@ impl Tracker {
     }
 
     /// apply an operation directly to the current tracker
-    fn apply(&mut self, id: ID, content: &Content) {
+    fn apply(&mut self, id: ID, content: &RemoteContent) {
         self.real_checkout();
         assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);

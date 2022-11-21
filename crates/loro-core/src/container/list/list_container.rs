@@ -19,7 +19,7 @@ use crate::{
     },
     context::Context,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp, RichOp},
+    op::{Op, RemoteContent, RemoteOp, RichOp},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -54,7 +54,7 @@ impl ListContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            RemoteContent::List(ListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -76,7 +76,7 @@ impl ListContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            RemoteContent::List(ListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -101,7 +101,7 @@ impl ListContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            Content::List(ListOp::new_del(pos, len)),
+            RemoteContent::List(ListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -199,7 +199,7 @@ impl Container for ListContainer {
 
     fn update_state_directly(&mut self, op: &RichOp) {
         match &op.get_sliced().content {
-            Content::List(op) => match op {
+            RemoteContent::List(op) => match op {
                 ListOp::Insert { slice, pos } => {
                     self.state.insert(*pos, slice.as_slice().unwrap().clone())
                 }

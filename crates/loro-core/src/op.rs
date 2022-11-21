@@ -23,14 +23,14 @@ use smallvec::{smallvec, SmallVec};
 pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
-    pub(crate) content: Content,
+    pub(crate) content: RemoteContent,
 }
 
 #[derive(Debug, Clone)]
 pub struct RemoteOp {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) contents: RleVec<[Content; 1]>,
+    pub(crate) contents: RleVec<[RemoteContent; 1]>,
 }
 
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
@@ -46,7 +46,7 @@ pub struct RichOp<'a> {
 
 impl Op {
     #[inline]
-    pub(crate) fn new(id: ID, content: Content, container: u32) -> Self {
+    pub(crate) fn new(id: ID, content: RemoteContent, container: u32) -> Self {
         Op {
             counter: id.counter,
             content,
@@ -104,7 +104,7 @@ impl HasLength for Op {
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from);
-        let content: Content = self.content.slice(from, to);
+        let content: RemoteContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
             content,

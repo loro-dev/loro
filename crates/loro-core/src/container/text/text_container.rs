@@ -14,7 +14,7 @@ use crate::{
     context::Context,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp, RichOp},
+    op::{Op, RemoteContent, RemoteOp, RichOp},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -59,7 +59,7 @@ impl TextContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            RemoteContent::List(ListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -84,7 +84,7 @@ impl TextContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            Content::List(ListOp::new_del(pos, len)),
+            RemoteContent::List(ListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -142,7 +142,7 @@ impl Container for TextContainer {
                 .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
         }
 
-        let mut contents: RleVec<[Content; 1]> = RleVec::new();
+        let mut contents: RleVec<[RemoteContent; 1]> = RleVec::new();
         for content in op.contents.iter_mut() {
             if let Some((slice, pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
                 match slice {
@@ -158,13 +158,13 @@ impl Container for TextContainer {
                             for span in self.raw_str.get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
-                                        contents.push(Content::List(ListOp::Insert {
+                                        contents.push(RemoteContent::List(ListOp::Insert {
                                             slice: ListSlice::RawStr(s[start..start + span].into()),
                                             pos: pos_start,
                                         }));
                                     }
                                     Alive::False(span) => {
-                                        let v = Content::List(ListOp::Insert {
+                                        let v = RemoteContent::List(ListOp::Insert {
                                             slice: ListSlice::Unknown(span),
                                             pos: pos_start,
                                         });
@@ -177,14 +177,14 @@ impl Container for TextContainer {
                             }
                             assert_eq!(start, r.atom_len());
                         } else {
-                            contents.push(Content::List(ListOp::Insert {
+                            contents.push(RemoteContent::List(ListOp::Insert {
                                 slice: ListSlice::RawStr(s),
                                 pos: *pos,
                             }));
                         }
                     }
                     this => {
-                        contents.push(Content::List(ListOp::Insert {
+                        contents.push(RemoteContent::List(ListOp::Insert {
                             slice: this.clone(),
                             pos: *pos,
                         }));
@@ -220,7 +220,7 @@ impl Container for TextContainer {
 
     fn update_state_directly(&mut self, op: &RichOp) {
         match &op.get_sliced().content {
-            Content::List(op) => match op {
+            RemoteContent::List(op) => match op {
                 ListOp::Insert { slice, pos } => {
                     let v = match slice {
                         ListSlice::Slice(slice) => slice.clone(),
