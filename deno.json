@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "build": "cargo build",
+    "test": "RUST_BACKTRACE=full cargo nextest run --features=test_utils",
+    "test-all": "deno task test & deno task quick-fuzz",
+    "test-prop": "RUSTFLAGS='--cfg=proptest' cargo nextest run --features=test_utils",
+    "check": "cargo clippy --all-features",
+    "quick-fuzz": "cd  crates/loro-core && just quick-fuzz",
+    "fix": "cargo clippy --fix --features=test_utils",
+    "vet": "cargo vet"
+  }
+}

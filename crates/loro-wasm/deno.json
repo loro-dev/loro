@@ -1,0 +1,11 @@
+{
+  "tasks": {
+    "build": "wasm-pack build --target web .",
+    "test": "deno test --allow-read"
+  },
+  "test": {
+    "files": {
+      "include": ["deno_test/"]
+    }
+  }
+}

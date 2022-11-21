@@ -1,5 +1,11 @@
 import init, { Loro } from "../pkg/loro_wasm.js";
-const wasm = await Deno.readFile("../pkg/loro_wasm_bg.wasm");
+import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
+import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
+const { __dirname } = __(import.meta);
+
+const wasm = await Deno.readFile(
+  resolve(__dirname, "../pkg/loro_wasm_bg.wasm")
+);
 
 await init(wasm);
 const loro = new Loro();

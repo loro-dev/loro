@@ -1,10 +1,13 @@
 {
   "cSpell.words": [
     "arbtest",
+    "clippy",
     "flate",
     "Leeeon",
     "LOGSTORE",
+    "nextest",
     "Peritext",
+    "RUSTFLAGS",
     "smstring",
     "thiserror",
     "txns",
