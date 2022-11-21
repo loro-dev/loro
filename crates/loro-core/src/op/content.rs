@@ -8,7 +8,7 @@ use crate::container::{list::list_op::ListOp, map::MapSet};
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ContentType {
     /// See [`crate::container::text::TextContent`]
-    Text,
+    List,
     /// See [`crate::container::map::MapInsertContent`]
     Map,
     /// Users can define their own content types.
@@ -36,7 +36,7 @@ impl Content {
     pub fn id(&self) -> ContentType {
         match self {
             Self::Map(_) => ContentType::Map,
-            Self::List(_) => ContentType::Text,
+            Self::List(_) => ContentType::List,
             Self::Dyn(arg0) => arg0.id(),
         }
     }
