@@ -191,14 +191,14 @@ impl Container for ListContainer {
         }
     }
 
-    fn to_import(&mut self, mut content: RemoteContent) -> InnerContent {
+    fn to_import(&mut self, content: RemoteContent) -> InnerContent {
         match content {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(data) => {
                         let slice_range = self.raw_data.alloc_arr(data);
                         let slice: SliceRange = slice_range.into();
-                        return InnerContent::List(InnerListOp::Insert { slice, pos });
+                        InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
                     _ => unreachable!(),
                 },

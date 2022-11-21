@@ -3,7 +3,6 @@ use crate::{
     container::{registry::ContainerInstance, Container, ContainerID},
     id::{ClientID, ContainerIdx, Counter, ID},
     span::{HasCounter, HasId, HasLamport},
-    LogStore,
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 mod content;

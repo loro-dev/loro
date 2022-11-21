@@ -201,17 +201,17 @@ impl Container for TextContainer {
                     ListSlice::RawStr(s) => {
                         let range = self.raw_str.alloc(&s);
                         let slice: SliceRange = range.into();
-                        return InnerContent::List(InnerListOp::Insert { slice, pos });
+                        InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
                     ListSlice::Unknown(u) => {
-                        return InnerContent::List(InnerListOp::Insert {
+                        InnerContent::List(InnerListOp::Insert {
                             slice: SliceRange::new_unknown(u as u32),
                             pos,
                         })
                     }
                     _ => unreachable!(),
                 },
-                ListOp::Delete(del) => return InnerContent::List(InnerListOp::Delete(del)),
+                ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
             },
             _ => unreachable!(),
         }

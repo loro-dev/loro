@@ -154,7 +154,7 @@ impl Container for MapContainer {
             let index = set.value;
             let value = self.pool.slice(&(index..index + 1))[0].clone();
             return smallvec![RemoteContent::Map(MapSet {
-                key: set.key.clone(),
+                key: set.key,
                 value,
             })];
         }
@@ -182,14 +182,14 @@ impl Container for MapContainer {
         };
         if let Some(slot) = self.state.get_mut(&v.key) {
             if slot.order < order {
-                slot.value = v.value.clone();
+                slot.value = v.value;
                 slot.order = order;
             }
         } else {
             self.state.insert(
                 v.key.to_owned(),
                 ValueSlot {
-                    value: v.value.clone(),
+                    value: v.value,
                     order,
                 },
             );
