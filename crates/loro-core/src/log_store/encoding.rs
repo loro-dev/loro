@@ -152,7 +152,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
                             }
                         },
                         crate::op::RemoteContent::Dyn(_) => unreachable!(),
-                        RemoteContent::Unknown(u) => (0, u, LoroValue::Null),
                     };
                     op_len += 1;
                     ops.push(OpEncoding {

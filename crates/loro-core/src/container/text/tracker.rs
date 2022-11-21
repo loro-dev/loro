@@ -312,6 +312,7 @@ impl Tracker {
         self.cached_fake_current_vv
             .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
+        dbg!(content);
         let text_content = content.as_list().expect("Content is not for list");
         match text_content {
             InnerListOp::Insert { slice, pos } => {

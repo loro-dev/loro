@@ -188,7 +188,6 @@ impl Container for ListContainer {
                 }
             },
             InnerContent::Map(_) => unreachable!(),
-            InnerContent::Unknown(u) => smallvec::smallvec![RemoteContent::Unknown(u)],
         }
     }
 
@@ -205,7 +204,6 @@ impl Container for ListContainer {
                 },
                 ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
             },
-            RemoteContent::Unknown(u) => InnerContent::Unknown(u),
             _ => unreachable!(),
         }
     }

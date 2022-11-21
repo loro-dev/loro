@@ -145,7 +145,6 @@ impl Container for TextContainer {
 
         let mut ans = SmallVec::new();
         match content {
-            InnerContent::Unknown(u) => ans.push(RemoteContent::Unknown(u)),
             InnerContent::List(list) => match list {
                 InnerListOp::Insert { slice, pos } => {
                     let r = slice;
@@ -204,14 +203,16 @@ impl Container for TextContainer {
                         let slice: SliceRange = range.into();
                         return InnerContent::List(InnerListOp::Insert { slice, pos });
                     }
-                    ListSlice::Unknown(u) => return InnerContent::Unknown(u),
+                    ListSlice::Unknown(u) => {
+                        return InnerContent::List(InnerListOp::Insert {
+                            slice: SliceRange::new_unknown(u as u32),
+                            pos,
+                        })
+                    }
                     _ => unreachable!(),
                 },
                 ListOp::Delete(del) => return InnerContent::List(InnerListOp::Delete(del)),
             },
-            RemoteContent::Unknown(u) => {
-                return InnerContent::Unknown(u);
-            }
             _ => unreachable!(),
         }
     }

@@ -20,7 +20,6 @@ pub enum ContentType {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerContent {
-    Unknown(usize),
     List(InnerListOp),
     Map(InnerMapSet),
 }
@@ -29,7 +28,6 @@ pub enum InnerContent {
 pub enum RemoteContent {
     Map(MapSet),
     List(ListOp),
-    Unknown(usize),
     Dyn(Box<dyn InsertContentTrait>),
 }
 
@@ -39,7 +37,6 @@ impl Clone for RemoteContent {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
             Self::Dyn(arg0) => Self::Dyn(arg0.clone_content()),
-            RemoteContent::Unknown(u) => RemoteContent::Unknown(*u),
         }
     }
 }
@@ -98,7 +95,6 @@ impl HasLength for RemoteContent {
             RemoteContent::Map(x) => x.content_len(),
             RemoteContent::Dyn(x) => x.content_len(),
             RemoteContent::List(x) => x.content_len(),
-            RemoteContent::Unknown(x) => *x,
         }
     }
 }
@@ -109,7 +105,6 @@ impl Sliceable for RemoteContent {
             RemoteContent::Map(x) => RemoteContent::Map(x.slice(from, to)),
             RemoteContent::Dyn(x) => RemoteContent::Dyn(x.slice_content(from, to)),
             RemoteContent::List(x) => RemoteContent::List(x.slice(from, to)),
-            RemoteContent::Unknown(_) => RemoteContent::Unknown(to - from),
         }
     }
 }
@@ -141,7 +136,6 @@ impl Mergable for RemoteContent {
                 _ => unreachable!(),
             },
             RemoteContent::Dyn(x) => x.merge_content(&**_other.as_dyn().unwrap()),
-            RemoteContent::Unknown(x) => *x += _other.content_len(),
         }
     }
 }
@@ -149,7 +143,6 @@ impl Mergable for RemoteContent {
 impl HasLength for InnerContent {
     fn content_len(&self) -> usize {
         match self {
-            InnerContent::Unknown(u) => *u,
             InnerContent::List(list) => list.atom_len(),
             InnerContent::Map(_) => 1,
         }
@@ -161,7 +154,6 @@ impl Sliceable for InnerContent {
         match self {
             a @ InnerContent::Map(_) => a.clone(),
             InnerContent::List(x) => InnerContent::List(x.slice(from, to)),
-            InnerContent::Unknown(_) => InnerContent::Unknown(to - from),
         }
     }
 }
@@ -173,7 +165,6 @@ impl Mergable for InnerContent {
     {
         match (self, other) {
             (InnerContent::List(x), InnerContent::List(y)) => x.is_mergable(y, &()),
-            (InnerContent::Unknown(_), InnerContent::Unknown(_)) => true,
             _ => false,
         }
     }
@@ -187,7 +178,6 @@ impl Mergable for InnerContent {
                 InnerContent::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            InnerContent::Unknown(x) => *x += _other.content_len(),
             InnerContent::Map(_) => unreachable!(),
         }
     }
