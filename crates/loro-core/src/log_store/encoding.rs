@@ -27,7 +27,7 @@ type Clients = Vec<ClientID>;
 type Containers = Vec<ContainerID>;
 
 #[columnar(vec, ser, de)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChangeEncoding {
     #[columnar(strategy = "DeltaRle", original_type = "u32")]
     client_idx: ClientIdx,
@@ -43,7 +43,7 @@ struct ChangeEncoding {
 }
 
 #[columnar(vec, ser, de)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     container: ContainerIdx,
@@ -57,7 +57,7 @@ struct OpEncoding {
 }
 
 #[columnar(vec, ser, de)]
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct DepsEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     client_idx: ClientIdx,
@@ -75,7 +75,7 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Encoded {
     #[columnar(type = "vec")]
     changes: Vec<ChangeEncoding>,
@@ -230,7 +230,7 @@ fn decode_changes(
         } = change_encoding;
 
         let client_id = clients[client_idx as usize];
-        let ops = RleVec::<[Op; 2]>::new();
+        let mut ops = RleVec::<[Op; 2]>::new();
         let deps = (0..deps_len)
             .map(|_| {
                 let raw = deps_iter.next().unwrap();
@@ -288,6 +288,7 @@ fn decode_changes(
             };
 
             op_counter += op.content_len() as i32;
+            ops.push(op);
         }
 
         let change = Change {

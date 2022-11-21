@@ -149,39 +149,43 @@ impl Container for TextContainer {
                 InnerListOp::Insert { slice, pos } => {
                     let r = slice;
                     if r.is_unknown() {
-                        panic!("Unknown range in state");
-                    }
-
-                    let s = self.raw_str.get_str(&r.0);
-                    if gc {
-                        let mut start = 0;
-                        let mut pos_start = pos;
-                        for span in self.raw_str.get_aliveness(&r.0) {
-                            match span {
-                                Alive::True(span) => {
-                                    ans.push(RemoteContent::List(ListOp::Insert {
-                                        slice: ListSlice::RawStr(s[start..start + span].into()),
-                                        pos: pos_start,
-                                    }));
-                                }
-                                Alive::False(span) => {
-                                    let v = RemoteContent::List(ListOp::Insert {
-                                        slice: ListSlice::Unknown(span),
-                                        pos: pos_start,
-                                    });
-                                    ans.push(v);
-                                }
-                            }
-
-                            start += span.atom_len();
-                            pos_start += span.atom_len();
-                        }
-                        assert_eq!(start, r.atom_len());
-                    } else {
-                        ans.push(RemoteContent::List(ListOp::Insert {
-                            slice: ListSlice::RawStr(s),
+                        let v = RemoteContent::List(ListOp::Insert {
+                            slice: ListSlice::Unknown(r.atom_len()),
                             pos,
-                        }))
+                        });
+                        ans.push(v);
+                    } else {
+                        let s = self.raw_str.get_str(&r.0);
+                        if gc {
+                            let mut start = 0;
+                            let mut pos_start = pos;
+                            for span in self.raw_str.get_aliveness(&r.0) {
+                                match span {
+                                    Alive::True(span) => {
+                                        ans.push(RemoteContent::List(ListOp::Insert {
+                                            slice: ListSlice::RawStr(s[start..start + span].into()),
+                                            pos: pos_start,
+                                        }));
+                                    }
+                                    Alive::False(span) => {
+                                        let v = RemoteContent::List(ListOp::Insert {
+                                            slice: ListSlice::Unknown(span),
+                                            pos: pos_start,
+                                        });
+                                        ans.push(v);
+                                    }
+                                }
+
+                                start += span.atom_len();
+                                pos_start += span.atom_len();
+                            }
+                            assert_eq!(start, r.atom_len());
+                        } else {
+                            ans.push(RemoteContent::List(ListOp::Insert {
+                                slice: ListSlice::RawStr(s),
+                                pos,
+                            }))
+                        }
                     }
                 }
                 InnerListOp::Delete(del) => ans.push(RemoteContent::List(ListOp::Delete(del))),
@@ -203,12 +207,10 @@ impl Container for TextContainer {
                         let slice: SliceRange = range.into();
                         InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
-                    ListSlice::Unknown(u) => {
-                        InnerContent::List(InnerListOp::Insert {
-                            slice: SliceRange::new_unknown(u as u32),
-                            pos,
-                        })
-                    }
+                    ListSlice::Unknown(u) => InnerContent::List(InnerListOp::Insert {
+                        slice: SliceRange::new_unknown(u as u32),
+                        pos,
+                    }),
                     _ => unreachable!(),
                 },
                 ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
