@@ -12,6 +12,7 @@ use crate::{
     context::Context,
     id::ClientID,
     op::{InnerContent, Op, RemoteContent, RichOp},
+    prelim::Prelim,
     span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
@@ -47,15 +48,31 @@ impl MapContainer {
         }
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(
+    pub fn insert<C: Context, P: Prelim>(
         &mut self,
         ctx: &C,
         key: InternalString,
-        value: V,
-    ) {
-        let value = value.into();
-        let value_index = self.pool.alloc(value).start;
-        let value = value_index;
+        value: P,
+    ) -> Option<ContainerID> {
+        let ct = value.container_type();
+        if let Some(ct) = ct {
+            let container_id = self.insert_obj(ctx, key, ct);
+            let m = ctx.log_store();
+            let store = m.read().unwrap();
+            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            drop(store);
+            value.integrate(ctx, &container);
+            Some(container_id)
+        } else {
+            let value = value.into_loro_value();
+            let value_index = self.pool.alloc(value).start;
+            let value = value_index;
+            self.insert_value(ctx, key, value);
+            None
+        }
+    }
+
+    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -66,7 +83,7 @@ impl MapContainer {
         };
 
         let id = store.next_id_for(client_id);
-        // TODO: store this value?
+        // // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             counter: id.counter,
@@ -76,11 +93,10 @@ impl MapContainer {
                 value,
             }),
         }]);
-
         self.state.insert(key, ValueSlot { value, order });
     }
 
-    pub fn insert_obj<C: Context>(
+    fn insert_obj<C: Context>(
         &mut self,
         ctx: &C,
         key: InternalString,
@@ -235,24 +251,13 @@ impl Map {
         }
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(
+    pub fn insert<C: Context, V: Prelim>(
         &mut self,
         ctx: &C,
         key: &str,
         value: V,
-    ) -> Result<(), crate::LoroError> {
-        self.with_container_checked(ctx, |map| {
-            map.insert(ctx, key.into(), value);
-        })
-    }
-
-    pub fn insert_obj<C: Context>(
-        &mut self,
-        ctx: &C,
-        key: &str,
-        obj: ContainerType,
-    ) -> Result<ContainerID, crate::LoroError> {
-        self.with_container_checked(ctx, |map| map.insert_obj(ctx, key.into(), obj))
+    ) -> Result<Option<ContainerID>, crate::LoroError> {
+        self.with_container_checked(ctx, |map| map.insert(ctx, key.into(), value))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), crate::LoroError> {

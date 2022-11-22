@@ -21,6 +21,7 @@ use crate::{
     context::Context,
     id::{ClientID, Counter, ID},
     op::{InnerContent, Op, RemoteContent, RichOp},
+    prelim::Prelim,
     value::LoroValue,
     version::IdSpanVector,
     LoroError,
@@ -50,10 +51,11 @@ impl ListContainer {
         if values.is_empty() {
             return;
         }
-
         let store = ctx.log_store();
-        let mut store = store.write().unwrap();
+        let mut store = store.try_write().unwrap();
+
         let id = store.next_id();
+
         let slice = self.raw_data.alloc_arr(values);
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
@@ -67,12 +69,29 @@ impl ListContainer {
         store.append_local_ops(&[op]);
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(
+    pub fn insert<C: Context, P: Prelim>(
         &mut self,
         ctx: &C,
         pos: usize,
-        value: V,
-    ) -> Option<ID> {
+        value: P,
+    ) -> Option<ContainerID> {
+        let ct = value.container_type();
+        if let Some(ct) = ct {
+            let container_id = self.insert_obj(ctx, pos, ct);
+            let m = ctx.log_store();
+            let store = m.read().unwrap();
+            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            drop(store);
+            value.integrate(ctx, &container);
+            Some(container_id)
+        } else {
+            let value = value.into_loro_value();
+            self.insert_value(ctx, pos, value);
+            None
+        }
+    }
+
+    fn insert_value<C: Context>(&mut self, ctx: &C, pos: usize, value: LoroValue) -> Option<ID> {
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
@@ -89,6 +108,20 @@ impl ListContainer {
         store.append_local_ops(&[op]);
 
         Some(id)
+    }
+
+    fn insert_obj<C: Context>(&mut self, ctx: &C, pos: usize, obj: ContainerType) -> ContainerID {
+        let m = ctx.log_store();
+        let mut store = m.write().unwrap();
+        let container_id = store.create_container(obj);
+        // TODO: we can avoid this lock
+        drop(store);
+        self.insert(
+            ctx,
+            pos,
+            LoroValue::Unresolved(Box::new(container_id.clone())),
+        );
+        container_id
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
@@ -119,25 +152,6 @@ impl ListContainer {
         store.append_local_ops(&[op]);
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
-    }
-
-    pub fn insert_obj<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        obj: ContainerType,
-    ) -> ContainerID {
-        let m = ctx.log_store();
-        let mut store = m.write().unwrap();
-        let container_id = store.create_container(obj);
-        // TODO: we can avoid this lock
-        drop(store);
-        self.insert(
-            ctx,
-            pos,
-            LoroValue::Unresolved(Box::new(container_id.clone())),
-        );
-        container_id
     }
 
     pub fn values_len(&self) -> usize {
@@ -296,22 +310,13 @@ impl List {
         self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(
+    pub fn insert<C: Context, P: Prelim>(
         &mut self,
         ctx: &C,
         pos: usize,
-        value: V,
-    ) -> Result<Option<ID>, LoroError> {
+        value: P,
+    ) -> Result<Option<ContainerID>, LoroError> {
         self.with_container_checked(ctx, |x| x.insert(ctx, pos, value))
-    }
-
-    pub fn insert_obj<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        obj: ContainerType,
-    ) -> Result<ContainerID, LoroError> {
-        self.with_container_checked(ctx, |x| x.insert_obj(ctx, pos, obj))
     }
 
     pub fn delete<C: Context>(

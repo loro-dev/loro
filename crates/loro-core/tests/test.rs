@@ -11,9 +11,12 @@ fn example() {
     let mut doc = LoroCore::default();
     let mut list = doc.get_list("list");
     list.insert(&doc, 0, 123).unwrap();
-    let map_id = list.insert_obj(&doc, 1, ContainerType::Map).unwrap();
+    let map_id = list.insert(&doc, 1, ContainerType::Map).unwrap().unwrap();
     let mut map = doc.get_map(map_id);
-    let text = map.insert_obj(&doc, "map_b", ContainerType::Text).unwrap();
+    let text = map
+        .insert(&doc, "map_b", ContainerType::Text)
+        .unwrap()
+        .unwrap();
     let mut text = doc.get_text(text);
     text.insert(&doc, 0, "world!").unwrap();
     text.insert(&doc, 0, "hello ").unwrap();
@@ -37,7 +40,8 @@ fn list() {
         .insert_batch(&loro_b, 0, vec![123.into(), "kk".into()])
         .unwrap();
     let map_id = list_b
-        .insert_obj(&loro_b, 1, loro_core::ContainerType::Map)
+        .insert(&loro_b, 1, loro_core::ContainerType::Map)
+        .unwrap()
         .unwrap();
     let mut map = loro_b.get_map(map_id);
     map.insert(&loro_b, "map_b", 123).unwrap();
@@ -69,11 +73,12 @@ fn map() {
         1.2
     );
     let map_id = root
-        .insert_obj(&loro, "map", loro_core::ContainerType::Map)
+        .insert(&loro, "map", loro_core::ContainerType::Map)
+        .unwrap()
         .unwrap();
     drop(root);
     let mut sub_map = loro.get_map(&map_id);
-    sub_map.insert(&loro, "sub", false);
+    sub_map.insert(&loro, "sub", false).unwrap();
     drop(sub_map);
     let root = loro.get_map("root");
     let value = root.get_value();

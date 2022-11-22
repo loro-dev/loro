@@ -48,11 +48,9 @@ impl TextContainer {
         if text.is_empty() {
             return None;
         }
-
         if self.state.len() < pos {
             panic!("insert index out of range");
         }
-
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
@@ -67,7 +65,6 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
         store.append_local_ops(&[op]);
-
         Some(id)
     }
 
