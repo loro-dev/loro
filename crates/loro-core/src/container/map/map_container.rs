@@ -116,6 +116,11 @@ impl MapContainer {
     pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
         self.insert(ctx, key, LoroValue::Null);
     }
+
+    #[inline]
+    pub fn get(&self, key: &InternalString) -> Option<LoroValue> {
+        self.state.get(key).map(|v| &v.value).cloned()
+    }
 }
 
 impl Container for MapContainer {
@@ -207,7 +212,12 @@ impl Map {
         }
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(&mut self, ctx: &C, key: &str, value: V) {
+    pub fn insert<C: Context, V: Into<LoroValue>>(
+        &mut self,
+        ctx: &C,
+        key: &str,
+        value: V,
+    ) -> Result<(), crate::LoroError> {
         self.with_container_checked(ctx, |map| {
             map.insert(ctx, key.into(), value);
         })
@@ -218,14 +228,18 @@ impl Map {
         ctx: &C,
         key: &str,
         obj: ContainerType,
-    ) -> ContainerID {
+    ) -> Result<ContainerID, crate::LoroError> {
         self.with_container_checked(ctx, |map| map.insert_obj(ctx, key.into(), obj))
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) {
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), crate::LoroError> {
         self.with_container_checked(ctx, |map| {
             map.delete(ctx, key.into());
         })
+    }
+
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
+        self.with_container(|map| map.get(&key.into()))
     }
 
     pub fn id(&self) -> ContainerID {

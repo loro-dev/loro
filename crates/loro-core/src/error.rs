@@ -1,7 +1,11 @@
 use thiserror::Error;
 
+use crate::id::ClientID;
+
 #[derive(Error, Debug)]
 pub enum LoroError {
+    #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
+    UnmatchedContext { expected: ClientID, found: ClientID },
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]
