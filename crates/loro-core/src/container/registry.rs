@@ -14,7 +14,7 @@ use crate::{
     id::{ClientID, ContainerIdx},
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
-    LoroValue, VersionVector,
+    LoroError, LoroValue, VersionVector,
 };
 
 use super::{
@@ -297,19 +297,18 @@ pub trait ContainerWrapper {
     where
         F: FnOnce(&mut Self::Container) -> R;
 
-    fn with_container_checked<C: Context, F, R>(&self, ctx: &C, f: F) -> R
+    fn with_container_checked<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
         let store_client_id = ctx.log_store().read().unwrap().this_client_id();
         if store_client_id != self.client_id() {
-            panic!(
-                "Context's client_id({}) does not match Container's client_id({})",
-                store_client_id,
-                self.client_id()
-            );
+            return Err(LoroError::UnmatchedContext {
+                expected: self.client_id(),
+                found: store_client_id,
+            });
         }
-        self.with_container(f)
+        Ok(self.with_container(f))
     }
 
     fn client_id(&self) -> ClientID;

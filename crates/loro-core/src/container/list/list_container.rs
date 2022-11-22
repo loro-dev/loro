@@ -23,6 +23,7 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
+    LoroError,
 };
 
 use super::list_op::InnerListOp;
@@ -88,6 +89,13 @@ impl ListContainer {
         store.append_local_ops(&[op]);
 
         Some(id)
+    }
+
+    pub fn get(&self, pos: usize) -> Option<LoroValue> {
+        self.state
+            .get(pos)
+            .map(|range| self.raw_data.slice(&range.as_ref().0))
+            .and_then(|slice| slice.first().cloned())
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
@@ -279,7 +287,12 @@ impl List {
         }
     }
 
-    pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
+    pub fn insert_batch<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        values: Vec<LoroValue>,
+    ) -> Result<(), LoroError> {
         self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
     }
 
@@ -288,7 +301,7 @@ impl List {
         ctx: &C,
         pos: usize,
         value: V,
-    ) -> Option<ID> {
+    ) -> Result<Option<ID>, LoroError> {
         self.with_container_checked(ctx, |x| x.insert(ctx, pos, value))
     }
 
@@ -297,12 +310,21 @@ impl List {
         ctx: &C,
         pos: usize,
         obj: ContainerType,
-    ) -> ContainerID {
+    ) -> Result<ContainerID, LoroError> {
         self.with_container_checked(ctx, |x| x.insert_obj(ctx, pos, obj))
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
-        self.with_container_checked(ctx, |text| text.delete(ctx, pos, len))
+    pub fn delete<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        len: usize,
+    ) -> Result<Option<ID>, LoroError> {
+        self.with_container_checked(ctx, |list| list.delete(ctx, pos, len))
+    }
+
+    pub fn get(&self, pos: usize) -> Option<LoroValue> {
+        self.with_container(|list| list.get(pos))
     }
 
     pub fn len(&self) -> usize {

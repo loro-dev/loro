@@ -302,11 +302,21 @@ impl Text {
         self.instance.lock().unwrap().as_text().unwrap().id.clone()
     }
 
-    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
+    pub fn insert<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        text: &str,
+    ) -> Result<Option<ID>, crate::LoroError> {
         self.with_container_checked(ctx, |x| x.insert(ctx, pos, text))
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        len: usize,
+    ) -> Result<Option<ID>, crate::LoroError> {
         self.with_container_checked(ctx, |text| text.delete(ctx, pos, len))
     }
 
