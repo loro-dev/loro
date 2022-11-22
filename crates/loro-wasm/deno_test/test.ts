@@ -23,7 +23,9 @@ Deno.test({
   b.set(loro, "ab", 123);
   console.log(b.value);
   console.log(a.value);
+  
   const bText = b.getText(loro, "hh");
+
   await t.step("getValueDeep", () => {
     bText.insert(loro, 0, "hello world Text");
     assertEquals(b.getValueDeep(loro), { ab: 123, hh: "hello world Text" });
@@ -37,8 +39,12 @@ Deno.test({
   });
   
   await t.step("get value error", () => {
-    assertThrows(()=>{
-      const _ = bText.value;
-    });
+    // assertThrows(()=>{
+      const map = loro.getMap("map");
+      const list = map.getList(loro, "list");
+      list.insert(loro, 0, 123);
+      console.log(map.value);
+      
+    // });
   });
 });

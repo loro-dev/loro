@@ -350,7 +350,9 @@ impl Actionable for Vec<Actor> {
                         container.insert(&actor.loro, &key.to_string(), *i);
                     }
                     FuzzValue::Container(c) => {
-                        let new = container.insert_obj(&actor.loro, &key.to_string(), *c);
+                        let new = container
+                            .insert_obj(&actor.loro, &key.to_string(), *c)
+                            .unwrap();
                         actor.add_new_container(new);
                     }
                 }
@@ -380,7 +382,9 @@ impl Actionable for Vec<Actor> {
                         container.insert(&actor.loro, *key as usize, *i);
                     }
                     FuzzValue::Container(c) => {
-                        let new = container.insert_obj(&actor.loro, *key as usize, *c);
+                        let new = container
+                            .insert_obj(&actor.loro, *key as usize, *c)
+                            .unwrap();
                         actor.add_new_container(new)
                     }
                 }

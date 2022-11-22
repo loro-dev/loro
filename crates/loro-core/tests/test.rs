@@ -10,13 +10,13 @@ fn example() {
 
     let mut doc = LoroCore::default();
     let mut list = doc.get_list("list");
-    list.insert(&doc, 0, 123);
-    let map_id = list.insert_obj(&doc, 1, ContainerType::Map);
+    list.insert(&doc, 0, 123).unwrap();
+    let map_id = list.insert_obj(&doc, 1, ContainerType::Map).unwrap();
     let mut map = doc.get_map(map_id);
-    let text = map.insert_obj(&doc, "map_b", ContainerType::Text);
+    let text = map.insert_obj(&doc, "map_b", ContainerType::Text).unwrap();
     let mut text = doc.get_text(text);
-    text.insert(&doc, 0, "world!");
-    text.insert(&doc, 0, "hello ");
+    text.insert(&doc, 0, "world!").unwrap();
+    text.insert(&doc, 0, "hello ").unwrap();
     assert_eq!(
         r#"[123,{"map_b":"hello world!"}]"#,
         list.get_value_deep(&doc).to_json()
@@ -30,11 +30,17 @@ fn list() {
     let mut loro_b = LoroCore::default();
     let mut list_a = loro_a.get_list("list");
     let mut list_b = loro_b.get_list("list");
-    list_a.insert_batch(&loro_a, 0, vec![12.into(), "haha".into()]);
-    list_b.insert_batch(&loro_b, 0, vec![123.into(), "kk".into()]);
-    let map_id = list_b.insert_obj(&loro_b, 1, loro_core::ContainerType::Map);
+    list_a
+        .insert_batch(&loro_a, 0, vec![12.into(), "haha".into()])
+        .unwrap();
+    list_b
+        .insert_batch(&loro_b, 0, vec![123.into(), "kk".into()])
+        .unwrap();
+    let map_id = list_b
+        .insert_obj(&loro_b, 1, loro_core::ContainerType::Map)
+        .unwrap();
     let mut map = loro_b.get_map(map_id);
-    map.insert(&loro_b, "map_b", 123);
+    map.insert(&loro_b, "map_b", 123).unwrap();
     println!("{}", list_a.get_value().to_json());
     println!("{}", list_b.get_value().to_json());
     loro_b.import(loro_a.export(loro_b.vv()));
@@ -49,7 +55,7 @@ fn list() {
 fn map() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");
-    root.insert(&loro, "haha", 1.2);
+    root.insert(&loro, "haha", 1.2).unwrap();
     let value = root.get_value();
     assert_eq!(value.as_map().unwrap().len(), 1);
     assert_eq!(
@@ -62,7 +68,9 @@ fn map() {
             .unwrap(),
         1.2
     );
-    let map_id = root.insert_obj(&loro, "map", loro_core::ContainerType::Map);
+    let map_id = root
+        .insert_obj(&loro, "map", loro_core::ContainerType::Map)
+        .unwrap();
     drop(root);
     let mut sub_map = loro.get_map(&map_id);
     sub_map.insert(&loro, "sub", false);
@@ -93,9 +101,9 @@ fn map() {
 fn two_client_text_sync() {
     let mut store = LoroCore::new(Default::default(), Some(10));
     let mut text_container = store.get_text("haha");
-    text_container.insert(&store, 0, "012");
-    text_container.insert(&store, 1, "34");
-    text_container.insert(&store, 1, "56");
+    text_container.insert(&store, 0, "012").unwrap();
+    text_container.insert(&store, 1, "34").unwrap();
+    text_container.insert(&store, 1, "56").unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
@@ -110,8 +118,8 @@ fn two_client_text_sync() {
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
 
-    text_container.delete(&store_b, 0, 2);
-    text_container.insert(&store_b, 4, "789");
+    text_container.delete(&store_b, 0, 2).unwrap();
+    text_container.insert(&store_b, 4, "789").unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
@@ -122,8 +130,8 @@ fn two_client_text_sync() {
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");
-    text_container.delete(&store, 0, 8);
-    text_container.insert(&store, 0, "abc");
+    text_container.delete(&store, 0, 8).unwrap();
+    text_container.insert(&store, 0, "abc").unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");
@@ -143,8 +151,8 @@ fn test_recursive_should_panic() {
     let mut store_b = LoroCore::new(Default::default(), Some(2));
     let mut text_a = store_a.get_text("text_a");
     let mut text_b = store_b.get_text("text_b");
-    text_a.insert(&store_a, 0, "012");
-    text_b.insert(&store_a, 1, "34");
+    text_a.insert(&store_a, 0, "012").unwrap();
+    text_b.insert(&store_a, 1, "34").unwrap();
 }
 
 #[ctor]
