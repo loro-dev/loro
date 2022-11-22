@@ -170,7 +170,7 @@ impl Sliceable for YSpan {
 
 impl InsertContentTrait for YSpan {
     fn id(&self) -> ContentType {
-        ContentType::Text
+        ContentType::List
     }
 }
 
@@ -224,7 +224,7 @@ pub mod test {
         ));
         assert_eq!(vec.merged_len(), 1);
         let merged = vec.get_merged(0).unwrap();
-        assert_eq!(merged.content.id(), ContentType::Text);
+        assert_eq!(merged.content.id(), ContentType::List);
         let text_content = merged.content.as_dyn().unwrap();
         dbg!(&merged);
         assert_eq!(text_content.content_len(), 2);

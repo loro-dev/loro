@@ -18,6 +18,7 @@ pub mod registry;
 
 pub mod list;
 pub mod map;
+mod pool;
 pub mod text;
 
 #[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
