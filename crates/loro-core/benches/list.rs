@@ -41,14 +41,16 @@ mod run {
                             actor,
                             (action.pos as usize) % text.len().max(1),
                             action.value.to_string().as_str(),
-                        );
+                        )
+                        .unwrap();
                     } else {
                         let mut list = actor.get_list(container.to_string().as_str());
                         list.insert(
                             actor,
                             (action.pos as usize) % list.len().max(1),
                             action.value.to_string().as_str(),
-                        );
+                        )
+                        .unwrap();
                     }
 
                     let a = (action.actor as usize) % len;

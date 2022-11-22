@@ -24,6 +24,8 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 
+mod prelim;
+pub use prelim::Prelim;
 mod value;
 
 pub use error::LoroError;

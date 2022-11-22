@@ -165,10 +165,9 @@ pub mod wasm {
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::List(list) => {
                 let arr = Array::new_with_length(list.len() as u32);
-                for v in list.into_iter() {
-                    arr.push(&convert(v));
+                for (i, v) in list.into_iter().enumerate() {
+                    arr.set(i as u32, convert(v));
                 }
-
                 arr.into_js_result().unwrap()
             }
             LoroValue::Map(m) => {
@@ -180,10 +179,11 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(container_id) => {
-                // FIXME:
+            LoroValue::Unresolved(_container_id) => {
+                unreachable!()
+                // FIXME: expose container_id to wasm
                 // serde_wasm_bindgen::to_value(&container_id).unwrap()
-                ContainerID(*container_id).into()
+                // ContainerID(*container_id).into()
             }
         }
     }

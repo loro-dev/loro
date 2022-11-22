@@ -1,10 +1,14 @@
-use std::ops::{Deref, DerefMut};
-
 use loro_core::{
     container::registry::ContainerWrapper, context::Context, ContainerType, List, LoroCore, Map,
     Text,
 };
+use std::ops::{Deref, DerefMut};
 use wasm_bindgen::prelude::*;
+mod prelim;
+pub use prelim::{PrelimList, PrelimMap, PrelimText};
+
+use crate::convert::js_try_to_prelim;
+mod convert;
 
 #[wasm_bindgen(js_name = setPanicHook)]
 pub fn set_panic_hook() {
@@ -18,7 +22,7 @@ pub fn set_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
-type JsResult<T> = Result<T, JsError>;
+type JsResult<T> = Result<T, JsValue>;
 
 #[wasm_bindgen]
 pub struct Loro(LoroCore);
@@ -55,6 +59,12 @@ impl Loro {
         let map = self.0.get_map(name);
         Ok(LoroMap(map))
     }
+
+    #[wasm_bindgen(js_name = "getList")]
+    pub fn get_list(&mut self, name: &str) -> JsResult<LoroList> {
+        let list = self.0.get_list(name);
+        Ok(LoroList(list))
+    }
 }
 
 #[wasm_bindgen]
@@ -85,7 +95,11 @@ pub struct LoroMap(Map);
 impl LoroMap {
     #[wasm_bindgen(js_name = "set")]
     pub fn insert(&mut self, ctx: &Loro, key: &str, value: JsValue) -> JsResult<()> {
-        self.0.insert(ctx.deref(), key, value)?;
+        if let Some(v) = js_try_to_prelim(&value) {
+            self.0.insert(ctx.deref(), key, v)?;
+        } else {
+            self.0.insert(ctx.deref(), key, value)?;
+        };
         Ok(())
     }
 
@@ -109,29 +123,33 @@ impl LoroMap {
         self.0.get_value_deep(ctx.deref()).into()
     }
 
-    #[wasm_bindgen(js_name = "getText")]
-    pub fn get_text(&mut self, ctx: &mut Loro, key: &str) -> JsResult<LoroText> {
-        let id = self.0.insert_obj(&ctx.0, key, ContainerType::Text)?;
-        let text = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroText(Text::from_instance(text, ctx.deref().client_id())))
-    }
-
-    #[wasm_bindgen(js_name = "getMap")]
-    pub fn get_map(&mut self, ctx: &mut Loro, key: &str) -> JsResult<LoroMap> {
-        let id = self
-            .0
-            .insert_obj(ctx.deref_mut(), key, ContainerType::Map)?;
-        let map = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroMap(Map::from_instance(map, ctx.deref().client_id())))
-    }
-
-    #[wasm_bindgen(js_name = "getList")]
-    pub fn get_list(&mut self, ctx: &mut Loro, key: &str) -> JsResult<LoroList> {
-        let id = self
-            .0
-            .insert_obj(ctx.deref_mut(), key, ContainerType::List)?;
-        let list = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroList(List::from_instance(list, ctx.deref().client_id())))
+    #[wasm_bindgen(js_name = "setContainer")]
+    pub fn set_container(
+        &mut self,
+        ctx: &mut Loro,
+        key: &str,
+        container: &str,
+    ) -> JsResult<JsValue> {
+        let _type = match container {
+            "text" => ContainerType::Text,
+            "map" => ContainerType::Map,
+            "list" => ContainerType::List,
+            _ => return Err(JsValue::from_str("Invalid container type")),
+        };
+        let id = self.0.insert(&ctx.0, key, _type)?.unwrap();
+        let instance = ctx.deref().get_container(&id).unwrap();
+        let container = match _type {
+            ContainerType::Text => {
+                LoroText(Text::from_instance(instance, ctx.deref().client_id())).into()
+            }
+            ContainerType::Map => {
+                LoroMap(Map::from_instance(instance, ctx.deref().client_id())).into()
+            }
+            ContainerType::List => {
+                LoroList(List::from_instance(instance, ctx.deref().client_id())).into()
+            }
+        };
+        Ok(container)
     }
 }
 
@@ -141,7 +159,11 @@ pub struct LoroList(List);
 #[wasm_bindgen]
 impl LoroList {
     pub fn insert(&mut self, ctx: &Loro, index: usize, value: JsValue) -> JsResult<()> {
-        self.0.insert(ctx.deref(), index, value)?;
+        if let Some(v) = js_try_to_prelim(&value) {
+            self.0.insert(ctx.deref(), index, v)?;
+        } else {
+            self.0.insert(ctx.deref(), index, value)?;
+        };
         Ok(())
     }
 
@@ -161,34 +183,37 @@ impl LoroList {
 
     #[wasm_bindgen(js_name = "getValueDeep")]
     pub fn get_value_deep(&self, ctx: &Loro) -> JsValue {
-        self.0.get_value_deep(ctx.deref()).into()
+        let value = self.0.get_value_deep(ctx.deref());
+        value.into()
     }
 
-    #[wasm_bindgen(js_name = "getText")]
-    pub fn get_text(&mut self, ctx: &mut Loro, index: usize) -> JsResult<LoroText> {
-        let id = self
-            .0
-            .insert_obj(ctx.deref_mut(), index, ContainerType::Text)?;
-        let text = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroText(Text::from_instance(text, ctx.deref().client_id())))
-    }
-
-    #[wasm_bindgen(js_name = "getMap")]
-    pub fn get_map(&mut self, ctx: &mut Loro, index: usize) -> JsResult<LoroMap> {
-        let id = self
-            .0
-            .insert_obj(ctx.deref_mut(), index, ContainerType::Map)?;
-        let map = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroMap(Map::from_instance(map, ctx.deref().client_id())))
-    }
-
-    #[wasm_bindgen(js_name = "getList")]
-    pub fn get_list(&mut self, ctx: &mut Loro, index: usize) -> JsResult<LoroList> {
-        let id = self
-            .0
-            .insert_obj(ctx.deref_mut(), index, ContainerType::List)?;
-        let list = ctx.deref().get_container(&id).unwrap();
-        Ok(LoroList(List::from_instance(list, ctx.deref().client_id())))
+    #[wasm_bindgen(js_name = "setContainer")]
+    pub fn set_container(
+        &mut self,
+        ctx: &mut Loro,
+        pos: usize,
+        container: &str,
+    ) -> JsResult<JsValue> {
+        let _type = match container {
+            "text" => ContainerType::Text,
+            "map" => ContainerType::Map,
+            "list" => ContainerType::List,
+            _ => return Err(JsValue::from_str("Invalid container type")),
+        };
+        let id = self.0.insert(&ctx.0, pos, _type)?.unwrap();
+        let instance = ctx.deref().get_container(&id).unwrap();
+        let container = match _type {
+            ContainerType::Text => {
+                LoroText(Text::from_instance(instance, ctx.deref().client_id())).into()
+            }
+            ContainerType::Map => {
+                LoroMap(Map::from_instance(instance, ctx.deref().client_id())).into()
+            }
+            ContainerType::List => {
+                LoroList(List::from_instance(instance, ctx.deref().client_id())).into()
+            }
+        };
+        Ok(container)
     }
 }
 

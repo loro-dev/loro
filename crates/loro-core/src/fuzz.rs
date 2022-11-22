@@ -144,12 +144,12 @@ impl Actionable for Vec<LoroCore> {
             Action::Ins { content, pos, site } => {
                 let site = &mut self[*site as usize];
                 let mut text = site.get_text("text");
-                text.insert(site, *pos, &content.to_string());
+                text.insert(site, *pos, &content.to_string()).unwrap();
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
                 let mut text = site.get_text("text");
-                text.delete(site, *pos, *len);
+                text.delete(site, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
                 let to_vv = self[*to as usize].vv();
@@ -243,14 +243,16 @@ pub fn test_single_client(mut actions: Vec<Action>) {
         ground_truth.apply_action(action);
         match action {
             Action::Ins { content, pos, .. } => {
-                text_container.insert(&store, *pos, &content.to_string());
+                text_container
+                    .insert(&store, *pos, &content.to_string())
+                    .unwrap();
             }
             Action::Del { pos, len, .. } => {
                 if text_container.is_empty() {
                     return;
                 }
 
-                text_container.delete(&store, *pos, *len);
+                text_container.delete(&store, *pos, *len).unwrap();
             }
             _ => {}
         }
@@ -278,14 +280,16 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
         ground_truth.apply_action(action);
         match action {
             Action::Ins { content, pos, .. } => {
-                text_container.insert(&store, *pos, &content.to_string());
+                text_container
+                    .insert(&store, *pos, &content.to_string())
+                    .unwrap();
             }
             Action::Del { pos, len, .. } => {
                 if text_container.is_empty() {
                     return;
                 }
 
-                text_container.delete(&store, *pos, *len);
+                text_container.delete(&store, *pos, *len).unwrap();
             }
             _ => {}
         }
