@@ -1,7 +1,7 @@
 use rle::HasLength;
 
 use crate::{
-    container::text::text_content::ListSlice,
+    container::text::text_content::SliceRange,
     id::{Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
     version::IdSpanVector,
@@ -35,7 +35,7 @@ impl<'a> EffectIter<'a> {
 #[derive(Debug)]
 pub enum Effect {
     Del { pos: usize, len: usize },
-    Ins { pos: usize, content: ListSlice },
+    Ins { pos: usize, content: SliceRange },
 }
 
 impl<'a> Iterator for EffectIter<'a> {
@@ -122,7 +122,7 @@ impl<'a> Iterator for EffectIter<'a> {
                                 debug_assert_eq!(length_diff, len as i32);
                                 return Some(Effect::Ins {
                                     pos: index,
-                                    content: content.into(),
+                                    content,
                                 });
                             }
                         }

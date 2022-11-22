@@ -145,10 +145,8 @@ impl LogStore {
         let mut new_ops = RleVec::new();
         for op in change.ops.iter() {
             let container = containers.get_mut(&op.container).unwrap();
-            // TODO: avoid this clone
-            let mut op = op.clone();
-            container.to_import(&mut op);
-            for op in op.convert(self) {
+            let container_idx = self.get_container_idx(&op.container).unwrap();
+            for op in op.clone().convert(container, container_idx) {
                 new_ops.push(op);
             }
         }
@@ -180,9 +178,7 @@ impl LogStore {
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
         let container = self.reg.get_by_idx(op.container).unwrap();
         let mut container = container.lock().unwrap();
-        let mut op = op.clone().convert(self);
-        container.to_export(&mut op, self.cfg.gc.gc);
-        op
+        op.clone().convert(&mut container, self.cfg.gc.gc)
     }
 
     pub(crate) fn create_container(&mut self, container_type: ContainerType) -> ContainerID {

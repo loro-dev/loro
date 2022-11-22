@@ -10,7 +10,6 @@ pub enum ListSlice {
     // TODO: use Box<[LoroValue]> ?
     RawData(Vec<LoroValue>),
     RawStr(SmString),
-    Slice(SliceRange),
     Unknown(usize),
 }
 
@@ -33,18 +32,6 @@ impl SliceRange {
 impl Default for ListSlice {
     fn default() -> Self {
         ListSlice::Unknown(0)
-    }
-}
-
-impl From<Range<u32>> for ListSlice {
-    fn from(a: Range<u32>) -> Self {
-        ListSlice::Slice(a.into())
-    }
-}
-
-impl From<SliceRange> for ListSlice {
-    fn from(a: SliceRange) -> Self {
-        ListSlice::Slice(a)
     }
 }
 
@@ -99,21 +86,12 @@ impl ListSlice {
     pub fn is_unknown(range: &SliceRange) -> bool {
         range.is_unknown()
     }
-
-    pub fn to_range(&self) -> SliceRange {
-        match self {
-            ListSlice::Slice(slice) => slice.clone(),
-            ListSlice::Unknown(u) => SliceRange::new_unknown(*u as u32),
-            _ => unreachable!(),
-        }
-    }
 }
 
 impl HasLength for ListSlice {
     fn content_len(&self) -> usize {
         match self {
             ListSlice::RawStr(s) => s.len(),
-            ListSlice::Slice(x) => rle::HasLength::content_len(&x),
             ListSlice::Unknown(x) => *x,
             ListSlice::RawData(x) => x.len(),
         }
@@ -124,7 +102,6 @@ impl Sliceable for ListSlice {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             ListSlice::RawStr(s) => ListSlice::RawStr(s.0[from..to].into()),
-            ListSlice::Slice(x) => ListSlice::Slice(x.slice(from, to)),
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
             ListSlice::RawData(x) => ListSlice::RawData(x[from..to].to_vec()),
         }
@@ -134,7 +111,6 @@ impl Sliceable for ListSlice {
 impl Mergable for ListSlice {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         match (self, other) {
-            (ListSlice::Slice(x), ListSlice::Slice(y)) => x.is_mergable(y, &()),
             (ListSlice::Unknown(_), ListSlice::Unknown(_)) => true,
             (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.is_mergable(b, &()),
             _ => false,
@@ -143,7 +119,6 @@ impl Mergable for ListSlice {
 
     fn merge(&mut self, other: &Self, _: &()) {
         match (self, other) {
-            (ListSlice::Slice(x), ListSlice::Slice(y)) => x.merge(y, &()),
             (ListSlice::Unknown(x), ListSlice::Unknown(y)) => {
                 *x += y;
             }

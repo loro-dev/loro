@@ -5,6 +5,7 @@ use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     RleTree,
 };
+use smallvec::SmallVec;
 
 use crate::{
     container::{
@@ -19,10 +20,12 @@ use crate::{
     },
     context::Context,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp, RichOp},
+    op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
 };
+
+use super::list_op::InnerListOp;
 
 #[derive(Debug)]
 pub struct ListContainer {
@@ -54,7 +57,7 @@ impl ListContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            InnerContent::List(InnerListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -76,7 +79,7 @@ impl ListContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            InnerContent::List(InnerListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -101,7 +104,7 @@ impl ListContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            Content::List(ListOp::new_del(pos, len)),
+            InnerContent::List(InnerListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -170,40 +173,46 @@ impl Container for ListContainer {
         values.into()
     }
 
-    fn to_export(&mut self, op: &mut RemoteOp, _gc: bool) {
-        for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
-                if let Some(change) = if let ListSlice::Slice(ranges) = slice {
-                    Some(self.raw_data.slice(&ranges.0))
-                } else {
-                    None
-                } {
-                    *slice = ListSlice::RawData(change.to_vec());
+    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
+        match content {
+            InnerContent::List(list) => match list {
+                InnerListOp::Insert { slice, pos } => {
+                    let data = self.raw_data.slice(&slice.0);
+                    smallvec::smallvec![RemoteContent::List(ListOp::Insert {
+                        pos,
+                        slice: ListSlice::RawData(data.to_vec()),
+                    })]
                 }
-            }
+                InnerListOp::Delete(del) => {
+                    smallvec::smallvec![RemoteContent::List(ListOp::Delete(del))]
+                }
+            },
+            InnerContent::Map(_) => unreachable!(),
         }
     }
 
-    fn to_import(&mut self, op: &mut RemoteOp) {
-        for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
-                if let Some(slice_range) = match std::mem::take(slice) {
-                    ListSlice::RawData(data) => Some(self.raw_data.alloc_arr(data)),
+    fn to_import(&mut self, content: RemoteContent) -> InnerContent {
+        match content {
+            RemoteContent::List(list) => match list {
+                ListOp::Insert { slice, pos } => match slice {
+                    ListSlice::RawData(data) => {
+                        let slice_range = self.raw_data.alloc_arr(data);
+                        let slice: SliceRange = slice_range.into();
+                        InnerContent::List(InnerListOp::Insert { slice, pos })
+                    }
                     _ => unreachable!(),
-                } {
-                    *slice = slice_range.into();
-                }
-            }
+                },
+                ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
+            },
+            _ => unreachable!(),
         }
     }
 
     fn update_state_directly(&mut self, op: &RichOp) {
         match &op.get_sliced().content {
-            Content::List(op) => match op {
-                ListOp::Insert { slice, pos } => {
-                    self.state.insert(*pos, slice.as_slice().unwrap().clone())
-                }
-                ListOp::Delete(span) => self
+            InnerContent::List(op) => match op {
+                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
+                InnerListOp::Delete(span) => self
                     .state
                     .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
             },
@@ -242,15 +251,7 @@ impl Container for ListContainer {
         for effect in self.tracker.iter_effects(from, effect_spans) {
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => {
-                    let v = match content {
-                        ListSlice::Slice(slice) => slice.clone(),
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
-                        _ => unreachable!(),
-                    };
-
-                    self.state.insert(pos, v)
-                }
+                Effect::Ins { pos, content } => self.state.insert(pos, content),
             }
         }
     }

@@ -2,19 +2,20 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree, RleVec,
+    HasLength, RleTree,
 };
+use smallvec::SmallVec;
 
 use crate::{
     container::{
-        list::list_op::ListOp,
+        list::list_op::{InnerListOp, ListOp},
         registry::{ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
     },
     context::Context,
     debug_log,
     id::{Counter, ID},
-    op::{Content, Op, RemoteOp, RichOp},
+    op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
 };
@@ -59,7 +60,7 @@ impl TextContainer {
         self.state.insert(pos, slice.clone().into());
         let op = Op::new(
             id,
-            Content::List(ListOp::Insert {
+            InnerContent::List(InnerListOp::Insert {
                 slice: slice.into(),
                 pos,
             }),
@@ -84,7 +85,7 @@ impl TextContainer {
         let id = store.next_id();
         let op = Op::new(
             id,
-            Content::List(ListOp::new_del(pos, len)),
+            InnerContent::List(InnerListOp::new_del(pos, len)),
             store.get_or_create_container_idx(&self.id),
         );
 
@@ -136,39 +137,42 @@ impl Container for TextContainer {
         LoroValue::String(ans_str.into_boxed_str())
     }
 
-    fn to_export(&mut self, op: &mut RemoteOp, gc: bool) {
+    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]> {
         if gc && self.raw_str.should_update_aliveness(self.text_len()) {
             self.raw_str
                 .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
         }
 
-        let mut contents: RleVec<[Content; 1]> = RleVec::new();
-        for content in op.contents.iter_mut() {
-            if let Some((slice, pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
-                match slice {
-                    ListSlice::Slice(r) => {
-                        if r.is_unknown() {
-                            panic!("Unknown range in state");
-                        }
-
+        let mut ans = SmallVec::new();
+        match content {
+            InnerContent::List(list) => match list {
+                InnerListOp::Insert { slice, pos } => {
+                    let r = slice;
+                    if r.is_unknown() {
+                        let v = RemoteContent::List(ListOp::Insert {
+                            slice: ListSlice::Unknown(r.atom_len()),
+                            pos,
+                        });
+                        ans.push(v);
+                    } else {
                         let s = self.raw_str.get_str(&r.0);
                         if gc {
                             let mut start = 0;
-                            let mut pos_start = *pos;
+                            let mut pos_start = pos;
                             for span in self.raw_str.get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
-                                        contents.push(Content::List(ListOp::Insert {
+                                        ans.push(RemoteContent::List(ListOp::Insert {
                                             slice: ListSlice::RawStr(s[start..start + span].into()),
                                             pos: pos_start,
                                         }));
                                     }
                                     Alive::False(span) => {
-                                        let v = Content::List(ListOp::Insert {
+                                        let v = RemoteContent::List(ListOp::Insert {
                                             slice: ListSlice::Unknown(span),
                                             pos: pos_start,
                                         });
-                                        contents.push(v);
+                                        ans.push(v);
                                     }
                                 }
 
@@ -177,60 +181,49 @@ impl Container for TextContainer {
                             }
                             assert_eq!(start, r.atom_len());
                         } else {
-                            contents.push(Content::List(ListOp::Insert {
+                            ans.push(RemoteContent::List(ListOp::Insert {
                                 slice: ListSlice::RawStr(s),
-                                pos: *pos,
-                            }));
+                                pos,
+                            }))
                         }
                     }
-                    this => {
-                        contents.push(Content::List(ListOp::Insert {
-                            slice: this.clone(),
-                            pos: *pos,
-                        }));
-                    }
                 }
-            } else {
-                contents.push(content.clone());
-            }
+                InnerListOp::Delete(del) => ans.push(RemoteContent::List(ListOp::Delete(del))),
+            },
+            InnerContent::Map(_) => unreachable!(),
         }
 
-        op.contents = contents;
+        assert!(!ans.is_empty());
+        ans
     }
 
-    fn to_import(&mut self, op: &mut RemoteOp) {
-        debug_log!("IMPORT {:#?}", &op);
-        for content in op.contents.iter_mut() {
-            if let Some((slice, _pos)) = content.as_list_mut().and_then(|x| x.as_insert_mut()) {
-                if let Some(slice_range) = match slice {
+    fn to_import(&mut self, content: RemoteContent) -> InnerContent {
+        debug_log!("IMPORT {:#?}", &content);
+        match content {
+            RemoteContent::List(list) => match list {
+                ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr(s) => {
-                        let range = self.raw_str.alloc(s);
-                        Some(range)
+                        let range = self.raw_str.alloc(&s);
+                        let slice: SliceRange = range.into();
+                        InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
-                    ListSlice::Unknown(_) => None,
-                    ListSlice::Slice(_) => unreachable!(),
-                    ListSlice::RawData(_) => unreachable!(),
-                } {
-                    *slice = slice_range.into();
-                }
-            }
+                    ListSlice::Unknown(u) => InnerContent::List(InnerListOp::Insert {
+                        slice: SliceRange::new_unknown(u as u32),
+                        pos,
+                    }),
+                    _ => unreachable!(),
+                },
+                ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
+            },
+            _ => unreachable!(),
         }
-        debug_log!("IMPORTED {:#?}", &op);
     }
 
     fn update_state_directly(&mut self, op: &RichOp) {
         match &op.get_sliced().content {
-            Content::List(op) => match op {
-                ListOp::Insert { slice, pos } => {
-                    let v = match slice {
-                        ListSlice::Slice(slice) => slice.clone(),
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(*u),
-                        _ => unreachable!(),
-                    };
-
-                    self.state.insert(*pos, v)
-                }
-                ListOp::Delete(span) => self
+            InnerContent::List(op) => match op {
+                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
+                InnerListOp::Delete(span) => self
                     .state
                     .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
             },
@@ -276,15 +269,7 @@ impl Container for TextContainer {
             debug_log!("APPLY EFFECT {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => {
-                    let v = match content {
-                        ListSlice::Slice(slice) => slice.clone(),
-                        ListSlice::Unknown(u) => ListSlice::unknown_range(u),
-                        _ => unreachable!(),
-                    };
-
-                    self.state.insert(pos, v)
-                }
+                Effect::Ins { pos, content } => self.state.insert(pos, content),
             }
         }
         debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());

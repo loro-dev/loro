@@ -1,7 +1,4 @@
-use std::{
-    marker::PhantomPinned,
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
@@ -14,13 +11,12 @@ use crate::{
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
-        registry::ContainerRegistry,
         text::text_content::ListSlice,
-        ContainerID,
+        Container, ContainerID,
     },
     dag::remove_included_frontiers,
     id::{ClientID, ContainerIdx, Counter, ID},
-    op::{Content, Op, RemoteOp},
+    op::{Op, RemoteContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
@@ -31,7 +27,7 @@ type Clients = Vec<ClientID>;
 type Containers = Vec<ContainerID>;
 
 #[columnar(vec, ser, de)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChangeEncoding {
     #[columnar(strategy = "DeltaRle", original_type = "u32")]
     client_idx: ClientIdx,
@@ -47,7 +43,7 @@ struct ChangeEncoding {
 }
 
 #[columnar(vec, ser, de)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     container: ContainerIdx,
@@ -61,7 +57,7 @@ struct OpEncoding {
 }
 
 #[columnar(vec, ser, de)]
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 struct DepsEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     client_idx: ClientIdx,
@@ -79,7 +75,7 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Encoded {
     #[columnar(type = "vec")]
     changes: Vec<ChangeEncoding>,
@@ -129,7 +125,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
             for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
                 for content in op.contents.into_iter() {
                     let (prop, gc, value) = match content {
-                        crate::op::Content::Map(MapSet { key, value }) => (
+                        crate::op::RemoteContent::Map(MapSet { key, value }) => (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key);
                                 keys.len() - 1
@@ -137,7 +133,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                             0,
                             value,
                         ),
-                        crate::op::Content::List(list) => match list {
+                        crate::op::RemoteContent::List(list) => match list {
                             ListOp::Insert { slice, pos } => (
                                 pos,
                                 match &slice {
@@ -155,7 +151,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                                 (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                             }
                         },
-                        crate::op::Content::Dyn(_) => unreachable!(),
+                        crate::op::RemoteContent::Dyn(_) => unreachable!(),
                     };
                     op_len += 1;
                     ops.push(OpEncoding {
@@ -191,9 +187,8 @@ fn encode_changes(store: &LogStore) -> Encoded {
 fn decode_changes(
     encoded: Encoded,
     client_id: Option<ClientID>,
-    mut cfg: Configure,
+    cfg: Configure,
 ) -> Arc<RwLock<LogStore>> {
-    let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
     let Encoded {
         changes: change_encodings,
         ops,
@@ -215,12 +210,13 @@ fn decode_changes(
         return store;
     }
 
-    let mut container_reg = ContainerRegistry::new();
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
+    let log_store = LogStore::new(cfg, client_id);
+    let mut store = log_store.write().unwrap();
     for container in containers.iter() {
-        container_reg.register(container);
+        store.reg.register(container);
     }
 
     for change_encoding in change_encodings {
@@ -245,18 +241,18 @@ fn decode_changes(
         let mut op_counter = counter;
         for op in op_iter.by_ref().take(op_len as usize) {
             let OpEncoding {
-                container,
+                container: container_idx,
                 prop,
                 value,
                 gc,
             } = op;
-            let container_id = containers[container as usize].clone();
+            let container_id = containers[container_idx as usize].clone();
 
             let container_type = container_id.container_type();
             let content = match container_type {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
-                    Content::Map(MapSet { key, value })
+                    RemoteContent::Map(MapSet { key, value })
                 }
                 ContainerType::List | ContainerType::Text => {
                     let pos = prop;
@@ -278,14 +274,17 @@ fn decode_changes(
                             ListOp::Insert { slice, pos }
                         }
                     };
-                    Content::List(list_op)
+                    RemoteContent::List(list_op)
                 }
             };
 
+            // TODO: can make this faster
+            let container_idx = store.get_container_idx(&container_id).unwrap();
+            let container = store.get_container(&container_id).unwrap();
             let op = Op {
                 counter: op_counter,
-                container,
-                content,
+                container: container_idx,
+                content: container.lock().unwrap().to_import(content),
             };
 
             op_counter += op.content_len() as i32;
@@ -311,34 +310,30 @@ fn decode_changes(
         .map(|changes| changes.last().unwrap().id_last())
         .collect();
 
-    let mut frontier = vv.clone();
+    let mut frontiers = vv.clone();
     for (_, changes) in changes.iter() {
         for change in changes.iter() {
-            remove_included_frontiers(&mut frontier, &change.deps);
+            remove_included_frontiers(&mut frontiers, &change.deps);
         }
     }
 
-    let latest_lamport = changes
+    store.latest_lamport = changes
         .values()
         .map(|changes| changes.last().unwrap().lamport_last())
         .max()
         .unwrap();
-    let latest_timestamp = changes
+    store.latest_timestamp = changes
         .values()
         .map(|changes| changes.last().unwrap().timestamp)
         .max()
         .unwrap();
-    Arc::new(RwLock::new(LogStore {
-        changes,
-        vv,
-        cfg,
-        latest_lamport,
-        latest_timestamp,
-        this_client_id,
-        frontiers: frontier.get_frontiers(),
-        reg: container_reg,
-        _pin: PhantomPinned,
-    }))
+
+    store.changes = changes;
+    store.vv = vv;
+    store.frontiers = frontiers.get_frontiers();
+    drop(store);
+    // FIXME: set all
+    log_store
 }
 
 impl LogStore {

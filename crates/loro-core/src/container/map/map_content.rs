@@ -2,11 +2,16 @@ use rle::{HasLength, Mergable, Sliceable};
 
 use crate::{ContentType, InsertContentTrait, InternalString, LoroValue};
 
-// TODO: use imported and exported format to save the space
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapSet {
     pub(crate) key: InternalString,
     pub(crate) value: LoroValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InnerMapSet {
+    pub(crate) key: InternalString,
+    pub(crate) value: u32,
 }
 
 impl Mergable for MapSet {}
@@ -17,6 +22,19 @@ impl Sliceable for MapSet {
     }
 }
 impl HasLength for MapSet {
+    fn content_len(&self) -> usize {
+        1
+    }
+}
+
+impl Mergable for InnerMapSet {}
+impl Sliceable for InnerMapSet {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        assert!(from == 0 && to == 1);
+        self.clone()
+    }
+}
+impl HasLength for InnerMapSet {
     fn content_len(&self) -> usize {
         1
     }
