@@ -134,7 +134,7 @@ impl LogStore {
         (next_vv, next_frontiers)
     }
 
-    fn apply(
+    pub(crate) fn apply(
         &mut self,
         mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
         context: &mut ImportContext,

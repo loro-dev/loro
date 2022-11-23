@@ -214,6 +214,7 @@ fn decode_changes(
     let mut deps_iter = deps.into_iter();
     let log_store = LogStore::new(cfg, client_id);
     let mut store = log_store.write().unwrap();
+    let mut container_map: FxHashMap<ContainerIdx, _> = FxHashMap::default();
     for container in containers.iter() {
         store.reg.register(container);
     }
@@ -288,6 +289,8 @@ fn decode_changes(
 
             op_counter += op.content_len() as i32;
             ops.push(op);
+
+            container_map.insert(container_idx, Arc::clone(container));
         }
 
         let change = Change {
@@ -328,6 +331,14 @@ fn decode_changes(
         .unwrap();
 
     store.changes = changes;
+
+    let container_map = container_map
+        .into_iter()
+        // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
+        .map(|(k, v)| (k, unsafe { std::mem::transmute(v.lock().unwrap()) }))
+        .collect();
+    store.apply(&frontiers, &vv, container_map);
+
     store.vv = vv;
     store.frontiers = frontiers.get_frontiers();
     drop(store);
