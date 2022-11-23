@@ -89,6 +89,7 @@ impl Hierarchy {
             }
         }
 
+        path.reverse();
         path
     }
 
