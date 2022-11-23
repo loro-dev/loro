@@ -1,5 +1,6 @@
 {
   "tasks": {
+    "install": "cargo install wasm-pack",
     "build": "wasm-pack build --target web .",
     "test": "deno test --allow-read"
   },
