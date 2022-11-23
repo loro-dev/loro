@@ -818,6 +818,7 @@ dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "loro-core",
+ "serde-wasm-bindgen",
  "wasm-bindgen",
 ]
 

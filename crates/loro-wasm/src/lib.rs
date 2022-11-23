@@ -1,6 +1,7 @@
 use loro_core::{
-    container::registry::ContainerWrapper, context::Context, ContainerType, List, LoroCore, Map,
-    Text,
+    container::{registry::ContainerWrapper, ContainerID},
+    context::Context,
+    ContainerType, List, LoroCore, Map, Text,
 };
 use std::ops::{Deref, DerefMut};
 use wasm_bindgen::prelude::*;
@@ -65,6 +66,31 @@ impl Loro {
         let list = self.0.get_list(name);
         Ok(LoroList(list))
     }
+
+    #[wasm_bindgen(js_name = "getContainerById")]
+    pub fn get_container_by_id(&mut self, container_id: JsValue) -> JsResult<JsValue> {
+        let container_id: ContainerID = serde_wasm_bindgen::from_value(container_id)?;
+        let ty = container_id.container_type();
+        let container = self.0.get_container(&container_id);
+        if let Some(container) = container {
+            Ok(match ty {
+                ContainerType::Text => {
+                    let text: Text = Text::from_instance(container, self.0.client_id());
+                    LoroText(text).into()
+                }
+                ContainerType::Map => {
+                    let map: Map = Map::from_instance(container, self.0.client_id());
+                    LoroMap(map).into()
+                }
+                ContainerType::List => {
+                    let list: List = List::from_instance(container, self.0.client_id());
+                    LoroList(list).into()
+                }
+            })
+        } else {
+            Err(JsValue::from_str("Container not found"))
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -85,6 +111,11 @@ impl LoroText {
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&self) -> String {
         self.0.get_value().as_string().unwrap().to_string()
+    }
+
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
     }
 }
 
@@ -114,8 +145,12 @@ impl LoroMap {
 
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&self) -> JsValue {
-        // TODO: if unresolved, return a container ID
         self.0.get_value().into()
+    }
+
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
     }
 
     #[wasm_bindgen(js_name = "getValueDeep")]
@@ -123,18 +158,22 @@ impl LoroMap {
         self.0.get_value_deep(ctx.deref()).into()
     }
 
-    #[wasm_bindgen(js_name = "setContainer")]
-    pub fn set_container(
+    #[wasm_bindgen(js_name = "insertContainer")]
+    pub fn insert_container(
         &mut self,
         ctx: &mut Loro,
         key: &str,
-        container: &str,
+        container_type: &str,
     ) -> JsResult<JsValue> {
-        let _type = match container {
+        let _type = match container_type {
             "text" => ContainerType::Text,
             "map" => ContainerType::Map,
             "list" => ContainerType::List,
-            _ => return Err(JsValue::from_str("Invalid container type")),
+            _ => {
+                return Err(JsValue::from_str(
+                    "Invalid container type, only supports text, map, list",
+                ))
+            }
         };
         let id = self.0.insert(&ctx.0, key, _type)?.unwrap();
         let instance = ctx.deref().get_container(&id).unwrap();
@@ -174,6 +213,11 @@ impl LoroList {
 
     pub fn get(&self, index: usize) -> JsValue {
         self.0.get(index).into()
+    }
+
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
     }
 
     #[wasm_bindgen(js_name = "value", method, getter)]
