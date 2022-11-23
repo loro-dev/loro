@@ -10,6 +10,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
+    event::Index,
     op::{InnerContent, Op, RemoteContent, RichOp},
     span::HasLamport,
     value::LoroValue,
@@ -115,6 +116,20 @@ impl MapContainer {
     #[inline]
     pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
         self.insert(ctx, key, LoroValue::Null);
+    }
+
+    pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
+        for (key, value) in self.state.iter() {
+            if self.pool[value.value]
+                .as_unresolved()
+                .map(|x| &**x == child)
+                .unwrap_or(false)
+            {
+                return Some(Index::Key(key.clone()));
+            }
+        }
+
+        None
     }
 }
 

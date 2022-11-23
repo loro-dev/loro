@@ -26,7 +26,7 @@ pub type Path = Vec<Index>;
 
 pub enum Index {
     Key(InternalString),
-    Index(usize),
+    Seq(usize),
 }
 
 pub enum Diff {
@@ -45,3 +45,5 @@ pub struct MapDiff {
     pub updated: FxHashMap<InternalString, ValuePair>,
     pub deleted: FxHashSet<InternalString>,
 }
+
+pub type Observer = dyn Fn(&Event);

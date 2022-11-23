@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Index, Range};
 
 use crate::value::LoroValue;
 
@@ -29,5 +29,13 @@ impl Pool {
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+}
+
+impl Index<u32> for Pool {
+    type Output = LoroValue;
+
+    fn index(&self, index: u32) -> &Self::Output {
+        &self.0[index as usize]
     }
 }

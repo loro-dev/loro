@@ -18,6 +18,7 @@ pub mod version;
 mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
+mod hierarchy;
 mod loro;
 mod smstring;
 mod span;

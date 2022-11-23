@@ -24,6 +24,7 @@ use crate::{
     },
     dag::Dag,
     debug_log,
+    hierarchy::Hierarchy,
     id::{ClientID, ContainerIdx, Counter},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
@@ -65,10 +66,11 @@ pub struct LogStore {
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
-    pub(crate) this_client_id: ClientID,
     frontiers: SmallVec<[ID; 2]>,
+    pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
+    pub(crate) hierarchy: Hierarchy,
     _pin: PhantomPinned,
 }
 
@@ -84,6 +86,7 @@ impl LogStore {
             latest_lamport: 0,
             latest_timestamp: 0,
             frontiers: Default::default(),
+            hierarchy: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
             _pin: PhantomPinned,

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    RleTree,
+    HasLength, RleTree,
 };
 use smallvec::SmallVec;
 
@@ -19,6 +19,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
+    event::Index,
     id::{Counter, ID},
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
@@ -148,6 +149,23 @@ impl ListContainer {
             self.raw_data.len(),
         );
         self.state.debug_inspect();
+    }
+
+    /// TODO: perf, can store the position info to the container children
+    pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
+        let mut idx = 0;
+        for values in self.state.iter() {
+            let value = values.as_ref();
+            for v in self.raw_data.slice(&value.0) {
+                if v.as_unresolved().map(|x| &**x == child).unwrap_or(false) {
+                    return Some(Index::Seq(idx));
+                }
+
+                idx += 1;
+            }
+        }
+
+        None
     }
 }
 

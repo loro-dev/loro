@@ -11,6 +11,7 @@ use smallvec::SmallVec;
 
 use crate::{
     context::Context,
+    event::Index,
     id::ContainerIdx,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
@@ -132,6 +133,16 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.to_import(content),
             ContainerInstance::Dyn(x) => x.to_import(content),
             ContainerInstance::List(x) => x.to_import(content),
+        }
+    }
+}
+
+impl ContainerInstance {
+    pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
+        match self {
+            ContainerInstance::Map(x) => x.index_of_child(child),
+            ContainerInstance::List(x) => x.index_of_child(child),
+            _ => unreachable!(),
         }
     }
 }
