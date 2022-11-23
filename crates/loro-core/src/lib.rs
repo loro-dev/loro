@@ -25,7 +25,7 @@ mod span;
 pub mod tests;
 
 mod prelim;
-pub use prelim::Prelim;
+pub use prelim::{Prelim, PrelimValue};
 mod value;
 
 pub use error::LoroError;

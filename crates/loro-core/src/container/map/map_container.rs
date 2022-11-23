@@ -54,17 +54,17 @@ impl MapContainer {
         key: InternalString,
         value: P,
     ) -> Option<ContainerID> {
-        let ct = value.container_type();
-        if let Some(ct) = ct {
-            let container_id = self.insert_obj(ctx, key, ct);
+        let (value, maybe_container) = value.convert_value();
+        if let Some(prelim) = maybe_container {
+            let container_id = self.insert_obj(ctx, key, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
             let container = Arc::clone(store.get_container(&container_id).unwrap());
             drop(store);
-            value.integrate(ctx, &container);
+            prelim.integrate(ctx, &container);
             Some(container_id)
         } else {
-            let value = value.into_loro_value();
+            let value = value.into_value().unwrap();
             self.insert_value(ctx, key, value);
             None
         }

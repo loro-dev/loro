@@ -5,6 +5,7 @@ use std::{
 
 use loro_core::{
     container::registry::ContainerInstance, context::Context, ContainerType, LoroValue, Prelim,
+    PrelimValue,
 };
 use wasm_bindgen::prelude::*;
 
@@ -17,19 +18,20 @@ pub(crate) enum PrelimType {
 }
 
 impl Prelim for PrelimType {
-    fn container_type(&self) -> Option<ContainerType> {
+    fn convert_value(self) -> (PrelimValue, Option<Self>) {
         match self {
-            PrelimType::Text(t) => t.container_type(),
-            PrelimType::Map(m) => m.container_type(),
-            PrelimType::List(l) => l.container_type(),
-        }
-    }
-
-    fn into_loro_value(self) -> LoroValue {
-        match self {
-            PrelimType::Text(t) => t.into_loro_value(),
-            PrelimType::Map(m) => m.into_loro_value(),
-            PrelimType::List(l) => l.into_loro_value(),
+            PrelimType::Text(text) => {
+                let (value, prelim) = text.convert_value();
+                (value, prelim.map(PrelimType::Text))
+            }
+            PrelimType::Map(map) => {
+                let (value, prelim) = map.convert_value();
+                (value, prelim.map(PrelimType::Map))
+            }
+            PrelimType::List(list) => {
+                let (value, prelim) = list.convert_value();
+                (value, prelim.map(PrelimType::List))
+            }
         }
     }
 
@@ -142,12 +144,8 @@ impl PrelimMap {
 }
 
 impl Prelim for PrelimText {
-    fn container_type(&self) -> Option<ContainerType> {
-        Some(ContainerType::Text)
-    }
-
-    fn into_loro_value(self) -> LoroValue {
-        unreachable!("PrelimText")
+    fn convert_value(self) -> (PrelimValue, Option<Self>) {
+        (PrelimValue::Container(ContainerType::Text), Some(self))
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
@@ -158,12 +156,8 @@ impl Prelim for PrelimText {
 }
 
 impl Prelim for PrelimList {
-    fn container_type(&self) -> Option<ContainerType> {
-        Some(ContainerType::List)
-    }
-
-    fn into_loro_value(self) -> LoroValue {
-        unreachable!()
+    fn convert_value(self) -> (PrelimValue, Option<Self>) {
+        (PrelimValue::Container(ContainerType::List), Some(self))
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
@@ -175,14 +169,8 @@ impl Prelim for PrelimList {
 }
 
 impl Prelim for PrelimMap {
-    fn container_type(&self) -> Option<ContainerType> {
-        Some(ContainerType::Map)
-    }
-
-    fn into_loro_value(self) -> LoroValue {
-        let m: HashMap<String, LoroValue> =
-            self.0.into_iter().map(|(k, v)| (k, v.into())).collect();
-        m.into()
+    fn convert_value(self) -> (PrelimValue, Option<Self>) {
+        (PrelimValue::Container(ContainerType::Map), Some(self))
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
