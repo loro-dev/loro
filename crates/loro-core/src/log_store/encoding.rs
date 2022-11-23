@@ -144,7 +144,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
                                     ListSlice::RawData(v) => v.into(),
                                     ListSlice::RawStr(s) => s.as_str().into(),
                                     ListSlice::Unknown(_) => LoroValue::Null,
-                                    _ => unreachable!(),
                                 },
                             ),
                             ListOp::Delete(span) => {

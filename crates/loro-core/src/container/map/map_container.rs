@@ -11,7 +11,9 @@ use crate::{
     },
     context::Context,
     event::Index,
+    id::ClientID,
     op::{InnerContent, Op, RemoteContent, RichOp},
+    prelim::Prelim,
     span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
@@ -47,13 +49,29 @@ impl MapContainer {
         }
     }
 
-    pub fn insert<C: Context, V: Into<LoroValue>>(
+    pub fn insert<C: Context, P: Prelim>(
         &mut self,
         ctx: &C,
         key: InternalString,
-        value: V,
-    ) {
-        let value = value.into();
+        value: P,
+    ) -> Option<ContainerID> {
+        let (value, maybe_container) = value.convert_value();
+        if let Some(prelim) = maybe_container {
+            let container_id = self.insert_obj(ctx, key, value.into_container().unwrap());
+            let m = ctx.log_store();
+            let store = m.read().unwrap();
+            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            drop(store);
+            prelim.integrate(ctx, &container);
+            Some(container_id)
+        } else {
+            let value = value.into_value().unwrap();
+            self.insert_value(ctx, key, value);
+            None
+        }
+    }
+
+    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
         let value_index = self.pool.alloc(value).start;
         let value = value_index;
         let self_id = &self.id;
@@ -66,7 +84,7 @@ impl MapContainer {
         };
 
         let id = store.next_id_for(client_id);
-        // TODO: store this value?
+        // // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             counter: id.counter,
@@ -76,11 +94,10 @@ impl MapContainer {
                 value,
             }),
         }]);
-
         self.state.insert(key, ValueSlot { value, order });
     }
 
-    pub fn insert_obj<C: Context>(
+    fn insert_obj<C: Context>(
         &mut self,
         ctx: &C,
         key: InternalString,
@@ -130,6 +147,14 @@ impl MapContainer {
         }
 
         None
+    }
+
+    #[inline]
+    pub fn get(&self, key: &InternalString) -> Option<LoroValue> {
+        self.state
+            .get(key)
+            .map(|v| self.pool.slice(&(v.value..v.value + 1)).first().unwrap())
+            .cloned()
     }
 }
 
@@ -224,36 +249,43 @@ impl Container for MapContainer {
 
 pub struct Map {
     instance: Arc<Mutex<ContainerInstance>>,
+    client_id: ClientID,
 }
 
 impl Clone for Map {
     fn clone(&self) -> Self {
         Self {
             instance: Arc::clone(&self.instance),
+            client_id: self.client_id,
         }
     }
 }
 
 impl Map {
-    pub fn insert<C: Context, V: Into<LoroValue>>(&mut self, ctx: &C, key: &str, value: V) {
-        self.with_container(|map| {
-            map.insert(ctx, key.into(), value);
-        })
+    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+        Self {
+            instance,
+            client_id,
+        }
     }
 
-    pub fn insert_obj<C: Context>(
+    pub fn insert<C: Context, V: Prelim>(
         &mut self,
         ctx: &C,
         key: &str,
-        obj: ContainerType,
-    ) -> ContainerID {
-        self.with_container(|map| map.insert_obj(ctx, key.into(), obj))
+        value: V,
+    ) -> Result<Option<ContainerID>, crate::LoroError> {
+        self.with_container_checked(ctx, |map| map.insert(ctx, key.into(), value))
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) {
-        self.with_container(|map| {
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), crate::LoroError> {
+        self.with_container_checked(ctx, |map| {
             map.delete(ctx, key.into());
         })
+    }
+
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
+        self.with_container(|map| map.get(&key.into()))
     }
 
     pub fn id(&self) -> ContainerID {
@@ -286,10 +318,8 @@ impl ContainerWrapper for Map {
         let map = container_instance.as_map_mut().unwrap();
         f(map)
     }
-}
 
-impl From<Arc<Mutex<ContainerInstance>>> for Map {
-    fn from(map: Arc<Mutex<ContainerInstance>>) -> Self {
-        Map { instance: map }
+    fn client_id(&self) -> ClientID {
+        self.client_id
     }
 }

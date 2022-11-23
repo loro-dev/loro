@@ -344,13 +344,16 @@ impl Actionable for Vec<Actor> {
 
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, &key.to_string());
+                        container.delete(&actor.loro, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, &key.to_string(), *i);
+                        container.insert(&actor.loro, &key.to_string(), *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let new = container.insert_obj(&actor.loro, &key.to_string(), *c);
+                        let new = container
+                            .insert(&actor.loro, &key.to_string(), *c)
+                            .unwrap()
+                            .unwrap();
                         actor.add_new_container(new);
                     }
                 }
@@ -374,13 +377,16 @@ impl Actionable for Vec<Actor> {
 
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, *key as usize, 1);
+                        container.delete(&actor.loro, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, *key as usize, *i);
+                        container.insert(&actor.loro, *key as usize, *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let new = container.insert_obj(&actor.loro, *key as usize, *c);
+                        let new = container
+                            .insert(&actor.loro, *key as usize, *c)
+                            .unwrap()
+                            .unwrap();
                         actor.add_new_container(new)
                     }
                 }
@@ -402,9 +408,13 @@ impl Actionable for Vec<Actor> {
                     &mut actor.text_containers[0]
                 };
                 if *is_del {
-                    container.delete(&actor.loro, *pos as usize, *value as usize);
+                    container
+                        .delete(&actor.loro, *pos as usize, *value as usize)
+                        .unwrap();
                 } else {
-                    container.insert(&actor.loro, *pos as usize, &(format!("[{}]", value)));
+                    container
+                        .insert(&actor.loro, *pos as usize, &(format!("[{}]", value)))
+                        .unwrap();
                 }
             }
         }

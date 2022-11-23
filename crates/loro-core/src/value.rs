@@ -148,9 +148,13 @@ impl From<ContainerID> for LoroValue {
 pub mod wasm {
     use fxhash::FxHashMap;
     use js_sys::{Array, Object};
+    use wasm_bindgen::prelude::*;
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
-    use crate::LoroValue;
+    use crate::{container::ContainerID as _ContainerID, LoroValue};
+
+    #[wasm_bindgen]
+    pub struct ContainerID(_ContainerID);
 
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
@@ -161,10 +165,9 @@ pub mod wasm {
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::List(list) => {
                 let arr = Array::new_with_length(list.len() as u32);
-                for v in list.into_iter() {
-                    arr.push(&convert(v));
+                for (i, v) in list.into_iter().enumerate() {
+                    arr.set(i as u32, convert(v));
                 }
-
                 arr.into_js_result().unwrap()
             }
             LoroValue::Map(m) => {
@@ -176,8 +179,8 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(_) => {
-                unreachable!()
+            LoroValue::Unresolved(ref container_id) => {
+                serde_wasm_bindgen::to_value(container_id).unwrap()
             }
         }
     }
