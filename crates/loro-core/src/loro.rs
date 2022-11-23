@@ -100,4 +100,9 @@ impl LoroCore {
     pub fn debug_inspect(&self) {
         self.log_store.write().unwrap().debug_inspect();
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> String {
+        self.log_store.read().unwrap().to_json()
+    }
 }

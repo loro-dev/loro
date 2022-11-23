@@ -39,11 +39,14 @@ fn main() {
         0,
         start.elapsed().as_millis()
     );
+    let json1 = loro.to_json();
     let start = Instant::now();
     let loro = LoroCore::decode_snapshot(&buf, None, Configure::default());
     println!("decode used {}ms", start.elapsed().as_millis());
     let buf2 = loro.encode_snapshot();
     assert_eq!(buf, buf2);
+    let json2 = loro.to_json();
+    assert_eq!(json1, json2);
     let mut last = 100;
     let mut count = 0;
     let mut max_count = 0;

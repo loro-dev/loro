@@ -342,6 +342,11 @@ impl LogStore {
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         self.reg.get_or_create_container_idx(container)
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> String {
+        self.reg.to_json().to_string()
+    }
 }
 
 impl Dag for LogStore {

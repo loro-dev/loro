@@ -171,6 +171,16 @@ impl ListContainer {
         );
         self.state.debug_inspect();
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut arr = Vec::new();
+        for i in 0..self.values_len() {
+            let v = self.get(i).unwrap();
+            arr.push(v.to_json_value());
+        }
+        serde_json::Value::Array(arr)
+    }
 }
 
 impl Container for ListContainer {
