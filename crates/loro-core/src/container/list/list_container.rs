@@ -75,17 +75,17 @@ impl ListContainer {
         pos: usize,
         value: P,
     ) -> Option<ContainerID> {
-        let ct = value.container_type();
-        if let Some(ct) = ct {
-            let container_id = self.insert_obj(ctx, pos, ct);
+        let (value, maybe_container) = value.convert_value();
+        if let Some(prelim) = maybe_container {
+            let container_id = self.insert_obj(ctx, pos, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
             let container = Arc::clone(store.get_container(&container_id).unwrap());
             drop(store);
-            value.integrate(ctx, &container);
+            prelim.integrate(ctx, &container);
             Some(container_id)
         } else {
-            let value = value.into_loro_value();
+            let value = value.into_value().unwrap();
             self.insert_value(ctx, pos, value);
             None
         }

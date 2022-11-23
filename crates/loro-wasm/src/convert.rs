@@ -3,10 +3,19 @@ use wasm_bindgen::JsValue;
 
 use crate::{prelim::PrelimType, LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};
 use wasm_bindgen::convert::FromWasmAbi;
+
+/// Convert a `JsValue` to `T` by constructor's name.
+///
+/// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
 pub(crate) fn js_to_any<T: FromWasmAbi<Abi = u32>>(
     js: JsValue,
     struct_name: &str,
 ) -> Result<T, JsValue> {
+    if !js.is_object() {
+        return Err(JsValue::from_str(
+            format!("Value supplied as {} is not an object", struct_name).as_str(),
+        ));
+    }
     let ctor_name = Object::get_prototype_of(&js).constructor().name();
     if ctor_name == struct_name {
         let ptr = Reflect::get(&js, &JsValue::from_str("ptr"))?;
