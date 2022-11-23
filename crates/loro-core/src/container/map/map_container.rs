@@ -11,13 +11,14 @@ use crate::{
     },
     context::Context,
     event::Index,
+    hierarchy::Hierarchy,
     id::ClientID,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     span::HasLamport,
     value::LoroValue,
     version::{IdSpanVector, TotalOrderStamp},
-    InternalString,
+    InternalString, LogStore,
 };
 
 use super::MapSet;
@@ -72,6 +73,7 @@ impl MapContainer {
     }
 
     fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
+        assert!(value.as_unresolved().is_none(), "To insert a container to map, you should use insert_obj method or insert with a Prelim container value");
         let value_index = self.pool.alloc(value).start;
         let value = value_index;
         let self_id = &self.id;
@@ -84,7 +86,6 @@ impl MapContainer {
         };
 
         let id = store.next_id_for(client_id);
-        // // TODO: store this value?
         let container = store.get_container_idx(self_id).unwrap();
         store.append_local_ops(&[Op {
             counter: id.counter,
@@ -94,6 +95,7 @@ impl MapContainer {
                 value,
             }),
         }]);
+        self.update_hierarchy_if_container_is_overwritten(&key, &mut store);
         self.state.insert(key, ValueSlot { value, order });
     }
 
@@ -107,12 +109,10 @@ impl MapContainer {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let client_id = store.this_client_id;
-        let container_id = store.create_container(obj);
-        let value_index = self.pool.alloc(container_id.clone()).start;
-        let value = value_index;
-        // TODO: store this value?
+        let (container_id, _) = store.create_container(obj);
+        let value = self.pool.alloc(container_id.clone()).start;
         let id = store.next_id_for(client_id);
-        let container = store.get_container_idx(self_id).unwrap();
+        let self_idx = store.get_container_idx(self_id).unwrap();
         let order = TotalOrderStamp {
             client_id,
             lamport: store.next_lamport(),
@@ -120,19 +120,35 @@ impl MapContainer {
 
         store.append_local_ops(&[Op {
             counter: id.counter,
-            container,
+            container: self_idx,
             content: InnerContent::Map(InnerMapSet {
                 value,
                 key: key.clone(),
             }),
         }]);
+        store.hierarchy.add_child(&self.id, &container_id);
+        self.update_hierarchy_if_container_is_overwritten(&key, &mut store);
+
         self.state.insert(key, ValueSlot { value, order });
         container_id
     }
 
+    fn update_hierarchy_if_container_is_overwritten(
+        &mut self,
+        key: &InternalString,
+        store: &mut LogStore,
+    ) {
+        if let Some(old_value) = self.state.get(key) {
+            let v = &self.pool[old_value.value];
+            if let Some(container) = v.as_unresolved() {
+                store.hierarchy.remove_child(&self.id, container);
+            }
+        }
+    }
+
     #[inline]
     pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
-        self.insert(ctx, key, LoroValue::Null);
+        self.insert_value(ctx, key, LoroValue::Null);
     }
 
     pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
@@ -213,23 +229,27 @@ impl Container for MapContainer {
         unreachable!()
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
         let content = op.get_sliced().content;
-        let v: &InnerMapSet = content.as_map().unwrap();
+        let new_val: &InnerMapSet = content.as_map().unwrap();
         let order = TotalOrderStamp {
             lamport: op.lamport(),
             client_id: op.client_id(),
         };
-        if let Some(slot) = self.state.get_mut(&v.key) {
+        if let Some(slot) = self.state.get_mut(&new_val.key) {
             if slot.order < order {
-                slot.value = v.value;
+                let old_val = &self.pool[slot.value];
+                if let Some(container) = old_val.as_unresolved() {
+                    hierarchy.remove_child(&self.id, container);
+                }
+                slot.value = new_val.value;
                 slot.order = order;
             }
         } else {
             self.state.insert(
-                v.key.to_owned(),
+                new_val.key.to_owned(),
                 ValueSlot {
-                    value: v.value,
+                    value: new_val.value,
                     order,
                 },
             );
@@ -240,10 +260,16 @@ impl Container for MapContainer {
 
     fn track_forward(&mut self, _: &IdSpanVector) {}
 
-    fn apply_tracked_effects_from(&mut self, _: &crate::VersionVector, _: &IdSpanVector) {}
+    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
+        self.update_state_directly(hierarchy, op);
+    }
 
-    fn track_apply(&mut self, op: &RichOp) {
-        self.update_state_directly(op);
+    fn apply_tracked_effects_from(
+        &mut self,
+        _store: &mut crate::LogStore,
+        _from: &crate::VersionVector,
+        _effect_spans: &IdSpanVector,
+    ) {
     }
 }
 

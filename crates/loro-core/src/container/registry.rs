@@ -12,10 +12,11 @@ use smallvec::SmallVec;
 use crate::{
     context::Context,
     event::Index,
+    hierarchy::Hierarchy,
     id::ClientID,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
-    LoroError, LoroValue, VersionVector,
+    LogStore, LoroError, LoroValue, VersionVector,
 };
 
 use super::{
@@ -78,12 +79,12 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
         match self {
-            ContainerInstance::Map(x) => x.update_state_directly(op),
-            ContainerInstance::Text(x) => x.update_state_directly(op),
-            ContainerInstance::Dyn(x) => x.update_state_directly(op),
-            ContainerInstance::List(x) => x.update_state_directly(op),
+            ContainerInstance::Map(x) => x.update_state_directly(hierarchy, op),
+            ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op),
+            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op),
+            ContainerInstance::List(x) => x.update_state_directly(hierarchy, op),
         }
     }
 
@@ -105,21 +106,26 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn track_apply(&mut self, op: &RichOp) {
+    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
         match self {
-            ContainerInstance::Map(x) => x.track_apply(op),
-            ContainerInstance::Text(x) => x.track_apply(op),
-            ContainerInstance::Dyn(x) => x.track_apply(op),
-            ContainerInstance::List(x) => x.track_apply(op),
+            ContainerInstance::Map(x) => x.track_apply(hierarchy, op),
+            ContainerInstance::Text(x) => x.track_apply(hierarchy, op),
+            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op),
+            ContainerInstance::List(x) => x.track_apply(hierarchy, op),
         }
     }
 
-    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        store: &mut LogStore,
+        from: &VersionVector,
+        effect_spans: &IdSpanVector,
+    ) {
         match self {
-            ContainerInstance::Map(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::Text(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::List(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(store, from, effect_spans),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(store, from, effect_spans),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(store, from, effect_spans),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(store, from, effect_spans),
         }
     }
 
@@ -225,9 +231,9 @@ impl ContainerRegistry {
         ContainerIdx(self.containers.len() as u32)
     }
 
-    pub(crate) fn register(&mut self, id: &ContainerID) {
+    pub(crate) fn register(&mut self, id: &ContainerID) -> ContainerIdx {
         let container = self.create(id.clone());
-        self.insert(id.clone(), container);
+        self.insert(id.clone(), container)
     }
 
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {

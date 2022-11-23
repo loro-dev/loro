@@ -1,17 +1,12 @@
 use fxhash::{FxHashMap, FxHashSet};
 
-use crate::{
-    container::{registry::ContainerIdx, ContainerID},
-    delta::Delta,
-    version::Frontiers,
-    InternalString, LoroValue,
-};
+use crate::{container::ContainerID, delta::Delta, version::Frontiers, InternalString, LoroValue};
 
-pub(crate) struct RawEvent {
-    container_idx: ContainerIdx,
-    old_version: Frontiers,
-    new_version: Frontiers,
-    diff: Diff,
+pub struct RawEvent {
+    pub container_id: ContainerID,
+    pub old_version: Frontiers,
+    pub new_version: Frontiers,
+    pub diff: Vec<Diff>,
 }
 
 pub struct Event {
@@ -26,22 +21,26 @@ pub struct Event {
 
 pub type Path = Vec<Index>;
 
+#[derive(Clone, PartialEq, Eq)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
 }
 
+#[derive(Clone, Debug)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String>),
     Map(MapDiff),
 }
 
+#[derive(Clone, Debug)]
 pub struct ValuePair {
     pub old: LoroValue,
     pub new: LoroValue,
 }
 
+#[derive(Clone, Debug)]
 pub struct MapDiff {
     pub added: FxHashMap<InternalString, LoroValue>,
     pub updated: FxHashMap<InternalString, ValuePair>,

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    RleTree,
+    HasLength, RleTree,
 };
 use smallvec::SmallVec;
 
@@ -20,12 +20,13 @@ use crate::{
     },
     context::Context,
     event::Index,
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
     version::IdSpanVector,
-    LoroError,
+    LogStore, LoroError,
 };
 
 use super::list_op::InnerListOp;
@@ -52,6 +53,7 @@ impl ListContainer {
         if values.is_empty() {
             return;
         }
+        assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use insert_obj or insert method");
         let store = ctx.log_store();
         let mut store = store.try_write().unwrap();
 
@@ -93,6 +95,10 @@ impl ListContainer {
     }
 
     fn insert_value<C: Context>(&mut self, ctx: &C, pos: usize, value: LoroValue) -> Option<ID> {
+        assert!(
+            value.as_unresolved().is_none(),
+            "To insert a container to list, you should use insert_obj method or insert a prelim type to the list"
+        );
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
@@ -114,7 +120,10 @@ impl ListContainer {
     fn insert_obj<C: Context>(&mut self, ctx: &C, pos: usize, obj: ContainerType) -> ContainerID {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
-        let container_id = store.create_container(obj);
+        let (container_id, _) = store.create_container(obj);
+        // Update hierarchy info
+        store.hierarchy.add_child(&self.id, &container_id);
+
         // TODO: we can avoid this lock
         drop(store);
         self.insert(
@@ -122,6 +131,7 @@ impl ListContainer {
             pos,
             LoroValue::Unresolved(Box::new(container_id.clone())),
         );
+
         container_id
     }
 
@@ -151,8 +161,26 @@ impl ListContainer {
         );
 
         store.append_local_ops(&[op]);
+        // Update hierarchy info
+        self.update_hierarchy_on_delete(&mut store.hierarchy, pos, len);
+
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
+    }
+
+    fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
+        if !hierarchy.has_children(&self.id) {
+            return;
+        }
+
+        for state in self.state.iter_range(pos, Some(pos + len)) {
+            let range = &state.as_ref().0;
+            for value in self.raw_data.slice(range).iter() {
+                if let LoroValue::Unresolved(container_id) = value {
+                    hierarchy.remove_child(&self.id, container_id);
+                }
+            }
+        }
     }
 
     pub fn values_len(&self) -> usize {
@@ -188,6 +216,14 @@ impl ListContainer {
         }
 
         None
+    }
+
+    fn update_hierarchy_on_insert(&mut self, hierarchy: &mut Hierarchy, content: &SliceRange) {
+        for value in self.raw_data.slice(&content.0).iter() {
+            if let LoroValue::Unresolved(container_id) = value {
+                hierarchy.add_child(&self.id, container_id);
+            }
+        }
     }
 }
 
@@ -248,13 +284,22 @@ impl Container for ListContainer {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
-                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
-                InnerListOp::Delete(span) => self
-                    .state
-                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+                InnerListOp::Insert { slice, pos } => {
+                    self.update_hierarchy_on_insert(hierarchy, slice);
+                    self.state.insert(*pos, slice.clone());
+                }
+                InnerListOp::Delete(span) => {
+                    self.update_hierarchy_on_delete(
+                        hierarchy,
+                        span.start() as usize,
+                        span.atom_len(),
+                    );
+                    self.state
+                        .delete_range(Some(span.start() as usize), Some(span.end() as usize));
+                }
             },
             _ => unreachable!(),
         }
@@ -279,19 +324,46 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_apply(&mut self, rich_op: &RichOp) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp) {
         self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
         &mut self,
+        store: &mut LogStore,
         from: &crate::VersionVector,
         effect_spans: &IdSpanVector,
     ) {
         for effect in self.tracker.iter_effects(from, effect_spans) {
             match effect {
-                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => self.state.insert(pos, content),
+                Effect::Del { pos, len } => {
+                    // Update hierarchy info
+                    if store.hierarchy.has_children(&self.id) {
+                        for state in self.state.iter_range(pos, Some(pos + len)) {
+                            let range = &state.as_ref().0;
+                            for value in self.raw_data.slice(range).iter() {
+                                if let LoroValue::Unresolved(container_id) = value {
+                                    store.hierarchy.remove_child(&self.id, container_id);
+                                }
+                            }
+                        }
+                    }
+
+                    self.state.delete_range(Some(pos), Some(pos + len));
+                }
+                Effect::Ins { pos, content } => {
+                    // Update hierarchy info
+                    {
+                        let content = &content;
+                        for value in self.raw_data.slice(&content.0).iter() {
+                            if let LoroValue::Unresolved(container_id) = value {
+                                store.hierarchy.add_child(&self.id, container_id);
+                            }
+                        }
+                    };
+
+                    self.state.insert(pos, content);
+                }
             }
         }
     }

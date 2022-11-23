@@ -14,10 +14,12 @@ use crate::{
     },
     context::Context,
     debug_log,
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
+    LogStore,
 };
 
 use super::{
@@ -216,7 +218,7 @@ impl Container for TextContainer {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(&mut self, _: &mut Hierarchy, op: &RichOp) {
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
@@ -252,12 +254,13 @@ impl Container for TextContainer {
         }
     }
 
-    fn track_apply(&mut self, rich_op: &RichOp) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp) {
         self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
         &mut self,
+        _: &mut LogStore,
         from: &crate::VersionVector,
         effect_spans: &IdSpanVector,
     ) {

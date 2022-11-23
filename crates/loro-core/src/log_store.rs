@@ -184,11 +184,14 @@ impl LogStore {
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
 
-    pub(crate) fn create_container(&mut self, container_type: ContainerType) -> ContainerID {
+    pub(crate) fn create_container(
+        &mut self,
+        container_type: ContainerType,
+    ) -> (ContainerID, ContainerIdx) {
         let id = self.next_id();
         let container_id = ContainerID::new_normal(id, container_type);
-        self.reg.register(&container_id);
-        container_id
+        let idx = self.reg.register(&container_id);
+        (container_id, idx)
     }
 
     #[inline(always)]

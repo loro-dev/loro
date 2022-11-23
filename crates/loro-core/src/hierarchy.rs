@@ -3,24 +3,23 @@ use std::fmt::Debug;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::{
-        registry::{ContainerIdx, ContainerRegistry},
-        ContainerID,
-    },
-    event::{Index, Observer, Path, RawEvent},
+    configure::rand_u64,
+    container::{registry::ContainerRegistry, ContainerID},
+    event::{Event, Index, Observer, Path, RawEvent},
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
 #[derive(Default, Debug)]
-pub(crate) struct Hierarchy {
-    nodes: FxHashMap<ContainerIdx, Node>,
+pub struct Hierarchy {
+    nodes: FxHashMap<ContainerID, Node>,
 }
 
+type SubscriptionID = u64;
 #[derive(Default)]
 struct Node {
-    parent: Option<ContainerIdx>,
-    children: FxHashSet<ContainerIdx>,
-    observers: Vec<Box<Observer>>,
+    parent: Option<ContainerID>,
+    children: FxHashSet<ContainerID>,
+    observers: FxHashMap<SubscriptionID, Box<Observer>>,
 }
 
 impl Debug for Node {
@@ -33,23 +32,35 @@ impl Debug for Node {
 }
 
 impl Hierarchy {
-    pub fn add_child(&mut self, parent: ContainerIdx, child: ContainerIdx) {
-        let parent_node = self.nodes.entry(parent).or_default();
-        parent_node.children.insert(child);
-        let child_node = self.nodes.entry(child).or_default();
-        child_node.parent = Some(parent);
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
     }
 
-    pub fn remove_child(&mut self, parent: ContainerIdx, child: ContainerIdx) {
-        let parent_node = self.nodes.get_mut(&parent).unwrap();
-        parent_node.children.remove(&child);
+    pub fn add_child(&mut self, parent: &ContainerID, child: &ContainerID) {
+        let parent_node = self.nodes.entry(parent.clone()).or_default();
+        parent_node.children.insert(child.clone());
+        let child_node = self.nodes.entry(child.clone()).or_default();
+        child_node.parent = Some(parent.clone());
+    }
+
+    pub fn has_children(&self, id: &ContainerID) -> bool {
+        self.nodes
+            .get(id)
+            .map(|node| !node.children.is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
+        let parent_node = self.nodes.get_mut(parent).unwrap();
+        parent_node.children.remove(child);
         let mut visited_descendants = FxHashSet::default();
         let mut stack = vec![child];
         while let Some(child) = stack.pop() {
-            visited_descendants.insert(child);
-            let child_node = self.nodes.get(&child).unwrap();
+            visited_descendants.insert(child.clone());
+            let child_node = self.nodes.get(child).unwrap();
             for child in child_node.children.iter() {
-                stack.push(*child);
+                stack.push(child);
             }
         }
 
@@ -61,24 +72,23 @@ impl Hierarchy {
     pub fn get_path(
         &mut self,
         reg: &ContainerRegistry,
-        descendant: &ContainerIdx,
-        current_target: Option<&ContainerIdx>,
+        descendant: &ContainerID,
+        current_target: Option<&ContainerID>,
     ) -> Path {
         let mut path = Path::default();
         let node = Some(descendant);
-        while let Some(node_idx) = node {
-            let node = self.nodes.get(node_idx).unwrap();
-            let node_id = reg.get_id(*node_idx).unwrap();
+        while let Some(node_id) = node {
+            let node = self.nodes.get(node_id).unwrap();
             let parent = &node.parent;
             if let Some(parent) = parent {
-                let parent_node = reg.get_by_idx(*parent).unwrap();
+                let parent_node = reg.get(parent).unwrap();
                 let index = parent_node.lock().unwrap().index_of_child(node_id).unwrap();
                 path.push(index);
             } else {
                 match node_id {
                     ContainerID::Root {
                         name,
-                        container_type,
+                        container_type: _,
                     } => path.push(Index::Key(name.clone())),
                     _ => unreachable!(),
                 }
@@ -93,21 +103,68 @@ impl Hierarchy {
         path
     }
 
-    pub fn should_notify(&self, container_idx: ContainerIdx) -> bool {
-        let mut node_idx = Some(container_idx);
-        while let Some(inner_node_idx) = node_idx {
-            let node = self.nodes.get(&inner_node_idx).unwrap();
+    pub fn should_notify(&self, container_id: ContainerID) -> bool {
+        let mut node_id = Some(&container_id);
+        while let Some(inner_node_id) = node_id {
+            let node = self.nodes.get(inner_node_id).unwrap();
             if !node.observers.is_empty() {
                 return true;
             }
 
-            node_idx = node.parent;
+            node_id = node.parent.as_ref();
         }
 
         false
     }
 
-    pub fn notify(&mut self, event: RawEvent, reg: &ContainerRegistry) {
-        todo!()
+    pub fn notify(&mut self, raw_event: RawEvent, reg: &ContainerRegistry) {
+        let target_id = raw_event.container_id;
+        let mut absolute_path = self.get_path(reg, &target_id, None);
+        absolute_path.reverse();
+        let path_to_root = absolute_path;
+        let mut current_target_id = Some(&target_id);
+        let mut count = 0;
+        let mut event = Event {
+            relative_path: Default::default(),
+            old_version: raw_event.old_version,
+            new_version: raw_event.new_version,
+            current_target: target_id.clone(),
+            target: target_id.clone(),
+            diff: raw_event.diff,
+        };
+
+        while let Some(id) = current_target_id {
+            let node = self.nodes.get(id).unwrap();
+            if !node.observers.is_empty() {
+                let mut relative_path = path_to_root[..count].to_vec();
+                relative_path.reverse();
+                event.relative_path = relative_path;
+                event.current_target = id.clone();
+                for (_, observer) in node.observers.iter() {
+                    observer(&event);
+                }
+            }
+
+            count += 1;
+            current_target_id = node.parent.as_ref();
+        }
+    }
+
+    pub fn observe(&mut self, container: ContainerID, observer: Box<Observer>) -> SubscriptionID {
+        let id = rand_u64();
+        self.nodes
+            .entry(container)
+            .or_default()
+            .observers
+            .insert(id, observer);
+        id
+    }
+
+    pub fn cancel_observe(&mut self, container: ContainerID, id: SubscriptionID) {
+        self.nodes
+            .entry(container)
+            .or_default()
+            .observers
+            .remove(&id);
     }
 }
