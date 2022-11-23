@@ -70,7 +70,6 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pub(crate) hierarchy: Hierarchy,
     _pin: PhantomPinned,
 }
 
@@ -86,7 +85,6 @@ impl LogStore {
             latest_lamport: 0,
             latest_timestamp: 0,
             frontiers: Default::default(),
-            hierarchy: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
             _pin: PhantomPinned,

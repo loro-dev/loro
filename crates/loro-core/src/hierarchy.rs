@@ -5,18 +5,19 @@ use fxhash::{FxHashMap, FxHashSet};
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
     event::{Index, Observer, Path},
+    id::ContainerIdx,
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
 #[derive(Default, Debug)]
 pub(crate) struct Hierarchy {
-    nodes: FxHashMap<ContainerID, Node>,
+    nodes: FxHashMap<ContainerIdx, Node>,
 }
 
 #[derive(Default)]
 struct Node {
-    parent: Option<ContainerID>,
-    children: FxHashSet<ContainerID>,
+    parent: Option<ContainerIdx>,
+    children: FxHashSet<ContainerIdx>,
     observers: Vec<Box<Observer>>,
 }
 
@@ -30,23 +31,23 @@ impl Debug for Node {
 }
 
 impl Hierarchy {
-    pub fn add_child(&mut self, parent: ContainerID, child: ContainerID) {
+    pub fn add_child(&mut self, parent: ContainerIdx, child: ContainerIdx) {
         let parent_node = self.nodes.entry(parent.clone()).or_default();
         parent_node.children.insert(child.clone());
         let child_node = self.nodes.entry(child).or_default();
         child_node.parent = Some(parent);
     }
 
-    pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
-        let parent_node = self.nodes.get_mut(parent).unwrap();
-        parent_node.children.remove(child);
+    pub fn remove_child(&mut self, parent: ContainerIdx, child: ContainerIdx) {
+        let parent_node = self.nodes.get_mut(&parent).unwrap();
+        parent_node.children.remove(&child);
         let mut visited_descendants = FxHashSet::default();
         let mut stack = vec![child];
         while let Some(child) = stack.pop() {
             visited_descendants.insert(child.clone());
-            let child_node = self.nodes.get(child).unwrap();
+            let child_node = self.nodes.get(&child).unwrap();
             for child in child_node.children.iter() {
-                stack.push(child);
+                stack.push(*child);
             }
         }
 
@@ -58,16 +59,17 @@ impl Hierarchy {
     pub fn get_path(
         &mut self,
         reg: &ContainerRegistry,
-        descendant: &ContainerID,
-        current_target: Option<&ContainerID>,
+        descendant: &ContainerIdx,
+        current_target: Option<&ContainerIdx>,
     ) -> Path {
         let mut path = Path::default();
         let node = Some(descendant);
-        while let Some(node_id) = node {
-            let node = self.nodes.get(node_id).unwrap();
+        while let Some(node_idx) = node {
+            let node = self.nodes.get(node_idx).unwrap();
+            let node_id = reg.get_id(*node_idx).unwrap();
             let parent = &node.parent;
             if let Some(parent) = parent {
-                let parent_node = reg.get(parent).unwrap();
+                let parent_node = reg.get_by_idx(*parent).unwrap();
                 let index = parent_node.lock().unwrap().index_of_child(node_id).unwrap();
                 path.push(index);
             } else {

@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 use crate::{
     context::Context,
     event::Index,
+    hierarchy::Hierarchy,
     id::{ClientID, ContainerIdx},
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
@@ -153,6 +154,7 @@ impl ContainerInstance {
 pub struct ContainerRegistry {
     container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     containers: Vec<ContainerAndId>,
+    hierarchy: Hierarchy,
 }
 
 #[derive(Debug)]
@@ -166,6 +168,7 @@ impl ContainerRegistry {
         ContainerRegistry {
             container_to_idx: FxHashMap::default(),
             containers: Vec::new(),
+            hierarchy: Default::default(),
         }
     }
 
