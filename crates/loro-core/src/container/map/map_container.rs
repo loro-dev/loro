@@ -65,14 +65,14 @@ impl MapContainer {
             Some(container_id)
         } else {
             let value = value.into_loro_value();
-            let value_index = self.pool.alloc(value).start;
-            let value = value_index;
             self.insert_value(ctx, key, value);
             None
         }
     }
 
-    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: u32) {
+    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
+        let value_index = self.pool.alloc(value).start;
+        let value = value_index;
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();

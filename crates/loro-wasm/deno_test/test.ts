@@ -30,7 +30,7 @@ Deno.test({
   const b = loro.getMap("ha");
   b.set(loro, "ab", 123);
 
-  const bText = b.setContainer(loro, "hh", "text");
+  const bText = b.insertContainer(loro, "hh", "text");
 
   await t.step("map get", () => {
     assertEquals(b.get("ab"), 123);
@@ -45,6 +45,14 @@ Deno.test({
     assertThrows(() => {
       const loro2 = new Loro();
       bText.insert(loro2, 0, "hello world Text");
+    });
+  });
+
+  await t.step("get container by id", () => {
+    assertThrows(() => {
+      const id = b.id;
+      const b2 = loro.getContainerById(id);
+      assertEquals(b2, b);
     });
   });
 });

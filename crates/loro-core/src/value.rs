@@ -179,11 +179,8 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(_container_id) => {
-                unreachable!()
-                // FIXME: expose container_id to wasm
-                // serde_wasm_bindgen::to_value(&container_id).unwrap()
-                // ContainerID(*container_id).into()
+            LoroValue::Unresolved(ref container_id) => {
+                serde_wasm_bindgen::to_value(container_id).unwrap()
             }
         }
     }
