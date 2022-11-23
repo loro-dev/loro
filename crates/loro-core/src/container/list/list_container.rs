@@ -95,10 +95,6 @@ impl ListContainer {
     }
 
     fn insert_value<C: Context>(&mut self, ctx: &C, pos: usize, value: LoroValue) -> Option<ID> {
-        assert!(
-            value.as_unresolved().is_none(),
-            "To insert a container to list, you should use insert_obj method or insert a prelim type to the list"
-        );
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
