@@ -24,6 +24,8 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 
+pub mod delta;
+pub mod event;
 mod value;
 
 pub use error::LoroError;
@@ -32,6 +34,7 @@ pub(crate) use change::{Lamport, Timestamp};
 pub(crate) use id::{ClientID, ID};
 pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
+// TODO: rename as Key?
 pub(crate) type InternalString = DefaultAtom;
 pub(crate) use container::Container;
 

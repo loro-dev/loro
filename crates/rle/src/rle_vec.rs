@@ -223,7 +223,7 @@ impl<A: Array> Index<usize> for RleVecWithLen<A> {
 
 impl<A: Array> PartialEq for RleVec<A>
 where
-    A::Item: Eq + PartialEq,
+    A::Item: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         self.vec == other.vec
