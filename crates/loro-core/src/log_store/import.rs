@@ -101,7 +101,7 @@ impl LogStore {
         (next_vv, next_frontiers)
     }
 
-    fn apply(
+    pub(crate) fn apply(
         &mut self,
         next_frontiers: &VersionVector,
         next_vv: &VersionVector,
