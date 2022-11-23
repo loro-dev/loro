@@ -231,8 +231,8 @@ impl LoroList {
         value.into()
     }
 
-    #[wasm_bindgen(js_name = "setContainer")]
-    pub fn set_container(
+    #[wasm_bindgen(js_name = "insertContainer")]
+    pub fn insert_container(
         &mut self,
         ctx: &mut Loro,
         pos: usize,
