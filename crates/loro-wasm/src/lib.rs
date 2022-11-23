@@ -231,6 +231,8 @@ impl LoroList {
         value.into()
     }
 
+    /// FIXME: the returned value should not hold a Arc reference to the container
+    /// it may cause memory leak
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,
