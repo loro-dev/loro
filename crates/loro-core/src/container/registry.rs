@@ -269,6 +269,22 @@ impl ContainerRegistry {
         }
     }
 
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for ContainerAndId { container, id } in self.containers.iter() {
+            let container = container.lock().unwrap();
+            let json = match container.deref() {
+                ContainerInstance::Map(x) => x.to_json(),
+                ContainerInstance::Text(x) => x.to_json(),
+                ContainerInstance::Dyn(_) => unreachable!("registry to json"),
+                ContainerInstance::List(x) => x.to_json(),
+            };
+            map.insert(serde_json::to_string(id).unwrap(), json);
+        }
+        serde_json::Value::Object(map)
+    }
+
     pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
         (
             &self.container_to_idx,

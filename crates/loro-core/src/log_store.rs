@@ -363,6 +363,11 @@ impl LogStore {
         self.hierarchy = hierarchy;
         result
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> String {
+        self.reg.to_json().to_string()
+    }
 }
 
 impl Dag for LogStore {

@@ -163,6 +163,15 @@ impl TextContainer {
         );
         self.state.debug_inspect();
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut s = String::new();
+        for slice in self.state.iter() {
+            s.push_str(&self.raw_str.get_str(&slice.as_ref().0));
+        }
+        serde_json::Value::String(s)
+    }
 }
 
 impl Container for TextContainer {

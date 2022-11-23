@@ -216,6 +216,16 @@ impl MapContainer {
             .get(key)
             .map(|v| self.pool.slice(&(v.value..v.value + 1)).first().unwrap())
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (k, v) in self.state.iter() {
+            let value = self.pool.slice(&(v.value..v.value + 1)).first().unwrap();
+            map.insert(k.to_string(), value.to_json_value());
+        }
+        serde_json::Value::Object(map)
+    }
 }
 
 fn calculate_map_diff(
