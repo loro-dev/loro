@@ -1,7 +1,10 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::{registry::ContainerInstance, Container, ContainerID},
-    id::{ClientID, ContainerIdx, Counter, ID},
+    container::{
+        registry::{ContainerIdx, ContainerInstance},
+        Container, ContainerID,
+    },
+    id::{ClientID, Counter, ID},
     span::{HasCounter, HasId, HasLamport},
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
@@ -45,7 +48,7 @@ pub struct RichOp<'a> {
 
 impl Op {
     #[inline]
-    pub(crate) fn new(id: ID, content: InnerContent, container: u32) -> Self {
+    pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
         Op {
             counter: id.counter,
             content,
@@ -66,7 +69,7 @@ impl RemoteOp {
     pub(crate) fn convert(
         self,
         container: &mut ContainerInstance,
-        container_idx: u32,
+        container_idx: ContainerIdx,
     ) -> SmallVec<[Op; 1]> {
         let mut counter = self.counter;
         self.contents

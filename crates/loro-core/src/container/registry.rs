@@ -12,8 +12,7 @@ use smallvec::SmallVec;
 use crate::{
     context::Context,
     event::Index,
-    hierarchy::Hierarchy,
-    id::{ClientID, ContainerIdx},
+    id::ClientID,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
     LoroError, LoroValue, VersionVector,
@@ -23,6 +22,15 @@ use super::{
     list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
     ContainerType,
 };
+
+#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
+pub(crate) struct ContainerIdx(u32);
+
+impl ContainerIdx {
+    pub(crate) fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 // TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]
@@ -154,7 +162,6 @@ impl ContainerInstance {
 pub struct ContainerRegistry {
     container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     containers: Vec<ContainerAndId>,
-    hierarchy: Hierarchy,
 }
 
 #[derive(Debug)]
@@ -168,7 +175,6 @@ impl ContainerRegistry {
         ContainerRegistry {
             container_to_idx: FxHashMap::default(),
             containers: Vec::new(),
-            hierarchy: Default::default(),
         }
     }
 
@@ -185,21 +191,21 @@ impl ContainerRegistry {
     pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
         self.container_to_idx
             .get(id)
-            .map(|x| &self.containers[*x as usize].container)
+            .map(|x| &self.containers[x.0 as usize].container)
     }
 
     #[inline(always)]
-    pub fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
-        self.containers.get(idx as usize).map(|x| &x.container)
+    pub(crate) fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.containers.get(idx.0 as usize).map(|x| &x.container)
     }
 
     #[inline(always)]
-    pub fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
+    pub(crate) fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.container_to_idx.get(id).copied()
     }
 
-    pub fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
-        self.containers.get(idx as usize).map(|x| &x.id)
+    pub(crate) fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
+        self.containers.get(idx.0 as usize).map(|x| &x.id)
     }
 
     #[inline(always)]
@@ -216,7 +222,7 @@ impl ContainerRegistry {
 
     #[inline(always)]
     fn next_idx(&self) -> ContainerIdx {
-        self.containers.len() as ContainerIdx
+        ContainerIdx(self.containers.len() as u32)
     }
 
     pub(crate) fn register(&mut self, id: &ContainerID) {

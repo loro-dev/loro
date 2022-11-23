@@ -1,8 +1,10 @@
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::ContainerID, delta::Delta, id::ContainerIdx, version::Frontiers, InternalString,
-    LoroValue,
+    container::{registry::ContainerIdx, ContainerID},
+    delta::Delta,
+    version::Frontiers,
+    InternalString, LoroValue,
 };
 
 pub(crate) struct RawEvent {

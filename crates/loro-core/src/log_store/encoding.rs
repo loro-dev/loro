@@ -15,7 +15,7 @@ use crate::{
         Container, ContainerID,
     },
     dag::remove_included_frontiers,
-    id::{ClientID, ContainerIdx, Counter, ID},
+    id::{ClientID, Counter, ID},
     op::{Op, RemoteContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
@@ -46,7 +46,7 @@ struct ChangeEncoding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
-    container: ContainerIdx,
+    container: u32,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize, // 18225 bytes
@@ -154,7 +154,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                     };
                     op_len += 1;
                     ops.push(OpEncoding {
-                        container,
+                        container: container.to_u32(),
                         prop,
                         value,
                         gc,

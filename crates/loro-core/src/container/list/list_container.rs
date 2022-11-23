@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree,
+    RleTree,
 };
 use smallvec::SmallVec;
 

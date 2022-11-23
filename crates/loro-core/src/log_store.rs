@@ -19,13 +19,13 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{
-        registry::{ContainerInstance, ContainerRegistry},
+        registry::{ContainerIdx, ContainerInstance, ContainerRegistry},
         ContainerID,
     },
     dag::Dag,
     debug_log,
     hierarchy::Hierarchy,
-    id::{ClientID, ContainerIdx, Counter},
+    id::{ClientID, Counter},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
@@ -70,6 +70,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
+    pub(crate) hierarchy: Hierarchy,
     _pin: PhantomPinned,
 }
 
@@ -87,6 +88,7 @@ impl LogStore {
             frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
+            hierarchy: Default::default(),
             _pin: PhantomPinned,
         }))
     }

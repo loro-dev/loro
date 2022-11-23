@@ -1,4 +1,4 @@
-use crate::LogStore;
+use crate::{container::registry::ContainerIdx, LogStore};
 use std::{ops::ControlFlow, sync::MutexGuard};
 
 use fxhash::FxHashMap;
@@ -9,7 +9,6 @@ use crate::{
     container::{registry::ContainerInstance, Container, ContainerID},
     dag::{remove_included_frontiers, DagUtils},
     debug_log,
-    id::ContainerIdx,
     op::RichOp,
     span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},
     version::are_frontiers_eq,
@@ -105,7 +104,7 @@ impl LogStore {
         &mut self,
         next_frontiers: &VersionVector,
         next_vv: &VersionVector,
-        mut container_map: FxHashMap<u32, MutexGuard<ContainerInstance>>,
+        mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
     ) {
         let latest_frontiers = next_frontiers.get_frontiers();
         debug_log!(

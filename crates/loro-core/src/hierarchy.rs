@@ -3,9 +3,11 @@ use std::fmt::Debug;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::{registry::ContainerRegistry, ContainerID},
-    event::{Index, Observer, Path},
-    id::ContainerIdx,
+    container::{
+        registry::{ContainerIdx, ContainerRegistry},
+        ContainerID,
+    },
+    event::{Index, Observer, Path, RawEvent},
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
@@ -32,8 +34,8 @@ impl Debug for Node {
 
 impl Hierarchy {
     pub fn add_child(&mut self, parent: ContainerIdx, child: ContainerIdx) {
-        let parent_node = self.nodes.entry(parent.clone()).or_default();
-        parent_node.children.insert(child.clone());
+        let parent_node = self.nodes.entry(parent).or_default();
+        parent_node.children.insert(child);
         let child_node = self.nodes.entry(child).or_default();
         child_node.parent = Some(parent);
     }
@@ -44,7 +46,7 @@ impl Hierarchy {
         let mut visited_descendants = FxHashSet::default();
         let mut stack = vec![child];
         while let Some(child) = stack.pop() {
-            visited_descendants.insert(child.clone());
+            visited_descendants.insert(child);
             let child_node = self.nodes.get(&child).unwrap();
             for child in child_node.children.iter() {
                 stack.push(*child);
@@ -88,5 +90,23 @@ impl Hierarchy {
         }
 
         path
+    }
+
+    pub fn should_notify(&self, container_idx: ContainerIdx) -> bool {
+        let mut node_idx = Some(container_idx);
+        while let Some(inner_node_idx) = node_idx {
+            let node = self.nodes.get(&inner_node_idx).unwrap();
+            if !node.observers.is_empty() {
+                return true;
+            }
+
+            node_idx = node.parent;
+        }
+
+        false
+    }
+
+    pub fn notify(&mut self, event: RawEvent, reg: &ContainerRegistry) {
+        todo!()
     }
 }
