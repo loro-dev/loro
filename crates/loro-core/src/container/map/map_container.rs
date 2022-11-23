@@ -72,7 +72,7 @@ impl MapContainer {
         }
     }
 
-    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
+    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: u32) {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -136,7 +136,10 @@ impl MapContainer {
 
     #[inline]
     pub fn get(&self, key: &InternalString) -> Option<LoroValue> {
-        self.state.get(key).map(|v| &v.value).cloned()
+        self.state
+            .get(key)
+            .map(|v| self.pool.slice(&(v.value..v.value + 1)).first().unwrap())
+            .cloned()
     }
 }
 

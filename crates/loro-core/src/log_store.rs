@@ -20,7 +20,7 @@ use crate::{
     configure::Configure,
     container::{
         registry::{ContainerInstance, ContainerRegistry},
-        Container, ContainerID,
+        ContainerID,
     },
     dag::Dag,
     debug_log,

@@ -1,5 +1,4 @@
 use js_sys::{Object, Reflect};
-use loro_core::Prelim;
 use wasm_bindgen::JsValue;
 
 use crate::{prelim::PrelimType, LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};

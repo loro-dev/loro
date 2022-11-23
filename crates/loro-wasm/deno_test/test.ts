@@ -32,6 +32,10 @@ Deno.test({
 
   const bText = b.setContainer(loro, "hh", "text");
 
+  await t.step("map get", () => {
+    assertEquals(b.get("ab"), 123);
+  });
+
   await t.step("getValueDeep", () => {
     bText.insert(loro, 0, "hello world Text");
     assertEquals(b.getValueDeep(loro), { ab: 123, hh: "hello world Text" });
