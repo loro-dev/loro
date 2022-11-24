@@ -1,4 +1,8 @@
-use crate::{container::registry::ContainerIdx, hierarchy::Hierarchy, LogStore};
+use crate::{
+    container::registry::ContainerIdx,
+    version::{Frontiers, IdSpanVector},
+    LogStore,
+};
 use std::{ops::ControlFlow, sync::MutexGuard};
 
 use fxhash::FxHashMap;
@@ -16,6 +20,14 @@ use crate::{
 };
 
 use super::{ContainerGuard, RemoteClientChanges};
+
+pub struct ImportContext {
+    pub old_frontiers: Frontiers,
+    pub new_frontiers: Frontiers,
+    pub old_vv: VersionVector,
+    pub new_vv: VersionVector,
+    pub spans: IdSpanVector,
+}
 
 impl LogStore {
     /// Import remote clients' changes into the local log store.
@@ -47,8 +59,15 @@ impl LogStore {
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
 
-        self.apply(&next_frontiers, &next_vv, container_map);
-        self.update_version_info(next_vv, next_frontiers);
+        let context = ImportContext {
+            old_frontiers: self.frontiers.iter().copied().collect(),
+            new_frontiers: next_frontiers.get_frontiers(),
+            old_vv: self.vv.clone(),
+            spans: next_vv.diff(&self.vv).left,
+            new_vv: next_vv,
+        };
+        self.apply(container_map, &context);
+        self.update_version_info(context.new_vv, next_frontiers);
     }
 
     fn update_version_info(&mut self, next_vv: VersionVector, next_frontiers: VersionVector) {
@@ -102,20 +121,19 @@ impl LogStore {
 
     fn apply(
         &mut self,
-        next_frontiers: &VersionVector,
-        next_vv: &VersionVector,
         mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
+        context: &ImportContext,
     ) {
-        let latest_frontiers = next_frontiers.get_frontiers();
+        let latest_frontiers = &context.new_frontiers;
         debug_log!(
             "FIND COMMON ANCESTORS self={:?} latest={:?}",
             &self.frontiers,
             &latest_frontiers
         );
-        let common_ancestors = self.find_common_ancestor(&self.frontiers, &latest_frontiers);
+        let common_ancestors = self.find_common_ancestor(&self.frontiers, latest_frontiers);
         if are_frontiers_eq(&common_ancestors, &self.frontiers) {
             // we may apply changes directly into state
-            let target_spans = next_vv.diff(&self.vv).left;
+            let target_spans = context.new_vv.diff(&self.vv).left;
             if target_spans.len() == 1 {
                 let (client_id, span) = target_spans.iter().next().unwrap();
                 self.with_hierarchy(|store, hierarchy| {
@@ -170,9 +188,10 @@ impl LogStore {
             container.tracker_checkout(&common_ancestors_vv);
         }
         self.with_hierarchy(|store, hierarchy| {
-            for iter in
-                store.iter_causal(&common_ancestors, next_vv.diff(&common_ancestors_vv).left)
-            {
+            for iter in store.iter_causal(
+                &common_ancestors,
+                context.new_vv.diff(&common_ancestors_vv).left,
+            ) {
                 let start = iter.slice.start;
                 let end = iter.slice.end;
                 let change = iter.data;
@@ -191,16 +210,14 @@ impl LogStore {
                     }
 
                     if let Some(container) = container_map.get_mut(&op.container) {
-                        container.track_apply(hierarchy, &rich_op);
+                        container.track_apply(hierarchy, &rich_op, context);
                     }
                 }
             }
         });
         debug_log!("LOGSTORE STAGE 2",);
-        let path = next_vv.diff(&self.vv).left;
-        let vv = self.vv.clone();
         for (_, container) in container_map.iter_mut() {
-            container.apply_tracked_effects_from(self, &vv, &path);
+            container.apply_tracked_effects_from(self, context);
         }
     }
 
@@ -247,18 +264,5 @@ impl LogStore {
         }
         changes.retain(|_, v| !v.is_empty());
         ControlFlow::Continue(())
-    }
-
-    // TODO: this feels like a dumb way to bypass lifetime issue, but I don't have better idea right now :(
-    #[inline(always)]
-    fn with_hierarchy<F, R>(&mut self, f: F) -> R
-    where
-        for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
-    {
-        let mut hierarchy = std::mem::take(&mut self.hierarchy);
-        let result = f(self, &mut hierarchy);
-        assert!(self.hierarchy.is_empty());
-        self.hierarchy = hierarchy;
-        result
     }
 }

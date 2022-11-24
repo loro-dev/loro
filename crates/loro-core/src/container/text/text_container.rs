@@ -14,8 +14,11 @@ use crate::{
     },
     context::Context,
     debug_log,
+    delta::Delta,
+    event::{Diff, Observer, RawEvent, SubscriptionID},
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
+    log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
@@ -66,7 +69,24 @@ impl TextContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
+        let old_version = store.frontiers().iter().copied().collect();
         store.append_local_ops(&[op]);
+        let new_version = store.frontiers().iter().copied().collect();
+
+        // notify
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.insert(text.to_owned());
+            self.notify(
+                &mut store,
+                vec![Diff::Text(delta)],
+                old_version,
+                new_version,
+                true,
+            );
+        }
+
         Some(id)
     }
 
@@ -88,9 +108,46 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
+        let old_version = store.frontiers().iter().copied().collect();
         store.append_local_ops(&[op]);
+        let new_version = store.frontiers().iter().copied().collect();
+
+        // notify
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.delete(len);
+            self.notify(
+                &mut store,
+                vec![Diff::Text(delta)],
+                old_version,
+                new_version,
+                true,
+            );
+        }
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
+    }
+
+    fn notify(
+        &mut self,
+        store: &mut LogStore,
+        diff: Vec<Diff>,
+        old_version: SmallVec<[ID; 2]>,
+        new_version: SmallVec<[ID; 2]>,
+        local: bool,
+    ) {
+        store.with_hierarchy(|store, hierarchy| {
+            let event = RawEvent {
+                diff,
+                local,
+                old_version,
+                new_version,
+                container_id: self.id.clone(),
+            };
+
+            hierarchy.notify(event, &store.reg);
+        });
     }
 
     pub fn text_len(&self) -> usize {
@@ -109,6 +166,18 @@ impl TextContainer {
             self.raw_str.len(),
         );
         self.state.debug_inspect();
+    }
+
+    pub fn subscribe<C: Context>(&self, ctx: &C, observer: Observer) -> SubscriptionID {
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
+        store.hierarchy.subscribe(&self.id, observer)
+    }
+
+    pub fn unsubscribe<C: Context>(&self, ctx: &C, subscription: SubscriptionID) {
+        let store = ctx.log_store();
+        let mut store = store.write().unwrap();
+        store.hierarchy.unsubscribe(&self.id, subscription);
     }
 }
 
@@ -254,24 +323,54 @@ impl Container for TextContainer {
         }
     }
 
-    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, import_context: &ImportContext) {
         self.tracker.track_apply(rich_op);
     }
 
-    fn apply_tracked_effects_from(
-        &mut self,
-        _: &mut LogStore,
-        from: &crate::VersionVector,
-        effect_spans: &IdSpanVector,
-    ) {
+    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
         debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
-        for effect in self.tracker.iter_effects(from, effect_spans) {
+        let should_notify = store.hierarchy.should_notify(&self.id);
+        let mut diff = vec![];
+        for effect in self
+            .tracker
+            .iter_effects(&import_context.old_vv, &import_context.spans)
+        {
             debug_log!("APPLY EFFECT {:?}", &effect);
             match effect {
-                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => self.state.insert(pos, content),
+                Effect::Del { pos, len } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.delete(len);
+                        diff.push(Diff::Text(delta));
+                    }
+
+                    self.state.delete_range(Some(pos), Some(pos + len));
+                }
+                Effect::Ins { pos, content } => {
+                    if should_notify {
+                        let s = self.raw_str.slice(&content.0).to_owned();
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.insert(s);
+                        diff.push(Diff::Text(delta));
+                    }
+
+                    self.state.insert(pos, content);
+                }
             }
         }
+
+        if should_notify {
+            self.notify(
+                store,
+                diff,
+                import_context.old_frontiers.clone(),
+                import_context.new_frontiers.clone(),
+                false,
+            );
+        }
+
         debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());
     }
 }

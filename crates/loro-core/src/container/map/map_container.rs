@@ -13,6 +13,7 @@ use crate::{
     event::Index,
     hierarchy::Hierarchy,
     id::ClientID,
+    log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     span::HasLamport,
@@ -260,15 +261,19 @@ impl Container for MapContainer {
 
     fn track_forward(&mut self, _: &IdSpanVector) {}
 
-    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
+    fn track_apply(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        import_context: &ImportContext,
+    ) {
         self.update_state_directly(hierarchy, op);
     }
 
     fn apply_tracked_effects_from(
         &mut self,
         _store: &mut crate::LogStore,
-        _from: &crate::VersionVector,
-        _effect_spans: &IdSpanVector,
+        _import_context: &ImportContext,
     ) {
     }
 }

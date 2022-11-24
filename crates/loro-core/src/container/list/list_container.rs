@@ -22,6 +22,7 @@ use crate::{
     event::Index,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
+    log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
@@ -320,17 +321,15 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, import_context: &ImportContext) {
         self.tracker.track_apply(rich_op);
     }
 
-    fn apply_tracked_effects_from(
-        &mut self,
-        store: &mut LogStore,
-        from: &crate::VersionVector,
-        effect_spans: &IdSpanVector,
-    ) {
-        for effect in self.tracker.iter_effects(from, effect_spans) {
+    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
+        for effect in self
+            .tracker
+            .iter_effects(&import_context.old_vv, &import_context.spans)
+        {
             match effect {
                 Effect::Del { pos, len } => {
                     // Update hierarchy info

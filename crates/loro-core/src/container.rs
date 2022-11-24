@@ -6,6 +6,7 @@
 //!
 use crate::{
     hierarchy::Hierarchy,
+    log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
     InternalString, LogStore, LoroValue, ID,
@@ -66,16 +67,16 @@ pub trait Container: Debug + Any + Unpin {
     /// Here we have not updated the container state yet. Because we
     /// need to calculate the effect of the op for [crate::List] and
     /// [crate::Text] by using tracker.  
-    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp);
+    fn track_apply(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        import_context: &ImportContext,
+    );
 
     /// Make tracker iterate over the target spans and apply the calculated
     /// effects to the container state
-    fn apply_tracked_effects_from(
-        &mut self,
-        store: &mut LogStore,
-        from: &VersionVector,
-        effect_spans: &IdSpanVector,
-    );
+    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

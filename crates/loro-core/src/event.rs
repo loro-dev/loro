@@ -6,6 +6,7 @@ pub struct RawEvent {
     pub container_id: ContainerID,
     pub old_version: Frontiers,
     pub new_version: Frontiers,
+    pub local: bool,
     pub diff: Vec<Diff>,
 }
 
@@ -17,6 +18,7 @@ pub struct Event {
     /// the relative path from current_target to target
     pub relative_path: Path,
     pub diff: Vec<Diff>,
+    pub local: bool,
 }
 
 pub type Path = Vec<Index>;
@@ -47,4 +49,6 @@ pub struct MapDiff {
     pub deleted: FxHashSet<InternalString>,
 }
 
-pub type Observer = dyn Fn(&Event);
+pub type Observer = Box<dyn Fn(&Event)>;
+
+pub type SubscriptionID = u64;

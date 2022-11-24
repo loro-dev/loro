@@ -4,6 +4,7 @@
 mod encoding;
 mod import;
 mod iter;
+pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock},
@@ -347,6 +348,19 @@ impl LogStore {
 
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         self.reg.get_or_create_container_idx(container)
+    }
+
+    // TODO: this feels like a dumb way to bypass lifetime issue, but I don't have better idea right now :(
+    #[inline(always)]
+    pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
+    where
+        for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
+    {
+        let mut hierarchy = std::mem::take(&mut self.hierarchy);
+        let result = f(self, &mut hierarchy);
+        assert!(self.hierarchy.is_empty());
+        self.hierarchy = hierarchy;
+        result
     }
 }
 

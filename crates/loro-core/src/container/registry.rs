@@ -14,9 +14,10 @@ use crate::{
     event::Index,
     hierarchy::Hierarchy,
     id::ClientID,
+    log_store::ImportContext,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
-    LogStore, LoroError, LoroValue, VersionVector,
+    LogStore, LoroError, LoroValue,
 };
 
 use super::{
@@ -106,26 +107,21 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
+    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp, ctx: &ImportContext) {
         match self {
-            ContainerInstance::Map(x) => x.track_apply(hierarchy, op),
-            ContainerInstance::Text(x) => x.track_apply(hierarchy, op),
-            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op),
-            ContainerInstance::List(x) => x.track_apply(hierarchy, op),
+            ContainerInstance::Map(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::Text(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::List(x) => x.track_apply(hierarchy, op, ctx),
         }
     }
 
-    fn apply_tracked_effects_from(
-        &mut self,
-        store: &mut LogStore,
-        from: &VersionVector,
-        effect_spans: &IdSpanVector,
-    ) {
+    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
         match self {
-            ContainerInstance::Map(x) => x.apply_tracked_effects_from(store, from, effect_spans),
-            ContainerInstance::Text(x) => x.apply_tracked_effects_from(store, from, effect_spans),
-            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(store, from, effect_spans),
-            ContainerInstance::List(x) => x.apply_tracked_effects_from(store, from, effect_spans),
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(store, import_context),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(store, import_context),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(store, import_context),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(store, import_context),
         }
     }
 

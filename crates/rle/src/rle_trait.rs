@@ -84,3 +84,9 @@ pub trait GlobalIndex:
 }
 
 impl<T: Debug + Integer + Copy + Default + FromPrimitive + AsPrimitive<usize>> GlobalIndex for T {}
+
+impl HasLength for String {
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+}

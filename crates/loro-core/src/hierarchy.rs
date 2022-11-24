@@ -5,7 +5,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use crate::{
     configure::rand_u64,
     container::{registry::ContainerRegistry, ContainerID},
-    event::{Event, Index, Observer, Path, RawEvent},
+    event::{Event, Index, Observer, Path, RawEvent, SubscriptionID},
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
@@ -14,12 +14,12 @@ pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
 }
 
-type SubscriptionID = u64;
 #[derive(Default)]
 struct Node {
     parent: Option<ContainerID>,
     children: FxHashSet<ContainerID>,
-    observers: FxHashMap<SubscriptionID, Box<Observer>>,
+    observers: FxHashMap<SubscriptionID, Observer>,
+    deep_observers: FxHashMap<SubscriptionID, Observer>,
 }
 
 impl Debug for Node {
@@ -33,6 +33,11 @@ impl Debug for Node {
 
 impl Hierarchy {
     #[inline(always)]
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -44,6 +49,7 @@ impl Hierarchy {
         child_node.parent = Some(parent.clone());
     }
 
+    #[inline(always)]
     pub fn has_children(&self, id: &ContainerID) -> bool {
         self.nodes
             .get(id)
@@ -103,10 +109,13 @@ impl Hierarchy {
         path
     }
 
-    pub fn should_notify(&self, container_id: ContainerID) -> bool {
-        let mut node_id = Some(&container_id);
+    pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+        let mut node_id = Some(container_id);
         while let Some(inner_node_id) = node_id {
-            let node = self.nodes.get(inner_node_id).unwrap();
+            let Some(node) = self.nodes.get(inner_node_id) else {
+                return false;
+            };
+
             if !node.observers.is_empty() {
                 return true;
             }
@@ -131,16 +140,24 @@ impl Hierarchy {
             current_target: target_id.clone(),
             target: target_id.clone(),
             diff: raw_event.diff,
+            local: raw_event.local,
         };
+
+        let node = self.nodes.get(&target_id).unwrap();
+        if !node.observers.is_empty() {
+            for (_, observer) in node.observers.iter() {
+                observer(&event);
+            }
+        }
 
         while let Some(id) = current_target_id {
             let node = self.nodes.get(id).unwrap();
-            if !node.observers.is_empty() {
+            if !node.deep_observers.is_empty() {
                 let mut relative_path = path_to_root[..count].to_vec();
                 relative_path.reverse();
                 event.relative_path = relative_path;
                 event.current_target = id.clone();
-                for (_, observer) in node.observers.iter() {
+                for (_, observer) in node.deep_observers.iter() {
                     observer(&event);
                 }
             }
@@ -150,21 +167,21 @@ impl Hierarchy {
         }
     }
 
-    pub fn observe(&mut self, container: ContainerID, observer: Box<Observer>) -> SubscriptionID {
+    pub fn subscribe(&mut self, container: &ContainerID, observer: Observer) -> SubscriptionID {
         let id = rand_u64();
         self.nodes
-            .entry(container)
+            .entry(container.clone())
             .or_default()
             .observers
             .insert(id, observer);
         id
     }
 
-    pub fn cancel_observe(&mut self, container: ContainerID, id: SubscriptionID) {
-        self.nodes
-            .entry(container)
-            .or_default()
-            .observers
-            .remove(&id);
+    pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) {
+        if let Some(x) = self.nodes.get_mut(container) {
+            x.observers.remove(&id);
+        } else {
+            // TODO: warning
+        }
     }
 }
