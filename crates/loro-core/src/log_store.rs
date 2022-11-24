@@ -345,7 +345,8 @@ impl LogStore {
 
     #[cfg(feature = "json")]
     pub fn to_json(&self) -> String {
-        self.reg.to_json().to_string()
+        let value = self.reg.to_json();
+        serde_json::to_string_pretty(&value).unwrap()
     }
 }
 

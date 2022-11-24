@@ -144,13 +144,13 @@ impl MapContainer {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self, reg: &ContainerRegistry) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
+    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
+        let mut map = FxHashMap::default();
         for (k, v) in self.state.iter() {
             let value = self.pool.slice(&(v.value..v.value + 1)).first().unwrap();
             map.insert(k.to_string(), value.to_json_value(reg));
         }
-        serde_json::Value::Object(map)
+        LoroValue::Map(Box::new(map))
     }
 }
 

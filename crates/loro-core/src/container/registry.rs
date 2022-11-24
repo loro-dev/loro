@@ -239,8 +239,8 @@ impl ContainerRegistry {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
+    pub fn to_json(&self) -> LoroValue {
+        let mut map = FxHashMap::default();
         for ContainerAndId { container, id } in self.containers.iter() {
             if let ContainerID::Root {
                 name,
@@ -254,10 +254,11 @@ impl ContainerRegistry {
                     ContainerInstance::Dyn(_) => unreachable!("registry to json dyn"),
                     ContainerInstance::List(x) => x.to_json(self),
                 };
-                map.insert(format!("{}-{:?}", name, container_type), json);
+                // TODO: container type?
+                map.insert(format!("{}-({:?})", name, container_type), json);
             }
         }
-        serde_json::Value::Object(map)
+        LoroValue::Map(Box::new(map))
     }
 
     pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
