@@ -22,13 +22,38 @@ use crate::{
 
 use super::{ContainerGuard, RemoteClientChanges};
 
+#[derive(Debug)]
 pub struct ImportContext {
     pub old_frontiers: Frontiers,
     pub new_frontiers: Frontiers,
     pub old_vv: VersionVector,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
-    pub diff: FxHashMap<ContainerID, Vec<Diff>>,
+    pub diff: Vec<(ContainerID, Vec<Diff>)>,
+}
+
+impl ImportContext {
+    pub fn push_diff(&mut self, id: &ContainerID, diff: Diff) {
+        if let Some((last_id, vec)) = self.diff.last_mut() {
+            if last_id == id {
+                vec.push(diff);
+                return;
+            }
+        }
+
+        self.diff.push((id.clone(), vec![diff]));
+    }
+
+    pub fn push_diff_vec(&mut self, id: &ContainerID, mut diff: Vec<Diff>) {
+        if let Some((last_id, vec)) = self.diff.last_mut() {
+            if last_id == id {
+                vec.append(&mut diff);
+                return;
+            }
+        }
+
+        self.diff.push((id.clone(), diff));
+    }
 }
 
 impl LogStore {

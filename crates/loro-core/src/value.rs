@@ -308,7 +308,7 @@ impl LoroValue {
 }
 
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
-    let value = if let Some(container) = v.as_unresolved() {
+    if let Some(container) = v.as_unresolved() {
         match container.container_type() {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
@@ -316,8 +316,7 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
         }
     } else {
         v.clone()
-    };
-    value
+    }
 }
 
 #[cfg(feature = "wasm")]

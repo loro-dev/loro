@@ -321,10 +321,7 @@ impl Container for MapContainer {
                         new_val.key.clone(),
                         (self.pool[slot.value].clone(), new_value.clone()).into(),
                     );
-                    ctx.diff
-                        .entry(self.id.clone())
-                        .or_default()
-                        .push(Diff::Map(map_diff));
+                    ctx.push_diff(&self.id, Diff::Map(map_diff));
                 }
 
                 let old_val = &self.pool[slot.value];
@@ -345,10 +342,7 @@ impl Container for MapContainer {
                 map_diff
                     .added
                     .insert(new_val.key.clone(), self.pool[new_val.value].clone());
-                ctx.diff
-                    .entry(self.id.clone())
-                    .or_default()
-                    .push(Diff::Map(map_diff));
+                ctx.push_diff(&self.id, Diff::Map(map_diff));
             }
 
             if let Some(container) = new_value.as_unresolved() {

@@ -542,6 +542,7 @@ impl Actionable for Vec<Actor> {
 }
 
 fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+    dbg!(a, b);
     match (a, b) {
         (LoroValue::Map(a), LoroValue::Map(b)) => {
             for (k, v) in a.iter() {
@@ -691,6 +692,77 @@ mod failed_tests {
     }
 
     #[test]
+    fn notify_causal_order_check() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 38912,
+                    is_del: false,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 138,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+            ],
+        )
+    }
+
+    #[test]
     fn test() {
         arbtest::builder()
             .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
@@ -720,33 +792,6 @@ mod failed_tests {
                     container_idx: 55,
                     key: 58,
                     value: Container(C::List),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn case_0() {
-        test_multi_sites(
-            3,
-            &mut [
-                Map {
-                    site: 2,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
                 },
             ],
         )

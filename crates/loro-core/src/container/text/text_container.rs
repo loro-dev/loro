@@ -295,10 +295,7 @@ impl Container for TextContainer {
                         let mut delta = Delta::new();
                         delta.retain(*pos);
                         delta.insert(s);
-                        ctx.diff
-                            .entry(self.id.clone())
-                            .or_default()
-                            .push(Diff::Text(delta));
+                        ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(*pos, slice.clone());
                 }
@@ -307,10 +304,7 @@ impl Container for TextContainer {
                         let mut delta = Delta::new();
                         delta.retain(span.start() as usize);
                         delta.delete(span.atom_len());
-                        ctx.diff
-                            .entry(self.id.clone())
-                            .or_default()
-                            .push(Diff::Text(delta));
+                        ctx.push_diff(&self.id, Diff::Text(delta));
                     }
 
                     self.state
@@ -398,11 +392,7 @@ impl Container for TextContainer {
         }
 
         if should_notify {
-            import_context
-                .diff
-                .entry(self.id.clone())
-                .or_default()
-                .append(&mut diff);
+            import_context.push_diff_vec(&self.id, diff);
         }
 
         debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());

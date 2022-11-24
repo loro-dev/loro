@@ -110,11 +110,8 @@ impl Hierarchy {
         }
 
         let mut path = Path::default();
-        dbg!(&self);
-        dbg!(&descendant, target);
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
-            dbg!(&node_id);
             let Some(node) = self.nodes.get(node_id) else {
                 debug_assert!(node_id.is_root());
                 break;

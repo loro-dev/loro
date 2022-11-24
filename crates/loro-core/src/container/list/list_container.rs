@@ -348,11 +348,7 @@ impl Container for ListContainer {
                         let delta_vec = self.raw_data.slice(&slice.0).to_vec();
                         delta.retain(*pos);
                         delta.insert(delta_vec);
-                        context
-                            .diff
-                            .entry(self.id.clone())
-                            .or_default()
-                            .push(Diff::List(delta));
+                        context.push_diff(&self.id, Diff::List(delta));
                     }
 
                     self.update_hierarchy_on_insert(hierarchy, slice);
@@ -363,11 +359,7 @@ impl Container for ListContainer {
                         let mut delta = Delta::new();
                         delta.retain(span.start() as usize);
                         delta.delete(span.atom_len());
-                        context
-                            .diff
-                            .entry(self.id.clone())
-                            .or_default()
-                            .push(Diff::List(delta));
+                        context.push_diff(&self.id, Diff::List(delta));
                     }
 
                     self.update_hierarchy_on_delete(
@@ -442,13 +434,9 @@ impl Container for ListContainer {
                 }
                 Effect::Ins { pos, content } => {
                     if should_notify {
-                        let mut delta_vec = vec![];
-                        for value in self.raw_data.slice(&content.0) {
-                            delta_vec.push(value.clone());
-                        }
                         let mut delta = Delta::new();
                         delta.retain(pos);
-                        delta.insert(delta_vec);
+                        delta.insert(self.raw_data.slice(&content.0).to_vec());
                         diff.push(Diff::List(delta));
                     }
                     for value in self.raw_data.slice(&content.0).iter() {
@@ -464,11 +452,7 @@ impl Container for ListContainer {
         }
 
         if should_notify {
-            import_context
-                .diff
-                .entry(self.id.clone())
-                .or_default()
-                .append(&mut diff);
+            import_context.push_diff_vec(&self.id, diff);
         }
     }
 }
