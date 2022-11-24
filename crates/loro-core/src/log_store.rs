@@ -234,9 +234,10 @@ impl LogStore {
     }
 
     /// this method would not get the container and apply op
-    pub fn append_local_ops(&mut self, ops: &[Op]) {
+    pub fn append_local_ops(&mut self, ops: &[Op]) -> (SmallVec<[ID; 2]>, &[ID]) {
+        let old_version = self.frontiers.clone();
         if ops.is_empty() {
-            return;
+            return (old_version, self.frontier());
         }
 
         let lamport = self.next_lamport();
@@ -264,8 +265,8 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
-
         debug_log!("CHANGES---------------- site {}", self.this_client_id);
+        (old_version, self.frontier())
     }
 
     #[inline]

@@ -105,12 +105,25 @@ impl ListContainer {
         let op = Op::new(
             id,
             InnerContent::List(InnerListOp::Insert {
-                slice: slice.into(),
+                slice: slice.clone().into(),
                 pos,
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        store.append_local_ops(&[op]);
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
+        if store.hierarchy.should_notify(&self.id) {
+            let value = self.raw_data.slice(&slice)[0].clone();
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.insert(vec![value]);
+            self.notify_local(
+                &mut store,
+                vec![Diff::List(delta)],
+                old_version,
+                new_version,
+            )
+        }
 
         Some(id)
     }
@@ -158,26 +171,39 @@ impl ListContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        store.append_local_ops(&[op]);
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
         // Update hierarchy info
         self.update_hierarchy_on_delete(&mut store.hierarchy, pos, len);
 
         self.state.delete_range(Some(pos), Some(pos + len));
+
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.delete(len);
+            self.notify_local(
+                &mut store,
+                vec![Diff::List(delta)],
+                old_version,
+                new_version,
+            )
+        }
+
         Some(id)
     }
 
-    fn notify(
+    fn notify_local(
         &mut self,
         store: &mut LogStore,
         diff: Vec<Diff>,
         old_version: SmallVec<[ID; 2]>,
         new_version: SmallVec<[ID; 2]>,
-        local: bool,
     ) {
         store.with_hierarchy(|store, hierarchy| {
             let event = RawEvent {
                 diff,
-                local,
+                local: true,
                 old_version,
                 new_version,
                 container_id: self.id.clone(),
@@ -303,7 +329,12 @@ impl Container for ListContainer {
         }
     }
 
-    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        context: &mut ImportContext,
+    ) {
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
@@ -343,11 +374,20 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, import_context: &ImportContext) {
+    fn track_apply(
+        &mut self,
+        _: &mut Hierarchy,
+        rich_op: &RichOp,
+        import_context: &mut ImportContext,
+    ) {
         self.tracker.track_apply(rich_op);
     }
 
-    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        store: &mut LogStore,
+        import_context: &mut ImportContext,
+    ) {
         let should_notify = store.hierarchy.should_notify(&self.id);
         let mut diff = vec![];
         for effect in self
@@ -402,13 +442,11 @@ impl Container for ListContainer {
         }
 
         if should_notify {
-            self.notify(
-                store,
-                diff,
-                import_context.old_frontiers.clone(),
-                import_context.new_frontiers.clone(),
-                false,
-            );
+            import_context
+                .diff
+                .entry(self.id.clone())
+                .or_default()
+                .append(&mut diff);
         }
     }
 }

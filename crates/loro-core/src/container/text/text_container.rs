@@ -15,14 +15,14 @@ use crate::{
     context::Context,
     debug_log,
     delta::Delta,
-    event::{Diff, Observer, RawEvent, SubscriptionID},
-    hierarchy::Hierarchy,
+    event::{Diff, RawEvent},
+    hierarchy::{self, Hierarchy},
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
-    LogStore, LoroError,
+    LogStore,
 };
 
 use super::{
@@ -69,8 +69,8 @@ impl TextContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        let old_version = store.frontiers().iter().copied().collect();
-        store.append_local_ops(&[op]);
+
+        let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = store.frontiers().iter().copied().collect();
 
         // notify
@@ -78,12 +78,11 @@ impl TextContainer {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(text.to_owned());
-            self.notify(
+            self.notify_local(
                 &mut store,
                 vec![Diff::Text(delta)],
                 old_version,
                 new_version,
-                true,
             );
         }
 
@@ -108,39 +107,36 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        let old_version = store.frontiers().iter().copied().collect();
-        store.append_local_ops(&[op]);
-        let new_version = store.frontiers().iter().copied().collect();
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
 
         // notify
         if store.hierarchy.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
-            self.notify(
+            self.notify_local(
                 &mut store,
                 vec![Diff::Text(delta)],
                 old_version,
                 new_version,
-                true,
             );
         }
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
     }
 
-    fn notify(
+    fn notify_local(
         &mut self,
         store: &mut LogStore,
         diff: Vec<Diff>,
         old_version: SmallVec<[ID; 2]>,
         new_version: SmallVec<[ID; 2]>,
-        local: bool,
     ) {
         store.with_hierarchy(|store, hierarchy| {
             let event = RawEvent {
                 diff,
-                local,
+                local: true,
                 old_version,
                 new_version,
                 container_id: self.id.clone(),
@@ -275,13 +271,42 @@ impl Container for TextContainer {
         }
     }
 
-    fn update_state_directly(&mut self, _: &mut Hierarchy, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        ctx: &mut ImportContext,
+    ) {
+        let should_notify = hierarchy.should_notify(&self.id);
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
-                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
-                InnerListOp::Delete(span) => self
-                    .state
-                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+                InnerListOp::Insert { slice, pos } => {
+                    if should_notify {
+                        let s = self.raw_str.slice(&slice.0).to_owned();
+                        let mut delta = Delta::new();
+                        delta.retain(*pos);
+                        delta.insert(s);
+                        ctx.diff
+                            .entry(self.id.clone())
+                            .or_default()
+                            .push(Diff::Text(delta));
+                    }
+                    self.state.insert(*pos, slice.clone());
+                }
+                InnerListOp::Delete(span) => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(span.start() as usize);
+                        delta.delete(span.atom_len());
+                        ctx.diff
+                            .entry(self.id.clone())
+                            .or_default()
+                            .push(Diff::Text(delta));
+                    }
+
+                    self.state
+                        .delete_range(Some(span.start() as usize), Some(span.end() as usize))
+                }
             },
             _ => unreachable!(),
         }
@@ -311,11 +336,20 @@ impl Container for TextContainer {
         }
     }
 
-    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, import_context: &ImportContext) {
+    fn track_apply(
+        &mut self,
+        _: &mut Hierarchy,
+        rich_op: &RichOp,
+        import_context: &mut ImportContext,
+    ) {
         self.tracker.track_apply(rich_op);
     }
 
-    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        store: &mut LogStore,
+        import_context: &mut ImportContext,
+    ) {
         debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
         let should_notify = store.hierarchy.should_notify(&self.id);
         let mut diff = vec![];
@@ -350,13 +384,11 @@ impl Container for TextContainer {
         }
 
         if should_notify {
-            self.notify(
-                store,
-                diff,
-                import_context.old_frontiers.clone(),
-                import_context.new_frontiers.clone(),
-                false,
-            );
+            import_context
+                .diff
+                .entry(self.id.clone())
+                .or_default()
+                .append(&mut diff);
         }
 
         debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());

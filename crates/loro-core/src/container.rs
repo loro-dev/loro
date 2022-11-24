@@ -49,9 +49,6 @@ pub trait Container: Debug + Any + Unpin {
     /// convert an op content to compact imported format
     fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
-    /// Apply the effect of the op directly to the state.
-    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp);
-
     /// Tracker need to retreat in order to apply the op.
     /// TODO: can be merged into checkout
     fn track_retreat(&mut self, spans: &IdSpanVector);
@@ -72,12 +69,23 @@ pub trait Container: Debug + Any + Unpin {
         &mut self,
         hierarchy: &mut Hierarchy,
         op: &RichOp,
-        import_context: &ImportContext,
+        import_context: &mut ImportContext,
     );
 
+    /// Apply the effect of the op directly to the state.
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        import_context: &mut ImportContext,
+    );
     /// Make tracker iterate over the target spans and apply the calculated
     /// effects to the container state
-    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext);
+    fn apply_tracked_effects_from(
+        &mut self,
+        store: &mut LogStore,
+        import_context: &mut ImportContext,
+    );
     fn subscribe(
         &self,
         hierarchy: &mut Hierarchy,

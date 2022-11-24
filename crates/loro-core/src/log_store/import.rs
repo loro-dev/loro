@@ -1,5 +1,6 @@
 use crate::{
     container::registry::ContainerIdx,
+    event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
     LogStore,
 };
@@ -27,6 +28,7 @@ pub struct ImportContext {
     pub old_vv: VersionVector,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
+    pub diff: FxHashMap<ContainerID, Vec<Diff>>,
 }
 
 impl LogStore {
@@ -59,14 +61,27 @@ impl LogStore {
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
 
-        let context = ImportContext {
+        let mut context = ImportContext {
             old_frontiers: self.frontiers.iter().copied().collect(),
             new_frontiers: next_frontiers.get_frontiers(),
             old_vv: self.vv.clone(),
             spans: next_vv.diff(&self.vv).left,
             new_vv: next_vv,
+            diff: Default::default(),
         };
-        self.apply(container_map, &context);
+        self.apply(container_map, &mut context);
+
+        for (id, diff) in std::mem::take(&mut context.diff).into_iter() {
+            let raw_event = RawEvent {
+                diff,
+                container_id: id,
+                old_version: context.old_frontiers.clone(),
+                new_version: context.new_frontiers.clone(),
+                local: false,
+            };
+            self.hierarchy.notify(raw_event, &self.reg);
+        }
+
         self.update_version_info(context.new_vv, next_frontiers);
     }
 
@@ -122,7 +137,7 @@ impl LogStore {
     fn apply(
         &mut self,
         mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
-        context: &ImportContext,
+        context: &mut ImportContext,
     ) {
         let latest_frontiers = &context.new_frontiers;
         debug_log!(
@@ -141,7 +156,7 @@ impl LogStore {
                         store.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end))
                     {
                         let container = container_map.get_mut(&op.op().container).unwrap();
-                        container.update_state_directly(hierarchy, &op);
+                        container.update_state_directly(hierarchy, &op, context);
                     }
                 });
                 return;
@@ -168,7 +183,7 @@ impl LogStore {
                             }
 
                             let container = container_map.get_mut(&op.container).unwrap();
-                            container.update_state_directly(hierarchy, &rich_op);
+                            container.update_state_directly(hierarchy, &rich_op, context);
                         }
                     }
                     return true;

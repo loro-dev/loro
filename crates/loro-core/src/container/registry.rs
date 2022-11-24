@@ -80,12 +80,17 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn update_state_directly(&mut self, hierarchy: &mut Hierarchy, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        context: &mut ImportContext,
+    ) {
         match self {
-            ContainerInstance::Map(x) => x.update_state_directly(hierarchy, op),
-            ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op),
-            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op),
-            ContainerInstance::List(x) => x.update_state_directly(hierarchy, op),
+            ContainerInstance::Map(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::List(x) => x.update_state_directly(hierarchy, op, context),
         }
     }
 
@@ -107,7 +112,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp, ctx: &ImportContext) {
+    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp, ctx: &mut ImportContext) {
         match self {
             ContainerInstance::Map(x) => x.track_apply(hierarchy, op, ctx),
             ContainerInstance::Text(x) => x.track_apply(hierarchy, op, ctx),
@@ -116,7 +121,11 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        store: &mut LogStore,
+        import_context: &mut ImportContext,
+    ) {
         match self {
             ContainerInstance::Map(x) => x.apply_tracked_effects_from(store, import_context),
             ContainerInstance::Text(x) => x.apply_tracked_effects_from(store, import_context),

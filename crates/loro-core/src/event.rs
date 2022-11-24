@@ -44,7 +44,13 @@ pub struct ValuePair {
     pub new: LoroValue,
 }
 
-#[derive(Clone, Debug)]
+impl From<(LoroValue, LoroValue)> for ValuePair {
+    fn from((old, new): (LoroValue, LoroValue)) -> Self {
+        ValuePair { old, new }
+    }
+}
+
+#[derive(Default, Clone, Debug)]
 pub struct MapDiff {
     pub added: FxHashMap<InternalString, LoroValue>,
     pub updated: FxHashMap<InternalString, ValuePair>,
