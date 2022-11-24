@@ -556,33 +556,23 @@ mod failed_tests {
         test_multi_sites(
             3,
             &mut [
-                Text {
+                Map {
                     site: 2,
                     container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
+                    key: 255,
+                    value: Container(C::List),
                 },
-                SyncAll,
-                Text {
+                Map {
                     site: 0,
                     container_idx: 0,
-                    pos: 0,
-                    value: 0,
-                    is_del: false,
+                    key: 0,
+                    value: Container(C::List),
                 },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 39064,
-                    is_del: false,
-                },
-                List {
-                    site: 1,
+                Map {
+                    site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: I32(1616928864),
+                    value: Null,
                 },
             ],
         )
@@ -651,42 +641,8 @@ mod failed_tests {
 
     use super::ContainerType as C;
     #[test]
-    fn case_1() {
-        minify_error(
-            5,
-            vec![
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                SyncAll,
-                Text {
-                    site: 0,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 0,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 39064,
-                    is_del: false,
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1616928864),
-                },
-            ],
-            test_multi_sites,
-            normalize,
-        )
+    fn to_minify() {
+        minify_error(5, vec![], test_multi_sites, normalize)
     }
 
     #[ctor::ctor]

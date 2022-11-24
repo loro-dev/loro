@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use crate::{
     context::Context,
-    event::Index,
+    event::{Index, Observer, SubscriptionID},
     hierarchy::Hierarchy,
     id::ClientID,
     log_store::ImportContext,
@@ -365,5 +365,46 @@ pub trait ContainerWrapper {
         }
 
         value
+    }
+
+    fn subscribe<C: Context>(
+        &self,
+        ctx: &C,
+        observer: Observer,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                observer,
+                false,
+            )
+        })
+    }
+
+    fn subscribe_deep<C: Context>(
+        &self,
+        ctx: &C,
+        observer: Observer,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                observer,
+                true,
+            )
+        })
+    }
+
+    fn unsubscribe<C: Context>(
+        &self,
+        ctx: &C,
+        subscription: SubscriptionID,
+    ) -> Result<(), LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.unsubscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                subscription,
+            )
+        })
     }
 }

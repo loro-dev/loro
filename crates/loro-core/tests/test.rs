@@ -27,6 +27,25 @@ fn example() {
 }
 
 #[test]
+fn text_observe() {
+    let mut doc = LoroCore::default();
+    let mut text = doc.get_text("text");
+    text.subscribe(
+        &doc,
+        Box::new(|event| {
+            dbg!(event);
+        }),
+    )
+    .unwrap();
+    text.insert(&doc, 0, "hello ").unwrap();
+    let mut doc_b = LoroCore::default();
+    let mut text_b = doc_b.get_text("text");
+    text_b.insert(&doc_b, 0, "world").unwrap();
+    doc.import(doc_b.export(Default::default()));
+    dbg!(text.get_value());
+}
+
+#[test]
 #[cfg(feature = "json")]
 fn list() {
     let mut loro_a = LoroCore::default();

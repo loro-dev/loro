@@ -58,13 +58,17 @@ impl Hierarchy {
     }
 
     pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
-        let parent_node = self.nodes.get_mut(parent).unwrap();
+        let Some(parent_node) = self.nodes.get_mut(parent) else {
+            return;
+        };
         parent_node.children.remove(child);
         let mut visited_descendants = FxHashSet::default();
         let mut stack = vec![child];
         while let Some(child) = stack.pop() {
             visited_descendants.insert(child.clone());
-            let child_node = self.nodes.get(child).unwrap();
+            let Some(child_node) = self.nodes.get(child) else {
+                continue;
+            };
             for child in child_node.children.iter() {
                 stack.push(child);
             }
@@ -167,13 +171,26 @@ impl Hierarchy {
         }
     }
 
-    pub fn subscribe(&mut self, container: &ContainerID, observer: Observer) -> SubscriptionID {
+    pub fn subscribe(
+        &mut self,
+        container: &ContainerID,
+        observer: Observer,
+        deep: bool,
+    ) -> SubscriptionID {
         let id = rand_u64();
-        self.nodes
-            .entry(container.clone())
-            .or_default()
-            .observers
-            .insert(id, observer);
+        if deep {
+            self.nodes
+                .entry(container.clone())
+                .or_default()
+                .deep_observers
+                .insert(id, observer);
+        } else {
+            self.nodes
+                .entry(container.clone())
+                .or_default()
+                .observers
+                .insert(id, observer);
+        }
         id
     }
 

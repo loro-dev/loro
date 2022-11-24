@@ -2,7 +2,7 @@
   "tasks": {
     "build": "cargo build",
     "test": "RUST_BACKTRACE=full cargo nextest run --features=test_utils",
-    "test-all": "deno task test & deno task quick-fuzz",
+    "test-all": "deno task test & deno task quick-fuzz & deno task test-wasm",
     "test-prop": "RUSTFLAGS='--cfg=proptest' cargo nextest run --features=test_utils",
     "test-wasm": "cd crates/loro-wasm && deno task build && deno task test",
     "check": "cargo clippy --all-features",

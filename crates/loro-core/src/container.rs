@@ -5,6 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
+    event::{Observer, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
@@ -77,6 +78,18 @@ pub trait Container: Debug + Any + Unpin {
     /// Make tracker iterate over the target spans and apply the calculated
     /// effects to the container state
     fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext);
+    fn subscribe(
+        &self,
+        hierarchy: &mut Hierarchy,
+        observer: Observer,
+        deep: bool,
+    ) -> SubscriptionID {
+        hierarchy.subscribe(self.id(), observer, deep)
+    }
+
+    fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
+        hierarchy.unsubscribe(self.id(), subscription);
+    }
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

@@ -22,7 +22,7 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
-    LogStore,
+    LogStore, LoroError,
 };
 
 use super::{
@@ -166,18 +166,6 @@ impl TextContainer {
             self.raw_str.len(),
         );
         self.state.debug_inspect();
-    }
-
-    pub fn subscribe<C: Context>(&self, ctx: &C, observer: Observer) -> SubscriptionID {
-        let store = ctx.log_store();
-        let mut store = store.write().unwrap();
-        store.hierarchy.subscribe(&self.id, observer)
-    }
-
-    pub fn unsubscribe<C: Context>(&self, ctx: &C, subscription: SubscriptionID) {
-        let store = ctx.log_store();
-        let mut store = store.write().unwrap();
-        store.hierarchy.unsubscribe(&self.id, subscription);
     }
 }
 
