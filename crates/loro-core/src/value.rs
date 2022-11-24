@@ -205,6 +205,7 @@ impl LoroValue {
         }
 
         hints.push(last_hint);
+        dbg!(&self, path);
         let mut value = self;
         for (item, hint) in path.iter().zip(hints.iter()) {
             match item {
@@ -294,6 +295,7 @@ impl LoroValue {
     }
 
     pub fn apply(&mut self, path: &Path, diff: &[Diff]) {
+        dbg!(&path, diff);
         if diff.is_empty() {
             return;
         }

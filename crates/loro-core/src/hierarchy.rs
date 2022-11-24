@@ -172,13 +172,26 @@ impl Hierarchy {
         false
     }
 
+    pub fn notify_batch(&mut self, raw_events: Vec<RawEvent>, reg: &ContainerRegistry) {
+        // notify event in the order of path length
+        // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
+        let mut event_and_paths = raw_events
+            .into_iter()
+            .map(|x| (self.get_path(reg, &x.container_id, None), x))
+            .collect::<Vec<_>>();
+        event_and_paths.sort_by_cached_key(|x| x.0.len());
+        for (path, event) in event_and_paths {
+            self.notify_with_path(event, path);
+        }
+    }
+
     pub fn notify(&mut self, raw_event: RawEvent, reg: &ContainerRegistry) {
+        let absolute_path = self.get_path(reg, &raw_event.container_id, None);
+        self.notify_with_path(raw_event, absolute_path);
+    }
+
+    fn notify_with_path(&mut self, raw_event: RawEvent, absolute_path: Path) {
         let target_id = raw_event.container_id;
-        let absolute_path = self.get_path(reg, &target_id, None);
-        let mut path_to_root = absolute_path.clone();
-        path_to_root.reverse();
-        let mut current_target_id = Some(target_id.clone());
-        let mut count = 0;
         let mut event = Event {
             absolute_path,
             relative_path: Default::default(),
@@ -189,14 +202,16 @@ impl Hierarchy {
             diff: raw_event.diff,
             local: raw_event.local,
         };
-
+        let mut current_target_id = Some(target_id.clone());
+        let mut count = 0;
+        let mut path_to_root = event.absolute_path.clone();
+        path_to_root.reverse();
         let node = self.nodes.entry(target_id).or_default();
         if !node.observers.is_empty() {
             for (_, observer) in node.observers.iter_mut() {
                 observer(&event);
             }
         }
-
         while let Some(id) = current_target_id {
             let node = self.nodes.get_mut(&id).unwrap();
             if !node.deep_observers.is_empty() {
@@ -216,7 +231,6 @@ impl Hierarchy {
 
             current_target_id = node.parent.as_ref().cloned();
         }
-
         if !self.root_observers.is_empty() {
             event.relative_path = event.absolute_path.clone();
             event.current_target = None;

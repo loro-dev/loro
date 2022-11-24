@@ -1,6 +1,6 @@
 use crate::{
     container::registry::ContainerIdx,
-    event::{Diff, RawEvent},
+    event::{self, Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
     LogStore,
 };
@@ -98,11 +98,11 @@ impl LogStore {
         self.apply(container_map, &mut context);
 
         let deleted = self.hierarchy.take_deleted();
-        for (id, diff) in std::mem::take(&mut context.diff).into_iter() {
-            if deleted.contains(&id) {
-                continue;
-            }
-
+        let mut events = Vec::with_capacity(context.diff.len());
+        for (id, diff) in std::mem::take(&mut context.diff)
+            .into_iter()
+            .filter(|x| !deleted.contains(&x.0))
+        {
             let raw_event = RawEvent {
                 diff,
                 container_id: id,
@@ -110,9 +110,10 @@ impl LogStore {
                 new_version: context.new_frontiers.clone(),
                 local: false,
             };
-            self.hierarchy.notify(raw_event, &self.reg);
+            events.push(raw_event);
         }
 
+        self.hierarchy.notify_batch(events, &self.reg);
         self.update_version_info(context.new_vv, next_frontiers);
     }
 

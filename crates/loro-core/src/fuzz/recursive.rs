@@ -68,8 +68,10 @@ impl Actor {
 
         let root_value = Rc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Box::new(move |event| {
+            dbg!(&event);
             let mut root_value = root_value.borrow_mut();
             root_value.apply(&event.relative_path, &event.diff);
+            dbg!(&event, &root_value);
         }));
 
         let text = Rc::clone(&actor.text_tracker);
@@ -604,6 +606,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
 }
 
 fn check_synced(sites: &mut [Actor]) {
+    println!("SJDSA \n{}", sites[1].loro.to_json().to_json_pretty());
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
             debug_log!("-------------------------------");
@@ -779,18 +782,24 @@ mod failed_tests {
     #[test]
     fn case_3() {
         test_multi_sites(
-            3,
+            2,
             &mut [
                 List {
-                    site: 21,
-                    container_idx: 108,
-                    key: 217,
-                    value: Null,
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
                 },
                 List {
-                    site: 218,
-                    container_idx: 55,
-                    key: 58,
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
                     value: Container(C::List),
                 },
             ],
@@ -861,7 +870,65 @@ mod failed_tests {
     use super::ContainerType as C;
     #[test]
     fn to_minify() {
-        minify_error(5, vec![], test_multi_sites, normalize)
+        minify_error(
+            5,
+            vec![
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 4, to: 0 },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 4,
+                    container_idx: 1,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+            ],
+            test_multi_sites,
+            normalize,
+        )
     }
 
     #[ctor::ctor]
