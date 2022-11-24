@@ -242,14 +242,20 @@ impl ContainerRegistry {
     pub fn to_json(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         for ContainerAndId { container, id } in self.containers.iter() {
-            let container = container.lock().unwrap();
-            let json = match container.deref() {
-                ContainerInstance::Map(x) => x.to_json(),
-                ContainerInstance::Text(x) => x.to_json(),
-                ContainerInstance::Dyn(_) => unreachable!("registry to json"),
-                ContainerInstance::List(x) => x.to_json(),
-            };
-            map.insert(serde_json::to_string(id).unwrap(), json);
+            if let ContainerID::Root {
+                name,
+                container_type,
+            } = id
+            {
+                let container = container.lock().unwrap();
+                let json = match container.deref() {
+                    ContainerInstance::Map(x) => x.to_json(self),
+                    ContainerInstance::Text(x) => x.to_json(),
+                    ContainerInstance::Dyn(_) => unreachable!("registry to json dyn"),
+                    ContainerInstance::List(x) => x.to_json(self),
+                };
+                map.insert(format!("{}-{:?}", name, container_type), json);
+            }
         }
         serde_json::Value::Object(map)
     }
@@ -338,19 +344,21 @@ pub trait ContainerWrapper {
     }
 
     fn get_value_deep<C: Context>(&self, ctx: &C) -> LoroValue {
+        let m = ctx.log_store();
+        let reg = &m.try_read().unwrap().reg;
         let mut value = self.get_value();
         match &mut value {
             LoroValue::List(list) => {
                 list.iter_mut().for_each(|x| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(ctx).unwrap();
+                        *x = x.resolve_deep(reg).unwrap();
                     }
                 });
             }
             LoroValue::Map(map) => {
                 map.iter_mut().for_each(|(_, x)| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(ctx).unwrap();
+                        *x = x.resolve_deep(reg).unwrap();
                     }
                 });
             }
