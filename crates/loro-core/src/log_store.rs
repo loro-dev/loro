@@ -4,6 +4,7 @@
 mod encoding;
 mod import;
 mod iter;
+use crate::LoroValue;
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
@@ -12,7 +13,6 @@ use std::{
 
 use fxhash::FxHashMap;
 
-use crate::context::Context;
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
 
@@ -365,9 +365,8 @@ impl LogStore {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self) -> String {
-        let value = self.reg.to_json();
-        serde_json::to_string_pretty(&value).unwrap()
+    pub fn to_json(&self) -> LoroValue {
+        self.reg.to_json()
     }
 }
 

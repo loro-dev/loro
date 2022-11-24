@@ -106,7 +106,7 @@ pub trait Container: Debug + Any + Unpin {
 /// This structure is really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum ContainerID {
-    /// Root container does not need a insert op to create. It can be created implicitly.
+    /// Root container does not need an op to create. It can be created implicitly.
     Root {
         name: InternalString,
         container_type: ContainerType,

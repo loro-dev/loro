@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use crate::LoroValue;
 use fxhash::FxHashMap;
 use rle::RleVecWithIndex;
 
@@ -7,6 +8,7 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
+    event::{Observer, SubscriptionID},
     id::ClientID,
     op::RemoteOp,
     LogStore, VersionVector,
@@ -102,7 +104,23 @@ impl LoroCore {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self) -> LoroValue {
         self.log_store.try_read().unwrap().to_json()
+    }
+
+    pub fn subscribe_deep(&mut self, observer: Observer) -> SubscriptionID {
+        self.log_store
+            .write()
+            .unwrap()
+            .hierarchy
+            .subscribe_root(observer)
+    }
+
+    pub fn unsubscribe_deep(&mut self, subscription: SubscriptionID) -> bool {
+        self.log_store
+            .write()
+            .unwrap()
+            .hierarchy
+            .unsubscribe_root(subscription)
     }
 }

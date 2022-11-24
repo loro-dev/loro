@@ -9,9 +9,10 @@ use crate::{
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
+    root_observers: FxHashMap<SubscriptionID, Observer>,
 }
 
 #[derive(Default)]
@@ -20,6 +21,14 @@ struct Node {
     children: FxHashSet<ContainerID>,
     observers: FxHashMap<SubscriptionID, Observer>,
     deep_observers: FxHashMap<SubscriptionID, Observer>,
+}
+
+impl Debug for Hierarchy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hierarchy")
+            .field("nodes", &self.nodes)
+            .finish()
+    }
 }
 
 impl Debug for Node {
@@ -96,7 +105,6 @@ impl Hierarchy {
         let mut path = Path::default();
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
-            dbg!(&node_id);
             let node = self.nodes.get(node_id).unwrap();
             let parent = &node.parent;
             if let Some(parent) = parent {
@@ -125,6 +133,10 @@ impl Hierarchy {
     }
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+        if !self.root_observers.is_empty() {
+            return true;
+        }
+
         if self
             .nodes
             .get(container_id)
@@ -152,22 +164,23 @@ impl Hierarchy {
 
     pub fn notify(&mut self, raw_event: RawEvent, reg: &ContainerRegistry) {
         let target_id = raw_event.container_id;
-        let mut absolute_path = self.get_path(reg, &target_id, None);
-        absolute_path.reverse();
-        let path_to_root = absolute_path;
+        let absolute_path = self.get_path(reg, &target_id, None);
+        let mut path_to_root = absolute_path.clone();
+        path_to_root.reverse();
         let mut current_target_id = Some(target_id.clone());
         let mut count = 0;
         let mut event = Event {
+            absolute_path,
             relative_path: Default::default(),
             old_version: raw_event.old_version,
             new_version: raw_event.new_version,
-            current_target: target_id.clone(),
+            current_target: Some(target_id.clone()),
             target: target_id.clone(),
             diff: raw_event.diff,
             local: raw_event.local,
         };
 
-        let node = self.nodes.get_mut(&target_id).unwrap();
+        let node = self.nodes.entry(target_id).or_default();
         if !node.observers.is_empty() {
             for (_, observer) in node.observers.iter_mut() {
                 observer(&event);
@@ -180,14 +193,26 @@ impl Hierarchy {
                 let mut relative_path = path_to_root[..count].to_vec();
                 relative_path.reverse();
                 event.relative_path = relative_path;
-                event.current_target = id.clone();
+                event.current_target = Some(id.clone());
                 for (_, observer) in node.deep_observers.iter_mut() {
                     observer(&event);
                 }
             }
 
             count += 1;
+            if node.parent.is_none() {
+                debug_assert!(id.is_root());
+            }
+
             current_target_id = node.parent.as_ref().cloned();
+        }
+
+        if !self.root_observers.is_empty() {
+            event.relative_path = event.absolute_path.clone();
+            event.current_target = None;
+            for (_, observer) in self.root_observers.iter_mut() {
+                observer(&event);
+            }
         }
     }
 
@@ -214,11 +239,22 @@ impl Hierarchy {
         id
     }
 
-    pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) {
+    pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) -> bool {
         if let Some(x) = self.nodes.get_mut(container) {
-            x.observers.remove(&id);
+            x.observers.remove(&id).is_some()
         } else {
             // TODO: warning
+            false
         }
+    }
+
+    pub fn subscribe_root(&mut self, observer: Observer) -> SubscriptionID {
+        let id = rand_u64();
+        self.root_observers.insert(id, observer);
+        id
+    }
+
+    pub fn unsubscribe_root(&mut self, sub: SubscriptionID) -> bool {
+        self.root_observers.remove(&sub).is_some()
     }
 }

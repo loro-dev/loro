@@ -7,6 +7,8 @@ use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
     context::Context,
+    delta::DeltaItem,
+    event::{Diff, Index, Path},
     Container,
 };
 
@@ -65,6 +67,11 @@ impl LoroValue {
     #[cfg(feature = "json")]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
+    }
+
+    #[cfg(feature = "json")]
+    pub fn to_json_pretty(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap()
     }
 
     #[cfg(feature = "json")]
@@ -156,6 +163,138 @@ impl From<ContainerID> for LoroValue {
     fn from(v: ContainerID) -> Self {
         LoroValue::Unresolved(Box::new(v))
     }
+}
+
+enum TypeHint {
+    Map,
+    Text,
+    List,
+}
+
+impl LoroValue {
+    fn get_mut(&mut self, path: &Path, last_hint: TypeHint) -> &mut LoroValue {
+        let mut hints = Vec::with_capacity(path.len());
+        for item in path.iter().skip(1) {
+            match item {
+                Index::Key(_) => hints.push(TypeHint::Map),
+                Index::Seq(_) => hints.push(TypeHint::List),
+            }
+        }
+
+        hints.push(last_hint);
+        let mut value = self;
+        for (item, hint) in path.iter().zip(hints.iter()) {
+            match item {
+                Index::Key(key) => {
+                    value = value
+                        .as_map_mut()
+                        .unwrap()
+                        .entry(key.to_string())
+                        .or_insert_with(|| match hint {
+                            TypeHint::Map => LoroValue::Map(Default::default()),
+                            TypeHint::Text => LoroValue::String(Default::default()),
+                            TypeHint::List => LoroValue::List(Default::default()),
+                        })
+                }
+                Index::Seq(index) => {
+                    value = value.as_list_mut().unwrap().get_mut(*index).unwrap();
+                }
+            }
+        }
+
+        value
+    }
+
+    pub fn apply_diff(&mut self, diff: &[Diff]) {
+        match self {
+            LoroValue::String(value) => {
+                let mut s = value.to_string();
+                for item in diff.iter() {
+                    let delta = item.as_text().unwrap();
+                    let mut index = 0;
+                    for delta_item in delta.iter() {
+                        match delta_item {
+                            DeltaItem::Retain { len, .. } => {
+                                index += len;
+                            }
+                            DeltaItem::Insert { value, .. } => {
+                                s.insert_str(index, value);
+                                index += value.len();
+                            }
+                            DeltaItem::Delete(len) => {
+                                s.drain(index..index + len);
+                            }
+                        }
+                    }
+                }
+                *value = s.into_boxed_str();
+            }
+            LoroValue::List(seq) => {
+                for item in diff.iter() {
+                    let delta = item.as_list().unwrap();
+                    let mut index = 0;
+                    for delta_item in delta.iter() {
+                        match delta_item {
+                            DeltaItem::Retain { len, .. } => {
+                                index += len;
+                            }
+                            DeltaItem::Insert { value, .. } => {
+                                value.iter().for_each(|v| {
+                                    let value = unresolved_to_collection(v);
+                                    seq.insert(index, value);
+                                    index += 1;
+                                });
+                            }
+                            DeltaItem::Delete(len) => {
+                                seq.drain(index..index + len);
+                            }
+                        }
+                    }
+                }
+            }
+            LoroValue::Map(map) => {
+                for item in diff.iter() {
+                    let diff = item.as_map().unwrap();
+                    for v in diff.added.iter() {
+                        map.insert(v.0.to_string(), unresolved_to_collection(v.1));
+                    }
+                    for v in diff.deleted.iter() {
+                        map.remove(v.as_ref());
+                    }
+                    for (key, value) in diff.updated.iter() {
+                        map.insert(key.to_string(), unresolved_to_collection(&value.new));
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn apply(&mut self, path: &Path, diff: &[Diff]) {
+        if diff.is_empty() {
+            return;
+        }
+
+        let hint = match diff[0] {
+            Diff::List(_) => TypeHint::List,
+            Diff::Text(_) => TypeHint::Text,
+            Diff::Map(_) => TypeHint::Map,
+        };
+        self.get_mut(path, hint).apply_diff(diff);
+    }
+}
+
+fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
+    let value = if let Some(container) = v.as_unresolved() {
+        match container.container_type() {
+            crate::ContainerType::Text => LoroValue::String(Default::default()),
+            crate::ContainerType::Map => LoroValue::Map(Default::default()),
+            crate::ContainerType::List => LoroValue::List(Default::default()),
+        }
+    } else {
+        v.clone()
+    };
+    value
 }
 
 #[cfg(feature = "wasm")]

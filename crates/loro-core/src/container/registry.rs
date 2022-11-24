@@ -285,8 +285,12 @@ impl ContainerRegistry {
                     ContainerInstance::Dyn(_) => unreachable!("registry to json dyn"),
                     ContainerInstance::List(x) => x.to_json(self),
                 };
-                // TODO: container type?
-                map.insert(format!("{}-({:?})", name, container_type), json);
+                if map.contains_key(name.as_ref()) {
+                    // TODO: warning
+                    map.insert(format!("{}-({:?})", name, container_type), json);
+                } else {
+                    map.insert(name.to_string(), json);
+                }
             }
         }
         LoroValue::Map(Box::new(map))

@@ -1,3 +1,4 @@
+use enum_as_inner::EnumAsInner;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{container::ContainerID, delta::Delta, version::Frontiers, InternalString, LoroValue};
@@ -15,10 +16,11 @@ pub struct RawEvent {
 pub struct Event {
     pub old_version: Frontiers,
     pub new_version: Frontiers,
-    pub current_target: ContainerID,
+    pub current_target: Option<ContainerID>,
     pub target: ContainerID,
     /// the relative path from current_target to target
     pub relative_path: Path,
+    pub absolute_path: Path,
     pub diff: Vec<Diff>,
     pub local: bool,
 }
@@ -31,7 +33,7 @@ pub enum Index {
     Seq(usize),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String>),

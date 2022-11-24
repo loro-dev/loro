@@ -408,12 +408,7 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_apply(
-        &mut self,
-        _: &mut Hierarchy,
-        rich_op: &RichOp,
-        import_context: &mut ImportContext,
-    ) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, _: &mut ImportContext) {
         self.tracker.track_apply(rich_op);
     }
 
