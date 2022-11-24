@@ -293,6 +293,7 @@ impl Container for MapContainer {
         unreachable!()
     }
 
+    // TODO: refactor
     fn update_state_directly(
         &mut self,
         hierarchy: &mut Hierarchy,
@@ -308,29 +309,32 @@ impl Container for MapContainer {
         let should_notify = hierarchy.should_notify(&self.id);
         if let Some(slot) = self.state.get_mut(&new_val.key) {
             if slot.order < order {
+                let new_value = &self.pool[new_val.value];
                 if should_notify {
                     let mut map_diff = MapDiff::default();
                     map_diff.updated.insert(
                         new_val.key.clone(),
-                        (
-                            self.pool[slot.value].clone(),
-                            self.pool[new_val.value].clone(),
-                        )
-                            .into(),
+                        (self.pool[slot.value].clone(), new_value.clone()).into(),
                     );
                     ctx.diff
                         .entry(self.id.clone())
                         .or_default()
                         .push(Diff::Map(map_diff));
                 }
+
                 let old_val = &self.pool[slot.value];
                 if let Some(container) = old_val.as_unresolved() {
                     hierarchy.remove_child(&self.id, container);
                 }
+                if let Some(container) = new_value.as_unresolved() {
+                    hierarchy.add_child(&self.id, container);
+                }
+
                 slot.value = new_val.value;
                 slot.order = order;
             }
         } else {
+            let new_value = &self.pool[new_val.value];
             if should_notify {
                 let mut map_diff = MapDiff::default();
                 map_diff
@@ -340,6 +344,10 @@ impl Container for MapContainer {
                     .entry(self.id.clone())
                     .or_default()
                     .push(Diff::Map(map_diff));
+            }
+
+            if let Some(container) = new_value.as_unresolved() {
+                hierarchy.add_child(&self.id, container);
             }
 
             self.state.insert(

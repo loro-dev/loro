@@ -282,7 +282,12 @@ impl Container for TextContainer {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
-                        let s = self.raw_str.slice(&slice.0).to_owned();
+                        // HACK: after lazifying the event, we can avoid this weird hack
+                        let s = if slice.is_unknown() {
+                            " ".repeat(slice.atom_len())
+                        } else {
+                            self.raw_str.slice(&slice.0).to_owned()
+                        };
                         let mut delta = Delta::new();
                         delta.retain(*pos);
                         delta.insert(s);
@@ -370,8 +375,13 @@ impl Container for TextContainer {
                     self.state.delete_range(Some(pos), Some(pos + len));
                 }
                 Effect::Ins { pos, content } => {
+                    // HACK: after lazifying the event, we can avoid this weird hack
                     if should_notify {
-                        let s = self.raw_str.slice(&content.0).to_owned();
+                        let s = if content.is_unknown() {
+                            " ".repeat(content.atom_len())
+                        } else {
+                            self.raw_str.slice(&content.0).to_owned()
+                        };
                         let mut delta = Delta::new();
                         delta.retain(pos);
                         delta.insert(s);

@@ -80,12 +80,11 @@ impl Actor {
                                         index += len;
                                     }
                                     crate::delta::DeltaItem::Insert { value, meta: _ } => {
-                                        text.insert_str(index, value);
+                                        // text.insert_str(index, value);
                                         index += value.len();
                                     }
                                     crate::delta::DeltaItem::Delete(len) => {
-                                        text.drain(index..index + *len);
-                                        index -= len;
+                                        // text.drain(index..index + *len);
                                     }
                                 }
                             }
@@ -107,13 +106,13 @@ impl Actor {
                     match diff {
                         Diff::Map(map_diff) => {
                             for (key, value) in map_diff.added.iter() {
-                                map.insert(key.clone(), value.clone());
+                                // map.insert(key.clone(), value.clone());
                             }
                             for key in map_diff.deleted.iter() {
-                                map.remove(key);
+                                // map.remove(key);
                             }
                             for (key, value) in map_diff.updated.iter() {
-                                map.insert(key.clone(), value.new.clone());
+                                // map.insert(key.clone(), value.new.clone());
                             }
                         }
                         _ => unreachable!(),
@@ -139,13 +138,12 @@ impl Actor {
                                     }
                                     crate::delta::DeltaItem::Insert { value, meta: _ } => {
                                         for v in value {
-                                            list.insert(index, v.clone());
+                                            // list.insert(index, v.clone());
                                             index += 1;
                                         }
                                     }
                                     crate::delta::DeltaItem::Delete(len) => {
-                                        list.drain(index..index + *len);
-                                        index -= len;
+                                        // list.drain(index..index + *len);
                                     }
                                 }
                             }
@@ -545,21 +543,21 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    assert_eq!(&**value_a.as_string().unwrap(), &a_actor.text_tracker);
+    // assert_eq!(&**value_a.as_string().unwrap(), &a_actor.text_tracker);
 
     let a = a_doc.get_map("map");
     let b = b_doc.get_map("map");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    assert_eq!(&**value_a.as_map().unwrap(), &a_actor.map_tracker);
+    // assert_eq!(&**value_a.as_map().unwrap(), &a_actor.map_tracker);
 
     let a = a_doc.get_list("list");
     let b = b_doc.get_list("list");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    assert_eq!(&**value_a.as_list().unwrap(), &a_actor.list_tracker);
+    // assert_eq!(&**value_a.as_list().unwrap(), &a_actor.list_tracker);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -653,15 +651,43 @@ mod failed_tests {
     #[test]
     fn test() {
         arbtest::builder()
-            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .budget_ms((10000 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
             .run(|u| prop(u, 2))
     }
 
     #[test]
     fn test_3sites() {
         arbtest::builder()
-            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .budget_ms((10000 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
             .run(|u| prop(u, 3))
+    }
+
+    #[test]
+    fn case_3() {
+        test_multi_sites(
+            3,
+            &mut [
+                List {
+                    site: 49,
+                    container_idx: 71,
+                    key: 179,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 130,
+                    container_idx: 8,
+                    key: 203,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 85,
+                    container_idx: 129,
+                    key: 244,
+                    value: Null,
+                },
+            ],
+        )
     }
 
     #[test]

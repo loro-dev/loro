@@ -26,9 +26,9 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {{
         if cfg!(test) {
             use ::colored::Colorize;
-            let line = line!().to_string();
-            print!("{}:{}\t", file!().purple(), line.purple());
-            println!($($arg)*);
+            // let line = line!().to_string();
+            // print!("{}:{}\t", file!().purple(), line.purple());
+            // println!($($arg)*);
         }
     }};
     () => {

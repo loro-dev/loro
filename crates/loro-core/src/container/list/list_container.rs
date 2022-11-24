@@ -335,13 +335,37 @@ impl Container for ListContainer {
         op: &RichOp,
         context: &mut ImportContext,
     ) {
+        let should_notify = hierarchy.should_notify(&self.id);
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        let delta_vec = self.raw_data.slice(&slice.0).to_vec();
+                        delta.retain(*pos);
+                        delta.insert(delta_vec);
+                        context
+                            .diff
+                            .entry(self.id.clone())
+                            .or_default()
+                            .push(Diff::List(delta));
+                    }
+
                     self.update_hierarchy_on_insert(hierarchy, slice);
                     self.state.insert(*pos, slice.clone());
                 }
                 InnerListOp::Delete(span) => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(span.start() as usize);
+                        delta.delete(span.atom_len());
+                        context
+                            .diff
+                            .entry(self.id.clone())
+                            .or_default()
+                            .push(Diff::List(delta));
+                    }
+
                     self.update_hierarchy_on_delete(
                         hierarchy,
                         span.start() as usize,

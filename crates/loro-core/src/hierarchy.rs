@@ -85,9 +85,18 @@ impl Hierarchy {
         descendant: &ContainerID,
         current_target: Option<&ContainerID>,
     ) -> Path {
+        if let ContainerID::Root { name, .. } = descendant {
+            return vec![Index::Key(name.into())];
+        }
+
+        if current_target.map(|x| x == descendant).unwrap_or(false) {
+            return vec![];
+        }
+
         let mut path = Path::default();
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
+            dbg!(&node_id);
             let node = self.nodes.get(node_id).unwrap();
             let parent = &node.parent;
             if let Some(parent) = parent {
@@ -116,13 +125,22 @@ impl Hierarchy {
     }
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+        if self
+            .nodes
+            .get(container_id)
+            .map(|x| !x.observers.is_empty())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
         let mut node_id = Some(container_id);
         while let Some(inner_node_id) = node_id {
             let Some(node) = self.nodes.get(inner_node_id) else {
                 return false;
             };
 
-            if !node.observers.is_empty() {
+            if !node.deep_observers.is_empty() {
                 return true;
             }
 
