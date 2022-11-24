@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
+use smallvec::smallvec;
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
@@ -11,6 +12,7 @@ use crate::{
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
+        registry::ContainerIdx,
         text::text_content::ListSlice,
         Container, ContainerID,
     },
@@ -21,6 +23,8 @@ use crate::{
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
+
+use super::ImportContext;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
@@ -337,9 +341,17 @@ fn decode_changes(
         // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
         .map(|(k, v)| (k, unsafe { std::mem::transmute(v.lock().unwrap()) }))
         .collect();
-    store.apply(&frontiers, &vv, container_map);
+    let mut context = ImportContext {
+        old_frontiers: smallvec![],
+        new_frontiers: frontiers.get_frontiers(),
+        old_vv: Default::default(),
+        spans: vv.diff(&Default::default()).left,
+        new_vv: vv,
+        diff: Default::default(),
+    };
+    store.apply(container_map, &mut context);
 
-    store.vv = vv;
+    store.vv = context.new_vv;
     store.frontiers = frontiers.get_frontiers();
     drop(store);
     // FIXME: set all
