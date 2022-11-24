@@ -135,7 +135,7 @@ impl Hierarchy {
         let mut absolute_path = self.get_path(reg, &target_id, None);
         absolute_path.reverse();
         let path_to_root = absolute_path;
-        let mut current_target_id = Some(&target_id);
+        let mut current_target_id = Some(target_id.clone());
         let mut count = 0;
         let mut event = Event {
             relative_path: Default::default(),
@@ -147,27 +147,27 @@ impl Hierarchy {
             local: raw_event.local,
         };
 
-        let node = self.nodes.get(&target_id).unwrap();
+        let node = self.nodes.get_mut(&target_id).unwrap();
         if !node.observers.is_empty() {
-            for (_, observer) in node.observers.iter() {
+            for (_, observer) in node.observers.iter_mut() {
                 observer(&event);
             }
         }
 
         while let Some(id) = current_target_id {
-            let node = self.nodes.get(id).unwrap();
+            let node = self.nodes.get_mut(&id).unwrap();
             if !node.deep_observers.is_empty() {
                 let mut relative_path = path_to_root[..count].to_vec();
                 relative_path.reverse();
                 event.relative_path = relative_path;
                 event.current_target = id.clone();
-                for (_, observer) in node.deep_observers.iter() {
+                for (_, observer) in node.deep_observers.iter_mut() {
                     observer(&event);
                 }
             }
 
             count += 1;
-            current_target_id = node.parent.as_ref();
+            current_target_id = node.parent.as_ref().cloned();
         }
     }
 

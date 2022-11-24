@@ -2,12 +2,17 @@ use std::{collections::HashSet, fmt::Debug};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
+use rle::HasLength;
 use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
     array_mut_ref,
     container::{registry::ContainerWrapper, ContainerID},
-    debug_log, ContainerType, List, LoroCore, LoroValue, Map, Text,
+    debug_log,
+    event::Diff,
+    id::ClientID,
+    ContainerType, InternalString, List, LoroCore, LoroValue, Map, Text,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -40,9 +45,120 @@ pub enum Action {
 
 struct Actor {
     loro: LoroCore,
+    map_tracker: FxHashMap<String, LoroValue>,
+    list_tracker: Vec<LoroValue>,
+    text_tracker: String,
     map_containers: Vec<Map>,
     list_containers: Vec<List>,
     text_containers: Vec<Text>,
+}
+
+impl Actor {
+    fn new(id: ClientID) -> Self {
+        let mut actor = Actor {
+            loro: LoroCore::new(Default::default(), Some(id)),
+            map_tracker: Default::default(),
+            list_tracker: Default::default(),
+            text_tracker: Default::default(),
+            map_containers: Default::default(),
+            list_containers: Default::default(),
+            text_containers: Default::default(),
+        };
+
+        // SAFETY: test only code
+        let text: &mut String = unsafe { std::mem::transmute(&mut actor.text_tracker) };
+        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+            &ContainerID::new_root("text", ContainerType::Text),
+            Box::new(|event| {
+                for diff in event.diff.iter() {
+                    match diff {
+                        Diff::Text(delta) => {
+                            let mut index = 0;
+                            for item in delta.iter() {
+                                match item {
+                                    crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                                        index += len;
+                                    }
+                                    crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                                        text.insert_str(index, value);
+                                        index += value.len();
+                                    }
+                                    crate::delta::DeltaItem::Delete(len) => {
+                                        text.drain(index..index + *len);
+                                        index -= len;
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }),
+            false,
+        );
+
+        let map: &mut FxHashMap<InternalString, LoroValue> =
+            // SAFETY: test only code
+            unsafe { std::mem::transmute(&mut actor.map_tracker) };
+        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+            &ContainerID::new_root("map", ContainerType::Map),
+            Box::new(|event| {
+                for diff in event.diff.iter() {
+                    match diff {
+                        Diff::Map(map_diff) => {
+                            for (key, value) in map_diff.added.iter() {
+                                map.insert(key.clone(), value.clone());
+                            }
+                            for key in map_diff.deleted.iter() {
+                                map.remove(key);
+                            }
+                            for (key, value) in map_diff.updated.iter() {
+                                map.insert(key.clone(), value.new.clone());
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }),
+            false,
+        );
+
+        // SAFETY: test only code
+        let list: &mut Vec<LoroValue> = unsafe { std::mem::transmute(&mut actor.list_tracker) };
+        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+            &ContainerID::new_root("list", ContainerType::List),
+            Box::new(|event| {
+                for diff in event.diff.iter() {
+                    match diff {
+                        Diff::List(delta) => {
+                            let mut index = 0;
+                            for item in delta.iter() {
+                                match item {
+                                    crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                                        index += len;
+                                    }
+                                    crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                                        for v in value {
+                                            list.insert(index, v.clone());
+                                            index += 1;
+                                        }
+                                    }
+                                    crate::delta::DeltaItem::Delete(len) => {
+                                        list.drain(index..index + *len);
+                                        index -= len;
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }),
+            false,
+        );
+
+        actor
+    }
 }
 
 #[derive(Arbitrary, Clone, Debug, PartialEq, Eq)]
@@ -421,22 +537,29 @@ impl Actionable for Vec<Actor> {
     }
 }
 
-fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
-    let a = site_a.get_text("text");
-    let b = site_b.get_text("text");
+fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
+    let a_doc = &mut a_actor.loro;
+    let b_doc = &mut b_actor.loro;
+    let a = a_doc.get_text("text");
+    let b = b_doc.get_text("text");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    let a = site_a.get_map("map");
-    let b = site_b.get_map("map");
+    assert_eq!(&**value_a.as_string().unwrap(), &a_actor.text_tracker);
+
+    let a = a_doc.get_map("map");
+    let b = b_doc.get_map("map");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    let a = site_a.get_list("list");
-    let b = site_b.get_list("list");
+    assert_eq!(&**value_a.as_map().unwrap(), &a_actor.map_tracker);
+
+    let a = a_doc.get_list("list");
+    let b = b_doc.get_list("list");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
+    assert_eq!(&**value_a.as_list().unwrap(), &a_actor.list_tracker);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -447,10 +570,10 @@ fn check_synced(sites: &mut [Actor]) {
             debug_log!("-------------------------------");
 
             let (a, b) = array_mut_ref!(sites, [i, j]);
-            let a = &mut a.loro;
-            let b = &mut b.loro;
-            a.import(b.export(a.vv()));
-            b.import(a.export(b.vv()));
+            let a_doc = &mut a.loro;
+            let b_doc = &mut b.loro;
+            a_doc.import(b_doc.export(a_doc.vv()));
+            b_doc.import(a_doc.export(b_doc.vv()));
             check_eq(a, b)
         }
     }
@@ -459,12 +582,7 @@ fn check_synced(sites: &mut [Actor]) {
 pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        sites.push(Actor {
-            loro: LoroCore::new(Default::default(), Some(i as u64)),
-            map_containers: Default::default(),
-            list_containers: Default::default(),
-            text_containers: Default::default(),
-        });
+        sites.push(Actor::new(i as u64));
     }
 
     let mut applied = Vec::new();
@@ -491,12 +609,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        sites.push(Actor {
-            loro: LoroCore::new(Default::default(), Some(i as u64)),
-            map_containers: Default::default(),
-            list_containers: Default::default(),
-            text_containers: Default::default(),
-        });
+        sites.push(Actor::new(i as u64));
     }
 
     let mut applied = Vec::new();

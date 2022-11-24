@@ -67,6 +67,10 @@ impl<Value: HasLength, Meta> Default for Delta<Value, Meta> {
 
 impl<Value: HasLength, Meta: Default> Delta<Value, Meta> {
     pub fn retain(&mut self, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         self.vec.push(DeltaItem::Retain {
             len,
             meta: Default::default(),
