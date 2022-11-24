@@ -68,24 +68,10 @@ impl LoroValue {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json_value(&self, reg: &ContainerRegistry) -> serde_json::Value {
+    pub fn to_json_value(&self, reg: &ContainerRegistry) -> LoroValue {
         match self {
-            LoroValue::Null => serde_json::Value::Null,
-            LoroValue::Bool(b) => serde_json::Value::Bool(*b),
-            LoroValue::Double(d) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap())
-            }
-            LoroValue::I32(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-            LoroValue::String(s) => serde_json::Value::String(s.to_string()),
-            LoroValue::List(l) => {
-                serde_json::Value::Array(l.iter().map(|v| v.to_json_value(reg)).collect())
-            }
-            LoroValue::Map(m) => serde_json::Value::Object(
-                m.iter()
-                    .map(|(k, v)| (k.to_string(), v.to_json_value(reg)))
-                    .collect(),
-            ),
             LoroValue::Unresolved(_) => self.resolve_deep(reg).unwrap().to_json_value(reg),
+            _ => self.clone(),
         }
     }
 

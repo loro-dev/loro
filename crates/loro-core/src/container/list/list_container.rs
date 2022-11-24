@@ -272,13 +272,13 @@ impl ListContainer {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self, reg: &ContainerRegistry) -> serde_json::Value {
+    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
         let mut arr = Vec::new();
         for i in 0..self.values_len() {
             let v = self.get(i).unwrap();
             arr.push(v.to_json_value(reg));
         }
-        serde_json::Value::Array(arr)
+        arr.into()
     }
 }
 

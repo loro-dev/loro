@@ -165,8 +165,8 @@ impl TextContainer {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::Value::String(self.get_value().as_string().unwrap().to_string())
+    pub fn to_json(&self) -> LoroValue {
+        self.get_value()
     }
 }
 
