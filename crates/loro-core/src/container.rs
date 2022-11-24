@@ -83,7 +83,7 @@ pub trait Container: Debug + Any + Unpin {
     /// effects to the container state
     fn apply_tracked_effects_from(
         &mut self,
-        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     );
     fn subscribe(

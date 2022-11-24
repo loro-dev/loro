@@ -218,14 +218,8 @@ impl MapContainer {
             .map(|v| self.pool.slice(&(v.value..v.value + 1)).first().unwrap())
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
-        let mut map = FxHashMap::default();
-        for (k, v) in self.state.iter() {
-            let value = self.pool.slice(&(v.value..v.value + 1)).first().unwrap();
-            map.insert(k.to_string(), value.to_json_value(reg));
-        }
-        LoroValue::Map(Box::new(map))
+        self.get_value().resolve_deep(reg)
     }
 }
 
@@ -386,7 +380,7 @@ impl Container for MapContainer {
 
     fn apply_tracked_effects_from(
         &mut self,
-        _store: &mut crate::LogStore,
+        _: &mut Hierarchy,
         _import_context: &mut ImportContext,
     ) {
     }

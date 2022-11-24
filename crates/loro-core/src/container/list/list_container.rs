@@ -271,14 +271,8 @@ impl ListContainer {
         }
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
-        let mut arr = Vec::new();
-        for i in 0..self.values_len() {
-            let v = self.get(i).unwrap();
-            arr.push(v.to_json_value(reg));
-        }
-        arr.into()
+        self.get_value().resolve_deep(reg)
     }
 }
 
@@ -414,10 +408,10 @@ impl Container for ListContainer {
 
     fn apply_tracked_effects_from(
         &mut self,
-        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
-        let should_notify = store.hierarchy.should_notify(&self.id);
+        let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = vec![];
         for effect in self
             .tracker
@@ -432,12 +426,13 @@ impl Container for ListContainer {
                         diff.push(Diff::List(delta));
                     }
 
-                    if store.hierarchy.has_children(&self.id) {
+                    if hierarchy.has_children(&self.id) {
+                        // update hierarchy
                         for state in self.state.iter_range(pos, Some(pos + len)) {
                             let range = &state.as_ref().0;
                             for value in self.raw_data.slice(range).iter() {
                                 if let LoroValue::Unresolved(container_id) = value {
-                                    store.hierarchy.remove_child(&self.id, container_id);
+                                    hierarchy.remove_child(&self.id, container_id);
                                 }
                             }
                         }
@@ -456,14 +451,12 @@ impl Container for ListContainer {
                         delta.insert(delta_vec);
                         diff.push(Diff::List(delta));
                     }
-                    {
-                        let content = &content;
-                        for value in self.raw_data.slice(&content.0).iter() {
-                            if let LoroValue::Unresolved(container_id) = value {
-                                store.hierarchy.add_child(&self.id, container_id);
-                            }
+                    for value in self.raw_data.slice(&content.0).iter() {
+                        // update hierarchy
+                        if let LoroValue::Unresolved(container_id) = value {
+                            hierarchy.add_child(&self.id, container_id);
                         }
-                    };
+                    }
 
                     self.state.insert(pos, content);
                 }

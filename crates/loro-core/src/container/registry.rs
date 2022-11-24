@@ -123,14 +123,14 @@ impl Container for ContainerInstance {
 
     fn apply_tracked_effects_from(
         &mut self,
-        store: &mut LogStore,
+        h: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
         match self {
-            ContainerInstance::Map(x) => x.apply_tracked_effects_from(store, import_context),
-            ContainerInstance::Text(x) => x.apply_tracked_effects_from(store, import_context),
-            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(store, import_context),
-            ContainerInstance::List(x) => x.apply_tracked_effects_from(store, import_context),
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(h, import_context),
         }
     }
 
@@ -269,7 +269,6 @@ impl ContainerRegistry {
         }
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for ContainerAndId { container, id } in self.containers.iter() {
@@ -387,14 +386,14 @@ pub trait ContainerWrapper {
             LoroValue::List(list) => {
                 list.iter_mut().for_each(|x| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(reg).unwrap();
+                        *x = x.clone().resolve_deep(reg)
                     }
                 });
             }
             LoroValue::Map(map) => {
                 map.iter_mut().for_each(|(_, x)| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(reg).unwrap();
+                        *x = x.clone().resolve_deep(reg)
                     }
                 });
             }

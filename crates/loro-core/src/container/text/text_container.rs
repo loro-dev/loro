@@ -164,7 +164,6 @@ impl TextContainer {
         self.state.debug_inspect();
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         self.get_value()
     }
@@ -357,11 +356,11 @@ impl Container for TextContainer {
 
     fn apply_tracked_effects_from(
         &mut self,
-        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
         debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
-        let should_notify = store.hierarchy.should_notify(&self.id);
+        let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = vec![];
         for effect in self
             .tracker

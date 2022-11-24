@@ -3,7 +3,6 @@ use std::{cell::RefCell, collections::HashSet, fmt::Debug, rc::Rc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use rle::HasLength;
 use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
@@ -12,7 +11,7 @@ use crate::{
     debug_log,
     event::Diff,
     id::ClientID,
-    ContainerType, InternalString, List, LoroCore, LoroValue, Map, Text,
+    ContainerType, List, LoroCore, LoroValue, Map, Text,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -45,6 +44,7 @@ pub enum Action {
 
 struct Actor {
     loro: LoroCore,
+    value_tracker: Rc<RefCell<LoroValue>>,
     map_tracker: Rc<RefCell<FxHashMap<String, LoroValue>>>,
     list_tracker: Rc<RefCell<Vec<LoroValue>>>,
     text_tracker: Rc<RefCell<String>>,
@@ -57,6 +57,7 @@ impl Actor {
     fn new(id: ClientID) -> Self {
         let mut actor = Actor {
             loro: LoroCore::new(Default::default(), Some(id)),
+            value_tracker: Rc::new(RefCell::new(LoroValue::Map(Default::default()))),
             map_tracker: Default::default(),
             list_tracker: Default::default(),
             text_tracker: Default::default(),
@@ -64,6 +65,12 @@ impl Actor {
             list_containers: Default::default(),
             text_containers: Default::default(),
         };
+
+        let root_value = Rc::clone(&actor.value_tracker);
+        actor.loro.subscribe_deep(Box::new(move |event| {
+            let mut root_value = root_value.borrow_mut();
+            root_value.apply(&event.relative_path, &event.diff);
+        }));
 
         let text = Rc::clone(&actor.text_tracker);
         actor.loro.log_store.write().unwrap().hierarchy.subscribe(
@@ -534,34 +541,64 @@ impl Actionable for Vec<Actor> {
     }
 }
 
+fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+    match (a, b) {
+        (LoroValue::Map(a), LoroValue::Map(b)) => {
+            for (k, v) in a.iter() {
+                let is_empty = match v {
+                    LoroValue::String(s) => s.is_empty(),
+                    LoroValue::List(l) => l.is_empty(),
+                    LoroValue::Map(m) => m.is_empty(),
+                    _ => false,
+                };
+                if is_empty {
+                    continue;
+                }
+
+                assert_value_eq(v, b.get(k).unwrap());
+            }
+
+            for (k, v) in b.iter() {
+                let is_empty = match v {
+                    LoroValue::String(s) => s.is_empty(),
+                    LoroValue::List(l) => l.is_empty(),
+                    LoroValue::Map(m) => m.is_empty(),
+                    _ => false,
+                };
+                if is_empty {
+                    continue;
+                }
+
+                assert_value_eq(v, a.get(k).unwrap());
+            }
+        }
+        (a, b) => assert_eq!(a, b),
+    }
+}
+
 fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_doc = &mut a_actor.loro;
     let b_doc = &mut b_actor.loro;
+    let a_result = a_doc.to_json();
+    assert_value_eq(&a_result, &b_doc.to_json());
+    assert_value_eq(&a_result, &a_actor.value_tracker.borrow());
+
     let a = a_doc.get_text("text");
-    let b = b_doc.get_text("text");
     let value_a = a.get_value();
-    let value_b = b.get_value();
-    assert_eq!(value_a, value_b);
     assert_eq!(
         &**value_a.as_string().unwrap(),
-        &*a_actor.text_tracker.borrow()
+        &*a_actor.text_tracker.borrow(),
     );
 
     let a = a_doc.get_map("map");
-    let b = b_doc.get_map("map");
     let value_a = a.get_value();
-    let value_b = b.get_value();
-    assert_eq!(value_a, value_b);
     assert_eq!(&**value_a.as_map().unwrap(), &*a_actor.map_tracker.borrow());
 
     let a = a_doc.get_list("list");
-    let b = b_doc.get_list("list");
     let value_a = a.get_value();
-    let value_b = b.get_value();
-    assert_eq!(value_a, value_b);
     assert_eq!(
         &**value_a.as_list().unwrap(),
-        &*a_actor.list_tracker.borrow()
+        &*a_actor.list_tracker.borrow(),
     );
 }
 
@@ -673,23 +710,16 @@ mod failed_tests {
             3,
             &mut [
                 List {
-                    site: 49,
-                    container_idx: 71,
-                    key: 179,
-                    value: Container(C::Map),
-                },
-                SyncAll,
-                Map {
-                    site: 130,
-                    container_idx: 8,
-                    key: 203,
-                    value: Container(C::Map),
+                    site: 21,
+                    container_idx: 108,
+                    key: 217,
+                    value: Null,
                 },
                 List {
-                    site: 85,
-                    container_idx: 129,
-                    key: 244,
-                    value: Null,
+                    site: 218,
+                    container_idx: 55,
+                    key: 58,
+                    value: Container(C::List),
                 },
             ],
         )

@@ -103,7 +103,6 @@ impl LoroCore {
         self.log_store.try_write().unwrap().debug_inspect();
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         self.log_store.try_read().unwrap().to_json()
     }

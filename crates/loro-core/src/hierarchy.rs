@@ -13,6 +13,7 @@ use crate::{
 pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
     root_observers: FxHashMap<SubscriptionID, Observer>,
+    deleted: FxHashSet<ContainerID>,
 }
 
 #[derive(Default)]
@@ -83,29 +84,41 @@ impl Hierarchy {
             }
         }
 
-        for descendant in visited_descendants {
-            self.nodes.remove(&descendant);
+        for descendant in visited_descendants.iter() {
+            self.nodes.remove(descendant);
         }
+
+        self.deleted.extend(visited_descendants);
+    }
+
+    pub fn take_deleted(&mut self) -> FxHashSet<ContainerID> {
+        std::mem::take(&mut self.deleted)
     }
 
     pub fn get_path(
         &mut self,
         reg: &ContainerRegistry,
         descendant: &ContainerID,
-        current_target: Option<&ContainerID>,
+        target: Option<&ContainerID>,
     ) -> Path {
         if let ContainerID::Root { name, .. } = descendant {
             return vec![Index::Key(name.into())];
         }
 
-        if current_target.map(|x| x == descendant).unwrap_or(false) {
+        if target.map(|x| x == descendant).unwrap_or(false) {
             return vec![];
         }
 
         let mut path = Path::default();
+        dbg!(&self);
+        dbg!(&descendant, target);
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
-            let node = self.nodes.get(node_id).unwrap();
+            dbg!(&node_id);
+            let Some(node) = self.nodes.get(node_id) else {
+                debug_assert!(node_id.is_root());
+                break;
+            };
             let parent = &node.parent;
             if let Some(parent) = parent {
                 let parent_node = reg.get(parent).unwrap();
@@ -121,7 +134,7 @@ impl Hierarchy {
                 }
             }
 
-            if parent.as_ref() == current_target {
+            if parent.as_ref() == target {
                 break;
             }
 

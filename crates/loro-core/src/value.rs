@@ -33,35 +33,58 @@ enum Test {
 }
 
 impl LoroValue {
-    pub(crate) fn resolve_deep(&self, reg: &ContainerRegistry) -> Option<LoroValue> {
-        if let Some(id) = self.as_unresolved() {
-            reg.get(id).map(|container| {
-                let mut value = container.lock().unwrap().get_value();
-
-                match &mut value {
-                    LoroValue::List(list) => {
-                        for v in list.iter_mut() {
-                            if v.as_unresolved().is_some() {
-                                *v = v.resolve_deep(reg).unwrap();
-                            }
-                        }
+    pub(crate) fn resolve_deep(mut self, reg: &ContainerRegistry) -> LoroValue {
+        match &mut self {
+            LoroValue::List(list) => {
+                for v in list.iter_mut() {
+                    if v.as_unresolved().is_some() {
+                        *v = v.clone().resolve_deep(reg)
                     }
-                    LoroValue::Map(map) => {
-                        for v in map.values_mut() {
-                            if v.as_unresolved().is_some() {
-                                *v = v.resolve_deep(reg).unwrap();
-                            }
-                        }
-                    }
-                    LoroValue::Unresolved(_) => unreachable!(),
-                    _ => {}
                 }
+            }
+            LoroValue::Map(map) => {
+                for v in map.values_mut() {
+                    if v.as_unresolved().is_some() {
+                        *v = v.clone().resolve_deep(reg)
+                    }
+                }
+            }
+            LoroValue::Unresolved(id) => {
+                self = reg
+                    .get(id)
+                    .map(|container| {
+                        let mut value = container.lock().unwrap().get_value();
 
-                value
-            })
-        } else {
-            None
+                        match &mut value {
+                            LoroValue::List(list) => {
+                                for v in list.iter_mut() {
+                                    if v.as_unresolved().is_some() {
+                                        *v = v.clone().resolve_deep(reg)
+                                    }
+                                }
+                            }
+                            LoroValue::Map(map) => {
+                                for v in map.values_mut() {
+                                    if v.as_unresolved().is_some() {
+                                        *v = v.clone().resolve_deep(reg)
+                                    }
+                                }
+                            }
+                            LoroValue::Unresolved(_) => unreachable!(),
+                            _ => {}
+                        }
+
+                        value
+                    })
+                    .unwrap_or_else(|| match id.container_type() {
+                        crate::ContainerType::Text => LoroValue::String(Default::default()),
+                        crate::ContainerType::Map => LoroValue::Map(Default::default()),
+                        crate::ContainerType::List => LoroValue::List(Default::default()),
+                    })
+            }
+            _ => {}
         }
+        self
     }
 
     #[cfg(feature = "json")]
@@ -74,10 +97,9 @@ impl LoroValue {
         serde_json::to_string_pretty(self).unwrap()
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json_value(&self, reg: &ContainerRegistry) -> LoroValue {
         match self {
-            LoroValue::Unresolved(_) => self.resolve_deep(reg).unwrap().to_json_value(reg),
+            LoroValue::Unresolved(_) => self.clone().resolve_deep(reg).to_json_value(reg),
             _ => self.clone(),
         }
     }
@@ -165,6 +187,7 @@ impl From<ContainerID> for LoroValue {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum TypeHint {
     Map,
     Text,

@@ -69,9 +69,15 @@ impl LogStore {
             new_vv: next_vv,
             diff: Default::default(),
         };
+        self.hierarchy.take_deleted();
         self.apply(container_map, &mut context);
 
+        let deleted = self.hierarchy.take_deleted();
         for (id, diff) in std::mem::take(&mut context.diff).into_iter() {
+            if deleted.contains(&id) {
+                continue;
+            }
+
             let raw_event = RawEvent {
                 diff,
                 container_id: id,
@@ -232,7 +238,7 @@ impl LogStore {
         });
         debug_log!("LOGSTORE STAGE 2",);
         for (_, container) in container_map.iter_mut() {
-            container.apply_tracked_effects_from(self, context);
+            container.apply_tracked_effects_from(&mut self.hierarchy, context);
         }
     }
 

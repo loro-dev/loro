@@ -364,7 +364,6 @@ impl LogStore {
         result
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         self.reg.to_json()
     }
