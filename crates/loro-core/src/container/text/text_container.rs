@@ -108,6 +108,11 @@ impl TextContainer {
         );
         self.state.debug_inspect();
     }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> LoroValue {
+        self.get_value()
+    }
 }
 
 impl Container for TextContainer {

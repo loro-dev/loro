@@ -1,7 +1,7 @@
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
-use loro_core::{LoroCore, LoroValue};
+use loro_core::{ContainerType, LoroCore, LoroValue};
 
 #[test]
 #[cfg(feature = "json")]
@@ -87,7 +87,6 @@ fn map() {
     assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
     assert!(map.get("map").unwrap().as_unresolved().is_some());
     println!("{}", value.to_json());
-
     let deep_value = root.get_value_deep(&loro);
     assert_eq!(deep_value.as_map().unwrap().len(), 2);
     let map = deep_value.as_map().unwrap();
@@ -158,6 +157,20 @@ fn test_recursive_should_panic() {
     let mut text_b = store_b.get_text("text_b");
     text_a.insert(&store_a, 0, "012").unwrap();
     text_b.insert(&store_a, 1, "34").unwrap();
+}
+
+#[test]
+fn test_to_json() {
+    let mut loro = LoroCore::new(Default::default(), Some(10));
+    let mut map = loro.get_map("A map");
+    map.insert(&loro, "haha", 1.2).unwrap();
+    let a = map
+        .insert(&loro, "text container", ContainerType::Text)
+        .unwrap()
+        .unwrap();
+    let mut text = loro.get_text(&a);
+    text.insert(&loro, 0, "012").unwrap();
+    println!("{}", loro.to_json());
 }
 
 #[ctor]

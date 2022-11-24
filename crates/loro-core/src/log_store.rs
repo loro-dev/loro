@@ -11,8 +11,8 @@ use std::{
 
 use fxhash::FxHashMap;
 
+use crate::context::Context;
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
-
 use smallvec::SmallVec;
 
 use crate::{
@@ -341,6 +341,12 @@ impl LogStore {
 
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         self.reg.get_or_create_container_idx(container)
+    }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self) -> String {
+        let value = self.reg.to_json();
+        serde_json::to_string_pretty(&value).unwrap()
     }
 }
 

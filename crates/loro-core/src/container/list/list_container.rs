@@ -11,7 +11,7 @@ use crate::{
     container::{
         list::list_op::ListOp,
         pool,
-        registry::{ContainerInstance, ContainerWrapper},
+        registry::{ContainerInstance, ContainerRegistry, ContainerWrapper},
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
@@ -170,6 +170,16 @@ impl ListContainer {
             self.raw_data.len(),
         );
         self.state.debug_inspect();
+    }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
+        let mut arr = Vec::new();
+        for i in 0..self.values_len() {
+            let v = self.get(i).unwrap();
+            arr.push(v.to_json_value(reg));
+        }
+        arr.into()
     }
 }
 

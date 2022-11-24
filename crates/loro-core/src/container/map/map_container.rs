@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::{super::pool::Pool, InnerMapSet};
+use crate::container::registry::ContainerRegistry;
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
@@ -140,6 +141,16 @@ impl MapContainer {
             .get(key)
             .map(|v| self.pool.slice(&(v.value..v.value + 1)).first().unwrap())
             .cloned()
+    }
+
+    #[cfg(feature = "json")]
+    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
+        let mut map = FxHashMap::default();
+        for (k, v) in self.state.iter() {
+            let value = self.pool.slice(&(v.value..v.value + 1)).first().unwrap();
+            map.insert(k.to_string(), value.to_json_value(reg));
+        }
+        LoroValue::Map(Box::new(map))
     }
 }
 

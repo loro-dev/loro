@@ -16,6 +16,10 @@ impl Context for LoroCore {
     }
 
     fn get_container(&self, id: &ContainerID) -> Option<Arc<Mutex<ContainerInstance>>> {
-        self.log_store.write().unwrap().get_container(id).cloned()
+        self.log_store
+            .try_read()
+            .unwrap()
+            .get_container(id)
+            .cloned()
     }
 }
