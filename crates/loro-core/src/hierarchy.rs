@@ -143,6 +143,24 @@ impl Hierarchy {
     }
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+        let mut node_id = Some(container_id);
+        while let Some(inner_node_id) = node_id {
+            let Some(node) = self.nodes.get(inner_node_id) else {
+                if inner_node_id.is_root() {
+                    break;
+                } else {
+                    // deleted node
+                    return false;
+                }
+            };
+
+            if !node.deep_observers.is_empty() {
+                return true;
+            }
+
+            node_id = node.parent.as_ref();
+        }
+
         if !self.root_observers.is_empty() {
             return true;
         }
@@ -154,19 +172,6 @@ impl Hierarchy {
             .unwrap_or(false)
         {
             return true;
-        }
-
-        let mut node_id = Some(container_id);
-        while let Some(inner_node_id) = node_id {
-            let Some(node) = self.nodes.get(inner_node_id) else {
-                return false;
-            };
-
-            if !node.deep_observers.is_empty() {
-                return true;
-            }
-
-            node_id = node.parent.as_ref();
         }
 
         false
