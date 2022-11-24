@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::{cell::RefCell, collections::HashSet, fmt::Debug, rc::Rc};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -45,9 +45,9 @@ pub enum Action {
 
 struct Actor {
     loro: LoroCore,
-    map_tracker: FxHashMap<String, LoroValue>,
-    list_tracker: Vec<LoroValue>,
-    text_tracker: String,
+    map_tracker: Rc<RefCell<FxHashMap<String, LoroValue>>>,
+    list_tracker: Rc<RefCell<Vec<LoroValue>>>,
+    text_tracker: Rc<RefCell<String>>,
     map_containers: Vec<Map>,
     list_containers: Vec<List>,
     text_containers: Vec<Text>,
@@ -65,11 +65,11 @@ impl Actor {
             text_containers: Default::default(),
         };
 
-        // SAFETY: test only code
-        let text: &mut String = unsafe { std::mem::transmute(&mut actor.text_tracker) };
+        let text = Rc::clone(&actor.text_tracker);
         actor.loro.log_store.write().unwrap().hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
-            Box::new(|event| {
+            Box::new(move |event| {
+                let mut text = text.borrow_mut();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::Text(delta) => {
@@ -80,11 +80,11 @@ impl Actor {
                                         index += len;
                                     }
                                     crate::delta::DeltaItem::Insert { value, meta: _ } => {
-                                        // text.insert_str(index, value);
+                                        text.insert_str(index, value);
                                         index += value.len();
                                     }
                                     crate::delta::DeltaItem::Delete(len) => {
-                                        // text.drain(index..index + *len);
+                                        text.drain(index..index + *len);
                                     }
                                 }
                             }
@@ -96,23 +96,22 @@ impl Actor {
             false,
         );
 
-        let map: &mut FxHashMap<InternalString, LoroValue> =
-            // SAFETY: test only code
-            unsafe { std::mem::transmute(&mut actor.map_tracker) };
+        let map = Rc::clone(&actor.map_tracker);
         actor.loro.log_store.write().unwrap().hierarchy.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
-            Box::new(|event| {
+            Box::new(move |event| {
+                let mut map = map.borrow_mut();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::Map(map_diff) => {
                             for (key, value) in map_diff.added.iter() {
-                                // map.insert(key.clone(), value.clone());
+                                map.insert(key.to_string(), value.clone());
                             }
                             for key in map_diff.deleted.iter() {
-                                // map.remove(key);
+                                map.remove(&key.to_string());
                             }
                             for (key, value) in map_diff.updated.iter() {
-                                // map.insert(key.clone(), value.new.clone());
+                                map.insert(key.to_string(), value.new.clone());
                             }
                         }
                         _ => unreachable!(),
@@ -122,11 +121,11 @@ impl Actor {
             false,
         );
 
-        // SAFETY: test only code
-        let list: &mut Vec<LoroValue> = unsafe { std::mem::transmute(&mut actor.list_tracker) };
+        let list = Rc::clone(&actor.list_tracker);
         actor.loro.log_store.write().unwrap().hierarchy.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
-            Box::new(|event| {
+            Box::new(move |event| {
+                let mut list = list.borrow_mut();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::List(delta) => {
@@ -138,12 +137,12 @@ impl Actor {
                                     }
                                     crate::delta::DeltaItem::Insert { value, meta: _ } => {
                                         for v in value {
-                                            // list.insert(index, v.clone());
+                                            list.insert(index, v.clone());
                                             index += 1;
                                         }
                                     }
                                     crate::delta::DeltaItem::Delete(len) => {
-                                        // list.drain(index..index + *len);
+                                        list.drain(index..index + *len);
                                     }
                                 }
                             }
@@ -543,21 +542,27 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    // assert_eq!(&**value_a.as_string().unwrap(), &a_actor.text_tracker);
+    assert_eq!(
+        &**value_a.as_string().unwrap(),
+        &*a_actor.text_tracker.borrow()
+    );
 
     let a = a_doc.get_map("map");
     let b = b_doc.get_map("map");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    // assert_eq!(&**value_a.as_map().unwrap(), &a_actor.map_tracker);
+    assert_eq!(&**value_a.as_map().unwrap(), &*a_actor.map_tracker.borrow());
 
     let a = a_doc.get_list("list");
     let b = b_doc.get_list("list");
     let value_a = a.get_value();
     let value_b = b.get_value();
     assert_eq!(value_a, value_b);
-    // assert_eq!(&**value_a.as_list().unwrap(), &a_actor.list_tracker);
+    assert_eq!(
+        &**value_a.as_list().unwrap(),
+        &*a_actor.list_tracker.borrow()
+    );
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -587,11 +592,11 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     for action in actions.iter_mut() {
         sites.preprocess(action);
         applied.push(action.clone());
-        let sites_ptr: *mut Vec<_> = &mut sites as *mut _;
+        let sites_ptr: usize = &mut sites as *mut _ as usize;
         #[allow(clippy::blocks_in_if_conditions)]
         if std::panic::catch_unwind(|| {
             // SAFETY: Test
-            let sites = unsafe { &mut *sites_ptr };
+            let sites = unsafe { &mut *(sites_ptr as *mut Vec<_>) };
             sites.apply_action(&action.clone());
         })
         .is_err()
