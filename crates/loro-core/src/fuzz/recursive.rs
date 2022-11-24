@@ -651,14 +651,14 @@ mod failed_tests {
     #[test]
     fn test() {
         arbtest::builder()
-            .budget_ms((10000 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
             .run(|u| prop(u, 2))
     }
 
     #[test]
     fn test_3sites() {
         arbtest::builder()
-            .budget_ms((10000 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
             .run(|u| prop(u, 3))
     }
 
