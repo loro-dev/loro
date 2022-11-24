@@ -19,7 +19,8 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    event::Index,
+    delta::Delta,
+    event::{Diff, Index, RawEvent},
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
@@ -163,6 +164,27 @@ impl ListContainer {
 
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
+    }
+
+    fn notify(
+        &mut self,
+        store: &mut LogStore,
+        diff: Vec<Diff>,
+        old_version: SmallVec<[ID; 2]>,
+        new_version: SmallVec<[ID; 2]>,
+        local: bool,
+    ) {
+        store.with_hierarchy(|store, hierarchy| {
+            let event = RawEvent {
+                diff,
+                local,
+                old_version,
+                new_version,
+                container_id: self.id.clone(),
+            };
+
+            hierarchy.notify(event, &store.reg);
+        });
     }
 
     fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
@@ -326,13 +348,21 @@ impl Container for ListContainer {
     }
 
     fn apply_tracked_effects_from(&mut self, store: &mut LogStore, import_context: &ImportContext) {
+        let should_notify = store.hierarchy.should_notify(&self.id);
+        let mut diff = vec![];
         for effect in self
             .tracker
             .iter_effects(&import_context.old_vv, &import_context.spans)
         {
             match effect {
                 Effect::Del { pos, len } => {
-                    // Update hierarchy info
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.delete(len);
+                        diff.push(Diff::List(delta));
+                    }
+
                     if store.hierarchy.has_children(&self.id) {
                         for state in self.state.iter_range(pos, Some(pos + len)) {
                             let range = &state.as_ref().0;
@@ -347,7 +377,16 @@ impl Container for ListContainer {
                     self.state.delete_range(Some(pos), Some(pos + len));
                 }
                 Effect::Ins { pos, content } => {
-                    // Update hierarchy info
+                    if should_notify {
+                        let mut delta_vec = vec![];
+                        for value in self.raw_data.slice(&content.0) {
+                            delta_vec.push(value.clone());
+                        }
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.insert(delta_vec);
+                        diff.push(Diff::List(delta));
+                    }
                     {
                         let content = &content;
                         for value in self.raw_data.slice(&content.0).iter() {
@@ -360,6 +399,16 @@ impl Container for ListContainer {
                     self.state.insert(pos, content);
                 }
             }
+        }
+
+        if should_notify {
+            self.notify(
+                store,
+                diff,
+                import_context.old_frontiers.clone(),
+                import_context.new_frontiers.clone(),
+                false,
+            );
         }
     }
 }

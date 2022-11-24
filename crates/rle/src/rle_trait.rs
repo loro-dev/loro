@@ -90,3 +90,9 @@ impl HasLength for String {
         self.len()
     }
 }
+
+impl<T> HasLength for Vec<T> {
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+}
