@@ -166,11 +166,7 @@ impl TextContainer {
 
     #[cfg(feature = "json")]
     pub fn to_json(&self) -> serde_json::Value {
-        let mut s = String::new();
-        for slice in self.state.iter() {
-            s.push_str(&self.raw_str.get_str(&slice.as_ref().0));
-        }
-        serde_json::Value::String(s)
+        serde_json::Value::String(self.get_value().as_string().unwrap().to_string())
     }
 }
 

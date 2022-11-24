@@ -4,7 +4,11 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
 
-use crate::{container::ContainerID, context::Context, Container};
+use crate::{
+    container::{registry::ContainerRegistry, ContainerID},
+    context::Context,
+    Container,
+};
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, EnumAsInner)]
@@ -27,28 +31,30 @@ enum Test {
 }
 
 impl LoroValue {
-    pub(crate) fn resolve_deep<C: Context>(&self, ctx: &C) -> Option<LoroValue> {
+    pub(crate) fn resolve_deep(&self, reg: &ContainerRegistry) -> Option<LoroValue> {
         if let Some(id) = self.as_unresolved() {
-            ctx.get_container(id).map(|container| {
+            reg.get(id).map(|container| {
                 let mut value = container.lock().unwrap().get_value();
+
                 match &mut value {
                     LoroValue::List(list) => {
                         for v in list.iter_mut() {
                             if v.as_unresolved().is_some() {
-                                *v = v.resolve_deep(ctx).unwrap();
+                                *v = v.resolve_deep(reg).unwrap();
                             }
                         }
                     }
                     LoroValue::Map(map) => {
                         for v in map.values_mut() {
                             if v.as_unresolved().is_some() {
-                                *v = v.resolve_deep(ctx).unwrap();
+                                *v = v.resolve_deep(reg).unwrap();
                             }
                         }
                     }
                     LoroValue::Unresolved(_) => unreachable!(),
                     _ => {}
                 }
+
                 value
             })
         } else {
@@ -62,7 +68,7 @@ impl LoroValue {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json_value(&self) -> serde_json::Value {
+    pub fn to_json_value(&self, reg: &ContainerRegistry) -> serde_json::Value {
         match self {
             LoroValue::Null => serde_json::Value::Null,
             LoroValue::Bool(b) => serde_json::Value::Bool(*b),
@@ -72,16 +78,14 @@ impl LoroValue {
             LoroValue::I32(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
             LoroValue::String(s) => serde_json::Value::String(s.to_string()),
             LoroValue::List(l) => {
-                serde_json::Value::Array(l.iter().map(|v| v.to_json_value()).collect())
+                serde_json::Value::Array(l.iter().map(|v| v.to_json_value(reg)).collect())
             }
             LoroValue::Map(m) => serde_json::Value::Object(
                 m.iter()
-                    .map(|(k, v)| (k.to_string(), v.to_json_value()))
+                    .map(|(k, v)| (k.to_string(), v.to_json_value(reg)))
                     .collect(),
             ),
-            LoroValue::Unresolved(id) => {
-                serde_json::Value::String(serde_json::to_string(id).unwrap())
-            }
+            LoroValue::Unresolved(_) => self.resolve_deep(reg).unwrap().to_json_value(reg),
         }
     }
 

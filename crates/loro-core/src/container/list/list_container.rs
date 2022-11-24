@@ -11,7 +11,7 @@ use crate::{
     container::{
         list::list_op::ListOp,
         pool,
-        registry::{ContainerInstance, ContainerWrapper},
+        registry::{ContainerInstance, ContainerRegistry, ContainerWrapper},
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
@@ -272,11 +272,11 @@ impl ListContainer {
     }
 
     #[cfg(feature = "json")]
-    pub fn to_json(&self) -> serde_json::Value {
+    pub fn to_json(&self, reg: &ContainerRegistry) -> serde_json::Value {
         let mut arr = Vec::new();
         for i in 0..self.values_len() {
             let v = self.get(i).unwrap();
-            arr.push(v.to_json_value());
+            arr.push(v.to_json_value(reg));
         }
         serde_json::Value::Array(arr)
     }
