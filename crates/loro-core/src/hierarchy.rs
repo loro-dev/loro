@@ -86,8 +86,8 @@ impl Hierarchy {
         current_target: Option<&ContainerID>,
     ) -> Path {
         let mut path = Path::default();
-        let node = Some(descendant);
-        while let Some(node_id) = node {
+        let mut iter_node = Some(descendant);
+        while let Some(node_id) = iter_node {
             let node = self.nodes.get(node_id).unwrap();
             let parent = &node.parent;
             if let Some(parent) = parent {
@@ -107,6 +107,8 @@ impl Hierarchy {
             if parent.as_ref() == current_target {
                 break;
             }
+
+            iter_node = parent.as_ref();
         }
 
         path.reverse();
