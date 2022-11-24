@@ -16,7 +16,7 @@ use crate::{
     debug_log,
     delta::Delta,
     event::{Diff, RawEvent},
-    hierarchy::{self, Hierarchy},
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
@@ -71,7 +71,7 @@ impl TextContainer {
         );
 
         let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = store.frontiers().iter().copied().collect();
+        let new_version = new_version.into();
 
         // notify
         if store.hierarchy.should_notify(&self.id) {
