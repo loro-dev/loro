@@ -160,6 +160,9 @@ impl Actor {
             false,
         );
 
+        actor.text_containers.push(actor.loro.get_text("text"));
+        actor.map_containers.push(actor.loro.get_map("map"));
+        actor.list_containers.push(actor.loro.get_list("list"));
         actor
     }
 }
@@ -579,7 +582,8 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_doc = &mut a_actor.loro;
     let b_doc = &mut b_actor.loro;
     let a_result = a_doc.to_json();
-    assert_value_eq(&a_result, &b_doc.to_json());
+    debug_log::debug_log!("{}", a_result.to_json_pretty());
+    assert_eq!(&a_result, &b_doc.to_json());
     assert_value_eq(&a_result, &a_actor.value_tracker.borrow());
 
     let a = a_doc.get_text("text");
@@ -910,7 +914,7 @@ mod failed_tests {
     }
 
     #[test]
-    fn unknown() {
+    fn find_path_for_deleted_container() {
         test_multi_sites(
             5,
             &mut [
@@ -971,8 +975,43 @@ mod failed_tests {
     }
 
     #[test]
-    fn container_apply_effect_order() {
-        test_multi_sites(5, &mut [])
+    fn list_slice_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1499488352),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1734844320),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 1,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
     }
 
     use super::ContainerType as C;

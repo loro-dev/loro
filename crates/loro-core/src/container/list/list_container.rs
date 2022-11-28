@@ -149,7 +149,7 @@ impl ListContainer {
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
         self.state
             .get(pos)
-            .map(|range| self.raw_data.slice(&range.as_ref().0))
+            .map(|range| self.raw_data.slice(&range.get_sliced().0))
             .and_then(|slice| slice.first().cloned())
     }
 
@@ -219,9 +219,10 @@ impl ListContainer {
         }
 
         for state in self.state.iter_range(pos, Some(pos + len)) {
-            let range = &state.as_ref().0;
+            let range = &state.get_sliced().0;
             for value in self.raw_data.slice(range).iter() {
                 if let LoroValue::Unresolved(container_id) = value {
+                    debug_log::debug_log!("Deleted {:?}", container_id);
                     hierarchy.remove_child(&self.id, container_id);
                 }
             }
@@ -421,9 +422,10 @@ impl Container for ListContainer {
                     if hierarchy.has_children(&self.id) {
                         // update hierarchy
                         for state in self.state.iter_range(pos, Some(pos + len)) {
-                            let range = &state.as_ref().0;
-                            for value in self.raw_data.slice(range).iter() {
+                            let range = state.get_sliced();
+                            for value in self.raw_data.slice(&range.0).iter() {
                                 if let LoroValue::Unresolved(container_id) = value {
+                                    debug_log::debug_log!("Deleted {:?}", container_id);
                                     hierarchy.remove_child(&self.id, container_id);
                                 }
                             }
