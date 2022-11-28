@@ -280,7 +280,10 @@ impl LogStore {
                 retries += 1;
                 queue.push_front(container);
                 if retries > queue.len() {
-                    panic!("container hierarchy is broken");
+                    // the left containers are deleted
+                    debug_log::debug_log!("Left containers are deleted");
+                    debug_log::debug_dbg!(&queue);
+                    break;
                 }
             }
         }

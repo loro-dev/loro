@@ -14,7 +14,6 @@ pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
     root_observers: FxHashMap<SubscriptionID, Observer>,
     latest_deleted: FxHashSet<ContainerID>,
-    deleted: FxHashSet<ContainerID>,
 }
 
 #[derive(Default)]
@@ -73,7 +72,7 @@ impl Hierarchy {
     #[inline(always)]
     pub fn contains(&self, id: &ContainerID) -> bool {
         debug_log::debug_dbg!(&self);
-        self.nodes.get(id).is_some() || self.deleted.contains(id)
+        self.nodes.get(id).is_some()
     }
 
     pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
@@ -96,10 +95,6 @@ impl Hierarchy {
 
         for descendant in visited_descendants.iter() {
             self.nodes.remove(descendant);
-        }
-
-        for node in visited_descendants.iter() {
-            self.deleted.insert(node.clone());
         }
 
         self.latest_deleted.extend(visited_descendants);
