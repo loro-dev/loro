@@ -50,10 +50,25 @@ impl ContainerExport for ListContainer {
     }
 
     fn export_ranges(&self) -> Self::Range {
-        self.state
+        let ans = self
+            .state
             .iter()
-            .map(|slice_range| (slice_range.get_sliced().0.start))
-            .collect()
+            .fold(Vec::with_capacity(self.state.len() * 2), |mut acc, p| {
+                let s = p.get_sliced().0.start;
+                let e = p.get_sliced().0.end;
+                // print!("{}-{} ", s, e);
+                acc.extend([s, e]);
+                acc
+            });
+        // println!("\n");
+        ans
+        // .map(|slice_range| {
+        //     merge_2_u32_u64(
+        //         slice_range.get_sliced().0.start,
+        //         slice_range.get_sliced().0.end,
+        //     )
+        // })
+        // .collect()
     }
 
     fn import_pool(&mut self, pool: Self::Pool) {
@@ -61,10 +76,13 @@ impl ContainerExport for ListContainer {
     }
 
     fn import_ranges(&mut self, range: Self::Range) {
-        range
-            .into_iter()
-            .enumerate()
-            .for_each(|(pos, start)| self.state.insert(pos, (start..start + 1).into()))
+        let mut index = 0;
+        for r in range.chunks(2) {
+            let s = r[0];
+            let e = r[1];
+            self.state.insert(index, (s..e).into());
+            index += (e - s) as usize;
+        }
     }
 }
 
