@@ -6,7 +6,7 @@ use crate::smstring::SmString;
 
 #[derive(Debug, Default)]
 pub struct StringPool {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     alive_ranges: RleVecWithIndex<Alive>,
     deleted: usize,
 }

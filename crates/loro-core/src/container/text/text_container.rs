@@ -34,8 +34,8 @@ use super::{
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
-    raw_str: StringPool,
+    pub(crate) state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
+    pub(crate) raw_str: StringPool,
     tracker: Tracker,
 }
 

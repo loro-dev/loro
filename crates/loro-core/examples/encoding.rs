@@ -39,28 +39,36 @@ fn main() {
         0,
         start.elapsed().as_millis()
     );
-    let json1 = loro.to_json();
-    let start = Instant::now();
+    // let json1 = loro.to_json();
+    // let start = Instant::now();
     let loro = LoroCore::decode_snapshot(&buf, None, Configure::default());
-    println!("decode used {}ms", start.elapsed().as_millis());
-    let buf2 = loro.encode_snapshot();
-    assert_eq!(buf, buf2);
-    let json2 = loro.to_json();
-    assert_eq!(json1, json2);
-    let mut last = 100;
-    let mut count = 0;
-    let mut max_count = 0;
-    for &byte in buf.iter() {
-        if byte == last {
-            count += 1;
-            if count > max_count {
-                max_count = count;
-            }
-        } else {
-            count = 0;
-        }
-        last = byte;
-    }
+    // println!("decode used {}ms", start.elapsed().as_millis());
+    // let buf2 = loro.encode_snapshot();
+    // assert_eq!(con, con2);
+    // let loro = LoroCore::decode_snapshot(&buf2, None, Configure::default());
+    // assert_eq!(buf, buf2);
+    // println!(
+    //     "{} bytes, overhead {} bytes",
+    //     buf2.len(),
+    //     (buf2.len() as isize - buf.len() as isize)
+    // );
+    // let json2 = loro.to_json();
+    // assert_eq!(json1, json2);
 
-    println!("Longest continuous bytes length {}", max_count);
+    // let mut last = 100;
+    // let mut count = 0;
+    // let mut max_count = 0;
+    // for &byte in buf.iter() {
+    //     if byte == last {
+    //         count += 1;
+    //         if count > max_count {
+    //             max_count = count;
+    //         }
+    //     } else {
+    //         count = 0;
+    //     }
+    //     last = byte;
+    // }
+
+    // println!("Longest continuous bytes length {}", max_count);
 }

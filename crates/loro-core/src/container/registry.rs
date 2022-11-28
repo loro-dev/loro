@@ -7,6 +7,7 @@ use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
 use owning_ref::OwningRefMut;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::instrument;
 
@@ -36,11 +37,13 @@ impl ContainerIdx {
 }
 
 // TODO: replace this with a fat pointer?
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Serialize, Deserialize)]
 pub enum ContainerInstance {
-    Map(Box<MapContainer>),
-    Text(Box<TextContainer>),
     List(Box<ListContainer>),
+    Text(Box<TextContainer>),
+    #[serde(skip)]
+    Map(Box<MapContainer>),
+    #[serde(skip)]
     Dyn(Box<dyn Container>),
 }
 
@@ -230,7 +233,7 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
+    pub(crate) fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
         let idx = self.next_idx();
         self.container_to_idx.insert(id.clone(), idx);
         self.containers.push(ContainerAndId {
