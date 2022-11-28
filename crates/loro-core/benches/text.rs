@@ -73,6 +73,32 @@ mod run {
             })
         });
 
+        b.bench_function("B4 Observed", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                loro.subscribe_deep(Box::new(|_| {}));
+                let text = loro.get_text("text");
+                text.with_container(|text| {
+                    for txn in txns.unwrap().as_array().unwrap() {
+                        let patches = txn
+                            .as_object()
+                            .unwrap()
+                            .get("patches")
+                            .unwrap()
+                            .as_array()
+                            .unwrap();
+                        for patch in patches {
+                            let pos = patch[0].as_u64().unwrap() as usize;
+                            let del_here = patch[1].as_u64().unwrap() as usize;
+                            let ins_content = patch[2].as_str().unwrap();
+                            text.delete(&loro, pos, del_here);
+                            text.insert(&loro, pos, ins_content);
+                        }
+                    }
+                })
+            })
+        });
+
         b.sample_size(10);
         b.bench_function("B4DirectSync", |b| {
             b.iter(|| {
