@@ -46,6 +46,15 @@ pub struct RichOp<'a> {
     end: usize,
 }
 
+/// RichOp includes lamport and timestamp info, which is used for conflict resolution.
+#[derive(Debug, Clone)]
+pub struct OwnedRichOp {
+    pub op: Op,
+    pub client_id: ClientID,
+    pub lamport: Lamport,
+    pub timestamp: Timestamp,
+}
+
 impl Op {
     #[inline]
     pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
@@ -247,6 +256,15 @@ impl<'a> RichOp<'a> {
         self.op.slice(self.start, self.end)
     }
 
+    pub fn as_owned(&self) -> OwnedRichOp {
+        OwnedRichOp {
+            op: self.get_sliced(),
+            client_id: self.client_id,
+            lamport: self.lamport,
+            timestamp: self.timestamp,
+        }
+    }
+
     pub fn op(&self) -> &Op {
         self.op
     }
@@ -265,5 +283,18 @@ impl<'a> RichOp<'a> {
 
     pub fn end(&self) -> usize {
         self.end
+    }
+}
+
+impl OwnedRichOp {
+    pub fn rich_op(&self) -> RichOp {
+        RichOp {
+            op: &self.op,
+            client_id: self.client_id,
+            lamport: self.lamport,
+            timestamp: self.timestamp,
+            start: 0,
+            end: self.op.atom_len(),
+        }
     }
 }

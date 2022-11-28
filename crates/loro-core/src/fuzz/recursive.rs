@@ -975,6 +975,34 @@ mod failed_tests {
     }
 
     #[test]
+    fn unknown() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 255,
+                    value: Container(C::Map),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn list_slice_err() {
         test_multi_sites(
             5,

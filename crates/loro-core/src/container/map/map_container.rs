@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::{super::pool::Pool, InnerMapSet};
-use crate::container::registry::ContainerRegistry;
+use crate::{container::registry::ContainerRegistry, op::OwnedRichOp};
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
@@ -33,6 +33,7 @@ pub struct MapContainer {
     id: ContainerID,
     state: FxHashMap<InternalString, ValueSlot>,
     pool: Pool,
+    pending_ops: Vec<OwnedRichOp>,
 }
 
 #[derive(Debug)]
@@ -49,6 +50,7 @@ impl MapContainer {
             id,
             state: FxHashMap::default(),
             pool: Pool::default(),
+            pending_ops: Vec::new(),
         }
     }
 
@@ -363,20 +365,18 @@ impl Container for MapContainer {
 
     fn track_forward(&mut self, _: &IdSpanVector) {}
 
-    fn track_apply(
-        &mut self,
-        hierarchy: &mut Hierarchy,
-        op: &RichOp,
-        import_context: &mut ImportContext,
-    ) {
-        self.update_state_directly(hierarchy, op, import_context);
+    fn track_apply(&mut self, _: &mut Hierarchy, op: &RichOp, _: &mut ImportContext) {
+        self.pending_ops.push(op.as_owned());
     }
 
     fn apply_tracked_effects_from(
         &mut self,
-        _: &mut Hierarchy,
-        _import_context: &mut ImportContext,
+        hierarchy: &mut Hierarchy,
+        import_context: &mut ImportContext,
     ) {
+        for op in std::mem::take(&mut self.pending_ops) {
+            self.update_state_directly(hierarchy, &op.rich_op(), import_context)
+        }
     }
 }
 
