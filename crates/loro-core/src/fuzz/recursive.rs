@@ -866,6 +866,50 @@ mod failed_tests {
     }
 
     #[test]
+    fn apply_directly() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                Text {
+                    site: 4,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 39064,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn path_issue() {
         test_multi_sites(
             2,

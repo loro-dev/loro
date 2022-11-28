@@ -288,6 +288,11 @@ impl LogStore {
             }
         }
 
+        // TODO: can omit this, if apply directly also omit all the ops from deleted containers
+        for mut container in queue {
+            container.apply_tracked_effects_from(&mut self.hierarchy, context);
+        }
+
         debug_log::group_end!();
     }
 
