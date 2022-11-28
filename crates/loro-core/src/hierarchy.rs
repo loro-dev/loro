@@ -54,8 +54,6 @@ impl Hierarchy {
 
     // TODO: rename to register?
     pub fn add_child(&mut self, parent: &ContainerID, child: &ContainerID) {
-        debug_log::debug_log!("Register ({:?}) parent ({:?})", &child, &parent);
-
         let parent_node = self.nodes.entry(parent.clone()).or_default();
         parent_node.children.insert(child.clone());
         let child_node = self.nodes.entry(child.clone()).or_default();

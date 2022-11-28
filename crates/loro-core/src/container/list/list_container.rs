@@ -409,8 +409,6 @@ impl Container for ListContainer {
             .tracker
             .iter_effects(&import_context.old_vv, &import_context.spans)
         {
-            debug_log::debug_log!("effect: {:?}", effect);
-
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
