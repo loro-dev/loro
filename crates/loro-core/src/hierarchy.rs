@@ -52,7 +52,10 @@ impl Hierarchy {
         self.nodes.is_empty()
     }
 
+    // TODO: rename to register?
     pub fn add_child(&mut self, parent: &ContainerID, child: &ContainerID) {
+        debug_log::debug_log!("Register ({:?}) parent ({:?})", &child, &parent);
+
         let parent_node = self.nodes.entry(parent.clone()).or_default();
         parent_node.children.insert(child.clone());
         let child_node = self.nodes.entry(child.clone()).or_default();
@@ -65,6 +68,11 @@ impl Hierarchy {
             .get(id)
             .map(|node| !node.children.is_empty())
             .unwrap_or(false)
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, id: &ContainerID) -> bool {
+        self.nodes.get(id).is_some()
     }
 
     pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
@@ -93,6 +101,25 @@ impl Hierarchy {
 
     pub fn take_deleted(&mut self) -> FxHashSet<ContainerID> {
         std::mem::take(&mut self.deleted)
+    }
+
+    pub fn get_path_len(&self, id: &ContainerID) -> Option<usize> {
+        let mut len = 0;
+        let mut current = id;
+        while let Some(node) = self.nodes.get(current) {
+            len += 1;
+            if let Some(parent) = &node.parent {
+                current = parent;
+            } else {
+                break;
+            }
+        }
+
+        if current.is_root() {
+            return Some(len);
+        }
+
+        None
     }
 
     pub fn get_path(
@@ -144,6 +171,7 @@ impl Hierarchy {
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
         let mut node_id = Some(container_id);
+
         while let Some(inner_node_id) = node_id {
             let Some(node) = self.nodes.get(inner_node_id) else {
                 if inner_node_id.is_root() {

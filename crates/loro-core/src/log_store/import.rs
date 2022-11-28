@@ -1,10 +1,10 @@
 use crate::{
     container::registry::ContainerIdx,
-    event::{self, Diff, RawEvent},
+    event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
     LogStore,
 };
-use std::{ops::ControlFlow, sync::MutexGuard};
+use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
 
 use fxhash::FxHashMap;
 
@@ -13,7 +13,6 @@ use rle::{HasLength, RleVecWithIndex, Sliceable};
 use crate::{
     container::{registry::ContainerInstance, Container, ContainerID},
     dag::{remove_included_frontiers, DagUtils},
-    debug_log,
     op::RichOp,
     span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},
     version::are_frontiers_eq,
@@ -78,6 +77,7 @@ impl LogStore {
             return;
         }
 
+        debug_log::group!("Import at {}", self.this_client_id);
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         self.lock_related_containers(&changes, &mut container_map);
         let (next_vv, next_frontiers) = self.push_changes(changes, &mut container_map);
@@ -95,14 +95,26 @@ impl LogStore {
             diff: Default::default(),
         };
         self.hierarchy.take_deleted();
-        self.apply(container_map, &mut context);
 
+        debug_log::group!("apply");
+        self.apply(container_map, &mut context);
+        debug_log::group_end!();
+
+        self.notify(&mut context);
+        self.update_version_info(context.new_vv, next_frontiers);
+        debug_log::group_end!();
+    }
+
+    fn notify(&mut self, context: &mut ImportContext) {
+        debug_log::group!("notify");
         let deleted = self.hierarchy.take_deleted();
         let mut events = Vec::with_capacity(context.diff.len());
+        debug_log::debug_log!("Deleted {:#?}", &deleted);
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
             .filter(|x| !deleted.contains(&x.0))
         {
+            debug_log::debug_dbg!(&id, &diff);
             let raw_event = RawEvent {
                 diff,
                 container_id: id,
@@ -110,11 +122,11 @@ impl LogStore {
                 new_version: context.new_frontiers.clone(),
                 local: false,
             };
+            debug_log::debug_dbg!(&raw_event);
             events.push(raw_event);
         }
-
         self.hierarchy.notify_batch(events, &self.reg);
-        self.update_version_info(context.new_vv, next_frontiers);
+        debug_log::group_end!();
     }
 
     fn update_version_info(&mut self, next_vv: VersionVector, next_frontiers: VersionVector) {
@@ -172,11 +184,6 @@ impl LogStore {
         context: &mut ImportContext,
     ) {
         let latest_frontiers = &context.new_frontiers;
-        debug_log!(
-            "FIND COMMON ANCESTORS self={:?} latest={:?}",
-            &self.frontiers,
-            &latest_frontiers
-        );
         let common_ancestors = self.find_common_ancestor(&self.frontiers, latest_frontiers);
         if are_frontiers_eq(&common_ancestors, &self.frontiers) {
             // we may apply changes directly into state
@@ -242,7 +249,6 @@ impl LogStore {
                 let start = iter.slice.start;
                 let end = iter.slice.end;
                 let change = iter.data;
-                debug_log!("iter {:#?}", &iter);
                 // TODO: perf: we can make iter_causal returns target vv and only
                 // checkout the related container to the target vv
                 for (_, container) in container_map.iter_mut() {
@@ -262,10 +268,24 @@ impl LogStore {
                 }
             }
         });
-        debug_log!("LOGSTORE STAGE 2",);
-        for (_, container) in container_map.iter_mut() {
-            container.apply_tracked_effects_from(&mut self.hierarchy, context);
+        debug_log::group!("apply effects");
+        let mut queue: VecDeque<_> = container_map.into_iter().map(|(_, x)| x).collect();
+        let mut retries = 0;
+        // only apply the effects of a container when it's registered to the hierarchy
+        while let Some(mut container) = queue.pop_back() {
+            if container.id().is_root() || self.hierarchy.contains(container.id()) {
+                retries = 0;
+                container.apply_tracked_effects_from(&mut self.hierarchy, context);
+            } else {
+                retries += 1;
+                queue.push_front(container);
+                if retries > queue.len() {
+                    panic!("container hierarchy is broken");
+                }
+            }
         }
+
+        debug_log::group_end!();
     }
 
     /// get the locks of the containers to avoid repeated acquiring and releasing the locks

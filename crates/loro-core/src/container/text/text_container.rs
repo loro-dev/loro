@@ -13,7 +13,6 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    debug_log,
     delta::Delta,
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
@@ -254,7 +253,6 @@ impl Container for TextContainer {
     }
 
     fn to_import(&mut self, content: RemoteContent) -> InnerContent {
-        debug_log!("IMPORT {:#?}", &content);
         match content {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
@@ -316,25 +314,20 @@ impl Container for TextContainer {
     }
 
     fn track_retreat(&mut self, spans: &IdSpanVector) {
-        debug_log!("TRACKER RETREAT {:#?}", &spans);
         self.tracker.retreat(spans);
     }
 
     fn track_forward(&mut self, spans: &IdSpanVector) {
-        debug_log!("TRACKER FORWARD {:#?}", &spans);
         self.tracker.forward(spans);
     }
 
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
-        debug_log!("Tracker checkout {:?}", vv);
         if (!vv.is_empty() || self.tracker.start_vv().is_empty())
             && self.tracker.all_vv() >= vv
             && vv >= self.tracker.start_vv()
         {
-            debug_log!("OLD Tracker");
             self.tracker.checkout(vv);
         } else {
-            debug_log!("NEW Tracker");
             self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
     }
@@ -353,14 +346,12 @@ impl Container for TextContainer {
         hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
-        debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = vec![];
         for effect in self
             .tracker
             .iter_effects(&import_context.old_vv, &import_context.spans)
         {
-            debug_log!("APPLY EFFECT {:?}", &effect);
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
@@ -394,8 +385,6 @@ impl Container for TextContainer {
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
         }
-
-        debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());
     }
 }
 

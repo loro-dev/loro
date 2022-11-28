@@ -486,9 +486,9 @@ dependencies = [
 
 [[package]]
 name = "debug-log"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd2cce8e65a25b144661b7c661eefd89d06c5329ed9a30da8ec98c4f3fefc60b"
+checksum = "364ff57c5031fee39b026dcdfdc9c7dc1d1d79451bfdacba90f040524b766254"
 
 [[package]]
 name = "derive_arbitrary"

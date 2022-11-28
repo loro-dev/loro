@@ -1,9 +1,10 @@
+use colored::Colorize;
+use debug_log::debug_log;
 use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::InnerListOp, text::tracker::yata_impl::YataImpl},
-    debug_log,
     id::{Counter, ID},
     op::{InnerContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},

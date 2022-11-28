@@ -31,6 +31,7 @@ fn example() {
 }
 
 #[test]
+#[cfg(feature = "json")]
 fn text_observe() {
     let mut doc = LoroCore::default();
     let track_value = Rc::new(RefCell::new(LoroValue::Map(Default::default())));
@@ -194,6 +195,7 @@ fn test_recursive_should_panic() {
 }
 
 #[test]
+#[cfg(feature = "json")]
 fn test_to_json() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut map = loro.get_map("A map");

@@ -22,23 +22,6 @@ macro_rules! fx_map {
 }
 
 #[macro_export]
-macro_rules! debug_log {
-    ($($arg:tt)*) => {{
-        if cfg!(test) {
-            use ::colored::Colorize;
-            let line = line!().to_string();
-            print!("{}:{}\t", file!().purple(), line.purple());
-            println!($($arg)*);
-        }
-    }};
-    () => {
-        // if cfg!(test) {
-        // $crate::print!("\n")
-        // }
-    };
-}
-
-#[macro_export]
 macro_rules! unsafe_array_mut_ref {
     ($arr:expr, [$($idx:expr),*]) => {
         {

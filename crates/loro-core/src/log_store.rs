@@ -24,7 +24,6 @@ use crate::{
         ContainerID,
     },
     dag::Dag,
-    debug_log,
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     op::RemoteOp,
@@ -120,7 +119,6 @@ impl LogStore {
             }
         }
 
-        debug_log!("export {:#?}", &ans);
         ans
     }
 
@@ -265,7 +263,6 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
-        debug_log!("CHANGES---------------- site {}", self.this_client_id);
         (old_version, self.frontier())
     }
 
