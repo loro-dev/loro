@@ -13,6 +13,7 @@ use crate::{
 pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
     root_observers: FxHashMap<SubscriptionID, Observer>,
+    latest_deleted: FxHashSet<ContainerID>,
     deleted: FxHashSet<ContainerID>,
 }
 
@@ -54,6 +55,7 @@ impl Hierarchy {
 
     // TODO: rename to register?
     pub fn add_child(&mut self, parent: &ContainerID, child: &ContainerID) {
+        debug_log::debug_dbg!(&parent, &child);
         let parent_node = self.nodes.entry(parent.clone()).or_default();
         parent_node.children.insert(child.clone());
         let child_node = self.nodes.entry(child.clone()).or_default();
@@ -70,13 +72,15 @@ impl Hierarchy {
 
     #[inline(always)]
     pub fn contains(&self, id: &ContainerID) -> bool {
-        self.nodes.get(id).is_some()
+        debug_log::debug_dbg!(&self);
+        self.nodes.get(id).is_some() || self.deleted.contains(id)
     }
 
     pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {
         let Some(parent_node) = self.nodes.get_mut(parent) else {
             return;
         };
+
         parent_node.children.remove(child);
         let mut visited_descendants = FxHashSet::default();
         let mut stack = vec![child];
@@ -94,11 +98,15 @@ impl Hierarchy {
             self.nodes.remove(descendant);
         }
 
-        self.deleted.extend(visited_descendants);
+        for node in visited_descendants.iter() {
+            self.deleted.insert(node.clone());
+        }
+
+        self.latest_deleted.extend(visited_descendants);
     }
 
     pub fn take_deleted(&mut self) -> FxHashSet<ContainerID> {
-        std::mem::take(&mut self.deleted)
+        std::mem::take(&mut self.latest_deleted)
     }
 
     pub fn get_path_len(&self, id: &ContainerID) -> Option<usize> {
