@@ -71,8 +71,7 @@ impl Hierarchy {
 
     #[inline(always)]
     pub fn contains(&self, id: &ContainerID) -> bool {
-        debug_log::debug_dbg!(&self);
-        self.nodes.get(id).is_some()
+        self.nodes.get(id).is_some() || id.is_root()
     }
 
     pub fn remove_child(&mut self, parent: &ContainerID, child: &ContainerID) {

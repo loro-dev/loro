@@ -975,7 +975,67 @@ mod failed_tests {
     }
 
     #[test]
-    fn unknown() {
+    fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 2,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 3,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 0,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 1,
+                    value: Container(C::Map),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn map_apply() {
         test_multi_sites(
             5,
             &mut [
