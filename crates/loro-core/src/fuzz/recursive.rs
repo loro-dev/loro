@@ -910,6 +910,40 @@ mod failed_tests {
     }
 
     #[test]
+    fn unknown() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 1,
+                    container_idx: 1,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 4,
+                    container_idx: 1,
+                    key: 9,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn path_issue() {
         test_multi_sites(
             2,

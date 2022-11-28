@@ -128,13 +128,13 @@ impl Hierarchy {
         reg: &ContainerRegistry,
         descendant: &ContainerID,
         target: Option<&ContainerID>,
-    ) -> Path {
+    ) -> Option<Path> {
         if let ContainerID::Root { name, .. } = descendant {
-            return vec![Index::Key(name.into())];
+            return Some(vec![Index::Key(name.into())]);
         }
 
         if target.map(|x| x == descendant).unwrap_or(false) {
-            return vec![];
+            return Some(vec![]);
         }
 
         let mut path = Path::default();
@@ -155,7 +155,7 @@ impl Hierarchy {
                         name,
                         container_type: _,
                     } => path.push(Index::Key(name.clone())),
-                    _ => unreachable!(),
+                    _ => return None,
                 }
             }
 
@@ -167,7 +167,7 @@ impl Hierarchy {
         }
 
         path.reverse();
-        path
+        Some(path)
     }
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
@@ -211,7 +211,7 @@ impl Hierarchy {
         // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
         let mut event_and_paths = raw_events
             .into_iter()
-            .map(|x| (self.get_path(reg, &x.container_id, None), x))
+            .filter_map(|x| self.get_path(reg, &x.container_id, None).map(|y| (y, x)))
             .collect::<Vec<_>>();
         event_and_paths.sort_by_cached_key(|x| x.0.len());
         for (path, event) in event_and_paths {
@@ -220,7 +220,9 @@ impl Hierarchy {
     }
 
     pub fn notify(&mut self, raw_event: RawEvent, reg: &ContainerRegistry) {
-        let absolute_path = self.get_path(reg, &raw_event.container_id, None);
+        let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
+            return;
+        };
         self.notify_with_path(raw_event, absolute_path);
     }
 
