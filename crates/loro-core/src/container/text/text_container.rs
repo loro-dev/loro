@@ -5,6 +5,7 @@ use rle::{
     HasLength, RleTree,
 };
 use smallvec::SmallVec;
+use tracing::instrument;
 
 use crate::{
     container::{
@@ -48,6 +49,7 @@ impl TextContainer {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
         if text.is_empty() {
             return None;
@@ -88,6 +90,7 @@ impl TextContainer {
         Some(id)
     }
 
+    #[instrument(skip_all)]
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
         if len == 0 {
             return None;
@@ -273,6 +276,7 @@ impl Container for TextContainer {
         }
     }
 
+    #[instrument(skip_all)]
     fn update_state_directly(
         &mut self,
         hierarchy: &mut Hierarchy,
@@ -321,6 +325,7 @@ impl Container for TextContainer {
         self.tracker.forward(spans);
     }
 
+    #[instrument(skip_all)]
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
         if (!vv.is_empty() || self.tracker.start_vv().is_empty())
             && self.tracker.all_vv() >= vv
@@ -332,6 +337,7 @@ impl Container for TextContainer {
         }
     }
 
+    #[instrument(skip_all)]
     fn track_apply(
         &mut self,
         _: &mut Hierarchy,
@@ -341,6 +347,7 @@ impl Container for TextContainer {
         self.tracker.track_apply(rich_op);
     }
 
+    #[instrument(skip_all)]
     fn apply_tracked_effects_from(
         &mut self,
         hierarchy: &mut Hierarchy,
