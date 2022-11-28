@@ -1,10 +1,11 @@
+use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
-    LogStore,
 };
 use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
+use tracing::instrument;
 
 use fxhash::FxHashMap;
 
@@ -72,6 +73,8 @@ impl LogStore {
     ///     - Stage 1: we iterate over the new changes by causal order, and record them to the tracker.
     ///     - Stage 2: we calculate the effects of the new changes, and apply them to the state.
     /// - Update the rest of the log store state.
+    ///
+    #[instrument(skip_all)]
     pub fn import(&mut self, mut changes: RemoteClientChanges) {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
             return;
@@ -178,6 +181,7 @@ impl LogStore {
         (next_vv, next_frontiers)
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn apply(
         &mut self,
         mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
