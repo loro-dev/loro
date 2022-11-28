@@ -8,6 +8,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use owning_ref::OwningRefMut;
 use smallvec::SmallVec;
+use tracing::instrument;
 
 use crate::{
     context::Context,
@@ -62,6 +63,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
@@ -71,6 +73,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn get_value(&self) -> crate::LoroValue {
         match self {
             ContainerInstance::Map(x) => x.get_value(),
@@ -80,6 +83,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn update_state_directly(
         &mut self,
         hierarchy: &mut Hierarchy,
@@ -94,6 +98,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn track_retreat(&mut self, op: &IdSpanVector) {
         match self {
             ContainerInstance::Map(x) => x.track_retreat(op),
@@ -103,6 +108,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn track_forward(&mut self, op: &IdSpanVector) {
         match self {
             ContainerInstance::Map(x) => x.track_forward(op),
@@ -112,6 +118,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp, ctx: &mut ImportContext) {
         match self {
             ContainerInstance::Map(x) => x.track_apply(hierarchy, op, ctx),
@@ -121,6 +128,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn apply_tracked_effects_from(
         &mut self,
         h: &mut Hierarchy,
@@ -134,6 +142,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn to_export(
         &mut self,
         content: crate::op::InnerContent,
@@ -147,6 +156,7 @@ impl Container for ContainerInstance {
         }
     }
 
+    #[instrument(skip_all)]
     fn to_import(&mut self, content: crate::op::RemoteContent) -> crate::op::InnerContent {
         match self {
             ContainerInstance::Map(x) => x.to_import(content),

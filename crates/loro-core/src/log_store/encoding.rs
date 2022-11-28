@@ -5,6 +5,7 @@ use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 use smallvec::smallvec;
+use tracing::instrument;
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
@@ -92,6 +93,7 @@ struct Encoded {
     keys: Vec<InternalString>,
 }
 
+#[instrument(skip_all)]
 fn encode_changes(store: &LogStore) -> Encoded {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
@@ -187,6 +189,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
     }
 }
 
+#[instrument(skip_all)]
 fn decode_changes(
     encoded: Encoded,
     client_id: Option<ClientID>,
