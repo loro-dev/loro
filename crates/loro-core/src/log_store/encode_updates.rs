@@ -7,24 +7,24 @@ use crate::{
     container::ContainerID,
     id::{ClientID, Counter, ID},
     op::{RemoteContent, RemoteOp},
-    LogStore, VersionVector,
+    LogStore, LoroCore, VersionVector,
 };
 
 use super::RemoteClientChanges;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Updates {
     changes: Vec<EncodedClientChanges>,
 }
 
 /// the continuous changes from the same client
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct EncodedClientChanges {
     meta: FirstChangeInfo,
     data: Vec<EncodedChange>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct FirstChangeInfo {
     pub(crate) client: ClientID,
     pub(crate) counter: Counter,
@@ -32,13 +32,13 @@ struct FirstChangeInfo {
     pub(crate) timestamp: Timestamp,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct EncodedOp {
     pub(crate) container: ContainerID,
     pub(crate) contents: Vec<RemoteContent>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct EncodedChange {
     pub(crate) ops: Vec<EncodedOp>,
     pub(crate) deps_except_self: Vec<ID>,
@@ -60,7 +60,7 @@ impl LogStore {
         postcard::to_allocvec(&updates)
     }
 
-    pub fn decode_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
+    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
         let updates: Updates = postcard::from_bytes(input)?;
         let mut changes: RemoteClientChanges = Default::default();
         for encoded in updates.changes {
@@ -80,6 +80,24 @@ where
     let this_client_id = first_change.id.client_id;
     let mut data = Vec::with_capacity(changes.size_hint().0 + 1);
     let mut last_change = first_change.clone();
+    data.push(EncodedChange {
+        ops: first_change
+            .ops
+            .iter()
+            .map(|op| EncodedOp {
+                container: op.container.clone(),
+                contents: op.contents.iter().cloned().collect(),
+            })
+            .collect(),
+        deps_except_self: first_change
+            .deps
+            .iter()
+            .filter(|x| x.client_id != this_client_id)
+            .copied()
+            .collect(),
+        lamport_delta: 0,
+        timestamp_delta: 0,
+    });
     for change in changes {
         data.push(EncodedChange {
             ops: change
@@ -121,10 +139,10 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     for encoded in changes.data {
         let start_counter = counter;
         let mut deps = SmallVec::with_capacity(encoded.deps_except_self.len() + 1);
-        if counter > 0 {
+        if start_counter > 0 {
             deps.push(ID {
                 client_id: changes.meta.client,
-                counter: changes.meta.counter - 1,
+                counter: start_counter - 1,
             });
         }
 
@@ -159,4 +177,15 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     }
 
     result
+}
+
+impl LoroCore {
+    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, postcard::Error> {
+        self.log_store.read().unwrap().encode_updates(from)
+    }
+
+    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
+        let ans = self.log_store.write().unwrap().import_updates(input);
+        ans
+    }
 }
