@@ -325,10 +325,7 @@ impl LogStore {
             let other_start_ctr = changes.first().unwrap().ctr_start();
             match other_start_ctr.cmp(&self_end_ctr) {
                 std::cmp::Ordering::Less => {
-                    *changes = changes.slice(
-                        (self_end_ctr - other_start_ctr) as usize,
-                        changes.atom_len(),
-                    );
+                    *changes = changes.slice((self_end_ctr - other_start_ctr) as usize, usize::MAX);
                 }
                 std::cmp::Ordering::Equal => {}
                 std::cmp::Ordering::Greater => {

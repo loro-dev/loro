@@ -217,14 +217,22 @@ fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
 fn check_synced(sites: &mut [LoroCore]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log!("-------------------------------");
-            debug_log!("checking {} with {}", i, j);
-            debug_log!("-------------------------------");
-
+            debug_log::group!("checking {} with {}", i, j);
             let (a, b) = array_mut_ref!(sites, [i, j]);
-            a.import(b.export(a.vv()));
-            b.import(a.export(b.vv()));
-            check_eq(a, b)
+            {
+                debug_log::group!("Import {}", i);
+                a.import_updates(&b.export_updates(&a.vv()).unwrap())
+                    .unwrap();
+                debug_log::group_end!();
+            }
+            {
+                debug_log::group!("Import {}", j);
+                b.import_updates(&a.export_updates(&b.vv()).unwrap())
+                    .unwrap();
+                debug_log::group_end!();
+            }
+            check_eq(a, b);
+            debug_log::group_end!();
         }
     }
 }
@@ -432,9 +440,10 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.apply_action(action);
     }
 
-    debug_log!("=================================");
+    debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
     check_synced(&mut sites);
+    debug_log::group_end!();
 }
 
 #[cfg(test)]
@@ -648,6 +657,43 @@ mod test {
                     content: 35082,
                     pos: 12876550765177602139,
                     site: 178,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn simplest() {
+        test_multi_sites(
+            2,
+            &mut [Ins {
+                content: 1,
+                pos: 0,
+                site: 0,
+            }],
+        )
+    }
+
+    #[test]
+    fn encode() {
+        test_multi_sites(
+            8,
+            &mut [
+                Ins {
+                    content: 0,
+                    pos: 1840611456097844714,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 2825745054957034,
+                    site: 10,
+                },
+                Sync { from: 10, to: 0 },
+                Del {
+                    pos: 1125899890065408,
+                    len: 1840611456097844714,
+                    site: 0,
                 },
             ],
         )
