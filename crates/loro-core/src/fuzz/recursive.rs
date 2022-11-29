@@ -612,8 +612,12 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc.import(b_doc.export(a_doc.vv()));
-            b_doc.import(a_doc.export(b_doc.vv()));
+            a_doc
+                .import_updates(&b_doc.export_updates(&a_doc.vv()).unwrap())
+                .unwrap();
+            b_doc
+                .import_updates(&a_doc.export_updates(&b_doc.vv()).unwrap())
+                .unwrap();
             check_eq(a, b);
             debug_log::group_end!();
         }
