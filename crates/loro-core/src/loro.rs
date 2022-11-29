@@ -2,10 +2,10 @@ use std::sync::{Arc, RwLock};
 
 use crate::LoroValue;
 use fxhash::FxHashMap;
-use rle::RleVecWithIndex;
+
 
 use crate::{
-    change::{Change, ChangeMergeCfg},
+    change::{Change},
     configure::Configure,
     container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
     event::{Observer, SubscriptionID},
