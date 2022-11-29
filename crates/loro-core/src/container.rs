@@ -10,7 +10,7 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
-    InternalString, LogStore, LoroValue, ID,
+    InternalString, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};

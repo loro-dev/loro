@@ -1,4 +1,7 @@
-use std::ops::{Deref, Range};
+use std::{
+    ops::{Deref, Range},
+    vec,
+};
 
 use num::Integer;
 
@@ -210,6 +213,16 @@ impl<T, Conf> RleVecWithIndex<T, Conf> {
     #[inline(always)]
     pub fn get_merged(&self, index: usize) -> Option<&T> {
         self.vec.get(index)
+    }
+}
+
+impl<T, Cfg> IntoIterator for RleVecWithIndex<T, Cfg> {
+    type Item = T;
+
+    type IntoIter = vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
     }
 }
 

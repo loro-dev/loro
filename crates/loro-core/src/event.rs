@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use fxhash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 
 use crate::{container::ContainerID, delta::Delta, version::Frontiers, InternalString, LoroValue};
 
@@ -27,7 +28,7 @@ pub struct Event {
 
 pub type Path = Vec<Index>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Index {
     Key(InternalString),
     Seq(usize),
