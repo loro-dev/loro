@@ -109,7 +109,7 @@ impl LogStore {
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
-                let vec = ans.entry(change.id.client_id).or_insert_with(|| Vec::new());
+                let vec = ans.entry(change.id.client_id).or_insert_with(Vec::new);
                 vec.push(self.change_to_export_format(change));
             }
         }

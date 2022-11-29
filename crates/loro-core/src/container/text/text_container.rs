@@ -336,7 +336,7 @@ impl Container for TextContainer {
         &mut self,
         _: &mut Hierarchy,
         rich_op: &RichOp,
-        import_context: &mut ImportContext,
+        _import_context: &mut ImportContext,
     ) {
         self.tracker.track_apply(rich_op);
     }
