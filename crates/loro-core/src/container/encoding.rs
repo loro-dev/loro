@@ -50,25 +50,10 @@ impl ContainerExport for ListContainer {
     }
 
     fn export_ranges(&self) -> Self::Range {
-        let ans = self
-            .state
+        self.state
             .iter()
-            .fold(Vec::with_capacity(self.state.len() * 2), |mut acc, p| {
-                let s = p.get_sliced().0.start;
-                let e = p.get_sliced().0.end;
-                // print!("{}-{} ", s, e);
-                acc.extend([s, e]);
-                acc
-            });
-        // println!("\n");
-        ans
-        // .map(|slice_range| {
-        //     merge_2_u32_u64(
-        //         slice_range.get_sliced().0.start,
-        //         slice_range.get_sliced().0.end,
-        //     )
-        // })
-        // .collect()
+            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
+            .collect()
     }
 
     fn import_pool(&mut self, pool: Self::Pool) {
@@ -98,25 +83,10 @@ impl ContainerExport for TextContainer {
     }
 
     fn export_ranges(&self) -> Self::Range {
-        let ans = self
-            .state
+        self.state
             .iter()
-            .fold(Vec::with_capacity(self.state.len() * 2), |mut acc, p| {
-                let s = p.get_sliced().0.start;
-                let e = p.get_sliced().0.end;
-                // print!("{}-{} ", s, e);
-                acc.extend([s, e]);
-                acc
-            });
-        // println!("\n");
-        ans
-        // .map(|slice_range| {
-        //     merge_2_u32_u64(
-        //         slice_range.get_sliced().0.start,
-        //         slice_range.get_sliced().0.end,
-        //     )
-        // })
-        // .collect()
+            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
+            .collect()
     }
 
     fn import_pool(&mut self, pool: Self::Pool) {
