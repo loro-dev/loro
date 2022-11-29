@@ -44,7 +44,7 @@ fn main() {
     let loro2 = LoroCore::decode_snapshot(&buf, None, Configure::default());
     println!("decode used {}ms", start.elapsed().as_millis());
     let buf2 = loro2.encode_snapshot();
-    assert_eq!(buf, buf2);
+    // assert_eq!(buf, buf2);
     let json2 = loro2.to_json();
     assert_eq!(json1, json2);
 
