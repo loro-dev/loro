@@ -72,18 +72,12 @@ impl LoroCore {
         Text::from_instance(instance, cid)
     }
 
-    pub fn export(
-        &self,
-        remote_vv: VersionVector,
-    ) -> FxHashMap<u64, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> {
+    pub fn export(&self, remote_vv: VersionVector) -> FxHashMap<u64, Vec<Change<RemoteOp>>> {
         let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
-    pub fn import(
-        &mut self,
-        changes: FxHashMap<u64, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>,
-    ) {
+    pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
         let mut store = self.log_store.write().unwrap();
         store.import(changes)
     }

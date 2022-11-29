@@ -19,7 +19,6 @@ use crate::{
     dag::remove_included_frontiers,
     id::{ClientID, Counter, ID},
     op::{Op, RemoteContent, RemoteOp},
-    smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
@@ -154,7 +153,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
                                 (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                             }
                         },
-                        crate::op::RemoteContent::Dyn(_) => unreachable!(),
                     };
                     op_len += 1;
                     ops.push(OpEncoding {
@@ -271,7 +269,7 @@ fn decode_changes(
                         },
                         _ => {
                             let slice = match value {
-                                LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
+                                LoroValue::String(s) => ListSlice::RawStr(s.into()),
                                 LoroValue::List(v) => ListSlice::RawData(*v),
                                 _ => unreachable!(),
                             };

@@ -555,6 +555,31 @@ impl<A: Array> Deref for RleVecWithLen<A> {
     }
 }
 
+impl<T: Sliceable + HasLength> Sliceable for Vec<T> {
+    fn slice(&self, start: usize, end: usize) -> Self {
+        if start >= end || self.is_empty() {
+            return Vec::new();
+        }
+
+        let mut ans = Vec::new();
+        let mut index = 0;
+        for item in self {
+            if index >= end {
+                break;
+            }
+
+            let len = item.atom_len();
+            if start < index + len {
+                ans.push(item.slice(start.saturating_sub(index), (end - index).min(len)))
+            }
+
+            index += len;
+        }
+
+        ans
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
