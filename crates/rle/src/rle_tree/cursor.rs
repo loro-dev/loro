@@ -307,10 +307,28 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
             PhantomData,
         )
     }
+}
 
+impl<'tree, T: Rle, A: RleTreeTrait<T>> RawSafeCursor<'tree, T, A, Im> {
     #[inline]
     pub fn from_leaf(
         leaf: &LeafNode<'tree, T, A>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+        len: usize,
+    ) -> Self {
+        Self(
+            UnsafeCursor::new(leaf.into(), index, offset, pos, len),
+            PhantomData,
+        )
+    }
+}
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> RawSafeCursor<'tree, T, A, Mut> {
+    #[inline]
+    pub fn from_leaf(
+        leaf: &mut LeafNode<'tree, T, A>,
         index: usize,
         offset: usize,
         pos: Position,
@@ -328,6 +346,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
     pub fn as_tree_ref(&self) -> &'tree T {
         // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.as_ref() }
+    }
+
+    #[inline]
+    pub fn as_tree_mut(&mut self) -> &'tree mut T {
+        // SAFETY: SafeCursor is a shared reference to the tree
+        unsafe { self.0.as_mut() }
     }
 
     #[inline]

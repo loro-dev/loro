@@ -101,7 +101,8 @@ impl<
     /// So we can travel from the first cursor to modify each element gradually
     pub fn set_small_range(&mut self, start: Index, value: Value) {
         let end = start + Index::from_usize(std::cmp::max(value.atom_len(), 1)).unwrap();
-        let cursor = self.tree.get_cursor_ge(start);
+        #[allow(clippy::type_complexity)]
+        let cursor = self.tree.get_cursor_ge_mut(start);
         if cursor.is_none() {
             self.tree.insert(
                 start,
@@ -146,11 +147,15 @@ impl<
             // element contains the target range
             let offset = (start - elem.index).as_();
             let leaf: NonNull<_> = cur_leaf.into();
+            #[allow(clippy::type_complexity)]
+            let leaf: NonNull<
+                LeafNode<'_, WithIndex<Value, Index>, RangeMapTrait<Index, Value, TreeArena>>,
+                // SAFETY: ignore lifetime to bypass tree mut borrow check
+            > = unsafe { std::mem::transmute(leaf) };
 
             self.tree.update_at_cursors(
                 &mut [UnsafeCursor {
-                    // SAFETY: ignore lifetime to bypass tree mut borrow check
-                    leaf: unsafe { std::mem::transmute(leaf) },
+                    leaf,
                     index,
                     offset,
                     pos: crate::rle_tree::Position::Middle,
@@ -335,6 +340,23 @@ impl<
             let x = x.as_tree_ref();
             (x.index, &x.value)
         })
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, index: Index) -> Option<&mut Value> {
+        let cursor = self.tree.get_mut(index);
+        if let Some(mut cursor) = cursor {
+            match cursor.pos() {
+                crate::rle_tree::Position::Before
+                | crate::rle_tree::Position::End
+                | crate::rle_tree::Position::After => None,
+                crate::rle_tree::Position::Start | crate::rle_tree::Position::Middle => {
+                    Some(&mut cursor.as_tree_mut().value)
+                }
+            }
+        } else {
+            None
+        }
     }
 
     #[inline]

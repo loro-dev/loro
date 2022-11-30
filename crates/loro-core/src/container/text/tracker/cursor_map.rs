@@ -41,6 +41,33 @@ impl ZeroElement for Marker {
 }
 
 impl Marker {
+    pub(super) fn as_cursor_mut<'a, 'b>(
+        &'a mut self,
+        id: ID,
+    ) -> Option<SafeCursorMut<'b, YSpan, YSpanTreeTrait>> {
+        match self {
+            Marker::Insert { ptr, len: _ } => {
+                // SAFETY: tree data is always valid
+                let node = unsafe { ptr.as_mut() };
+                let position = node.children().iter().position(|x| x.contain_id(id))?;
+                let child = &node.children()[position];
+                let start_counter = child.id.counter;
+                let offset = id.counter - start_counter;
+                // SAFETY: we transform lifetime from SafeCursor<'static> to SafeCursor<'b> to suit the need.
+                // Its safety is guaranteed by the caller, who has access to the underlying tree
+                unsafe {
+                    std::mem::transmute(Some(SafeCursorMut::from_leaf(
+                        node,
+                        position,
+                        offset as usize,
+                        Position::from_offset(offset as isize, child.atom_len()),
+                        0,
+                    )))
+                }
+            }
+            Marker::Delete(_) => None,
+        }
+    }
     pub(super) fn as_cursor<'a, 'b>(
         &'a self,
         id: ID,

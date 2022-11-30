@@ -105,8 +105,8 @@ impl ListCrdt for YataImpl {
             .and_then(|x| {
                 container
                     .id_to_cursor
-                    .get(x.into())
-                    .and_then(|m| m.as_cursor(x))
+                    .get_mut(x.into())
+                    .and_then(|m| m.as_cursor_mut(x))
             })
             .and_then(|x| x.shift(1));
         let to = to.and_then(|x| {
@@ -156,8 +156,8 @@ impl Yata for YataImpl {
         ctx: &mut Context,
     ) {
         if let Some(id) = id {
-            let left = container.id_to_cursor.get(id.into()).unwrap();
-            let left = left.as_cursor(id).unwrap();
+            let left = container.id_to_cursor.get_mut(id.into()).unwrap();
+            let left = left.as_cursor_mut(id).unwrap();
             let mut notify = make_notify(&mut container.id_to_cursor);
             // SAFETY: we own the tree here
             unsafe {
