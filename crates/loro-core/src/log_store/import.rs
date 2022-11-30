@@ -79,7 +79,6 @@ impl LogStore {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
             return;
         }
-
         debug_log::group!("Import at {}", self.this_client_id);
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         self.lock_related_containers(&changes, &mut container_map);
@@ -88,7 +87,6 @@ impl LogStore {
             .into_iter()
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
-
         let mut context = ImportContext {
             old_frontiers: self.frontiers.iter().copied().collect(),
             new_frontiers: next_frontiers.get_frontiers(),
@@ -98,11 +96,9 @@ impl LogStore {
             diff: Default::default(),
         };
         self.hierarchy.take_deleted();
-
         debug_log::group!("apply");
         self.apply(container_map, &mut context);
         debug_log::group_end!();
-
         self.notify(&mut context);
         self.update_version_info(context.new_vv, next_frontiers);
         debug_log::group_end!();
