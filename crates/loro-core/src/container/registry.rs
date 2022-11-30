@@ -7,6 +7,7 @@ use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
 use owning_ref::OwningRefMut;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::instrument;
 
@@ -36,11 +37,12 @@ impl ContainerIdx {
 }
 
 // TODO: replace this with a fat pointer?
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Serialize, Deserialize)]
 pub enum ContainerInstance {
     List(Box<ListContainer>),
     Text(Box<TextContainer>),
     Map(Box<MapContainer>),
+    #[serde(skip)]
     Dyn(Box<dyn Container>),
 }
 
@@ -305,12 +307,12 @@ impl ContainerRegistry {
         LoroValue::Map(Box::new(map))
     }
 
-    // pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
-    //     (
-    //         &self.container_to_idx,
-    //         self.containers.iter().map(|x| x.id.clone()).collect(),
-    //     )
-    // }
+    pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
+        (
+            &self.container_to_idx,
+            self.containers.iter().map(|x| x.id.clone()).collect(),
+        )
+    }
 }
 
 impl Default for ContainerRegistry {
