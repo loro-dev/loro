@@ -24,7 +24,6 @@ use std::{
 
 pub mod registry;
 
-pub mod encoding;
 pub mod list;
 pub mod map;
 mod pool;

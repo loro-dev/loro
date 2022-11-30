@@ -314,13 +314,13 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 impl LogStore {
     pub fn encode_snapshot(&self, vv: &VersionVector) -> Vec<u8> {
         let encoded = encode_changes(self, vv);
-        to_vec(&encoded).unwrap()
-        // compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        // to_vec(&encoded).unwrap()
+        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
     }
 
     pub fn decode_snapshot(&mut self, input: &[u8]) {
-        // let decompress_bytes = decompress(input).unwrap();
-        let encoded = from_bytes(&input).unwrap();
+        let decompress_bytes = decompress(input).unwrap();
+        let encoded = from_bytes(&decompress_bytes).unwrap();
         decode_changes(self, encoded);
     }
 }

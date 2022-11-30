@@ -7,7 +7,6 @@ mod run {
 
     use super::*;
     use flate2::read::GzDecoder;
-    use loro_core::configure::Configure;
     use loro_core::container::registry::ContainerWrapper;
     use loro_core::{LoroCore, VersionVector};
     use serde_json::Value;

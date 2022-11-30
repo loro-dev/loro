@@ -6,10 +6,6 @@ use crate::value::LoroValue;
 pub(crate) struct Pool(Vec<LoroValue>);
 
 impl Pool {
-    pub fn new(pool: Vec<LoroValue>) -> Self {
-        Self(pool)
-    }
-
     #[inline(always)]
     pub fn alloc<V: Into<LoroValue>>(&mut self, s: V) -> Range<u32> {
         self.0.push(s.into());
