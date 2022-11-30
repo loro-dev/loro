@@ -22,7 +22,7 @@ use super::y_span::{YSpan, YSpanTreeTrait};
 // marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
 #[derive(Debug, Clone, EnumAsInner, PartialEq, Eq)]
-pub(super) enum Marker {
+pub enum Marker {
     Insert {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
@@ -168,7 +168,7 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct CursorMap(RangeMap<u128, Marker>);
+pub struct CursorMap(RangeMap<u128, Marker>);
 
 impl Deref for CursorMap {
     type Target = RangeMap<u128, Marker>;
@@ -191,16 +191,14 @@ pub(super) fn make_notify(
             span.id.into(),
             Marker::Insert {
                 // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
-                ptr: unsafe {
-                    NonNull::new_unchecked(leaf as usize as *mut LeafNode<'static, _, _>)
-                },
+                ptr: unsafe { NonNull::new_unchecked(std::mem::transmute(leaf)) },
                 len: span.atom_len(),
             },
         );
     }
 }
 
-pub(super) struct IdSpanQueryResult {
+pub struct IdSpanQueryResult {
     pub inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)>,
     pub deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)>,
 }

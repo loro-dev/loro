@@ -108,6 +108,17 @@ impl Tracker {
         !self.cached_fake_current_vv.includes_id(id) && self.all_vv.includes_id(id)
     }
 
+    #[inline(always)]
+    pub fn with_cursor_map<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut Self, &mut CursorMap),
+    {
+        // TODO: we can generate the required notify function here directly
+        // SAFETY: we only use it for yata, where the second param is used to gen notify
+        let cursor_map = unsafe { std::mem::transmute(&mut self.id_to_cursor) };
+        f(self, cursor_map);
+    }
+
     /// check whether id_to_cursor correctly reflect the status of the content
     fn check_consistency(&mut self) {
         for span in self.content.iter() {
@@ -319,8 +330,9 @@ impl Tracker {
                 let yspan =
                     self.content
                         .get_yspan_at_pos(id, *pos, slice.content_len(), slice.clone());
-                // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-                unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
+                self.with_cursor_map(|this, map| {
+                    crdt_list::yata::integrate::<YataImpl>(this, yspan, map)
+                });
             }
             InnerListOp::Delete(span) => {
                 let mut spans = self

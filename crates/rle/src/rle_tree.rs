@@ -58,7 +58,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         if let Some(value) = self.with_node_mut(|node| {
-            let leaf = node.get_first_leaf();
+            let leaf = node.get_first_leaf_mut();
             if let Some(leaf) = leaf {
                 // SAFETY: we have exclusive ref to the tree
                 let cursor = unsafe { SafeCursorMut::new(leaf.into(), 0, 0, Position::Start, 0) };

@@ -1,6 +1,6 @@
 #![allow(unused)]
 use crdt_list::{
-    crdt::{ListCrdt, OpSet},
+    crdt::{GetOp, ListCrdt, OpSet},
     yata::Yata,
 };
 use rle::{
@@ -12,7 +12,7 @@ use rle::{
 use crate::id::{Counter, ID};
 
 use super::{
-    cursor_map::make_notify,
+    cursor_map::{make_notify, CursorMap},
     y_span::{YSpan, YSpanTreeTrait},
     Tracker,
 };
@@ -99,6 +99,7 @@ impl ListCrdt for YataImpl {
 }
 
 impl Yata for YataImpl {
+    type Context = CursorMap;
     fn left_origin(op: &Self::OpUnit) -> Option<Self::OpId> {
         op.origin_left
     }
@@ -107,16 +108,21 @@ impl Yata for YataImpl {
         op.origin_right
     }
 
-    fn insert_after(container: &mut Self::Container, anchor: Self::Cursor<'_>, op: Self::OpUnit) {
-        let mut notify = make_notify(&mut container.id_to_cursor);
+    fn insert_after(anchor: Self::Cursor<'_>, op: Self::OpUnit, ctx: &mut CursorMap) {
+        let mut notify = make_notify(ctx);
         anchor.insert_after_notify(op, &mut notify)
     }
 
-    fn insert_after_id(container: &mut Self::Container, id: Option<Self::OpId>, op: Self::OpUnit) {
+    fn insert_after_id(
+        container: &mut Self::Container,
+        id: Option<Self::OpId>,
+        op: Self::OpUnit,
+        ctx: &mut CursorMap,
+    ) {
         if let Some(id) = id {
             let left = container.id_to_cursor.get(id.into()).unwrap();
             let left = left.as_cursor(id).unwrap();
-            let mut notify = make_notify(&mut container.id_to_cursor);
+            let mut notify = make_notify(ctx);
             // SAFETY: we own the tree here
             unsafe {
                 left.unwrap()
@@ -125,7 +131,7 @@ impl Yata for YataImpl {
                     .insert_notify(op, &mut notify);
             }
         } else {
-            let mut notify = make_notify(&mut container.id_to_cursor);
+            let mut notify = make_notify(ctx);
             container.content.insert_at_first(op, &mut notify);
         }
     }
@@ -229,8 +235,9 @@ pub mod fuzz {
             container
                 .current_vv
                 .set_end(op.id.inc(op.atom_len() as i32));
-            // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-            unsafe { crdt_list::yata::integrate::<Self>(container, op) };
+            container.with_cursor_map(|this, map| {
+                crdt_list::yata::integrate::<Self>(this, op, map);
+            });
         }
 
         #[inline]

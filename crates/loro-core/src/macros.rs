@@ -22,22 +22,6 @@ macro_rules! fx_map {
 }
 
 #[macro_export]
-macro_rules! unsafe_array_mut_ref {
-    ($arr:expr, [$($idx:expr),*]) => {
-        {
-            // SAFETY: this is safe only when the indices are valid and there are not multiple mutable references to the same element
-            unsafe {
-                (
-                    $(
-                        {  &mut *(&mut $arr[$idx] as *mut _) }
-                    ),*,
-                )
-            }
-        }
-    }
-}
-
-#[macro_export]
 macro_rules! array_mut_ref {
     ($arr:expr, [$a0:expr, $a1:expr]) => {{
         #[inline]
