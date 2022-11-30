@@ -613,6 +613,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     }
                 }
                 {
+                    // remove node
                     let this = node;
                     if let Some(leaf) = this.as_leaf_mut() {
                         let next = leaf.next;
