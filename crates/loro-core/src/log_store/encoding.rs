@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex, RwLock};
-
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
@@ -12,19 +10,13 @@ use tracing::instrument;
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
-    configure::Configure,
     container::{
-        encoding::{merge_2_u32_u64, split_u64_2_u32},
-        list::list_op::{DeleteSpan, InnerListOp, ListOp, ListOp},
+        list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
-        map::{InnerMapSet, MapSet},
-        registry::ContainerIdx,
-        registry::ContainerInstance,
-        text::text_content::{ListSlice, SliceRange},
-        text::text_content::{ListSlice, SliceRange},
-        Container, ContainerID,
+        text::text_content::ListSlice,
+        ContainerID,
     },
-    dag::remove_included_frontiers,
+    dag::Dag,
     id::{ClientID, Counter, ID},
     op::{Op, RemoteContent, RemoteOp},
     span::{HasIdSpan, HasLamportSpan},
@@ -35,7 +27,7 @@ use super::ImportContext;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
-type Containers = Vec<Vec<u8>>;
+type Containers = Vec<ContainerID>;
 
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +40,7 @@ struct ChangeEncoding {
     lamport: Lamport,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     timestamp: Timestamp,
-    op_len: usize,
+    op_len: u32,
     #[columnar(strategy = "Rle")]
     deps_len: u32,
 }
@@ -56,16 +48,15 @@ struct ChangeEncoding {
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
-    container: u32,
+    #[columnar(strategy = "Rle", original_type = "usize")]
+    container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
-    prop: usize,
+    prop: usize, // 18225 bytes
+    // TODO: can be compressed
+    gc: usize,
     // #[columnar(compress(level = 0))]
-    // list range or del len or map value index
-    value: u64,
-    #[columnar(strategy = "BoolRle")]
-    is_del: bool,
+    value: LoroValue,
 }
 
 #[columnar(vec, ser, de)]
@@ -90,7 +81,7 @@ impl DepsEncoding {
 #[derive(Debug, Serialize, Deserialize)]
 struct Encoded {
     #[columnar(type = "vec")]
-    pub(crate) changes: Vec<ChangeEncoding>,
+    changes: Vec<ChangeEncoding>,
     #[columnar(type = "vec")]
     ops: Vec<OpEncoding>,
     #[columnar(type = "vec")]
@@ -101,22 +92,31 @@ struct Encoded {
 }
 
 #[instrument(skip_all)]
-fn encode_changes(store: &LogStore) -> Encoded {
+fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
+    let mut container_indexes = Vec::new();
+    let mut container_ids = Vec::new();
     let mut change_num = 0;
-    for (key, changes) in store.changes.iter() {
-        client_id_to_idx.insert(*key, clients.len() as ClientIdx);
-        clients.push(*key);
-        change_num += changes.merged_len();
+
+    let mut diff_changes = Vec::new();
+    let self_vv = store.vv();
+    let diff = self_vv.diff(vv);
+    for span in diff.left.iter() {
+        let changes = store.get_changes_slice(span.id_span());
+        for change in changes.into_iter() {
+            diff_changes.push(change);
+        }
     }
 
-    let (_, containers) = store.reg.export();
-    let mut container_states = Vec::with_capacity(containers.len());
-    for container_id in containers.iter() {
-        let container = store.reg.get(container_id).unwrap();
-        let state = container.lock().unwrap().export_state();
-        container_states.push(state);
+    for change in &diff_changes {
+        let client_id = change.id.client_id;
+        client_id_to_idx.entry(client_id).or_insert_with(|| {
+            let idx = clients.len() as ClientIdx;
+            clients.push(client_id);
+            idx
+        });
+        change_num += 1;
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -124,70 +124,77 @@ fn encode_changes(store: &LogStore) -> Encoded {
     let mut keys = Vec::new();
     let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
-    for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
-        for change in change_vec.iter() {
-            for dep in change.deps.iter() {
-                deps.push(DepsEncoding::new(
-                    *client_id_to_idx.get(&dep.client_id).unwrap(),
-                    dep.counter,
-                ));
-            }
-            let op_len = change.ops.len();
-            for op in change.ops.iter() {
-                containers.push(op.container);
-                let op = store.to_remote_op(op);
-                remote_ops.push(op);
-            }
 
-            let mut op_len = 0;
-            for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
-                for content in op.contents.into_iter() {
-                    let (prop, gc, value) = match content {
-                        crate::op::RemoteContent::Map(MapSet { key, value }) => (
-                            *key_to_idx.entry(key.clone()).or_insert_with(|| {
-                                keys.push(key);
-                                keys.len() - 1
-                            }),
-                            0,
-                            value,
-                        ),
-                        crate::op::RemoteContent::List(list) => match list {
-                            ListOp::Insert { slice, pos } => (
-                                pos,
-                                match &slice {
-                                    ListSlice::Unknown(v) => *v,
-                                    _ => 0,
-                                },
-                                match slice {
-                                    ListSlice::RawData(v) => v.into(),
-                                    ListSlice::RawStr(s) => s.as_str().into(),
-                                    ListSlice::Unknown(_) => LoroValue::Null,
-                                },
-                            ),
-                            ListOp::Delete(span) => {
-                                (span.pos as usize, 0, LoroValue::I32(span.len as i32))
-                            }
-                        },
-                    };
-                    op_len += 1;
-                    ops.push(OpEncoding {
-                        container: container.to_u32(),
-                        prop,
-                        value,
-                        gc,
-                    })
-                }
-            }
-
-            changes.push(ChangeEncoding {
-                client_idx: client_idx as ClientIdx,
-                counter: change.id.counter,
-                lamport: change.lamport,
-                timestamp: change.timestamp,
-                deps_len: change.deps.len() as u32,
-                op_len,
-            });
+    for change in diff_changes {
+        let client_idx = client_id_to_idx[&change.id.client_id];
+        for dep in change.deps.iter() {
+            deps.push(DepsEncoding::new(
+                *client_id_to_idx.get(&dep.client_id).unwrap(),
+                dep.counter,
+            ));
         }
+
+        let mut op_len = 0;
+        for op in change.ops.iter() {
+            let container = op.container;
+            let container_idx = if !container_indexes.contains(&container) {
+                container_indexes.push(container);
+                container_ids.push(store.reg.get_id(container).unwrap().clone());
+                container_indexes.len() - 1
+            } else {
+                container_indexes
+                    .iter()
+                    .position(|&x| x == container)
+                    .unwrap()
+            };
+            let op = store.to_remote_op(op);
+            for content in op.contents.into_iter() {
+                let (prop, gc, value) = match content {
+                    crate::op::RemoteContent::Map(MapSet { key, value }) => (
+                        *key_to_idx.entry(key.clone()).or_insert_with(|| {
+                            keys.push(key);
+                            keys.len() - 1
+                        }),
+                        0,
+                        value,
+                    ),
+                    crate::op::RemoteContent::List(list) => match list {
+                        ListOp::Insert { slice, pos } => (
+                            pos,
+                            match &slice {
+                                ListSlice::Unknown(v) => *v,
+                                _ => 0,
+                            },
+                            match slice {
+                                ListSlice::RawData(v) => v.into(),
+                                ListSlice::RawStr(s) => s.as_str().into(),
+                                ListSlice::Unknown(_) => LoroValue::Null,
+                            },
+                        ),
+                        ListOp::Delete(span) => {
+                            (span.pos as usize, 0, LoroValue::I32(span.len as i32))
+                        }
+                    },
+                    crate::op::RemoteContent::Dyn(_) => unreachable!(),
+                };
+                op_len += 1;
+                ops.push(OpEncoding {
+                    container: container_idx,
+                    prop,
+                    value,
+                    gc,
+                })
+            }
+        }
+
+        changes.push(ChangeEncoding {
+            client_idx: client_idx as ClientIdx,
+            counter: change.id.counter,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+            deps_len: change.deps.len() as u32,
+            op_len,
+        });
     }
 
     Encoded {
@@ -195,17 +202,13 @@ fn encode_changes(store: &LogStore) -> Encoded {
         ops,
         deps,
         clients,
-        containers: container_states,
+        containers: container_ids,
         keys,
     }
 }
 
 #[instrument(skip_all)]
-fn decode_changes(
-    encoded: Encoded,
-    client_id: Option<ClientID>,
-    cfg: Configure,
-) -> Arc<RwLock<LogStore>> {
+fn decode_changes(store: &mut LogStore, encoded: Encoded) {
     let Encoded {
         changes: change_encodings,
         ops,
@@ -215,30 +218,15 @@ fn decode_changes(
         keys,
     } = encoded;
 
-    if change_encodings.is_empty() {
-        let store = LogStore::new(cfg, None);
-        // register
-        if !containers.is_empty() {
-            let mut s = store.write().unwrap();
-            for buf in containers.into_iter() {
-                let container_ins = ContainerInstance::import_state(buf);
-                s.reg.insert(container_ins.id().clone(), container_ins);
-            }
-            drop(s);
+    if change_encodings.is_empty() && !containers.is_empty() {
+        for container in containers.iter() {
+            store.get_or_create_container(container);
         }
-        return store;
     }
 
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
-    let log_store = LogStore::new(cfg, client_id);
-    let mut store = log_store.write().unwrap();
-
-    for buf in containers.into_iter() {
-        let container_ins = ContainerInstance::import_state(buf);
-        store.reg.insert(container_ins.id().clone(), container_ins);
-    }
 
     for change_encoding in change_encodings {
         let ChangeEncoding {
@@ -251,7 +239,7 @@ fn decode_changes(
         } = change_encoding;
 
         let client_id = clients[client_idx as usize];
-        let mut ops = RleVec::<[Op; 2]>::new();
+        let mut ops = RleVec::<[RemoteOp; 2]>::new();
         let deps = (0..deps_len)
             .map(|_| {
                 let raw = deps_iter.next().unwrap();
@@ -265,16 +253,15 @@ fn decode_changes(
                 container: container_idx,
                 prop,
                 value,
-                is_del,
+                gc,
             } = op;
-            let container = store.reg.get_by_idx(container_idx).unwrap();
-            let content = match container.lock().unwrap().type_() {
+            let container_id = containers[container_idx].clone();
+
+            let container_type = container_id.container_type();
+            let content = match container_type {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
-                    InnerContent::Map(InnerMapSet {
-                        key,
-                        value: value as u32,
-                    })
+                    RemoteContent::Map(MapSet { key, value })
                 }
                 ContainerType::List | ContainerType::Text => {
                     let pos = prop;
@@ -289,24 +276,23 @@ fn decode_changes(
                         },
                         _ => {
                             let slice = match value {
-                                LoroValue::String(s) => ListSlice::RawStr(s.into()),
+                                LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
                                 LoroValue::List(v) => ListSlice::RawData(*v),
                                 _ => unreachable!(),
                             };
                             ListOp::Insert { slice, pos }
                         }
                     };
-                    InnerContent::List(list_op)
+                    RemoteContent::List(list_op)
                 }
             };
-            let op = Op {
+            let remote_op = RemoteOp {
+                container: container_id,
                 counter: op_counter,
-                container: container_idx,
-                content,
+                contents: vec![content].into(),
             };
-
-            op_counter += op.content_len() as i32;
-            ops.push(op);
+            op_counter += remote_op.content_len() as i32;
+            ops.push(remote_op);
         }
 
         let change = Change {
@@ -322,68 +308,19 @@ fn decode_changes(
             .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
             .push(change);
     }
-
-    let vv: VersionVector = changes
-        .values()
-        .map(|changes| changes.last().unwrap().id_last())
-        .collect();
-
-    let mut frontiers = vv.clone();
-    for (_, changes) in changes.iter() {
-        for change in changes.iter() {
-            remove_included_frontiers(&mut frontiers, &change.deps);
-        }
-    }
-
-    store.latest_lamport = changes
-        .values()
-        .map(|changes| changes.last().unwrap().lamport_last())
-        .max()
-        .unwrap();
-    store.latest_timestamp = changes
-        .values()
-        .map(|changes| changes.last().unwrap().timestamp)
-        .max()
-        .unwrap();
-
-    store.changes = changes;
-
-    let container_map = container_map
-        .into_iter()
-        // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
-        .map(|(k, v)| (k, unsafe { std::mem::transmute(v.lock().unwrap()) }))
-        .collect();
-    let mut context = ImportContext {
-        old_frontiers: smallvec![],
-        new_frontiers: frontiers.get_frontiers(),
-        old_vv: Default::default(),
-        spans: vv.diff(&Default::default()).left,
-        new_vv: vv,
-        diff: Default::default(),
-    };
-    store.apply(container_map, &mut context);
-
-    store.vv = context.new_vv;
-    store.frontiers = frontiers.get_frontiers();
-    drop(store);
-    // FIXME: set all
-    log_store
+    store.import(changes);
 }
 
 impl LogStore {
-    pub fn encode_snapshot(&self) -> Vec<u8> {
-        let encoded = encode_changes(self);
-        // to_vec(&encoded).unwrap()
-        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+    pub fn encode_snapshot(&self, vv: &VersionVector) -> Vec<u8> {
+        let encoded = encode_changes(self, vv);
+        to_vec(&encoded).unwrap()
+        // compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
     }
 
-    pub fn decode_snapshot(
-        input: &[u8],
-        client_id: Option<ClientID>,
-        cfg: Configure,
-    ) -> Arc<RwLock<Self>> {
-        let decompress_bytes = decompress(input).unwrap();
-        let encoded = from_bytes(&decompress_bytes).unwrap();
-        decode_changes(encoded, client_id, cfg)
+    pub fn decode_snapshot(&mut self, input: &[u8]) {
+        // let decompress_bytes = decompress(input).unwrap();
+        let encoded = from_bytes(&input).unwrap();
+        decode_changes(self, encoded);
     }
 }

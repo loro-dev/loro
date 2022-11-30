@@ -35,7 +35,8 @@ fn main() {
         }
     });
     let start = Instant::now();
-    let buf = loro.encode_snapshot();
+    let buf = loro.encode_snapshot(&VersionVector::new());
+
     println!(
         "{} bytes, overhead {} bytes. used {}ms",
         buf.len(),

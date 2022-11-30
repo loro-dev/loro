@@ -9,7 +9,7 @@ mod run {
     use flate2::read::GzDecoder;
     use loro_core::configure::Configure;
     use loro_core::container::registry::ContainerWrapper;
-    use loro_core::LoroCore;
+    use loro_core::{LoroCore, VersionVector};
     use serde_json::Value;
 
     pub fn b4(c: &mut Criterion) {
@@ -41,13 +41,15 @@ mod run {
         let mut b = c.benchmark_group("encode");
         b.bench_function("B4_encode", |b| {
             b.iter(|| {
-                let _ = loro.encode_snapshot();
+                let _ = loro.encode_snapshot(&VersionVector::new());
             })
         });
         b.bench_function("B4_decode", |b| {
-            let buf = loro.encode_snapshot();
+            let buf = loro.encode_snapshot(&VersionVector::new());
+            let mut store2 = LoroCore::default();
+            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
             b.iter(|| {
-                let _ = LoroCore::decode_snapshot(&buf, None, Configure::default());
+                store2.decode_snapshot(&buf);
             })
         });
     }

@@ -1,7 +1,7 @@
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
 use serde_columnar::{compress, decompress, from_bytes, to_vec, CompressConfig};
 
-use crate::{version::TotalOrderStamp, LoroValue};
+use crate::{version::TotalOrderStamp, LoroValue, VersionVector};
 
 use super::{
     list::ListContainer,
