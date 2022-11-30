@@ -13,7 +13,6 @@ use std::{
 
 use fxhash::FxHashMap;
 
-use crate::context::Context;
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
 

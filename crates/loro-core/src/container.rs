@@ -10,7 +10,7 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
-    InternalString, LogStore, LoroValue, ID,
+    InternalString, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use std::{any::Any, fmt::Debug};
 
 pub mod registry;
 
-pub mod encoding;
 pub mod list;
 pub mod map;
 mod pool;

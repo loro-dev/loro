@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -234,7 +233,7 @@ fn test_encode_state() {
     println!("store: {}", store.to_json().to_json_pretty());
     println!("store2: {}", store2.to_json().to_json_pretty());
     assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_snapshot(&VersionVector::new());
+    // let buf2 = store2.encode_snapshot(&VersionVector::new());
     // assert_eq!(buf, buf2);
 }
 
