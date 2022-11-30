@@ -1,8 +1,10 @@
 {
   "tasks": {
     "build": "cargo build",
-    "test": "RUST_BACKTRACE=full cargo nextest run --features=test_utils & deno task test-wasm",
-    "test-all": "deno task test & deno task quick-fuzz",
+    // to debug a single test use
+    // UST_BACKTRACE=full DEBUG=* cargo test --package loro-core --lib --features test_utils --features wasm -- fuzz::recursive::failed_tests::unknown --exact --nocapture &> debug.log
+    "test": "RUST_BACKTRACE=full cargo nextest run --features=test_utils",
+    "test-all": "deno task test & deno task quick-fuzz & deno task test-wasm",
     "test-prop": "RUSTFLAGS='--cfg=proptest' cargo nextest run --features=test_utils",
     "test-wasm": "cd crates/loro-wasm && deno task build && deno task test",
     "check": "cargo clippy --all-features",

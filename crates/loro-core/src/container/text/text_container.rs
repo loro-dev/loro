@@ -13,11 +13,15 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    debug_log,
+    delta::Delta,
+    event::{Diff, RawEvent},
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
+    log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
+    LogStore,
 };
 
 use super::{
@@ -64,7 +68,23 @@ impl TextContainer {
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        store.append_local_ops(&[op]);
+
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
+
+        // notify
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.insert(text.to_owned());
+            self.notify_local(
+                &mut store,
+                vec![Diff::Text(delta)],
+                old_version,
+                new_version,
+            );
+        }
+
         Some(id)
     }
 
@@ -86,9 +106,43 @@ impl TextContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        store.append_local_ops(&[op]);
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
+
+        // notify
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.delete(len);
+            self.notify_local(
+                &mut store,
+                vec![Diff::Text(delta)],
+                old_version,
+                new_version,
+            );
+        }
         self.state.delete_range(Some(pos), Some(pos + len));
         Some(id)
+    }
+
+    fn notify_local(
+        &mut self,
+        store: &mut LogStore,
+        diff: Vec<Diff>,
+        old_version: SmallVec<[ID; 2]>,
+        new_version: SmallVec<[ID; 2]>,
+    ) {
+        store.with_hierarchy(|store, hierarchy| {
+            let event = RawEvent {
+                diff,
+                local: true,
+                old_version,
+                new_version,
+                container_id: self.id.clone(),
+            };
+
+            hierarchy.notify(event, &store.reg);
+        });
     }
 
     pub fn text_len(&self) -> usize {
@@ -109,7 +163,6 @@ impl TextContainer {
         self.state.debug_inspect();
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         self.get_value()
     }
@@ -200,7 +253,6 @@ impl Container for TextContainer {
     }
 
     fn to_import(&mut self, content: RemoteContent) -> InnerContent {
-        debug_log!("IMPORT {:#?}", &content);
         match content {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
@@ -221,60 +273,118 @@ impl Container for TextContainer {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        ctx: &mut ImportContext,
+    ) {
+        let should_notify = hierarchy.should_notify(&self.id);
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
-                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
-                InnerListOp::Delete(span) => self
-                    .state
-                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+                InnerListOp::Insert { slice, pos } => {
+                    if should_notify {
+                        // HACK: after lazifying the event, we can avoid this weird hack
+                        let s = if slice.is_unknown() {
+                            " ".repeat(slice.atom_len())
+                        } else {
+                            self.raw_str.slice(&slice.0).to_owned()
+                        };
+                        let mut delta = Delta::new();
+                        delta.retain(*pos);
+                        delta.insert(s);
+                        ctx.push_diff(&self.id, Diff::Text(delta));
+                    }
+                    self.state.insert(*pos, slice.clone());
+                }
+                InnerListOp::Delete(span) => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(span.start() as usize);
+                        delta.delete(span.atom_len());
+                        ctx.push_diff(&self.id, Diff::Text(delta));
+                    }
+
+                    self.state
+                        .delete_range(Some(span.start() as usize), Some(span.end() as usize))
+                }
             },
             _ => unreachable!(),
         }
     }
 
     fn track_retreat(&mut self, spans: &IdSpanVector) {
-        debug_log!("TRACKER RETREAT {:#?}", &spans);
         self.tracker.retreat(spans);
     }
 
     fn track_forward(&mut self, spans: &IdSpanVector) {
-        debug_log!("TRACKER FORWARD {:#?}", &spans);
         self.tracker.forward(spans);
     }
 
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
-        debug_log!("Tracker checkout {:?}", vv);
         if (!vv.is_empty() || self.tracker.start_vv().is_empty())
             && self.tracker.all_vv() >= vv
             && vv >= self.tracker.start_vv()
         {
-            debug_log!("OLD Tracker");
             self.tracker.checkout(vv);
         } else {
-            debug_log!("NEW Tracker");
             self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
     }
 
-    fn track_apply(&mut self, rich_op: &RichOp) {
+    fn track_apply(
+        &mut self,
+        _: &mut Hierarchy,
+        rich_op: &RichOp,
+        import_context: &mut ImportContext,
+    ) {
         self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
         &mut self,
-        from: &crate::VersionVector,
-        effect_spans: &IdSpanVector,
+        hierarchy: &mut Hierarchy,
+        import_context: &mut ImportContext,
     ) {
-        debug_log!("BEFORE APPLY EFFECT {:?}", self.get_value());
-        for effect in self.tracker.iter_effects(from, effect_spans) {
-            debug_log!("APPLY EFFECT {:?}", &effect);
+        let should_notify = hierarchy.should_notify(&self.id);
+        let mut diff = vec![];
+        for effect in self
+            .tracker
+            .iter_effects(&import_context.old_vv, &import_context.spans)
+        {
             match effect {
-                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => self.state.insert(pos, content),
+                Effect::Del { pos, len } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.delete(len);
+                        diff.push(Diff::Text(delta));
+                    }
+
+                    self.state.delete_range(Some(pos), Some(pos + len));
+                }
+                Effect::Ins { pos, content } => {
+                    // HACK: after lazifying the event, we can avoid this weird hack
+                    if should_notify {
+                        let s = if content.is_unknown() {
+                            " ".repeat(content.atom_len())
+                        } else {
+                            self.raw_str.slice(&content.0).to_owned()
+                        };
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.insert(s);
+                        diff.push(Diff::Text(delta));
+                    }
+
+                    self.state.insert(pos, content);
+                }
             }
         }
-        debug_log!("AFTER APPLY EFFECT {:?}", self.get_value());
+
+        if should_notify {
+            import_context.push_diff_vec(&self.id, diff);
+        }
     }
 }
 

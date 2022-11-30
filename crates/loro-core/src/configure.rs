@@ -63,3 +63,9 @@ impl Default for Configure {
         }
     }
 }
+
+pub fn rand_u64() -> u64 {
+    let mut buf = [0u8; 8];
+    SystemRandom::new().fill(&mut buf).unwrap();
+    u64::from_le_bytes(buf)
+}

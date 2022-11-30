@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
+use smallvec::smallvec;
 
 use crate::{
     change::{Change, ChangeMergeCfg, Lamport, Timestamp},
@@ -11,16 +12,19 @@ use crate::{
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
+        registry::ContainerIdx,
         text::text_content::ListSlice,
         Container, ContainerID,
     },
     dag::remove_included_frontiers,
-    id::{ClientID, ContainerIdx, Counter, ID},
+    id::{ClientID, Counter, ID},
     op::{Op, RemoteContent, RemoteOp},
     smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
+
+use super::ImportContext;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
@@ -46,7 +50,7 @@ struct ChangeEncoding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
-    container: ContainerIdx,
+    container: u32,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize, // 18225 bytes
@@ -154,7 +158,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
                     };
                     op_len += 1;
                     ops.push(OpEncoding {
-                        container,
+                        container: container.to_u32(),
                         prop,
                         value,
                         gc,
@@ -337,9 +341,17 @@ fn decode_changes(
         // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
         .map(|(k, v)| (k, unsafe { std::mem::transmute(v.lock().unwrap()) }))
         .collect();
-    store.apply(&frontiers, &vv, container_map);
+    let mut context = ImportContext {
+        old_frontiers: smallvec![],
+        new_frontiers: frontiers.get_frontiers(),
+        old_vv: Default::default(),
+        spans: vv.diff(&Default::default()).left,
+        new_vv: vv,
+        diff: Default::default(),
+    };
+    store.apply(container_map, &mut context);
 
-    store.vv = vv;
+    store.vv = context.new_vv;
     store.frontiers = frontiers.get_frontiers();
     drop(store);
     // FIXME: set all

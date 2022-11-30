@@ -4,6 +4,8 @@
 mod encoding;
 mod import;
 mod iter;
+use crate::LoroValue;
+pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock},
@@ -19,12 +21,12 @@ use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{
-        registry::{ContainerInstance, ContainerRegistry},
+        registry::{ContainerIdx, ContainerInstance, ContainerRegistry},
         ContainerID,
     },
     dag::Dag,
-    debug_log,
-    id::{ClientID, ContainerIdx, Counter},
+    hierarchy::Hierarchy,
+    id::{ClientID, Counter},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
@@ -65,10 +67,11 @@ pub struct LogStore {
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
-    pub(crate) this_client_id: ClientID,
     frontiers: SmallVec<[ID; 2]>,
+    pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
+    pub(crate) hierarchy: Hierarchy,
     _pin: PhantomPinned,
 }
 
@@ -86,6 +89,7 @@ impl LogStore {
             frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
+            hierarchy: Default::default(),
             _pin: PhantomPinned,
         }))
     }
@@ -116,7 +120,6 @@ impl LogStore {
             }
         }
 
-        debug_log!("export {:#?}", &ans);
         ans
     }
 
@@ -181,11 +184,14 @@ impl LogStore {
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
 
-    pub(crate) fn create_container(&mut self, container_type: ContainerType) -> ContainerID {
+    pub(crate) fn create_container(
+        &mut self,
+        container_type: ContainerType,
+    ) -> (ContainerID, ContainerIdx) {
         let id = self.next_id();
         let container_id = ContainerID::new_normal(id, container_type);
-        self.reg.register(&container_id);
-        container_id
+        let idx = self.reg.register(&container_id);
+        (container_id, idx)
     }
 
     #[inline(always)]
@@ -227,9 +233,10 @@ impl LogStore {
     }
 
     /// this method would not get the container and apply op
-    pub fn append_local_ops(&mut self, ops: &[Op]) {
+    pub fn append_local_ops(&mut self, ops: &[Op]) -> (SmallVec<[ID; 2]>, &[ID]) {
+        let old_version = self.frontiers.clone();
         if ops.is_empty() {
-            return;
+            return (old_version, self.frontier());
         }
 
         let lamport = self.next_lamport();
@@ -257,8 +264,7 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
-
-        debug_log!("CHANGES---------------- site {}", self.this_client_id);
+        (old_version, self.frontier())
     }
 
     #[inline]
@@ -343,10 +349,21 @@ impl LogStore {
         self.reg.get_or_create_container_idx(container)
     }
 
-    #[cfg(feature = "json")]
-    pub fn to_json(&self) -> String {
-        let value = self.reg.to_json();
-        serde_json::to_string_pretty(&value).unwrap()
+    // TODO: this feels like a dumb way to bypass lifetime issue, but I don't have better idea right now :(
+    #[inline(always)]
+    pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
+    where
+        for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
+    {
+        let mut hierarchy = std::mem::take(&mut self.hierarchy);
+        let result = f(self, &mut hierarchy);
+        assert!(self.hierarchy.is_empty());
+        self.hierarchy = hierarchy;
+        result
+    }
+
+    pub fn to_json(&self) -> LoroValue {
+        self.reg.to_json()
     }
 }
 

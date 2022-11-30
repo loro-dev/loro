@@ -5,9 +5,12 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
+    event::{Observer, SubscriptionID},
+    hierarchy::Hierarchy,
+    log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
-    InternalString, LoroValue, ID,
+    InternalString, LogStore, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
@@ -46,9 +49,6 @@ pub trait Container: Debug + Any + Unpin {
     /// convert an op content to compact imported format
     fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
-    /// Apply the effect of the op directly to the state.
-    fn update_state_directly(&mut self, op: &RichOp);
-
     /// Tracker need to retreat in order to apply the op.
     /// TODO: can be merged into checkout
     fn track_retreat(&mut self, spans: &IdSpanVector);
@@ -65,11 +65,39 @@ pub trait Container: Debug + Any + Unpin {
     /// Here we have not updated the container state yet. Because we
     /// need to calculate the effect of the op for [crate::List] and
     /// [crate::Text] by using tracker.  
-    fn track_apply(&mut self, op: &RichOp);
+    fn track_apply(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        import_context: &mut ImportContext,
+    );
 
+    /// Apply the effect of the op directly to the state.
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        import_context: &mut ImportContext,
+    );
     /// Make tracker iterate over the target spans and apply the calculated
     /// effects to the container state
-    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector);
+    fn apply_tracked_effects_from(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        import_context: &mut ImportContext,
+    );
+    fn subscribe(
+        &self,
+        hierarchy: &mut Hierarchy,
+        observer: Observer,
+        deep: bool,
+    ) -> SubscriptionID {
+        hierarchy.subscribe(self.id(), observer, deep)
+    }
+
+    fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
+        hierarchy.unsubscribe(self.id(), subscription);
+    }
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
@@ -78,7 +106,7 @@ pub trait Container: Debug + Any + Unpin {
 /// This structure is really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum ContainerID {
-    /// Root container does not need a insert op to create. It can be created implicitly.
+    /// Root container does not need an op to create. It can be created implicitly.
     Root {
         name: InternalString,
         container_type: ContainerType,

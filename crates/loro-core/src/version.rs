@@ -30,6 +30,9 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
+// TODO: use new type
+pub type Frontiers = SmallVec<[ID; 2]>;
+
 impl PartialEq for VersionVector {
     fn eq(&self, other: &Self) -> bool {
         self.iter()

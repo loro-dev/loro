@@ -1,3 +1,7 @@
+use std::borrow::{Borrow, BorrowMut};
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
@@ -24,6 +28,37 @@ fn example() {
         r#"[123,{"map_b":"hello world!"}]"#,
         list.get_value_deep(&doc).to_json()
     );
+}
+
+#[test]
+#[cfg(feature = "json")]
+fn text_observe() {
+    let mut doc = LoroCore::default();
+    let track_value = Rc::new(RefCell::new(LoroValue::Map(Default::default())));
+    let moved_value = Rc::clone(&track_value);
+    doc.subscribe_deep(Box::new(move |event| {
+        let mut v = RefCell::borrow_mut(&*moved_value);
+        v.apply(&event.relative_path, &event.diff);
+    }));
+    let mut map = doc.get_map("meta");
+    map.insert(&doc, "name", "anonymous").unwrap();
+    let list = map
+        .insert(&doc, "to-dos", ContainerType::List)
+        .unwrap()
+        .unwrap();
+    let mut list = doc.get_list(list);
+    let todo_item = list.insert(&doc, 0, ContainerType::Map).unwrap().unwrap();
+    let mut todo_item = doc.get_map(todo_item);
+    todo_item.insert(&doc, "todo", "coding").unwrap();
+    assert_eq!(&doc.to_json(), &*RefCell::borrow(&track_value));
+    let mut text = doc.get_text("text");
+    text.insert(&doc, 0, "hello ").unwrap();
+    let mut doc_b = LoroCore::default();
+    let mut text_b = doc_b.get_text("text");
+    text_b.insert(&doc_b, 0, "world").unwrap();
+    doc.import(doc_b.export(Default::default()));
+    assert_eq!(&doc.to_json(), &*RefCell::borrow(&track_value));
+    println!("{}", doc.to_json().to_json());
 }
 
 #[test]
@@ -160,6 +195,7 @@ fn test_recursive_should_panic() {
 }
 
 #[test]
+#[cfg(feature = "json")]
 fn test_to_json() {
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut map = loro.get_map("A map");
@@ -170,7 +206,7 @@ fn test_to_json() {
         .unwrap();
     let mut text = loro.get_text(&a);
     text.insert(&loro, 0, "012").unwrap();
-    println!("{}", loro.to_json());
+    println!("{}", loro.to_json().to_json());
 }
 
 #[ctor]

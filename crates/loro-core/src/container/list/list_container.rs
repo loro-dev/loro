@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    RleTree,
+    HasLength, RleTree,
 };
 use smallvec::SmallVec;
 
@@ -19,12 +19,16 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
+    delta::Delta,
+    event::{Diff, Index, RawEvent},
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
+    log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
     version::IdSpanVector,
-    LoroError,
+    LogStore, LoroError,
 };
 
 use super::list_op::InnerListOp;
@@ -51,6 +55,7 @@ impl ListContainer {
         if values.is_empty() {
             return;
         }
+        assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use insert_obj or insert method");
         let store = ctx.log_store();
         let mut store = store.try_write().unwrap();
 
@@ -100,12 +105,25 @@ impl ListContainer {
         let op = Op::new(
             id,
             InnerContent::List(InnerListOp::Insert {
-                slice: slice.into(),
+                slice: slice.clone().into(),
                 pos,
             }),
             store.get_or_create_container_idx(&self.id),
         );
-        store.append_local_ops(&[op]);
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
+        if store.hierarchy.should_notify(&self.id) {
+            let value = self.raw_data.slice(&slice)[0].clone();
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.insert(vec![value]);
+            self.notify_local(
+                &mut store,
+                vec![Diff::List(delta)],
+                old_version,
+                new_version,
+            )
+        }
 
         Some(id)
     }
@@ -113,7 +131,10 @@ impl ListContainer {
     fn insert_obj<C: Context>(&mut self, ctx: &C, pos: usize, obj: ContainerType) -> ContainerID {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
-        let container_id = store.create_container(obj);
+        let (container_id, _) = store.create_container(obj);
+        // Update hierarchy info
+        store.hierarchy.add_child(&self.id, &container_id);
+
         // TODO: we can avoid this lock
         drop(store);
         self.insert(
@@ -121,13 +142,14 @@ impl ListContainer {
             pos,
             LoroValue::Unresolved(Box::new(container_id.clone())),
         );
+
         container_id
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
         self.state
             .get(pos)
-            .map(|range| self.raw_data.slice(&range.as_ref().0))
+            .map(|range| self.raw_data.slice(&range.get_sliced().0))
             .and_then(|slice| slice.first().cloned())
     }
 
@@ -149,9 +171,62 @@ impl ListContainer {
             store.get_or_create_container_idx(&self.id),
         );
 
-        store.append_local_ops(&[op]);
+        let (old_version, new_version) = store.append_local_ops(&[op]);
+        let new_version = new_version.into();
+        // Update hierarchy info
+        self.update_hierarchy_on_delete(&mut store.hierarchy, pos, len);
+
         self.state.delete_range(Some(pos), Some(pos + len));
+
+        if store.hierarchy.should_notify(&self.id) {
+            let mut delta = Delta::new();
+            delta.retain(pos);
+            delta.delete(len);
+            self.notify_local(
+                &mut store,
+                vec![Diff::List(delta)],
+                old_version,
+                new_version,
+            )
+        }
+
         Some(id)
+    }
+
+    fn notify_local(
+        &mut self,
+        store: &mut LogStore,
+        diff: Vec<Diff>,
+        old_version: SmallVec<[ID; 2]>,
+        new_version: SmallVec<[ID; 2]>,
+    ) {
+        store.with_hierarchy(|store, hierarchy| {
+            let event = RawEvent {
+                diff,
+                local: true,
+                old_version,
+                new_version,
+                container_id: self.id.clone(),
+            };
+
+            hierarchy.notify(event, &store.reg);
+        });
+    }
+
+    fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
+        if !hierarchy.has_children(&self.id) {
+            return;
+        }
+
+        for state in self.state.iter_range(pos, Some(pos + len)) {
+            let range = &state.get_sliced().0;
+            for value in self.raw_data.slice(range).iter() {
+                if let LoroValue::Unresolved(container_id) = value {
+                    debug_log::debug_log!("Deleted {:?}", container_id);
+                    hierarchy.remove_child(&self.id, container_id);
+                }
+            }
+        }
     }
 
     pub fn values_len(&self) -> usize {
@@ -172,14 +247,33 @@ impl ListContainer {
         self.state.debug_inspect();
     }
 
-    #[cfg(feature = "json")]
-    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
-        let mut arr = Vec::new();
-        for i in 0..self.values_len() {
-            let v = self.get(i).unwrap();
-            arr.push(v.to_json_value(reg));
+    /// TODO: perf, can store the position info to the container children
+    pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
+        let mut idx = 0;
+        for values in self.state.iter() {
+            let value = values.as_ref();
+            for v in self.raw_data.slice(&value.0) {
+                if v.as_unresolved().map(|x| &**x == child).unwrap_or(false) {
+                    return Some(Index::Seq(idx));
+                }
+
+                idx += 1;
+            }
         }
-        arr.into()
+
+        None
+    }
+
+    fn update_hierarchy_on_insert(&mut self, hierarchy: &mut Hierarchy, content: &SliceRange) {
+        for value in self.raw_data.slice(&content.0).iter() {
+            if let LoroValue::Unresolved(container_id) = value {
+                hierarchy.add_child(&self.id, container_id);
+            }
+        }
+    }
+
+    pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
+        self.get_value().resolve_deep(reg)
     }
 }
 
@@ -240,13 +334,43 @@ impl Container for ListContainer {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        context: &mut ImportContext,
+    ) {
+        let should_notify = hierarchy.should_notify(&self.id);
         match &op.get_sliced().content {
             InnerContent::List(op) => match op {
-                InnerListOp::Insert { slice, pos } => self.state.insert(*pos, slice.clone()),
-                InnerListOp::Delete(span) => self
-                    .state
-                    .delete_range(Some(span.start() as usize), Some(span.end() as usize)),
+                InnerListOp::Insert { slice, pos } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        let delta_vec = self.raw_data.slice(&slice.0).to_vec();
+                        delta.retain(*pos);
+                        delta.insert(delta_vec);
+                        context.push_diff(&self.id, Diff::List(delta));
+                    }
+
+                    self.update_hierarchy_on_insert(hierarchy, slice);
+                    self.state.insert(*pos, slice.clone());
+                }
+                InnerListOp::Delete(span) => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(span.start() as usize);
+                        delta.delete(span.atom_len());
+                        context.push_diff(&self.id, Diff::List(delta));
+                    }
+
+                    self.update_hierarchy_on_delete(
+                        hierarchy,
+                        span.start() as usize,
+                        span.atom_len(),
+                    );
+                    self.state
+                        .delete_range(Some(span.start() as usize), Some(span.end() as usize));
+                }
             },
             _ => unreachable!(),
         }
@@ -271,20 +395,66 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_apply(&mut self, rich_op: &RichOp) {
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, _: &mut ImportContext) {
         self.tracker.track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
         &mut self,
-        from: &crate::VersionVector,
-        effect_spans: &IdSpanVector,
+        hierarchy: &mut Hierarchy,
+        import_context: &mut ImportContext,
     ) {
-        for effect in self.tracker.iter_effects(from, effect_spans) {
+        let should_notify = hierarchy.should_notify(&self.id);
+        let mut diff = vec![];
+        for effect in self
+            .tracker
+            .iter_effects(&import_context.old_vv, &import_context.spans)
+        {
             match effect {
-                Effect::Del { pos, len } => self.state.delete_range(Some(pos), Some(pos + len)),
-                Effect::Ins { pos, content } => self.state.insert(pos, content),
+                Effect::Del { pos, len } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.delete(len);
+                        diff.push(Diff::List(delta));
+                    }
+
+                    if hierarchy.has_children(&self.id) {
+                        // update hierarchy
+                        for state in self.state.iter_range(pos, Some(pos + len)) {
+                            let range = state.get_sliced();
+                            for value in self.raw_data.slice(&range.0).iter() {
+                                if let LoroValue::Unresolved(container_id) = value {
+                                    debug_log::debug_log!("Deleted {:?}", container_id);
+                                    hierarchy.remove_child(&self.id, container_id);
+                                }
+                            }
+                        }
+                    }
+
+                    self.state.delete_range(Some(pos), Some(pos + len));
+                }
+                Effect::Ins { pos, content } => {
+                    if should_notify {
+                        let mut delta = Delta::new();
+                        delta.retain(pos);
+                        delta.insert(self.raw_data.slice(&content.0).to_vec());
+                        diff.push(Diff::List(delta));
+                    }
+                    for value in self.raw_data.slice(&content.0).iter() {
+                        // update hierarchy
+                        if let LoroValue::Unresolved(container_id) = value {
+                            hierarchy.add_child(&self.id, container_id);
+                        }
+                    }
+
+                    self.state.insert(pos, content);
+                }
             }
+        }
+
+        if should_notify {
+            import_context.push_diff_vec(&self.id, diff);
         }
     }
 }

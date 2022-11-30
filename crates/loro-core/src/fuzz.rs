@@ -1,10 +1,11 @@
 use std::{fmt::Debug, time::Instant};
 
+use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 
-use crate::{array_mut_ref, debug_log, id::ClientID, LoroCore};
+use crate::{array_mut_ref, id::ClientID, LoroCore};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {

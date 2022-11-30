@@ -11,16 +11,28 @@ use smallvec::SmallVec;
 
 use crate::{
     context::Context,
-    id::{ClientID, ContainerIdx},
+    event::{Index, Observer, SubscriptionID},
+    hierarchy::Hierarchy,
+    id::ClientID,
+    log_store::ImportContext,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
-    LoroError, LoroValue, VersionVector,
+    LogStore, LoroError, LoroValue,
 };
 
 use super::{
     list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
     ContainerType,
 };
+
+#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
+pub(crate) struct ContainerIdx(u32);
+
+impl ContainerIdx {
+    pub(crate) fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 // TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]
@@ -68,12 +80,17 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn update_state_directly(&mut self, op: &RichOp) {
+    fn update_state_directly(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        op: &RichOp,
+        context: &mut ImportContext,
+    ) {
         match self {
-            ContainerInstance::Map(x) => x.update_state_directly(op),
-            ContainerInstance::Text(x) => x.update_state_directly(op),
-            ContainerInstance::Dyn(x) => x.update_state_directly(op),
-            ContainerInstance::List(x) => x.update_state_directly(op),
+            ContainerInstance::Map(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::List(x) => x.update_state_directly(hierarchy, op, context),
         }
     }
 
@@ -95,21 +112,25 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn track_apply(&mut self, op: &RichOp) {
+    fn track_apply(&mut self, hierarchy: &mut Hierarchy, op: &RichOp, ctx: &mut ImportContext) {
         match self {
-            ContainerInstance::Map(x) => x.track_apply(op),
-            ContainerInstance::Text(x) => x.track_apply(op),
-            ContainerInstance::Dyn(x) => x.track_apply(op),
-            ContainerInstance::List(x) => x.track_apply(op),
+            ContainerInstance::Map(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::Text(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::List(x) => x.track_apply(hierarchy, op, ctx),
         }
     }
 
-    fn apply_tracked_effects_from(&mut self, from: &VersionVector, effect_spans: &IdSpanVector) {
+    fn apply_tracked_effects_from(
+        &mut self,
+        h: &mut Hierarchy,
+        import_context: &mut ImportContext,
+    ) {
         match self {
-            ContainerInstance::Map(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::Text(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(from, effect_spans),
-            ContainerInstance::List(x) => x.apply_tracked_effects_from(from, effect_spans),
+            ContainerInstance::Map(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::Text(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::List(x) => x.apply_tracked_effects_from(h, import_context),
         }
     }
 
@@ -132,6 +153,16 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.to_import(content),
             ContainerInstance::Dyn(x) => x.to_import(content),
             ContainerInstance::List(x) => x.to_import(content),
+        }
+    }
+}
+
+impl ContainerInstance {
+    pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
+        match self {
+            ContainerInstance::Map(x) => x.index_of_child(child),
+            ContainerInstance::List(x) => x.index_of_child(child),
+            _ => unreachable!(),
         }
     }
 }
@@ -171,21 +202,21 @@ impl ContainerRegistry {
     pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
         self.container_to_idx
             .get(id)
-            .map(|x| &self.containers[*x as usize].container)
+            .map(|x| &self.containers[x.0 as usize].container)
     }
 
     #[inline(always)]
-    pub fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
-        self.containers.get(idx as usize).map(|x| &x.container)
+    pub(crate) fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.containers.get(idx.0 as usize).map(|x| &x.container)
     }
 
     #[inline(always)]
-    pub fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
+    pub(crate) fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.container_to_idx.get(id).copied()
     }
 
-    pub fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
-        self.containers.get(idx as usize).map(|x| &x.id)
+    pub(crate) fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
+        self.containers.get(idx.0 as usize).map(|x| &x.id)
     }
 
     #[inline(always)]
@@ -202,12 +233,12 @@ impl ContainerRegistry {
 
     #[inline(always)]
     fn next_idx(&self) -> ContainerIdx {
-        self.containers.len() as ContainerIdx
+        ContainerIdx(self.containers.len() as u32)
     }
 
-    pub(crate) fn register(&mut self, id: &ContainerID) {
+    pub(crate) fn register(&mut self, id: &ContainerID) -> ContainerIdx {
         let container = self.create(id.clone());
-        self.insert(id.clone(), container);
+        self.insert(id.clone(), container)
     }
 
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {
@@ -238,7 +269,6 @@ impl ContainerRegistry {
         }
     }
 
-    #[cfg(feature = "json")]
     pub fn to_json(&self) -> LoroValue {
         let mut map = FxHashMap::default();
         for ContainerAndId { container, id } in self.containers.iter() {
@@ -254,8 +284,12 @@ impl ContainerRegistry {
                     ContainerInstance::Dyn(_) => unreachable!("registry to json dyn"),
                     ContainerInstance::List(x) => x.to_json(self),
                 };
-                // TODO: container type?
-                map.insert(format!("{}-({:?})", name, container_type), json);
+                if map.contains_key(name.as_ref()) {
+                    // TODO: warning
+                    map.insert(format!("{}-({:?})", name, container_type), json);
+                } else {
+                    map.insert(name.to_string(), json);
+                }
             }
         }
         LoroValue::Map(Box::new(map))
@@ -352,14 +386,14 @@ pub trait ContainerWrapper {
             LoroValue::List(list) => {
                 list.iter_mut().for_each(|x| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(reg).unwrap();
+                        *x = x.clone().resolve_deep(reg)
                     }
                 });
             }
             LoroValue::Map(map) => {
                 map.iter_mut().for_each(|(_, x)| {
                     if x.as_unresolved().is_some() {
-                        *x = x.resolve_deep(reg).unwrap();
+                        *x = x.clone().resolve_deep(reg)
                     }
                 });
             }
@@ -368,5 +402,46 @@ pub trait ContainerWrapper {
         }
 
         value
+    }
+
+    fn subscribe<C: Context>(
+        &self,
+        ctx: &C,
+        observer: Observer,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                observer,
+                false,
+            )
+        })
+    }
+
+    fn subscribe_deep<C: Context>(
+        &self,
+        ctx: &C,
+        observer: Observer,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                observer,
+                true,
+            )
+        })
+    }
+
+    fn unsubscribe<C: Context>(
+        &self,
+        ctx: &C,
+        subscription: SubscriptionID,
+    ) -> Result<(), LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.unsubscribe(
+                &mut ctx.log_store().write().unwrap().hierarchy,
+                subscription,
+            )
+        })
     }
 }
