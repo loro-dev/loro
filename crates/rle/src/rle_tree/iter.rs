@@ -257,7 +257,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                     start.pos = Position::Start;
                     return ans;
                 }
-                None => match node.next() {
+                None => match node.next_mut() {
                     Some(next) => {
                         start.leaf = next.into();
                         start.index = 0;
