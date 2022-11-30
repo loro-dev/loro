@@ -95,6 +95,17 @@ impl LoroCore {
         self.log_store().try_write().unwrap().decode_snapshot(input);
     }
 
+    pub fn export_store(&self) -> Vec<u8> {
+        let store = self.log_store.read().unwrap();
+        store.export_store()
+    }
+
+    pub fn import_store(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
+        let store = LogStore::new(cfg, client_id);
+        store.write().unwrap().import_store(input);
+        Self { log_store: store }
+    }
+
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {
         self.log_store.try_write().unwrap().debug_inspect();

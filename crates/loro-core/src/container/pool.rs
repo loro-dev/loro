@@ -32,6 +32,12 @@ impl Pool {
     }
 }
 
+impl From<Vec<LoroValue>> for Pool {
+    fn from(p: Vec<LoroValue>) -> Self {
+        Pool(p)
+    }
+}
+
 impl Index<u32> for Pool {
     type Output = LoroValue;
 

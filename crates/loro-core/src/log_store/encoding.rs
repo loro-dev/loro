@@ -25,13 +25,16 @@ use crate::{
 
 use super::ImportContext;
 
+mod container;
+mod snapshot;
+
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
 type Containers = Vec<ContainerID>;
 
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChangeEncoding {
+pub(super) struct ChangeEncoding {
     #[columnar(strategy = "DeltaRle", original_type = "u32")]
     client_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i32")]
@@ -52,7 +55,7 @@ struct OpEncoding {
     container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
-    prop: usize, // 18225 bytes
+    prop: usize,
     // TODO: can be compressed
     gc: usize,
     // #[columnar(compress(level = 0))]
@@ -308,6 +311,7 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
             .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
             .push(change);
     }
+    // TODO: using the one with fewer changes to import
     store.import(changes);
 }
 
@@ -322,5 +326,16 @@ impl LogStore {
         let decompress_bytes = decompress(input).unwrap();
         let encoded = from_bytes(&decompress_bytes).unwrap();
         decode_changes(self, encoded);
+    }
+
+    pub fn export_store(&self) -> Vec<u8> {
+        let encoded = snapshot::export_snapshot(self);
+        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+    }
+
+    pub fn import_store(&mut self, input: &[u8]) {
+        let decompress_bytes = decompress(input).unwrap();
+        let encoded = from_bytes(&decompress_bytes).unwrap();
+        snapshot::import_snapshot(self, encoded);
     }
 }
