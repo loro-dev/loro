@@ -802,7 +802,6 @@ mod find_common_ancestors_proptest {
         array_mut_ref,
         span::HasIdSpan,
         tests::{PROPTEST_FACTOR_1, PROPTEST_FACTOR_10},
-        unsafe_array_mut_ref,
     };
 
     use super::*;
@@ -921,14 +920,15 @@ mod find_common_ancestors_proptest {
             apply(interaction, &mut dags);
         }
 
-        let (dag0,): (&mut TestDag,) = unsafe_array_mut_ref!(&mut dags, [0]);
-        for dag in &dags[1..] {
+        for dag_idx in 1..dags.len() {
+            let (dag0, dag) = arref::array_mut_ref!(&mut dags, [0, dag_idx]);
             dag0.merge(dag);
         }
 
-        dag0.push(1);
-        let expected = dag0.frontier()[0];
-        for dag in &mut dags[1..] {
+        dags[0].push(1);
+        let expected = dags[0].frontier()[0];
+        for dag_idx in 1..dags.len() {
+            let (dag0, dag) = arref::array_mut_ref!(&mut dags, [0, dag_idx]);
             dag.merge(dag0);
         }
         for interaction in after_merge_insertion.iter_mut() {
@@ -1001,7 +1001,7 @@ mod find_common_ancestors_proptest {
         for target in 0..N {
             for i in N..dags.len() {
                 let (target, dag): (&mut TestDag, &mut TestDag) =
-                    unsafe_array_mut_ref!(dags, [target, i]);
+                    arref::array_mut_ref!(&mut dags, [target, i]);
                 target.merge(dag);
             }
         }
@@ -1015,7 +1015,7 @@ mod find_common_ancestors_proptest {
         for target in 0..N {
             for i in N..dags.len() {
                 let (target, dag): (&mut TestDag, &mut TestDag) =
-                    unsafe_array_mut_ref!(dags, [target, i]);
+                    arref::array_mut_ref!(&mut dags, [target, i]);
                 dag.merge(target);
             }
         }
@@ -1049,11 +1049,11 @@ mod find_common_ancestors_proptest {
                 }
             }
 
-            let (dag,): (&mut TestDag,) = unsafe_array_mut_ref!(&mut dags, [interaction.dag_idx]);
-            if dag.is_first() {
+            if dags[interaction.dag_idx].is_first() {
                 // need to merge to one of the common ancestors first
                 let target = interaction.dag_idx % N;
-                dag.merge(&dags[target]);
+                let (dag, target) = arref::array_mut_ref!(&mut dags, [interaction.dag_idx, target]);
+                dag.merge(target);
             }
 
             apply(*interaction, &mut dags);

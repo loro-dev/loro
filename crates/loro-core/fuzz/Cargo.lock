@@ -476,7 +476,9 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arref",
- "crdt-list",
+ "bit-vec",
+ "colored",
+ "crdt-list 0.4.0",
  "debug-log",
  "enum-as-inner",
  "fxhash",
