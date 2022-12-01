@@ -1,14 +1,23 @@
-use std::ops::Range;
+use std::{cell::RefCell, fmt, ops::Range, rc::Rc, str::Chars};
 
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
 use crate::smstring::SmString;
+
+use super::{text_content::SliceRange, unicode::TextLength};
 
 #[derive(Debug, Default)]
 pub struct StringPool {
     data: Vec<u8>,
     alive_ranges: RleVecWithIndex<Alive>,
     deleted: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PoolString {
+    pub(super) pool: Rc<RefCell<StringPool>>,
+    pub(super) range: SliceRange,
+    pub(super) utf16_length: usize,
 }
 
 #[derive(Debug)]
@@ -72,7 +81,7 @@ impl StringPool {
         std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap()
     }
 
-    pub fn get_str(&self, range: &Range<u32>) -> SmString {
+    pub fn get_string(&self, range: &Range<u32>) -> SmString {
         let mut ans = SmString::default();
         ans.push_str(
             std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap(),
@@ -136,5 +145,139 @@ impl StringPool {
     #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+}
+
+impl HasLength for PoolString {
+    fn content_len(&self) -> usize {
+        self.range.atom_len()
+    }
+}
+
+impl Mergable for PoolString {
+    fn is_mergable(&self, other: &Self, conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        self.range.is_mergable(&other.range, conf)
+    }
+
+    fn merge(&mut self, other: &Self, conf: &())
+    where
+        Self: Sized,
+    {
+        self.range.merge(&other.range, conf);
+        self.utf16_length += other.utf16_length;
+    }
+}
+
+impl Sliceable for PoolString {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        let range = self.range.slice(from, to);
+        let borrow = self.pool.borrow();
+        let str = borrow.slice(&range.0);
+        let utf16_length = encode_utf16(str).count();
+        Self {
+            pool: Rc::clone(&self.pool),
+            range,
+            utf16_length,
+        }
+    }
+}
+
+impl PoolString {
+    pub fn text_len(&self) -> TextLength {
+        TextLength {
+            utf8: self.range.atom_len() as u32,
+            utf16: self.utf16_length as u32,
+        }
+    }
+
+    pub fn utf16_index_to_utf8(&self, end: usize) -> usize {
+        let borrow = self.pool.borrow();
+        let str = borrow.slice(&self.range.0);
+        utf16_index_to_utf8(str, end)
+    }
+
+    pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
+        let borrow = self.pool.borrow();
+        let str = borrow.slice(&self.range.0);
+        encode_utf16(&str[..end]).count()
+    }
+}
+
+#[inline(always)]
+fn utf16_index_to_utf8(str: &str, end: usize) -> usize {
+    let len = str.len();
+    let mut iter = encode_utf16(str);
+    for _ in 0..end {
+        iter.next();
+    }
+    len - iter.chars.as_str().len()
+}
+
+fn encode_utf16(s: &str) -> EncodeUtf16 {
+    EncodeUtf16 {
+        chars: s.chars(),
+        extra: 0,
+    }
+}
+
+// from std
+#[derive(Clone)]
+pub struct EncodeUtf16<'a> {
+    pub(super) chars: Chars<'a>,
+    pub(super) extra: u16,
+}
+
+impl fmt::Debug for EncodeUtf16<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EncodeUtf16").finish_non_exhaustive()
+    }
+}
+
+impl<'a> Iterator for EncodeUtf16<'a> {
+    type Item = u16;
+
+    #[inline]
+    fn next(&mut self) -> Option<u16> {
+        if self.extra != 0 {
+            let tmp = self.extra;
+            self.extra = 0;
+            return Some(tmp);
+        }
+
+        let mut buf = [0; 2];
+        self.chars.next().map(|ch| {
+            let n = ch.encode_utf16(&mut buf).len();
+            if n == 2 {
+                self.extra = buf[1];
+            }
+            buf[0]
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (low, high) = self.chars.size_hint();
+        // every char gets either one u16 or two u16,
+        // so this iterator is between 1 or 2 times as
+        // long as the underlying iterator.
+        (low, high.and_then(|n| n.checked_mul(2)))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{encode_utf16, utf16_index_to_utf8};
+
+    #[test]
+    fn utf16_convert() {
+        assert_eq!(utf16_index_to_utf8("你abababc", 4), 6);
+        assert_eq!(utf16_index_to_utf8("你好ababc", 4), 8);
+        assert_eq!(utf16_index_to_utf8("你好ababc", 6), 10);
+        assert_eq!("你好".len(), 6);
+        assert_eq!(encode_utf16("你好").count(), 2);
+        assert_eq!(encode_utf16("ab").count(), 2);
     }
 }

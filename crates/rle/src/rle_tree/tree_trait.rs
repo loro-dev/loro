@@ -50,7 +50,7 @@ pub struct FindPosResult<I> {
 }
 
 impl<I> FindPosResult<I> {
-    pub(crate) fn new(child_index: usize, offset: I, pos: Position) -> Self {
+    pub fn new(child_index: usize, offset: I, pos: Position) -> Self {
         FindPosResult {
             child_index,
             offset,
@@ -59,7 +59,7 @@ impl<I> FindPosResult<I> {
         }
     }
 
-    pub(crate) fn new_not_found(child_index: usize, new_search_index: I, pos: Position) -> Self {
+    pub fn new_not_found(child_index: usize, new_search_index: I, pos: Position) -> Self {
         FindPosResult {
             child_index,
             offset: new_search_index,
