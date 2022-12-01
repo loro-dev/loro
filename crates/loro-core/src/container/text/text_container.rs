@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -26,7 +30,8 @@ use crate::{
 };
 
 use super::{
-    string_pool::{Alive, StringPool},
+    rope::Rope,
+    string_pool::{Alive, PoolString, StringPool},
     text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
 };
@@ -34,8 +39,8 @@ use super::{
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
-    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
-    raw_str: StringPool,
+    state: Rope,
+    raw_str: Rc<RefCell<StringPool>>,
     tracker: Tracker,
 }
 
@@ -43,7 +48,7 @@ impl TextContainer {
     pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
-            raw_str: StringPool::default(),
+            raw_str: Rc::new(RefCell::new(StringPool::default())),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
         }
@@ -60,12 +65,13 @@ impl TextContainer {
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
-        let slice = self.raw_str.alloc(text);
-        self.state.insert(pos, slice.clone().into());
+        let slice = StringPool::alloc_pool_string(&self.raw_str, text);
+        let range = slice.range.clone();
+        self.state.insert(pos, slice);
         let op = Op::new(
             id,
             InnerContent::List(InnerListOp::Insert {
-                slice: slice.into(),
+                slice: range.into(),
                 pos,
             }),
             store.get_or_create_container_idx(&self.id),
@@ -158,10 +164,12 @@ impl TextContainer {
 
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
+        use std::borrow::Borrow;
+        let pool = RefCell::borrow(&self.raw_str);
         println!(
             "Text Container {:?}, Raw String size={}, Tree=>\n",
             self.id,
-            self.raw_str.len(),
+            pool.len(),
         );
         self.state.debug_inspect();
     }
@@ -185,20 +193,26 @@ impl Container for TextContainer {
         let mut ans_str = String::new();
         for v in self.state.iter() {
             let content = v.as_ref();
-            if SliceRange::is_unknown(content) {
+            if SliceRange::is_unknown(&content.range) {
                 panic!("Unknown range when getting value");
             }
 
-            ans_str.push_str(&self.raw_str.get_string(&content.0));
+            ans_str.push_str(&self.raw_str.borrow().get_string(&content.range.0));
         }
 
         LoroValue::String(ans_str.into_boxed_str())
     }
 
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]> {
-        if gc && self.raw_str.should_update_aliveness(self.text_len()) {
+        if gc
+            && self
+                .raw_str
+                .borrow()
+                .should_update_aliveness(self.text_len())
+        {
             self.raw_str
-                .update_aliveness(self.state.iter().map(|x| x.as_ref().0.clone()))
+                .borrow_mut()
+                .update_aliveness(self.state.iter().map(|x| x.as_ref().range.0.clone()))
         }
 
         let mut ans = SmallVec::new();
@@ -213,11 +227,11 @@ impl Container for TextContainer {
                         });
                         ans.push(v);
                     } else {
-                        let s = self.raw_str.get_string(&r.0);
+                        let s = self.raw_str.borrow().get_string(&r.0);
                         if gc {
                             let mut start = 0;
                             let mut pos_start = pos;
-                            for span in self.raw_str.get_aliveness(&r.0) {
+                            for span in self.raw_str.borrow().get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
                                         ans.push(RemoteContent::List(ListOp::Insert {
@@ -260,7 +274,7 @@ impl Container for TextContainer {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr(s) => {
-                        let range = self.raw_str.alloc(&s);
+                        let range = self.raw_str.borrow_mut().alloc(&s);
                         let slice: SliceRange = range.into();
                         InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
@@ -292,14 +306,15 @@ impl Container for TextContainer {
                         let s = if slice.is_unknown() {
                             " ".repeat(slice.atom_len())
                         } else {
-                            self.raw_str.slice(&slice.0).to_owned()
+                            self.raw_str.borrow().slice(&slice.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(*pos);
                         delta.insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
-                    self.state.insert(*pos, slice.clone());
+                    self.state
+                        .insert(*pos, PoolString::from_slice(&self.raw_str, slice.clone()));
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
@@ -376,7 +391,7 @@ impl Container for TextContainer {
                         let s = if content.is_unknown() {
                             " ".repeat(content.atom_len())
                         } else {
-                            self.raw_str.slice(&content.0).to_owned()
+                            self.raw_str.borrow().slice(&content.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(pos);
@@ -384,7 +399,8 @@ impl Container for TextContainer {
                         diff.push(Diff::Text(delta));
                     }
 
-                    self.state.insert(pos, content);
+                    self.state
+                        .insert(pos, PoolString::from_slice(&self.raw_str, content));
                 }
             }
         }
