@@ -32,8 +32,8 @@ impl Rope {
     pub fn utf16_to_utf8(&self, index: usize) -> usize {
         self.process_cursor_at(
             index,
-            |x| x.utf16 as usize,
-            |x| x.utf16_length,
+            |x| x.utf16.unwrap() as usize,
+            |x| x.utf16_length.unwrap() as usize,
             |x| x.utf8 as usize,
             |x| x.atom_len(),
             |s, src_offset| s.utf16_index_to_utf8(src_offset),
@@ -45,8 +45,8 @@ impl Rope {
             index,
             |x| x.utf8 as usize,
             |x| x.atom_len(),
-            |x| x.utf16 as usize,
-            |x| x.utf16_length,
+            |x| x.utf16.unwrap() as usize,
+            |x| x.utf16_length.unwrap() as usize,
             |s, src_offset| s.utf8_index_to_utf16(src_offset),
         )
     }
