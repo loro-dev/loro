@@ -686,6 +686,10 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     pub fn children(&self) -> &<<A as RleTreeTrait<T>>::Arena as Arena>::Vec<'bump, T> {
         &self.children
     }
+
+    pub fn parent(&self) -> &NonNull<InternalNode<'bump, T, A>> {
+        &self.parent
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
@@ -781,7 +785,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         }
     }
 
-    pub(crate) fn get_index_in_parent(&self) -> Option<usize> {
+    pub fn get_index_in_parent(&self) -> Option<usize> {
         let parent = self.parent;
         // SAFETY: we know parent must be valid
         let parent = unsafe { parent.as_ref() };

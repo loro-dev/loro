@@ -189,7 +189,7 @@ impl Container for TextContainer {
                 panic!("Unknown range when getting value");
             }
 
-            ans_str.push_str(&self.raw_str.get_str(&content.0));
+            ans_str.push_str(&self.raw_str.get_string(&content.0));
         }
 
         LoroValue::String(ans_str.into_boxed_str())
@@ -213,7 +213,7 @@ impl Container for TextContainer {
                         });
                         ans.push(v);
                     } else {
-                        let s = self.raw_str.get_str(&r.0);
+                        let s = self.raw_str.get_string(&r.0);
                         if gc {
                             let mut start = 0;
                             let mut pos_start = pos;
