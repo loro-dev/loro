@@ -17,7 +17,7 @@ pub struct StringPool {
 pub struct PoolString {
     pub(super) pool: Rc<RefCell<StringPool>>,
     pub(super) range: SliceRange,
-    pub(super) utf16_length: usize,
+    pub(super) utf16_length: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -79,6 +79,16 @@ impl StringPool {
     #[allow(unused)]
     pub fn slice(&self, range: &Range<u32>) -> &str {
         std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap()
+    }
+
+    pub fn alloc_pool_string(this: &Rc<RefCell<Self>>, s: &str) -> PoolString {
+        let mut pool = this.borrow_mut();
+        let range = SliceRange(pool.alloc(s));
+        PoolString {
+            pool: Rc::clone(this),
+            range,
+            utf16_length: Some(encode_utf16(s).count() as u32),
+        }
     }
 
     pub fn get_string(&self, range: &Range<u32>) -> SmString {
@@ -167,29 +177,56 @@ impl Mergable for PoolString {
         Self: Sized,
     {
         self.range.merge(&other.range, conf);
-        self.utf16_length += other.utf16_length;
+        if let (Some(u), Some(other_u)) = (self.utf16_length, other.utf16_length) {
+            self.utf16_length = Some(u + other_u);
+        } else {
+            self.utf16_length = None;
+        }
     }
 }
 
 impl Sliceable for PoolString {
     fn slice(&self, from: usize, to: usize) -> Self {
         let range = self.range.slice(from, to);
-        let borrow = self.pool.borrow();
-        let str = borrow.slice(&range.0);
-        let utf16_length = encode_utf16(str).count();
-        Self {
-            pool: Rc::clone(&self.pool),
-            range,
-            utf16_length,
+        if range.is_unknown() {
+            Self {
+                pool: Rc::clone(&self.pool),
+                range,
+                utf16_length: None,
+            }
+        } else {
+            let borrow = self.pool.borrow();
+            let str = borrow.slice(&range.0);
+            let utf16_length = encode_utf16(str).count();
+            Self {
+                pool: Rc::clone(&self.pool),
+                range,
+                utf16_length: Some(utf16_length as u32),
+            }
         }
     }
 }
 
 impl PoolString {
+    pub fn from_slice(pool: &Rc<RefCell<StringPool>>, slice: SliceRange) -> Self {
+        Self {
+            pool: Rc::clone(pool),
+            utf16_length: if slice.is_unknown() {
+                None
+            } else {
+                let borrow = pool.borrow();
+                let str = borrow.slice(&slice.0);
+                let utf16_length = encode_utf16(str).count();
+                Some(utf16_length as u32)
+            },
+            range: slice,
+        }
+    }
+
     pub fn text_len(&self) -> TextLength {
         TextLength {
             utf8: self.range.atom_len() as u32,
-            utf16: self.utf16_length as u32,
+            utf16: self.utf16_length,
         }
     }
 
@@ -273,9 +310,9 @@ mod test {
 
     #[test]
     fn utf16_convert() {
-        assert_eq!(utf16_index_to_utf8("你abababc", 4), 6);
-        assert_eq!(utf16_index_to_utf8("你好ababc", 4), 8);
-        assert_eq!(utf16_index_to_utf8("你好ababc", 6), 10);
+        assert_eq!(utf16_index_to_utf8("你aaaaa", 4), 6);
+        assert_eq!(utf16_index_to_utf8("你好aaaa", 4), 8);
+        assert_eq!(utf16_index_to_utf8("你好aaaa", 6), 10);
         assert_eq!("你好".len(), 6);
         assert_eq!(encode_utf16("你好").count(), 2);
         assert_eq!(encode_utf16("ab").count(), 2);

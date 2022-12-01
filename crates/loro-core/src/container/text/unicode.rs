@@ -16,7 +16,7 @@ pub(super) struct UnicodeTreeTrait<const SIZE: u32>;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TextLength {
     pub utf8: u32,
-    pub utf16: u32,
+    pub utf16: Option<u32>,
 }
 
 impl Add for TextLength {
@@ -25,7 +25,7 @@ impl Add for TextLength {
     fn add(self, rhs: Self) -> Self::Output {
         TextLength {
             utf8: self.utf8 + rhs.utf8,
-            utf16: self.utf16 + rhs.utf16,
+            utf16: self.utf16.and_then(|x| rhs.utf16.map(|y| x + y)),
         }
     }
 }
