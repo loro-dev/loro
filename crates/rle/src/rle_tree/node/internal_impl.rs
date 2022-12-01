@@ -690,7 +690,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
-    pub(crate) fn get_index_in_parent(&self) -> Option<usize> {
+    pub fn get_index_in_parent(&self) -> Option<usize> {
         let parent = self.parent.unwrap();
         // SAFETY: we know parent must be valid
         let parent = unsafe { parent.as_ref() };
@@ -703,6 +703,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     #[inline(always)]
     pub(crate) fn update_cache(&mut self) {
         A::update_cache_internal(self);
+    }
+
+    pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
+        &self.parent
     }
 }
 

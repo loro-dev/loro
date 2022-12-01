@@ -27,7 +27,7 @@ pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
     pub(crate) bump: A::Arena,
     #[borrows(bump)]
     #[not_covariant]
-    node: <A::Arena as arena::Arena>::Boxed<'this, Node<'this, T, A>>,
+    pub node: <A::Arena as arena::Arena>::Boxed<'this, Node<'this, T, A>>,
 }
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
