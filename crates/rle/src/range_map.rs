@@ -299,7 +299,8 @@ impl<
                     internal.drain_children(start, end);
                 }
 
-                internal.update_cache();
+                // TODO: perf
+                internal.update_cache(None);
                 if let Some(parent) = internal.parent {
                     visited_internal_nodes.insert(parent);
                 }

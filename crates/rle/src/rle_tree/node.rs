@@ -219,8 +219,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             }
         }
 
-        self.update_cache();
-        sibling.update_cache();
+        // TODO: Perf
+        self.update_cache(None);
+        sibling.update_cache(None);
     }
 
     #[inline(always)]
@@ -303,8 +304,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             }
         }
 
-        self.update_cache();
-        sibling.update_cache();
+        // TODO: perf
+        self.update_cache(None);
+        sibling.update_cache(None);
     }
 
     pub(crate) fn remove(&mut self) {
@@ -326,9 +328,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         for _ in parent.children.drain(index..index + 1) {}
     }
 
-    pub(crate) fn update_cache(&mut self) {
+    pub(crate) fn update_cache(&mut self, update: Option<A::CacheUpdate>) -> A::CacheUpdate {
         match self {
-            Node::Internal(node) => A::update_cache_internal(node),
+            Node::Internal(node) => A::update_cache_internal(node, update),
             Node::Leaf(node) => A::update_cache_leaf(node),
         }
     }
@@ -342,6 +344,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                 }
             }
             Node::Leaf(_) => {}
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache(&self) -> &A::Cache {
+        match self {
+            Node::Internal(x) => &x.cache,
+            Node::Leaf(x) => &x.cache,
         }
     }
 }

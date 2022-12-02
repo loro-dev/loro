@@ -1,6 +1,6 @@
 use std::{
     iter::Sum,
-    ops::{Add, Deref},
+    ops::{Add, Deref, Neg, Sub},
 };
 
 use rle::{
@@ -13,10 +13,72 @@ use super::string_pool::PoolString;
 #[derive(Debug, Clone, Copy)]
 pub(super) struct UnicodeTreeTrait<const SIZE: usize>;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextLength {
-    pub utf8: u32,
-    pub utf16: Option<u32>,
+    pub utf8: i32,
+    pub utf16: Option<i32>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Cache {
+    pub text_len: TextLength,
+    pub unknown_elem_len: isize,
+}
+
+impl Default for TextLength {
+    fn default() -> Self {
+        Self {
+            utf8: 0,
+            utf16: Some(0),
+        }
+    }
+}
+
+impl Sub for TextLength {
+    type Output = TextLength;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        TextLength {
+            utf8: self.utf8 - rhs.utf8,
+            utf16: match (self.utf16, rhs.utf16) {
+                (Some(u), Some(o)) => Some(u - o),
+                _ => None,
+            },
+        }
+    }
+}
+
+impl Neg for TextLength {
+    type Output = TextLength;
+
+    fn neg(self) -> Self::Output {
+        TextLength {
+            utf8: -self.utf8,
+            utf16: self.utf16.map(|x| -x),
+        }
+    }
+}
+
+impl Neg for Cache {
+    type Output = Cache;
+
+    fn neg(self) -> Self::Output {
+        Self {
+            text_len: -self.text_len,
+            unknown_elem_len: -self.unknown_elem_len,
+        }
+    }
+}
+
+impl Sub for Cache {
+    type Output = Cache;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Cache {
+            text_len: self.text_len - rhs.text_len,
+            unknown_elem_len: self.unknown_elem_len - rhs.unknown_elem_len,
+        }
+    }
 }
 
 impl Add for TextLength {
@@ -30,6 +92,17 @@ impl Add for TextLength {
             } else {
                 None
             },
+        }
+    }
+}
+
+impl Add for Cache {
+    type Output = Cache;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Cache {
+            text_len: self.text_len + rhs.text_len,
+            unknown_elem_len: self.unknown_elem_len + rhs.unknown_elem_len,
         }
     }
 }
@@ -54,31 +127,105 @@ impl Sum for TextLength {
     }
 }
 
+impl Sum for Cache {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut utf8 = 0;
+        let mut utf16 = Some(0);
+        let mut unknown_elem_len = 0;
+        for item in iter {
+            utf8 += item.text_len.utf8;
+            unknown_elem_len += item.unknown_elem_len;
+            if let (Some(a), Some(b)) = (utf16, item.text_len.utf16) {
+                utf16 = Some(a + b);
+            } else {
+                utf16 = None;
+            }
+        }
+
+        Self {
+            text_len: TextLength { utf8, utf16 },
+            unknown_elem_len,
+        }
+    }
+}
+
 impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     const MAX_CHILDREN_NUM: usize = SIZE;
 
     type Int = usize;
 
-    type Cache = TextLength;
+    type CacheUpdate = Cache;
+    type Cache = Cache;
 
     type Arena = HeapMode;
 
-    fn update_cache_leaf(node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>) {
+    fn update_cache_leaf(
+        node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>,
+    ) -> Self::CacheUpdate {
+        let old = node.cache;
         node.cache = node
             .children()
             .iter()
-            .fold(TextLength::default(), |acc, cur| acc + cur.text_len())
+            .map(|x| Cache {
+                text_len: x.text_len(),
+                unknown_elem_len: if x.range.is_unknown() { 1 } else { 0 },
+            })
+            .sum();
+        node.cache - old
     }
 
-    fn update_cache_internal(node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>) {
-        node.cache = node
-            .children()
-            .iter()
-            .map(|x| match &**x {
-                rle::rle_tree::node::Node::Internal(x) => x.cache,
-                rle::rle_tree::node::Node::Leaf(x) => x.cache,
-            })
-            .sum()
+    fn update_cache_internal(
+        node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>,
+        hint: Option<Self::CacheUpdate>,
+    ) -> Self::CacheUpdate {
+        match hint {
+            Some(diff) => {
+                if node.cache.unknown_elem_len > 0 {
+                    node.cache = node.cache + diff;
+                    if node.cache.unknown_elem_len == 0 {
+                        node.cache.text_len.utf16 = Some(
+                            node.children()
+                                .iter()
+                                .map(|x| match &**x {
+                                    rle::rle_tree::node::Node::Internal(x) => {
+                                        x.cache.text_len.utf16.unwrap()
+                                    }
+                                    rle::rle_tree::node::Node::Leaf(x) => {
+                                        x.cache.text_len.utf16.unwrap()
+                                    }
+                                })
+                                .sum::<i32>(),
+                        );
+                    }
+                } else {
+                    node.cache = node.cache + diff;
+                }
+
+                debug_assert_eq!(
+                    node.children()
+                        .iter()
+                        .map(|x| match &**x {
+                            rle::rle_tree::node::Node::Internal(x) => x.cache,
+                            rle::rle_tree::node::Node::Leaf(x) => x.cache,
+                        })
+                        .sum::<Cache>(),
+                    node.cache
+                );
+                diff
+            }
+            None => {
+                let old = node.cache;
+                node.cache = node
+                    .children()
+                    .iter()
+                    .map(|x| match &**x {
+                        rle::rle_tree::node::Node::Internal(x) => x.cache,
+                        rle::rle_tree::node::Node::Leaf(x) => x.cache,
+                    })
+                    .sum();
+                node.cache - old
+            }
+        }
     }
 
     fn find_pos_internal(
@@ -126,11 +273,30 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     }
 
     fn len_leaf(node: &rle::rle_tree::node::LeafNode<'_, PoolString, Self>) -> Self::Int {
-        node.cache.utf8 as usize
+        node.cache.text_len.utf8 as usize
     }
 
     fn len_internal(node: &rle::rle_tree::node::InternalNode<'_, PoolString, Self>) -> Self::Int {
-        node.cache.utf8 as usize
+        node.cache.text_len.utf8 as usize
+    }
+
+    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {
+        a + b
+    }
+
+    fn cache_to_update(x: &Self::Cache) -> Self::CacheUpdate {
+        *x
+    }
+
+    fn value_to_update(x: &PoolString) -> Self::CacheUpdate {
+        Cache {
+            text_len: x.text_len(),
+            unknown_elem_len: if x.range.is_unknown() { 1 } else { 0 },
+        }
+    }
+
+    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {
+        -x
     }
 }
 
@@ -151,16 +317,24 @@ where
     for (i, child) in node.children().iter().enumerate() {
         last_cache = match child.deref() {
             Node::Internal(x) => {
-                if index <= f(x.cache) {
-                    return FindPosResult::new(i, index, Position::get_pos(index, f(x.cache)));
+                if index <= f(x.cache.text_len) {
+                    return FindPosResult::new(
+                        i,
+                        index,
+                        Position::get_pos(index, f(x.cache.text_len)),
+                    );
                 }
-                f(x.cache)
+                f(x.cache.text_len)
             }
             Node::Leaf(x) => {
-                if index <= f(x.cache) {
-                    return FindPosResult::new(i, index, Position::get_pos(index, f(x.cache)));
+                if index <= f(x.cache.text_len) {
+                    return FindPosResult::new(
+                        i,
+                        index,
+                        Position::get_pos(index, f(x.cache.text_len)),
+                    );
                 }
-                f(x.cache)
+                f(x.cache.text_len)
             }
         };
 
@@ -200,4 +374,131 @@ where
         f(node.children().last().unwrap()),
         Position::End,
     )
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::{Arc, Mutex};
+
+    use arbitrary::{Arbitrary, Unstructured};
+    use enum_as_inner::EnumAsInner;
+    use rle::RleTree;
+
+    use crate::container::text::{
+        string_pool::{PoolString, StringPool},
+        text_content::SliceRange,
+    };
+
+    use super::UnicodeTreeTrait;
+
+    #[derive(Default)]
+    struct TestRope {
+        pool: Arc<Mutex<StringPool>>,
+        rope: RleTree<PoolString, UnicodeTreeTrait<2>>,
+    }
+
+    impl TestRope {
+        fn insert(&mut self, pos: usize, s: &str) {
+            let s = StringPool::alloc_pool_string(&self.pool, s);
+            self.rope.insert(pos, s);
+        }
+
+        fn delete(&mut self, pos: usize, len: usize) {
+            self.rope.delete_range(Some(pos), Some(pos + len));
+        }
+
+        fn insert_unknown(&mut self, pos: usize, len: usize) {
+            self.rope.insert(
+                pos,
+                PoolString::from_slice(&self.pool, SliceRange::new_unknown(len as u32)),
+            );
+        }
+    }
+
+    #[derive(Debug, Clone, Arbitrary, EnumAsInner)]
+    enum Action {
+        Insert { pos: u16, value: u16 },
+        InsertUnknown { pos: u16, len: u8 },
+        Delete { pos: u16, len: u8 },
+    }
+
+    fn apply(actions: &mut [Action]) {
+        let mut test: TestRope = Default::default();
+        for action in actions.iter_mut() {
+            match action {
+                Action::Insert { pos, value } => {
+                    *pos = (*pos as usize % (test.rope.len() + 1)) as u16;
+                    test.insert(*pos as usize, &format!("{} ", value));
+                }
+                Action::InsertUnknown { pos, len } => {
+                    *pos = (*pos as usize % (test.rope.len() + 1)) as u16;
+                    test.insert_unknown(*pos as usize, *len as usize);
+                }
+                Action::Delete { pos, len } => {
+                    if test.rope.len() == 0 {
+                        continue;
+                    }
+
+                    *pos = (*pos as usize % test.rope.len()) as u16;
+                    let end = (*pos as usize + *len as usize).min(test.rope.len());
+                    *len = (end as u16 - *pos) as u8;
+                    test.delete(*pos as usize, *len as usize)
+                }
+            }
+        }
+    }
+
+    fn prop(u: &mut Unstructured<'_>) -> arbitrary::Result<()> {
+        let xs = u.arbitrary::<Vec<Action>>()?;
+        if let Err(e) = std::panic::catch_unwind(|| {
+            apply(&mut xs.clone());
+        }) {
+            dbg!(xs);
+            println!("{:?}", e);
+            panic!()
+        } else {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn arb_apply() {
+        arbtest::builder().budget_ms(10_000).run(prop)
+    }
+
+    #[test]
+    fn random_op() {
+        let mut test: TestRope = Default::default();
+        test.insert(0, "123456789");
+        test.delete(7, 1);
+        test.delete(5, 1);
+        test.delete(3, 1);
+        test.delete(1, 1);
+        for _ in 0..100 {
+            test.insert(0, "1");
+        }
+        while test.rope.len() > 0 {
+            test.delete(0, 1);
+        }
+    }
+
+    #[test]
+    fn random_op_2() {
+        let mut test: TestRope = Default::default();
+        test.insert(0, "123456789");
+        for i in 0..100 {
+            test.insert(i, "1234");
+        }
+        while test.rope.len() > 100 {
+            test.delete(5, 40);
+        }
+    }
+
+    #[test]
+    fn case_0() {
+        let mut test: TestRope = Default::default();
+        test.insert(0, "35624");
+        test.delete(0, 5);
+        test.insert(0, "35108");
+    }
 }

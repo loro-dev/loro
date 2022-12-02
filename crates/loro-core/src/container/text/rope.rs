@@ -7,7 +7,7 @@ use super::{
     unicode::{find_pos_internal, find_pos_leaf, TextLength, UnicodeTreeTrait},
 };
 
-type A = UnicodeTreeTrait<8>;
+type A = UnicodeTreeTrait<16>;
 type Inner = RleTree<PoolString, A>;
 
 #[derive(Debug, Default)]
@@ -85,8 +85,8 @@ impl Rope {
                             .iter()
                             .map(|x| {
                                 dst_cache(match &**x {
-                                    Node::Internal(x) => x.cache,
-                                    Node::Leaf(x) => x.cache,
+                                    Node::Internal(x) => x.cache.text_len,
+                                    Node::Leaf(x) => x.cache.text_len,
                                 })
                             })
                             .sum::<usize>();

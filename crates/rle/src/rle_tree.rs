@@ -376,7 +376,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         .entry(node.parent.unwrap())
                         .or_default();
                 } else {
-                    A::update_cache_internal(node);
+                    // TODO: Perf, give hint
+                    A::update_cache_internal(node, None);
                 }
             }
         }
