@@ -11,7 +11,7 @@ use rle::{
 use super::string_pool::PoolString;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct UnicodeTreeTrait<const SIZE: u32>;
+pub(super) struct UnicodeTreeTrait<const SIZE: usize>;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TextLength {
@@ -25,19 +25,37 @@ impl Add for TextLength {
     fn add(self, rhs: Self) -> Self::Output {
         TextLength {
             utf8: self.utf8 + rhs.utf8,
-            utf16: self.utf16.and_then(|x| rhs.utf16.map(|y| x + y)),
+            utf16: if let (Some(a), Some(b)) = (self.utf16, rhs.utf16) {
+                Some(a + b)
+            } else {
+                None
+            },
         }
     }
 }
 
 impl Sum for TextLength {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.reduce(|a, b| a + b).unwrap_or_default()
+        let mut u8 = 0;
+        let mut u16 = Some(0);
+        for item in iter {
+            u8 += item.utf8;
+            if let (Some(a), Some(b)) = (u16, item.utf16) {
+                u16 = Some(a + b);
+            } else {
+                u16 = None;
+            }
+        }
+
+        Self {
+            utf8: u8,
+            utf16: u16,
+        }
     }
 }
 
-impl<const SIZE: u32> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
-    const MAX_CHILDREN_NUM: usize = SIZE as usize;
+impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
+    const MAX_CHILDREN_NUM: usize = SIZE;
 
     type Int = usize;
 
@@ -118,7 +136,8 @@ impl<const SIZE: u32> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     }
 }
 
-pub(super) fn find_pos_internal<F, const S: u32>(
+#[inline(always)]
+pub(super) fn find_pos_internal<F, const S: usize>(
     node: &rle::rle_tree::node::InternalNode<'_, PoolString, UnicodeTreeTrait<S>>,
     mut index: usize,
     f: &F,
@@ -157,7 +176,8 @@ where
     FindPosResult::new(node.children().len() - 1, last_cache, Position::End)
 }
 
-pub(super) fn find_pos_leaf<F, const S: u32>(
+#[inline(always)]
+pub(super) fn find_pos_leaf<F, const S: usize>(
     node: &rle::rle_tree::node::LeafNode<'_, PoolString, UnicodeTreeTrait<S>>,
     mut index: usize,
     f: &F,
