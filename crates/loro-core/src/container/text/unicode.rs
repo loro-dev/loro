@@ -370,6 +370,7 @@ where
         index -= f(child);
     }
 
+    assert!(index == 0);
     FindPosResult::new(
         node.children().len() - 1,
         f(node.children().last().unwrap()),
@@ -431,10 +432,12 @@ pub mod test {
             match action {
                 Action::Insert { pos, value } => {
                     *pos = (*pos as usize % (test.rope.len() + 1)) as u16;
+                    debug_log::debug_log!("insert {} {}", *pos, *value);
                     test.insert(*pos as usize, &format!("{} ", value));
                 }
                 Action::InsertUnknown { pos, len } => {
                     *pos = (*pos as usize % (test.rope.len() + 1)) as u16;
+                    debug_log::debug_log!("unknown {} {}", *pos, *len);
                     test.insert_unknown(*pos as usize, *len as usize);
                 }
                 Action::Delete { pos, len } => {
@@ -445,6 +448,7 @@ pub mod test {
                     *pos = (*pos as usize % test.rope.len()) as u16;
                     let end = (*pos as usize + *len as usize).min(test.rope.len());
                     *len = (end as u16 - *pos) as u8;
+                    debug_log::debug_log!("del {} {}", *pos, *len);
                     test.delete(*pos as usize, *len as usize)
                 }
             }
@@ -489,6 +493,29 @@ pub mod test {
         } else {
             Ok(())
         }
+    }
+
+    #[test]
+    fn failed_1() {
+        apply(&mut [
+            InsertUnknown {
+                pos: 56355,
+                len: 126,
+            },
+            Insert { pos: 256, value: 0 },
+            Insert {
+                pos: 32256,
+                value: 9180,
+            },
+            Insert {
+                pos: 62475,
+                value: 32500,
+            },
+            Delete {
+                pos: 9089,
+                len: 220,
+            },
+        ])
     }
 
     #[test]

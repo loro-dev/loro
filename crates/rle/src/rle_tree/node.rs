@@ -335,6 +335,25 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             Node::Leaf(x) => &x.cache,
         }
     }
+
+    pub(crate) fn is_deleted(&self) -> bool {
+        match self {
+            Node::Internal(node) => {
+                let mut node = node;
+                while let Some(parent) = node.parent() {
+                    if self.get_self_index().is_none() {
+                        return true;
+                    }
+
+                    // SAFETY: parent is a valid pointer
+                    node = unsafe { parent.as_ref() };
+                }
+
+                false
+            }
+            Node::Leaf(x) => x.is_deleted(),
+        }
+    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {

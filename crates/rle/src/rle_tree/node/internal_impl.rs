@@ -89,16 +89,35 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         self.check_balance();
 
         self.check_children_parent_link();
+        let mut is_leaf_children = false;
         for child in self.children.iter_mut() {
             match child.deref_mut() {
                 Node::Internal(node) => {
                     node.check();
                 }
                 Node::Leaf(node) => {
+                    is_leaf_children = true;
                     node.check();
                 }
             }
         }
+
+        if is_leaf_children {
+            let mut last: Option<NonNull<LeafNode<'a, T, A>>> = None;
+            for child in self.children.iter() {
+                if let Some(ref mut last) = last {
+                    assert_eq!(child.as_leaf().unwrap().prev, Some(*last), "{:#?}", &self);
+                    // SAFETY: for test
+                    unsafe {
+                        assert_eq!(last.as_ref().next, Some(child.as_leaf().unwrap().into()))
+                    };
+                    *last = child.as_leaf().unwrap().into();
+                } else {
+                    last = Some(child.as_leaf().unwrap().into());
+                }
+            }
+        }
+
         A::check_cache_internal(self);
     }
 
@@ -584,7 +603,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
             Err((hint, new)) => {
                 update = hint;
-                match self._insert_with_split(child_index, new) {
+                match self._insert_with_split(child_index + 1, new) {
                     Ok(hint) => {
                         update = A::merge_cache_update(update, hint);
                     }
