@@ -37,7 +37,7 @@ use super::{
 pub struct TextContainer {
     id: ContainerID,
     state: Rope,
-    raw_str: Rc<RefCell<StringPool>>,
+    raw_str: Arc<RefCell<StringPool>>,
     tracker: Tracker,
 }
 
@@ -45,7 +45,7 @@ impl TextContainer {
     pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
-            raw_str: Rc::new(RefCell::new(StringPool::default())),
+            raw_str: Arc::new(RefCell::new(StringPool::default())),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
         }
@@ -67,10 +67,7 @@ impl TextContainer {
         self.state.insert(pos, slice);
         let op = Op::new(
             id,
-            InnerContent::List(InnerListOp::Insert {
-                slice: range,
-                pos,
-            }),
+            InnerContent::List(InnerListOp::Insert { slice: range, pos }),
             store.get_or_create_container_idx(&self.id),
         );
 
