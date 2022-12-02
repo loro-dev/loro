@@ -422,6 +422,8 @@ mod test {
         Delete { pos: u16, len: u8 },
     }
 
+    use Action::*;
+
     fn apply(actions: &mut [Action]) {
         let mut test: TestRope = Default::default();
         for action in actions.iter_mut() {
@@ -448,8 +450,35 @@ mod test {
         }
     }
 
+    fn normalize(actions: &mut [Action]) {
+        let mut text_len = 0;
+        for action in actions.iter_mut() {
+            match action {
+                Action::Insert { pos, value } => {
+                    *pos = (*pos as usize % (text_len + 1)) as u16;
+                    text_len += format!("{}", value).len();
+                }
+                Action::InsertUnknown { pos, len } => {
+                    *pos = (*pos as usize % (text_len + 1)) as u16;
+                    text_len += *len as usize;
+                }
+                Action::Delete { pos, len } => {
+                    if text_len == 0 {
+                        continue;
+                    }
+
+                    *pos = (*pos as usize % text_len) as u16;
+                    let end = (*pos as usize + *len as usize).min(text_len);
+                    *len = (end as u16 - *pos) as u8;
+                    text_len -= *len as usize;
+                }
+            }
+        }
+    }
+
     fn prop(u: &mut Unstructured<'_>) -> arbitrary::Result<()> {
-        let xs = u.arbitrary::<Vec<Action>>()?;
+        let mut xs = u.arbitrary::<Vec<Action>>()?;
+        normalize(&mut xs);
         if let Err(e) = std::panic::catch_unwind(|| {
             apply(&mut xs.clone());
         }) {
@@ -459,6 +488,24 @@ mod test {
         } else {
             Ok(())
         }
+    }
+
+    #[test]
+    fn failed_0() {
+        apply(&mut [
+            Insert {
+                pos: 0,
+                value: 12451,
+            },
+            Insert {
+                pos: 3,
+                value: 46337,
+            },
+            Delete { pos: 6, len: 4 },
+            InsertUnknown { pos: 0, len: 59 },
+            InsertUnknown { pos: 4, len: 225 },
+            InsertUnknown { pos: 73, len: 193 },
+        ])
     }
 
     #[test]
