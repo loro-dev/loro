@@ -192,10 +192,8 @@ pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
                 value,
                 is_del,
             } = op;
-            let container = store
-                .reg
-                .get_by_idx(ContainerIdx::new(container_idx))
-                .unwrap();
+            let container_idx = ContainerIdx::from_u32(container_idx);
+            let container = store.reg.get_by_idx(container_idx).unwrap();
             let content = match container.lock().unwrap().type_() {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
@@ -222,7 +220,7 @@ pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
             };
             let op = Op {
                 counter: op_counter,
-                container: ContainerIdx::new(container_idx),
+                container: container_idx,
                 content,
             };
 

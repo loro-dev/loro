@@ -32,7 +32,7 @@ fn main() {
         }
     });
     let start = Instant::now();
-    let buf = loro.encode_snapshot(&VersionVector::new());
+    let buf = loro.encode_snapshot(&VersionVector::new(), false);
 
     println!(
         "{} bytes, overhead {} bytes. used {}ms",
@@ -48,7 +48,7 @@ fn main() {
     loro2.decode_snapshot(&buf);
 
     println!("decode used {}ms", start.elapsed().as_millis());
-    let buf2 = loro2.encode_snapshot(&VersionVector::new());
+    let buf2 = loro2.encode_snapshot(&VersionVector::new(), false);
     loro.decode_snapshot(&buf2);
     // assert_eq!(buf, buf2);
     let json1 = loro.to_json();

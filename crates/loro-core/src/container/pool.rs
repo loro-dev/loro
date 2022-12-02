@@ -1,4 +1,4 @@
-use std::ops::{Index, Range};
+use std::ops::{Deref, Index, Range};
 
 use crate::value::LoroValue;
 
@@ -35,6 +35,14 @@ impl Pool {
 impl From<Vec<LoroValue>> for Pool {
     fn from(p: Vec<LoroValue>) -> Self {
         Pool(p)
+    }
+}
+
+impl Deref for Pool {
+    type Target = Vec<LoroValue>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

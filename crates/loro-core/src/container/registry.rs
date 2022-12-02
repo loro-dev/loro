@@ -34,6 +34,10 @@ impl ContainerIdx {
     pub(crate) fn to_u32(self) -> u32 {
         self.0
     }
+
+    pub(crate) fn from_u32(idx: u32) -> Self {
+        Self(idx)
+    }
 }
 
 // TODO: replace this with a fat pointer?

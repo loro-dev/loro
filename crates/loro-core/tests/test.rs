@@ -211,23 +211,23 @@ fn test_encode_state() {
     let mut list2 = store.get_list(id);
     list2.insert(&store, 0, "some hahaha").unwrap();
     let start = Instant::now();
-    let buf = store.encode_snapshot(&VersionVector::new());
+    let buf = store.export_store(true);
     println!(
         "size: {:?} bytes time: {} ms",
         buf.len(),
         start.elapsed().as_millis()
     );
     let start = Instant::now();
-    let mut store2 = LoroCore::new(Default::default(), Some(2));
+    let store2 = LoroCore::import_store(&buf, Default::default(), Some(2));
 
-    store2
-        .get_text("text")
-        .insert(&store2, 0, "some text")
-        .unwrap();
+    // store2
+    //     .get_text("text")
+    //     .insert(&store2, 0, "some text")
+    //     .unwrap();
 
-    store2.decode_snapshot(&buf);
+    // store2.decode_snapshot(&buf);
     println!("############\n\n");
-    let buf2 = store2.encode_snapshot(&VersionVector::new());
+    let buf2 = store2.encode_snapshot(&VersionVector::new(), true);
     store.decode_snapshot(&buf2);
     println!("decode time: {} ms", start.elapsed().as_millis());
     println!("store: {}", store.to_json().to_json_pretty());
@@ -248,7 +248,7 @@ fn test_encode_state_text() {
     text.delete(&store, 2, 10).unwrap();
     text.delete(&store, 4, 12).unwrap();
     let start = Instant::now();
-    let buf = store.encode_snapshot(&VersionVector::new());
+    let buf = store.encode_snapshot(&VersionVector::new(), false);
     println!(
         "size: {:?} bytes time: {} ms",
         buf.len(),
@@ -259,7 +259,7 @@ fn test_encode_state_text() {
     store2.decode_snapshot(&buf);
     println!("decode time: {} ms", start.elapsed().as_millis());
     assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_snapshot(&VersionVector::new());
+    let buf2 = store2.encode_snapshot(&VersionVector::new(), false);
     assert_eq!(buf, buf2);
 }
 
@@ -272,7 +272,7 @@ fn test_encode_state_map() {
     map.insert(&store, "cc", 12).unwrap();
     map.delete(&store, "cc").unwrap();
     let start = Instant::now();
-    let buf = store.encode_snapshot(&VersionVector::new());
+    let buf = store.encode_snapshot(&VersionVector::new(), false);
     println!(
         "size: {:?} bytes time: {} ms",
         buf.len(),
@@ -283,7 +283,7 @@ fn test_encode_state_map() {
     println!("store2: {}", store.to_json().to_json_pretty());
     println!("store2: {}", store2.to_json().to_json_pretty());
     assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_snapshot(&VersionVector::new());
+    let buf2 = store2.encode_snapshot(&VersionVector::new(), false);
     assert_eq!(buf, buf2);
 }
 

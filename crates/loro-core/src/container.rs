@@ -23,7 +23,6 @@ pub mod registry;
 pub mod list;
 pub mod map;
 mod pool;
-pub(crate) use pool::Pool;
 pub mod text;
 
 #[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]

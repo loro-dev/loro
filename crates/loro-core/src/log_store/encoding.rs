@@ -1,11 +1,7 @@
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use serde_columnar::{
-    columnar, compress, compress, decompress, decompress, from_bytes, to_vec, CompressConfig,
-    CompressConfig,
-};
-use smallvec::smallvec;
+use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 use tracing::instrument;
 
 use crate::{
@@ -18,14 +14,11 @@ use crate::{
     },
     dag::Dag,
     id::{ClientID, Counter, ID},
-    op::{RemoteContent, RemoteContent, RemoteOp, RemoteOp},
-    smstring::SmString,
+    op::{RemoteContent, RemoteOp},
     smstring::SmString,
     span::HasIdSpan,
-    ContainerType, InternalString, LogStore, LoroValue, LoroValue, VersionVector,
+    ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
-
-use super::ImportContext;
 
 mod container;
 mod snapshot;
@@ -318,26 +311,49 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 }
 
 impl LogStore {
-    pub fn encode_snapshot(&self, vv: &VersionVector) -> Vec<u8> {
+    pub fn encode_snapshot(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
         let encoded = encode_changes(self, vv);
-        // to_vec(&encoded).unwrap()
-        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        let mut ans = vec![compress_cfg as u8];
+        let buf = if compress_cfg {
+            // TODO: columnar compress use read/write mode
+            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        } else {
+            to_vec(&encoded).unwrap()
+        };
+        ans.extend(buf);
+        ans
     }
 
     pub fn decode_snapshot(&mut self, input: &[u8]) {
-        let decompress_bytes = decompress(input).unwrap();
-        let encoded = from_bytes(&decompress_bytes).unwrap();
+        let compress_cfg = *input.first().unwrap() > 0;
+        let encoded = if compress_cfg {
+            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
+        } else {
+            from_bytes(&input[1..]).unwrap()
+        };
         decode_changes(self, encoded);
     }
 
-    pub fn export_store(&self) -> Vec<u8> {
+    pub fn export_store(&self, compress_cfg: bool) -> Vec<u8> {
         let encoded = snapshot::export_snapshot(self);
-        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        let mut ans = vec![compress_cfg as u8];
+        let buf = if compress_cfg {
+            // TODO: columnar compress use read/write mode
+            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        } else {
+            to_vec(&encoded).unwrap()
+        };
+        ans.extend(buf);
+        ans
     }
 
     pub fn import_store(&mut self, input: &[u8]) {
-        let decompress_bytes = decompress(input).unwrap();
-        let encoded = from_bytes(&decompress_bytes).unwrap();
+        let compress_cfg = *input.first().unwrap() > 0;
+        let encoded = if compress_cfg {
+            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
+        } else {
+            from_bytes(&input[1..]).unwrap()
+        };
         snapshot::import_snapshot(self, encoded);
     }
 }
