@@ -1,5 +1,5 @@
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
-use serde_columnar::{compress, decompress, from_bytes, to_vec, CompressConfig};
+use serde_columnar::{from_bytes, to_vec};
 
 use crate::{
     container::{
@@ -7,10 +7,10 @@ use crate::{
         map::{MapContainer, ValueSlot},
         registry::ContainerInstance,
         text::TextContainer,
-        Container, Pool,
+        Container,
     },
     version::TotalOrderStamp,
-    LoroValue, VersionVector,
+    LoroValue,
 };
 
 pub fn split_u64_2_u32(a: u64) -> (u32, u32) {

@@ -38,17 +38,42 @@ mod run {
             }
         });
         let mut b = c.benchmark_group("encode");
-        b.bench_function("B4_encode", |b| {
+        b.bench_function("B4_encode_compress", |b| {
             b.iter(|| {
-                let _ = loro.encode_snapshot(&VersionVector::new());
+                let _ = loro.encode_snapshot(&VersionVector::new(), true);
             })
         });
-        b.bench_function("B4_decode", |b| {
-            let buf = loro.encode_snapshot(&VersionVector::new());
+        b.bench_function("B4_decode_compress", |b| {
+            let buf = loro.encode_snapshot(&VersionVector::new(), true);
             let mut store2 = LoroCore::default();
             // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
             b.iter(|| {
                 store2.decode_snapshot(&buf);
+            })
+        });
+        b.bench_function("B4_encode_no_compress", |b| {
+            b.iter(|| {
+                let _ = loro.encode_snapshot(&VersionVector::new(), false);
+            })
+        });
+        b.bench_function("B4_decode_no_compress", |b| {
+            let buf = loro.encode_snapshot(&VersionVector::new(), false);
+            let mut store2 = LoroCore::default();
+            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
+            b.iter(|| {
+                store2.decode_snapshot(&buf);
+            })
+        });
+        b.bench_function("B4_export_no_compress", |b| {
+            b.iter(|| {
+                let _ = loro.export_store(false);
+            })
+        });
+        b.bench_function("B4_import_no_compress", |b| {
+            let buf = loro.export_store(false);
+            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
+            b.iter(|| {
+                let _ = LoroCore::import_store(&buf, Default::default(), None);
             })
         });
     }

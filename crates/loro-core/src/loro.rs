@@ -86,18 +86,18 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
-    pub fn encode_snapshot(&self, vv: &VersionVector) -> Vec<u8> {
+    pub fn encode_snapshot(&self, vv: &VersionVector, compress: bool) -> Vec<u8> {
         let store = self.log_store.read().unwrap();
-        store.encode_snapshot(vv)
+        store.encode_snapshot(vv, compress)
     }
 
     pub fn decode_snapshot(&mut self, input: &[u8]) {
         self.log_store().try_write().unwrap().decode_snapshot(input);
     }
 
-    pub fn export_store(&self) -> Vec<u8> {
+    pub fn export_store(&self, compress: bool) -> Vec<u8> {
         let store = self.log_store.read().unwrap();
-        store.export_store()
+        store.export_store(compress)
     }
 
     pub fn import_store(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
