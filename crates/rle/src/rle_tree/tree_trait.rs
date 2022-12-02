@@ -80,8 +80,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug + FromPrimitive;
-    type InternalCache: Default + Debug + Eq + Clone;
-    type LeafCache: Default + Debug + Eq + Clone;
+    type Cache: Default + Debug + Eq + Clone;
     /// The allocation method used for [crate::RleTree].
     /// There are two modes provided:
     ///
@@ -139,9 +138,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
     type Int = usize;
 
-    type InternalCache = usize;
-
-    type LeafCache = usize;
+    type Cache = usize;
     type Arena = TreeArena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {
@@ -295,8 +292,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     type Int = T::Int;
 
-    type InternalCache = Cache<T::Int>;
-    type LeafCache = Cache<T::Int>;
+    type Cache = Cache<T::Int>;
     type Arena = TreeArena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {

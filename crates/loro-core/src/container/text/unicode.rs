@@ -59,9 +59,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     type Int = usize;
 
-    type InternalCache = TextLength;
-
-    type LeafCache = TextLength;
+    type Cache = TextLength;
 
     type Arena = HeapMode;
 
