@@ -1,18 +1,20 @@
 #![allow(unused)]
+use std::ptr::NonNull;
+
 use crdt_list::{
-    crdt::{ListCrdt, OpSet},
+    crdt::{GetOp, ListCrdt, OpSet},
     yata::Yata,
 };
 use rle::{
     range_map::{RangeMap, WithStartEnd},
-    rle_tree::{iter::IterMut, SafeCursorMut},
+    rle_tree::{iter::IterMut, node::LeafNode, SafeCursorMut},
     HasLength,
 };
 
 use crate::id::{Counter, ID};
 
 use super::{
-    cursor_map::make_notify,
+    cursor_map::{make_notify, CursorMap, Marker},
     y_span::{YSpan, YSpanTreeTrait},
     Tracker,
 };
@@ -44,6 +46,41 @@ impl OpSet<YSpan, ID> for OpSpanSet {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Context {
+    records: Vec<(ID, Marker)>,
+}
+
+impl Context {
+    fn as_notify(
+        &mut self,
+    ) -> impl for<'a> FnMut(&YSpan, *mut LeafNode<'a, YSpan, YSpanTreeTrait>) + '_ {
+        |span, leaf| {
+            self.records.push((
+                span.id,
+                Marker::Insert {
+                    // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
+                    ptr: unsafe { NonNull::new_unchecked(std::mem::transmute(leaf)) },
+                    len: span.atom_len(),
+                },
+            ));
+        }
+    }
+}
+
+impl Tracker {
+    pub fn with_context<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut Self, &mut Context),
+    {
+        let mut ctx = Default::default();
+        f(self, &mut ctx);
+        for (id, marker) in ctx.records {
+            self.id_to_cursor.set_small_range(id.into(), marker);
+        }
+    }
+}
+
 pub struct YataImpl;
 
 impl ListCrdt for YataImpl {
@@ -68,8 +105,8 @@ impl ListCrdt for YataImpl {
             .and_then(|x| {
                 container
                     .id_to_cursor
-                    .get(x.into())
-                    .and_then(|m| m.as_cursor(x))
+                    .get_mut(x.into())
+                    .and_then(|m| m.as_cursor_mut(x))
             })
             .and_then(|x| x.shift(1));
         let to = to.and_then(|x| {
@@ -99,6 +136,7 @@ impl ListCrdt for YataImpl {
 }
 
 impl Yata for YataImpl {
+    type Context = Context;
     fn left_origin(op: &Self::OpUnit) -> Option<Self::OpId> {
         op.origin_left
     }
@@ -107,15 +145,19 @@ impl Yata for YataImpl {
         op.origin_right
     }
 
-    fn insert_after(container: &mut Self::Container, anchor: Self::Cursor<'_>, op: Self::OpUnit) {
-        let mut notify = make_notify(&mut container.id_to_cursor);
-        anchor.insert_after_notify(op, &mut notify)
+    fn insert_after(anchor: Self::Cursor<'_>, op: Self::OpUnit, ctx: &mut Context) {
+        anchor.insert_after_notify(op, &mut ctx.as_notify())
     }
 
-    fn insert_after_id(container: &mut Self::Container, id: Option<Self::OpId>, op: Self::OpUnit) {
+    fn insert_after_id(
+        container: &mut Self::Container,
+        id: Option<Self::OpId>,
+        op: Self::OpUnit,
+        ctx: &mut Context,
+    ) {
         if let Some(id) = id {
-            let left = container.id_to_cursor.get(id.into()).unwrap();
-            let left = left.as_cursor(id).unwrap();
+            let left = container.id_to_cursor.get_mut(id.into()).unwrap();
+            let left = left.as_cursor_mut(id).unwrap();
             let mut notify = make_notify(&mut container.id_to_cursor);
             // SAFETY: we own the tree here
             unsafe {
@@ -229,8 +271,9 @@ pub mod fuzz {
             container
                 .current_vv
                 .set_end(op.id.inc(op.atom_len() as i32));
-            // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-            unsafe { crdt_list::yata::integrate::<Self>(container, op) };
+            container.with_context(|this, context| {
+                crdt_list::yata::integrate::<Self>(this, op, context);
+            });
         }
 
         #[inline]

@@ -147,13 +147,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         })
     }
 
-    pub(crate) fn get_a_sibling(&self) -> Option<(&Self, Either)> {
+    pub(crate) fn get_a_sibling(&mut self) -> Option<(&mut Self, Either)> {
         let index = self.get_self_index()?;
-        let parent = self.parent()?;
+        let parent = self.parent_mut()?;
         if index > 0 {
-            Some((&parent.children[index - 1], Either::Left))
+            Some((&mut parent.children[index - 1], Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((&parent.children[index + 1], Either::Right))
+            Some((&mut parent.children[index + 1], Either::Right))
         } else {
             None
         }
@@ -307,25 +307,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         // TODO: perf
         self.update_cache(None);
         sibling.update_cache(None);
-    }
-
-    pub(crate) fn remove(&mut self) {
-        if let Some(leaf) = self.as_leaf_mut() {
-            let next = leaf.next;
-            let prev = leaf.prev;
-            if let Some(mut next) = next {
-                // SAFETY: it is safe here
-                unsafe { next.as_mut() }.prev = prev;
-            }
-            if let Some(mut prev) = prev {
-                // SAFETY: it is safe here
-                unsafe { prev.as_mut() }.next = next;
-            }
-        }
-
-        let index = self.get_self_index().unwrap();
-        let parent = self.parent_mut().unwrap();
-        for _ in parent.children.drain(index..index + 1) {}
     }
 
     pub(crate) fn update_cache(&mut self, update: Option<A::CacheUpdate>) -> A::CacheUpdate {
