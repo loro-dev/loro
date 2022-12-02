@@ -659,7 +659,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut old_zipper = SmallVec::new();
         match self._delete(start, end, &mut old_zipper, 1, notify) {
             Ok(_) => {}
-            Err((hint, mut new)) => {
+            Err((_, new)) => {
                 self._create_level(new);
             }
         };

@@ -32,6 +32,10 @@ pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
+        assert!(
+            A::MAX_CHILDREN_NUM > 3,
+            "MAX_CHILDREN_NUM must be greater than 3"
+        );
         RleTreeBuilder {
             bump: Default::default(),
             node_builder: |bump: &A::Arena| {
