@@ -14,6 +14,7 @@ ouroboros = "0.15.2"
 arref = "0.1.0"
 crdt-list = { version = "0.4.0" }
 fxhash = "0.2.1"
+heapless = "0.7.16"
 
 [dev-dependencies]
 color-backtrace = { version = "0.5" }

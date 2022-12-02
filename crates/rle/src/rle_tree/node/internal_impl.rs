@@ -656,8 +656,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         debug_assert!(self.is_root());
-        let mut zipper = SmallVec::new();
-        match self._delete(start, end, &mut zipper, 1, notify) {
+        let mut old_zipper = SmallVec::new();
+        match self._delete(start, end, &mut old_zipper, 1, notify) {
             Ok(_) => {}
             Err((hint, mut new)) => {
                 self._create_level(new);
@@ -670,25 +670,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut visited: SmallSet<NonNull<_>, 12> = SmallSet::new();
         let mut should_skip: SmallSet<NonNull<_>, 12> = SmallSet::new();
         let mut depth_to_node: SmallVec<[SmallVec<[NonNull<_>; 2]>; 10]> = smallvec::smallvec![];
-        let mut zipper: BinaryHeap<(isize, NonNull<Node<'a, T, A>>)> = zipper
-            .into_iter()
-            .filter_map(|(i, ptr)| {
-                if removed.contains(&ptr) {
-                    return None;
-                }
+        use heapless::binary_heap::{BinaryHeap, Max};
+        let mut zipper: BinaryHeap<(isize, NonNull<Node<'a, T, A>>), Max, 24> = Default::default();
+        for v in old_zipper.into_iter().filter_map(|(i, ptr)| {
+            if removed.contains(&ptr) {
+                return None;
+            }
 
-                if visited.contains(&ptr) {
-                    None
-                } else {
-                    while depth_to_node.len() <= i {
-                        depth_to_node.push(SmallVec::new());
-                    }
-                    depth_to_node[i].push(ptr);
-                    visited.insert(ptr);
-                    Some((-(i as isize), ptr))
+            if visited.contains(&ptr) {
+                None
+            } else {
+                while depth_to_node.len() <= i {
+                    depth_to_node.push(SmallVec::new());
                 }
-            })
-            .collect();
+                depth_to_node[i].push(ptr);
+                visited.insert(ptr);
+                Some((-(i as isize), ptr))
+            }
+        }) {
+            zipper.push(v).unwrap();
+        }
         // visit in depth order, top to down (depth 0..inf)
         while let Some((reverse_depth, mut node_ptr)) = zipper.pop() {
             if should_skip.contains(&node_ptr) {

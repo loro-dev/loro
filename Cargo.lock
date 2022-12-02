@@ -1390,6 +1390,7 @@ dependencies = [
  "ctor",
  "enum-as-inner",
  "fxhash",
+ "heapless",
  "num",
  "ouroboros",
  "proptest",
