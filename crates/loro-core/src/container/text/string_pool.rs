@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, ops::Range, rc::Rc, str::Chars};
+use std::{cell::RefCell, fmt, ops::Range, str::Chars, sync::Arc};
 
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
@@ -15,7 +15,7 @@ pub struct StringPool {
 
 #[derive(Debug, Clone)]
 pub struct PoolString {
-    pub(super) pool: Rc<RefCell<StringPool>>,
+    pub(super) pool: Arc<RefCell<StringPool>>,
     pub(super) range: SliceRange,
     pub(super) utf16_length: Option<u32>,
 }
@@ -81,11 +81,11 @@ impl StringPool {
         std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap()
     }
 
-    pub fn alloc_pool_string(this: &Rc<RefCell<Self>>, s: &str) -> PoolString {
+    pub fn alloc_pool_string(this: &Arc<RefCell<Self>>, s: &str) -> PoolString {
         let mut pool = this.borrow_mut();
         let range = SliceRange(pool.alloc(s));
         PoolString {
-            pool: Rc::clone(this),
+            pool: Arc::clone(this),
             range,
             utf16_length: Some(encode_utf16(s).count() as u32),
         }
@@ -190,7 +190,7 @@ impl Sliceable for PoolString {
         let range = self.range.slice(from, to);
         if range.is_unknown() {
             Self {
-                pool: Rc::clone(&self.pool),
+                pool: Arc::clone(&self.pool),
                 range,
                 utf16_length: None,
             }
@@ -199,7 +199,7 @@ impl Sliceable for PoolString {
             let str = borrow.slice(&range.0);
             let utf16_length = encode_utf16(str).count();
             Self {
-                pool: Rc::clone(&self.pool),
+                pool: Arc::clone(&self.pool),
                 range,
                 utf16_length: Some(utf16_length as u32),
             }
@@ -208,9 +208,9 @@ impl Sliceable for PoolString {
 }
 
 impl PoolString {
-    pub fn from_slice(pool: &Rc<RefCell<StringPool>>, slice: SliceRange) -> Self {
+    pub fn from_slice(pool: &Arc<RefCell<StringPool>>, slice: SliceRange) -> Self {
         Self {
-            pool: Rc::clone(pool),
+            pool: Arc::clone(pool),
             utf16_length: if slice.is_unknown() {
                 None
             } else {
