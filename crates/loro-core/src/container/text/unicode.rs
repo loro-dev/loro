@@ -572,7 +572,7 @@ pub mod test {
 
     #[test]
     fn arb_apply() {
-        arbtest::builder().budget_ms(10_000).run(prop)
+        arbtest::builder().budget_ms(200).run(prop)
     }
 
     #[test]

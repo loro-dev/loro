@@ -903,6 +903,7 @@ dependencies = [
  "crdt-list 0.4.0",
  "enum-as-inner",
  "fxhash",
+ "heapless",
  "num",
  "ouroboros",
  "smallvec",
