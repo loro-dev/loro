@@ -1,4 +1,9 @@
-use std::{cell::RefCell, fmt, ops::Range, str::Chars, sync::Arc};
+use std::{
+    fmt,
+    ops::Range,
+    str::Chars,
+    sync::{Arc, Mutex, Weak},
+};
 
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
@@ -15,7 +20,7 @@ pub struct StringPool {
 
 #[derive(Debug, Clone)]
 pub struct PoolString {
-    pub(super) pool: Arc<RefCell<StringPool>>,
+    pub(super) pool: Weak<Mutex<StringPool>>,
     pub(super) range: SliceRange,
     pub(super) utf16_length: Option<u32>,
 }
@@ -78,14 +83,17 @@ impl StringPool {
     #[inline(always)]
     #[allow(unused)]
     pub fn slice(&self, range: &Range<u32>) -> &str {
-        std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap()
+        // SAFETY: we are sure the range is valid utf8
+        unsafe {
+            std::str::from_utf8_unchecked(&self.data[range.start as usize..range.end as usize])
+        }
     }
 
-    pub fn alloc_pool_string(this: &Arc<RefCell<Self>>, s: &str) -> PoolString {
-        let mut pool = this.borrow_mut();
+    pub fn alloc_pool_string(this: &Arc<Mutex<Self>>, s: &str) -> PoolString {
+        let mut pool = this.lock().unwrap();
         let range = SliceRange(pool.alloc(s));
         PoolString {
-            pool: Arc::clone(this),
+            pool: Arc::downgrade(this),
             range,
             utf16_length: Some(encode_utf16(s).count() as u32),
         }
@@ -190,16 +198,17 @@ impl Sliceable for PoolString {
         let range = self.range.slice(from, to);
         if range.is_unknown() {
             Self {
-                pool: Arc::clone(&self.pool),
+                pool: self.pool.clone(),
                 range,
                 utf16_length: None,
             }
         } else {
-            let borrow = self.pool.borrow();
+            let mutex = self.pool.upgrade().unwrap();
+            let borrow = mutex.lock().unwrap();
             let str = borrow.slice(&range.0);
             let utf16_length = encode_utf16(str).count();
             Self {
-                pool: Arc::clone(&self.pool),
+                pool: Weak::clone(&self.pool),
                 range,
                 utf16_length: Some(utf16_length as u32),
             }
@@ -208,13 +217,13 @@ impl Sliceable for PoolString {
 }
 
 impl PoolString {
-    pub fn from_slice(pool: &Arc<RefCell<StringPool>>, slice: SliceRange) -> Self {
+    pub fn from_slice(pool: &Arc<Mutex<StringPool>>, slice: SliceRange) -> Self {
         Self {
-            pool: Arc::clone(pool),
+            pool: Arc::downgrade(pool),
             utf16_length: if slice.is_unknown() {
                 None
             } else {
-                let borrow = pool.borrow();
+                let borrow = pool.lock().unwrap();
                 let str = borrow.slice(&slice.0);
                 let utf16_length = encode_utf16(str).count();
                 Some(utf16_length as u32)
@@ -231,13 +240,15 @@ impl PoolString {
     }
 
     pub fn utf16_index_to_utf8(&self, end: usize) -> usize {
-        let borrow = self.pool.borrow();
+        let mutex = self.pool.upgrade().unwrap();
+        let borrow = mutex.lock().unwrap();
         let str = borrow.slice(&self.range.0);
         utf16_index_to_utf8(str, end)
     }
 
     pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
-        let borrow = self.pool.borrow();
+        let mutex = self.pool.upgrade().unwrap();
+        let borrow = mutex.lock().unwrap();
         let str = borrow.slice(&self.range.0);
         encode_utf16(&str[..end]).count()
     }

@@ -37,7 +37,7 @@ use super::{
 pub struct TextContainer {
     id: ContainerID,
     state: Rope,
-    raw_str: Arc<RefCell<StringPool>>,
+    raw_str: Arc<Mutex<StringPool>>,
     tracker: Tracker,
 }
 
@@ -45,7 +45,7 @@ impl TextContainer {
     pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
-            raw_str: Arc::new(RefCell::new(StringPool::default())),
+            raw_str: Arc::new(Mutex::new(StringPool::default())),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
         }
@@ -158,8 +158,7 @@ impl TextContainer {
 
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
-        use std::borrow::Borrow;
-        let pool = RefCell::borrow(&self.raw_str);
+        let pool = self.raw_str.lock().unwrap();
         println!(
             "Text Container {:?}, Raw String size={}, Tree=>\n",
             self.id,
@@ -191,7 +190,7 @@ impl Container for TextContainer {
                 panic!("Unknown range when getting value");
             }
 
-            ans_str.push_str(&self.raw_str.borrow().get_string(&content.range.0));
+            ans_str.push_str(&self.raw_str.lock().unwrap().get_string(&content.range.0));
         }
 
         LoroValue::String(ans_str.into_boxed_str())
@@ -201,11 +200,13 @@ impl Container for TextContainer {
         if gc
             && self
                 .raw_str
-                .borrow()
+                .lock()
+                .unwrap()
                 .should_update_aliveness(self.text_len())
         {
             self.raw_str
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .update_aliveness(self.state.iter().map(|x| x.as_ref().range.0.clone()))
         }
 
@@ -221,11 +222,11 @@ impl Container for TextContainer {
                         });
                         ans.push(v);
                     } else {
-                        let s = self.raw_str.borrow().get_string(&r.0);
+                        let s = self.raw_str.lock().unwrap().get_string(&r.0);
                         if gc {
                             let mut start = 0;
                             let mut pos_start = pos;
-                            for span in self.raw_str.borrow().get_aliveness(&r.0) {
+                            for span in self.raw_str.lock().unwrap().get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
                                         ans.push(RemoteContent::List(ListOp::Insert {
@@ -268,7 +269,7 @@ impl Container for TextContainer {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr(s) => {
-                        let range = self.raw_str.borrow_mut().alloc(&s);
+                        let range = self.raw_str.lock().unwrap().alloc(&s);
                         let slice: SliceRange = range.into();
                         InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
@@ -300,7 +301,7 @@ impl Container for TextContainer {
                         let s = if slice.is_unknown() {
                             " ".repeat(slice.atom_len())
                         } else {
-                            self.raw_str.borrow().slice(&slice.0).to_owned()
+                            self.raw_str.lock().unwrap().slice(&slice.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(*pos);
@@ -385,7 +386,7 @@ impl Container for TextContainer {
                         let s = if content.is_unknown() {
                             " ".repeat(content.atom_len())
                         } else {
-                            self.raw_str.borrow().slice(&content.0).to_owned()
+                            self.raw_str.lock().unwrap().slice(&content.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(pos);
