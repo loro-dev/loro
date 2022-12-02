@@ -512,7 +512,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             Ok(update) => Ok(A::update_cache_internal(self, Some(update))),
             Err((update, mut new)) => {
                 A::update_cache_internal(self, Some(update));
-                let b = A::update_cache_internal(new.as_internal_mut().unwrap(), None);
+                A::update_cache_internal(new.as_internal_mut().unwrap(), None);
                 if self.is_root() {
                     self._create_level(new);
                     Ok(Default::default())

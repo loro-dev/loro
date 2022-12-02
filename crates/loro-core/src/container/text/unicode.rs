@@ -168,9 +168,10 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
             .iter()
             .map(|x| Cache {
                 text_len: x.text_len(),
-                unknown_elem_len: if x.range.is_unknown() { 1 } else { 0 },
+                unknown_elem_len: x.range.is_unknown() as isize,
             })
             .sum();
+
         node.cache - old
     }
 
@@ -209,7 +210,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
                             rle::rle_tree::node::Node::Leaf(x) => x.cache,
                         })
                         .sum::<Cache>(),
-                    node.cache
+                    node.cache,
                 );
                 diff
             }
@@ -291,7 +292,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     fn value_to_update(x: &PoolString) -> Self::CacheUpdate {
         Cache {
             text_len: x.text_len(),
-            unknown_elem_len: if x.range.is_unknown() { 1 } else { 0 },
+            unknown_elem_len: x.range.is_unknown() as isize,
         }
     }
 
@@ -376,8 +377,8 @@ where
     )
 }
 
-#[cfg(test)]
-mod test {
+#[cfg(any(test, feature = "test_utils"))]
+pub mod test {
     use std::sync::{Arc, Mutex};
 
     use arbitrary::{Arbitrary, Unstructured};
@@ -392,9 +393,9 @@ mod test {
     use super::UnicodeTreeTrait;
 
     #[derive(Default)]
-    struct TestRope {
+    pub struct TestRope {
         pool: Arc<Mutex<StringPool>>,
-        rope: RleTree<PoolString, UnicodeTreeTrait<2>>,
+        rope: RleTree<PoolString, UnicodeTreeTrait<4>>,
     }
 
     impl TestRope {
@@ -416,7 +417,7 @@ mod test {
     }
 
     #[derive(Debug, Clone, Arbitrary, EnumAsInner)]
-    enum Action {
+    pub enum Action {
         Insert { pos: u16, value: u16 },
         InsertUnknown { pos: u16, len: u8 },
         Delete { pos: u16, len: u8 },
@@ -424,7 +425,7 @@ mod test {
 
     use Action::*;
 
-    fn apply(actions: &mut [Action]) {
+    pub fn apply(actions: &mut [Action]) {
         let mut test: TestRope = Default::default();
         for action in actions.iter_mut() {
             match action {
