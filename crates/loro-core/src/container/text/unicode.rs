@@ -310,39 +310,18 @@ where
         return FindPosResult::new_not_found(0, 0, Position::Before);
     }
 
-    let mut last_cache = 0;
+    let mut last_len = 0;
     for (i, child) in node.children().iter().enumerate() {
-        last_cache = match child.deref() {
-            Node::Internal(x) => {
-                if index <= f(x.cache.text_len) {
-                    return FindPosResult::new(
-                        i,
-                        index,
-                        Position::get_pos(index, f(x.cache.text_len)),
-                    );
-                }
-                f(x.cache.text_len)
-            }
-            Node::Leaf(x) => {
-                if index <= f(x.cache.text_len) {
-                    return FindPosResult::new(
-                        i,
-                        index,
-                        Position::get_pos(index, f(x.cache.text_len)),
-                    );
-                }
-                f(x.cache.text_len)
-            }
-        };
+        last_len = f(child.cache().text_len);
+        if index <= last_len {
+            return FindPosResult::new(i, index, Position::get_pos(index, last_len));
+        }
 
-        index -= last_cache;
+        index -= last_len;
     }
 
-    if index > 0 {
-        dbg!(&node);
-        assert_eq!(index, 0);
-    }
-    FindPosResult::new(node.children().len() - 1, last_cache, Position::End)
+    assert_eq!(index, 0);
+    FindPosResult::new(node.children().len() - 1, last_len, Position::End)
 }
 
 #[inline(always)]
@@ -366,7 +345,7 @@ where
         index -= f(child);
     }
 
-    assert!(index == 0);
+    assert_eq!(index, 0);
     FindPosResult::new(
         node.children().len() - 1,
         f(node.children().last().unwrap()),
