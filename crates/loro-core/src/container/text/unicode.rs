@@ -181,25 +181,21 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     ) -> Self::CacheUpdate {
         match hint {
             Some(diff) => {
-                if node.cache.unknown_elem_len > 0 {
-                    node.cache = node.cache + diff;
-                    if node.cache.unknown_elem_len == 0 {
-                        node.cache.text_len.utf16 = Some(
-                            node.children()
-                                .iter()
-                                .map(|x| match &**x {
-                                    rle::rle_tree::node::Node::Internal(x) => {
-                                        x.cache.text_len.utf16.unwrap()
-                                    }
-                                    rle::rle_tree::node::Node::Leaf(x) => {
-                                        x.cache.text_len.utf16.unwrap()
-                                    }
-                                })
-                                .sum::<i32>(),
-                        );
-                    }
-                } else {
-                    node.cache = node.cache + diff;
+                node.cache = node.cache + diff;
+                if node.cache.unknown_elem_len == 0 && node.cache.text_len.utf16.is_none() {
+                    node.cache.text_len.utf16 = Some(
+                        node.children()
+                            .iter()
+                            .map(|x| match &**x {
+                                rle::rle_tree::node::Node::Internal(x) => {
+                                    x.cache.text_len.utf16.unwrap()
+                                }
+                                rle::rle_tree::node::Node::Leaf(x) => {
+                                    x.cache.text_len.utf16.unwrap()
+                                }
+                            })
+                            .sum::<i32>(),
+                    );
                 }
 
                 debug_assert_eq!(
@@ -493,6 +489,44 @@ pub mod test {
         } else {
             Ok(())
         }
+    }
+
+    #[test]
+    fn failed_2() {
+        apply(&mut [
+            Insert {
+                pos: 19789,
+                value: 19789,
+            },
+            Insert {
+                pos: 333,
+                value: 65520,
+            },
+            Insert {
+                pos: 19789,
+                value: 41805,
+            },
+            Insert {
+                pos: 19967,
+                value: 19789,
+            },
+            Insert {
+                pos: 33792,
+                value: 2560,
+            },
+            InsertUnknown {
+                pos: 41891,
+                len: 163,
+            },
+            Insert {
+                pos: 41805,
+                value: 41891,
+            },
+            InsertUnknown {
+                pos: 41891,
+                len: 163,
+            },
+        ])
     }
 
     #[test]
