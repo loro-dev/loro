@@ -443,7 +443,7 @@ pub mod test {
 
                     *pos = (*pos as usize % test.rope.len()) as u16;
                     let end = (*pos as usize + *len as usize).min(test.rope.len());
-                    *len = (end as u16 - *pos) as u8;
+                    *len = (end - *pos as usize) as u8;
                     debug_log::debug_log!("del {} {}", *pos, *len);
                     test.delete(*pos as usize, *len as usize)
                 }
