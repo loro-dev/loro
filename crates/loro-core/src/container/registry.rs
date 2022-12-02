@@ -18,7 +18,7 @@ use crate::{
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
     version::IdSpanVector,
-    LoroError, LoroValue,
+    LogStore, LoroError, LoroValue,
 };
 
 use super::{
