@@ -4,10 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rle::{
-    rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
-    HasLength, RleTree,
-};
+use rle::HasLength;
 use smallvec::SmallVec;
 use tracing::instrument;
 
@@ -71,7 +68,7 @@ impl TextContainer {
         let op = Op::new(
             id,
             InnerContent::List(InnerListOp::Insert {
-                slice: range.into(),
+                slice: range,
                 pos,
             }),
             store.get_or_create_container_idx(&self.id),
@@ -357,7 +354,7 @@ impl Container for TextContainer {
         &mut self,
         _: &mut Hierarchy,
         rich_op: &RichOp,
-        import_context: &mut ImportContext,
+        _import_context: &mut ImportContext,
     ) {
         self.tracker.track_apply(rich_op);
     }

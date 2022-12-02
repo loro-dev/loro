@@ -67,14 +67,14 @@ impl<const SIZE: u32> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     fn find_pos_internal(
         node: &rle::rle_tree::node::InternalNode<'_, PoolString, Self>,
-        mut index: Self::Int,
+        index: Self::Int,
     ) -> FindPosResult<Self::Int> {
         find_pos_internal(node, index, &|x| x.utf8 as usize)
     }
 
     fn find_pos_leaf(
         node: &rle::rle_tree::node::LeafNode<'_, PoolString, Self>,
-        mut index: Self::Int,
+        index: Self::Int,
     ) -> rle::rle_tree::tree_trait::FindPosResult<usize> {
         find_pos_leaf(node, index, &|x| x.atom_len())
     }
