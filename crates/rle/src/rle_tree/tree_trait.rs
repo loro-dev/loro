@@ -75,6 +75,7 @@ pub type ArenaVec<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Vec<'a, V
 pub type ArenaBox<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Boxed<'a, V>;
 #[allow(type_alias_bounds)]
 pub type ArenaBoxedNode<'a, T, A: RleTreeTrait<T>> = ArenaBox<'a, T, A, Node<'a, T, A>>;
+#[allow(type_alias_bounds)]
 pub type InsertResult<'a, T, A: RleTreeTrait<T>> =
     Result<A::Cache, (A::Cache, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>)>;
 

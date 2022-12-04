@@ -11,7 +11,7 @@ use crate::{
     rle_tree::{
         arena::VecTrait,
         node::utils::distribute,
-        tree_trait::{FindPosResult, Position},
+        tree_trait::{FindPosResult, InsertResult, Position},
     },
     small_set::SmallSet,
 };
@@ -82,6 +82,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         self.check_children_parent_link();
         let mut is_leaf_children = false;
         for child in self.children.iter_mut() {
+            assert_eq!(child.cache, child.node.cache());
             match child.node.deref_mut() {
                 Node::Internal(node) => {
                     assert!(!is_leaf_children);
@@ -458,28 +459,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
-    pub fn insert<F>(
-        &mut self,
-        index: A::Int,
-        value: T,
-        notify: &mut F,
-    ) -> Result<(), <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>>
+    pub fn insert<F>(&mut self, index: A::Int, value: T, notify: &mut F) -> InsertResult<'a, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         match self._insert(index, value, notify) {
-            Ok(_) => {
-                A::update_cache_internal(self);
-                Ok(())
-            }
+            Ok(_) => Ok(A::update_cache_internal(self)),
             Err(mut new) => {
-                A::update_cache_internal(self);
+                let ans = A::update_cache_internal(self);
                 A::update_cache_internal(new.as_internal_mut().unwrap());
                 if self.is_root() {
                     self._create_level(new);
-                    Ok(())
+                    Ok(ans)
                 } else {
-                    Err(new)
+                    Err((ans, new))
                 }
             }
         }

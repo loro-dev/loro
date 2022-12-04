@@ -4,7 +4,7 @@ use crate::{
     rle_tree::{
         arena::VecTrait,
         cursor::SafeCursorMut,
-        tree_trait::{FindPosResult, Position},
+        tree_trait::{FindPosResult, InsertResult, Position},
     },
     HasLength, Sliceable,
 };
@@ -190,7 +190,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         raw_index: A::Int,
         value: T,
         notify: &mut F,
-    ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>
+    ) -> InsertResult<'bump, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -220,7 +220,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         value: T,
         notify: &mut F,
         value_from_same_parent: bool,
-    ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>
+    ) -> InsertResult<'bump, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -254,18 +254,18 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         len: usize,
         update_fn: U,
         notify: &mut F,
-    ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>
+    ) -> InsertResult<'bump, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
         U: FnOnce(&mut T),
     {
         if len == 0 {
-            return Ok(());
+            return Ok(self.cache);
         }
 
         if offset == 0 && self.children[child_index].atom_len() == len {
             update_fn(&mut self.children[child_index]);
-            return Ok(());
+            return Ok(self.cache);
         }
 
         let left = if offset == 0 {
@@ -294,7 +294,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 if let Some(right) = right {
                     if left.is_mergable(&right, &()) {
                         left.merge(&right, &());
-                        Ok(())
+                        Ok(self.cache)
                     } else {
                         self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify, true)
                     }
@@ -567,16 +567,13 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     fn with_cache_updated(
         &mut self,
         result: Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>,
-    ) -> Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>> {
+    ) -> InsertResult<'bump, T, A> {
         match result {
-            Ok(_) => {
-                A::update_cache_leaf(self);
-                Ok(())
-            }
+            Ok(_) => Ok(A::update_cache_leaf(self)),
             Err(mut new) => {
-                A::update_cache_leaf(self);
+                let ans = A::update_cache_leaf(self);
                 A::update_cache_leaf(new.as_leaf_mut().unwrap());
-                Err(new)
+                Err((ans, new))
             }
         }
     }
