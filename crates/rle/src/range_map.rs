@@ -167,7 +167,6 @@ impl<
                 },
                 &mut |_, _| {},
             );
-
             return;
         }
 
@@ -306,13 +305,14 @@ impl<
                     internal.drain_children(start, end);
                 }
 
-                // TODO: perf
                 internal.update_cache(None);
                 if let Some(parent) = internal.parent {
                     visited_internal_nodes.insert(parent);
                 }
             }
         }
+
+        self.tree.debug_check();
     }
 
     #[inline]

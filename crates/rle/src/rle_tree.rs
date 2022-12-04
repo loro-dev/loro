@@ -74,6 +74,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }) {
             self.insert_notify(A::Int::from_u8(0).unwrap(), value, notify);
         }
+
+        self.debug_check();
     }
 
     #[inline]
@@ -84,6 +86,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .insert(index, value, &mut |_a, _b| {})
                 .unwrap();
         });
+
+        self.debug_check();
     }
 
     /// `notify` would be invoke if a new element is inserted/moved to a new leaf node.
@@ -294,6 +298,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .unwrap()
                 .delete(start, end, &mut |_, _| {});
         });
+        self.debug_check();
     }
 
     pub fn delete_range_notify<F>(
@@ -306,7 +311,9 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     {
         self.with_node_mut(|node| {
             node.as_internal_mut().unwrap().delete(start, end, notify);
-        })
+        });
+
+        self.debug_check();
     }
 
     /// reviewed by @Leeeon233
@@ -361,6 +368,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
 
         self.update_with_gathered_map(updates_map, notify);
+        self.debug_check();
     }
 
     /// the updated elements will only be notified when the leaf node is split
@@ -405,6 +413,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
 
         self.update_with_gathered_map(updates_map, notify);
+        self.debug_check();
     }
 
     #[allow(clippy::type_complexity)]
@@ -415,19 +424,24 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     ) where
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, Vec<_>)>, _> =
+        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, A::CacheUpdate, Vec<_>)>, _> =
             FxHashMap::default();
         for (mut leaf, updates) in iter {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };
-            if let Err(new) = leaf.apply_updates(updates, notify) {
-                internal_updates_map
-                    .entry(leaf.parent)
-                    .or_default()
-                    .push((leaf.get_index_in_parent().unwrap(), new));
-            } else {
-                // insert empty value to trigger cache update
-                internal_updates_map.entry(leaf.parent).or_default();
+            match leaf.apply_updates(updates, notify) {
+                Ok(update) => internal_updates_map.entry(leaf.parent).or_default().push((
+                    leaf.get_index_in_parent().unwrap(),
+                    update,
+                    Vec::new(),
+                )),
+                Err((update, new)) => {
+                    internal_updates_map.entry(leaf.parent).or_default().push((
+                        leaf.get_index_in_parent().unwrap(),
+                        update,
+                        new,
+                    ));
+                }
             }
         }
 
@@ -437,19 +451,25 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 // SAFETY: we has the exclusive reference to the tree and the cursor is valid
                 let node = unsafe { node.as_mut() };
 
-                if let Err(new) = node.apply_updates(updates) {
-                    internal_updates_map
-                        .entry(node.parent.unwrap())
-                        .or_default()
-                        .push((node.get_index_in_parent().unwrap(), new));
-                } else if node.parent.is_some() {
-                    // insert empty value to trigger cache update
-                    internal_updates_map
-                        .entry(node.parent.unwrap())
-                        .or_default();
-                } else {
-                    // TODO: Perf, give hint
-                    A::update_cache_internal(node, None);
+                match node.apply_updates(updates) {
+                    Ok(update) => {
+                        if node.parent.is_some() {
+                            // insert empty value to trigger cache update
+                            internal_updates_map
+                                .entry(node.parent.unwrap())
+                                .or_default()
+                                .push((node.get_index_in_parent().unwrap(), update, Vec::new()));
+                        } else {
+                            // TODO: Perf, give hint
+                            A::update_cache_internal(node, None);
+                        }
+                    }
+                    Err((update, new)) => {
+                        internal_updates_map
+                            .entry(node.parent.unwrap())
+                            .or_default()
+                            .push((node.get_index_in_parent().unwrap(), update, new));
+                    }
                 }
             }
         }

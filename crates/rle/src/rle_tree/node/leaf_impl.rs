@@ -226,13 +226,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         value: T,
         notify: &mut F,
         value_from_same_parent: bool,
-    ) -> Result<
-        A::CacheUpdate,
-        (
-            A::CacheUpdate,
-            <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>,
-        ),
-    >
+    ) -> InsertResult<'bump, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -485,7 +479,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         &mut self,
         mut updates: Vec<(usize, SmallVec<[T; 2]>)>,
         notify: &mut F,
-    ) -> Result<(), Vec<ArenaBoxedNode<'bump, T, A>>>
+    ) -> Result<A::CacheUpdate, (A::CacheUpdate, Vec<ArenaBoxedNode<'bump, T, A>>)>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -549,8 +543,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 self.children.push(child);
             }
 
-            A::update_cache_leaf(self);
-            Ok(())
+            Ok(A::update_cache_leaf(self))
         } else {
             let children_nums =
                 distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
@@ -560,7 +553,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             }
 
             index += 1;
-            A::update_cache_leaf(self);
+            let ans = A::update_cache_leaf(self);
             let mut leaf_vec = Vec::new();
             while !new_children.is_empty() {
                 let mut new_leaf_node = self
@@ -586,7 +579,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
 
             // SAFETY: there will not be shared mutable references
             Self::connect(Some(last), unsafe { next.map(|mut x| x.as_mut()) });
-            Err(leaf_vec)
+            Err((ans, leaf_vec))
         }
     }
 

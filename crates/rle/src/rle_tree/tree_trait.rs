@@ -174,17 +174,43 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     type Arena = TreeArena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> isize {
+        let old_cache = node.cache;
         node.cache = node
             .children()
             .iter()
             .map(|x| HasLength::content_len(x))
             .sum::<usize>() as isize;
-        0
+        node.cache - old_cache
     }
 
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<isize>) -> isize {
-        node.cache = node.children().iter().map(|x| x.cache).sum();
-        0
+        let old_cache = node.cache;
+        match hint {
+            Some(hint) => {
+                node.cache += hint;
+                debug_assert_eq!(
+                    node.cache,
+                    node.children()
+                        .iter()
+                        .map(|x| {
+                            debug_assert_eq!(x.cache, x.node.cache());
+                            x.cache
+                        })
+                        .sum()
+                )
+            }
+            None => {
+                node.cache = node
+                    .children()
+                    .iter()
+                    .map(|x| {
+                        debug_assert_eq!(x.cache, x.node.cache());
+                        x.cache
+                    })
+                    .sum();
+            }
+        }
+        node.cache - old_cache
     }
 
     fn find_pos_internal(
@@ -308,7 +334,7 @@ impl Position {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Default, Copy)]
-pub struct Cache<I> {
+pub struct Cache<I: Integer> {
     start: I,
     end: I,
 }
@@ -324,51 +350,51 @@ fn get_cache<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena>(
 }
 
 #[derive(Clone, Default, Debug, Copy)]
-pub struct None;
-impl AddAssign for None {
+pub struct Zero;
+impl AddAssign for Zero {
     #[inline(always)]
     fn add_assign(&mut self, _: Self) {}
 }
 
-impl Add for None {
+impl Add for Zero {
     type Output = Self;
 
     #[inline(always)]
     fn add(self, _: Self) -> Self::Output {
-        None
+        Zero
     }
 }
 
-impl Sub for None {
+impl Sub for Zero {
     type Output = Self;
 
     #[inline(always)]
     fn sub(self, _: Self) -> Self::Output {
-        None
+        Zero
     }
 }
 
-impl Neg for None {
+impl Neg for Zero {
     type Output = Self;
 
     #[inline(always)]
     fn neg(self) -> Self::Output {
-        None
+        Zero
     }
 }
 
-impl<T> Add<None> for Cache<T> {
+impl<T: Integer> Add<Zero> for Cache<T> {
     type Output = Cache<T>;
 
     #[inline(always)]
-    fn add(self, _: None) -> Self::Output {
+    fn add(self, _: Zero) -> Self::Output {
         self
     }
 }
 
-impl<T> AddAssign<None> for Cache<T> {
+impl<T: Integer> AddAssign<Zero> for Cache<T> {
     #[inline(always)]
-    fn add_assign(&mut self, _: None) {}
+    fn add_assign(&mut self, _: Zero) {}
 }
 
 impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
@@ -380,30 +406,30 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     type Int = T::Int;
 
-    type CacheUpdate = None;
+    type CacheUpdate = Zero;
     type Cache = Cache<T::Int>;
     type Arena = TreeArena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> None {
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Zero {
         if node.children.is_empty() {
             node.cache.end = node.cache.start;
-            return None;
+            return Zero;
         }
 
         // TODO: Maybe panic if overlap?
         node.cache.end = node.children().last().unwrap().get_end_index();
         node.cache.start = node.children()[0].get_start_index();
-        None
+        Zero
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<None>) -> None {
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<Zero>) -> Zero {
         if node.children.is_empty() {
-            return None;
+            return Zero;
         }
 
         node.cache.end = node.children().last().unwrap().cache.end;
         node.cache.start = node.children()[0].cache.start;
-        None
+        Zero
     }
 
     fn find_pos_internal(
@@ -425,7 +451,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         let ans = node
             .children
             .binary_search_by(|x| {
-                let cache = x.cache;
+                let cache = x.node.cache();
                 if index < cache.start {
                     Ordering::Greater
                 } else if index > cache.end {
@@ -439,14 +465,20 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
                     FindPosResult::new_not_found(
                         x,
                         index,
-                        get_pos_global(index, node.children[x].cache),
+                        get_pos_global(index, node.children[x].node.cache()),
                     )
                 },
-                |x| FindPosResult::new(x, index, get_pos_global(index, node.children[x].cache)),
+                |x| {
+                    FindPosResult::new(
+                        x,
+                        index,
+                        get_pos_global(index, node.children[x].node.cache()),
+                    )
+                },
             );
         if ans.pos == Position::End {
             if ans.child_index + 1 < node.children.len()
-                && index == node.children[ans.child_index + 1].cache.start
+                && index == node.children[ans.child_index + 1].node.cache().start
             {
                 FindPosResult::new(ans.child_index + 1, index, Position::Start)
             } else {
@@ -535,6 +567,11 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     }
 
     fn check_cache_leaf(node: &LeafNode<'_, T, Self>) {
+        if node.children.is_empty() {
+            assert_eq!(node.cache.start, node.cache.end);
+            return;
+        }
+
         assert_eq!(
             node.cache.end,
             node.children()
@@ -548,6 +585,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
         if node.children().is_empty() {
+            assert_eq!(node.cache.start, node.cache.end);
             return;
         }
 
@@ -563,11 +601,11 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     }
 
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
-        None
+        Zero
     }
 
     fn value_to_update(x: &T) -> Self::CacheUpdate {
-        None
+        Zero
     }
 }
 

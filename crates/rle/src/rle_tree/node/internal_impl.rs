@@ -422,11 +422,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     pub(crate) fn apply_updates(
         &mut self,
-        mut updates: Vec<(usize, Vec<ArenaBoxedNode<'a, T, A>>)>,
-    ) -> Result<(), Vec<ArenaBoxedNode<'a, T, A>>> {
+        mut updates: Vec<(usize, A::CacheUpdate, Vec<ArenaBoxedNode<'a, T, A>>)>,
+    ) -> Result<A::CacheUpdate, (A::CacheUpdate, Vec<ArenaBoxedNode<'a, T, A>>)> {
+        let mut update_sum = A::CacheUpdate::default();
+        for (index, update, _) in updates.iter().filter(|x| x.2.is_empty()) {
+            update_sum += *update;
+            self.children[*index].cache += *update;
+        }
+
+        updates.retain(|x| !x.2.is_empty());
         if updates.is_empty() {
             A::update_cache_internal(self, None);
-            return Ok(());
+            return Ok(update_sum);
         }
 
         updates.sort_by_key(|x| x.0);
@@ -439,8 +446,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 self.bump,
             ),
         );
+
         let mut saved_end = 0;
-        for (index, replace) in updates {
+        for (index, _, replace) in updates {
             for child in self_children.drain(0..index + 1 - saved_end) {
                 new_children.push(child.node);
             }
@@ -463,8 +471,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 self.children.push(Child::from(child));
             }
 
-            A::update_cache_internal(self, None);
-            Ok(())
+            Ok(A::update_cache_internal(self, None))
         } else {
             let children_nums =
                 distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
@@ -475,7 +482,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
 
             index += 1;
-            A::update_cache_internal(self, None);
+            let update = A::update_cache_internal(self, None);
             let mut ans_vec = Vec::new();
             while !new_children.is_empty() {
                 let mut new_internal_node = self
@@ -492,12 +499,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 ans_vec.push(new_internal_node);
             }
 
-            Err(ans_vec)
+            Err((update, ans_vec))
         };
 
         if result.is_err() && self.is_root() {
             #[allow(clippy::unnecessary_unwrap)]
-            let new_vec = result.unwrap_err();
+            let (update, new_vec) = result.unwrap_err();
             {
                 // create level
                 let mut origin_root = self.bump.allocate(Node::Internal(InternalNode::new(
@@ -521,8 +528,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 self.children.push(Child::from(new_node));
             }
 
-            A::update_cache_internal(self, None);
-            Ok(())
+            Ok(A::update_cache_internal(self, None))
         } else {
             result
         }
@@ -634,14 +640,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         };
 
         let mut update: A::CacheUpdate;
+        child.cache = child.node.cache();
         match result {
             Ok(hint) => {
                 update = hint;
-                child.cache += update;
             }
             Err((hint, new)) => {
                 update = hint;
-                child.cache += update;
                 match self._insert_with_split(child_index + 1, new) {
                     Ok(hint) => {
                         update += hint;
@@ -878,6 +883,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     #[inline(always)]
     pub(crate) fn update_cache(&mut self, hint: Option<A::CacheUpdate>) {
+        // TODO: perf
+        for child in self.children.iter_mut() {
+            child.cache = child.node.cache();
+        }
         A::update_cache_internal(self, hint);
     }
 
