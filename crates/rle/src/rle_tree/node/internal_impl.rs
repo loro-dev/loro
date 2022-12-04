@@ -53,7 +53,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         debug_assert!(keep_num >= A::MIN_CHILDREN_NUM);
         let mut update = A::CacheUpdate::default();
         for mut child in self.children.drain(keep_num..) {
-            update = update + A::cache_to_update(child.cache);
+            update += A::cache_to_update(child.cache);
             child.node.set_parent(other.into());
             other.children.push(child);
         }
@@ -637,17 +637,17 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         match result {
             Ok(hint) => {
                 update = hint;
-                child.cache = child.cache + update;
+                child.cache += update;
             }
             Err((hint, new)) => {
                 update = hint;
-                child.cache = child.cache + update;
+                child.cache += update;
                 match self._insert_with_split(child_index + 1, new) {
                     Ok(hint) => {
-                        update = update + hint;
+                        update += hint;
                     }
                     Err((hint, new)) => {
-                        update = update + hint;
+                        update += hint;
                         return Err((update, new));
                     }
                 }

@@ -197,6 +197,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
         let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
+            debug_assert_eq!(child.cache, child.node.cache());
             last_cache = child.cache as usize;
             if index <= last_cache {
                 return FindPosResult::new(i, index, Position::get_pos(index, last_cache));
@@ -285,11 +286,11 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     }
 
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
-        0
+        x
     }
 
     fn value_to_update(x: &T) -> Self::CacheUpdate {
-        0
+        x.atom_len() as isize
     }
 }
 
