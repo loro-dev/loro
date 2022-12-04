@@ -1,6 +1,6 @@
 use std::{
     iter::Sum,
-    ops::{Add, Deref, Neg, Sub},
+    ops::{Add, AddAssign, Deref, Neg, Sub},
 };
 
 use rle::{
@@ -96,6 +96,30 @@ impl Add for TextLength {
     }
 }
 
+impl AddAssign for TextLength {
+    fn add_assign(&mut self, rhs: Self) {
+        self.utf8 += rhs.utf8;
+        match &mut self.utf16 {
+            a @ Some(_) => match rhs.utf16 {
+                Some(y) => {
+                    *a = Some(a.unwrap() + y);
+                }
+                None => {
+                    *a = None;
+                }
+            },
+            None => {}
+        }
+    }
+}
+
+impl AddAssign for Cache {
+    fn add_assign(&mut self, rhs: Self) {
+        self.text_len += rhs.text_len;
+        self.unknown_elem_len += rhs.unknown_elem_len;
+    }
+}
+
 impl Add for Cache {
     type Output = Cache;
 
@@ -181,7 +205,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     ) -> Self::CacheUpdate {
         match hint {
             Some(diff) => {
-                node.cache = node.cache + diff;
+                node.cache += diff;
                 if node.cache.unknown_elem_len == 0 && node.cache.text_len.utf16.is_none() {
                     node.cache.text_len.utf16 = Some(
                         node.children()
@@ -195,6 +219,12 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
                     node.children().iter().map(|x| x.cache).sum::<Cache>(),
                     node.cache,
                 );
+
+                if cfg!(test) || cfg!(debug_assert) {
+                    for child in node.children() {
+                        debug_assert_eq!(child.cache, child.node.cache());
+                    }
+                }
                 diff
             }
             None => {
@@ -257,10 +287,6 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         node.cache.text_len.utf8 as usize
     }
 
-    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {
-        a + b
-    }
-
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
         x
     }
@@ -270,10 +296,6 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
             text_len: x.text_len(),
             unknown_elem_len: x.range.is_unknown() as isize,
         }
-    }
-
-    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {
-        -x
     }
 }
 

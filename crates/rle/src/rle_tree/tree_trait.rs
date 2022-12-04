@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    ops::{Add, Neg, Sub},
+    ops::{Add, AddAssign, Neg, Sub},
 };
 
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
@@ -97,8 +97,15 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
         + Debug
         + Neg<Output = Self::CacheUpdate>
         + Add<Output = Self::CacheUpdate>
+        + AddAssign<Self::CacheUpdate>
         + Sub<Output = Self::CacheUpdate>;
-    type Cache: Default + Debug + Eq + Clone + Copy;
+    type Cache: Default
+        + Debug
+        + Eq
+        + Clone
+        + Copy
+        + Add<Self::CacheUpdate, Output = Self::Cache>
+        + AddAssign<Self::CacheUpdate>;
     /// The allocation method used for [crate::RleTree].
     /// There are two modes provided:
     ///
@@ -139,10 +146,8 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn check_cache_leaf(_node: &LeafNode<'_, T, Self>) {}
     fn check_cache_internal(_node: &InternalNode<'_, T, Self>) {}
 
-    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate;
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate;
     fn value_to_update(x: &T) -> Self::CacheUpdate;
-    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate;
 }
 
 #[derive(Debug, Default)]
@@ -165,7 +170,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     type Int = usize;
 
     type CacheUpdate = isize;
-    type Cache = usize;
+    type Cache = isize;
     type Arena = TreeArena;
 
     fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> isize {
@@ -173,7 +178,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
             .children()
             .iter()
             .map(|x| HasLength::content_len(x))
-            .sum();
+            .sum::<usize>() as isize;
         0
     }
 
@@ -192,7 +197,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
         let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
-            last_cache = child.cache;
+            last_cache = child.cache as usize;
             if index <= last_cache {
                 return FindPosResult::new(i, index, Position::get_pos(index, last_cache));
             }
@@ -228,24 +233,27 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     }
 
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> usize {
-        node.cache
+        node.cache as usize
     }
 
     fn len_internal(node: &InternalNode<'_, T, Self>) -> usize {
-        node.cache
+        node.cache as usize
     }
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
         assert_eq!(
             node.cache,
-            node.children().iter().map(|x| x.node.len()).sum()
+            node.children().iter().map(|x| x.node.len()).sum::<usize>() as isize
         );
     }
 
     fn check_cache_leaf(node: &LeafNode<'_, T, Self>) {
         assert_eq!(
             node.cache,
-            node.children().iter().map(|x| x.content_len()).sum()
+            node.children()
+                .iter()
+                .map(|x| x.content_len())
+                .sum::<usize>() as isize
         );
     }
 
@@ -276,20 +284,12 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         index
     }
 
-    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {
-        0
-    }
-
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
         0
     }
 
     fn value_to_update(x: &T) -> Self::CacheUpdate {
         0
-    }
-
-    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {
-        -x
     }
 }
 
@@ -323,10 +323,16 @@ fn get_cache<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena>(
 
 #[derive(Clone, Default, Debug, Copy)]
 pub struct None;
+impl AddAssign for None {
+    #[inline(always)]
+    fn add_assign(&mut self, _: Self) {}
+}
+
 impl Add for None {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
+    #[inline(always)]
+    fn add(self, _: Self) -> Self::Output {
         None
     }
 }
@@ -334,7 +340,8 @@ impl Add for None {
 impl Sub for None {
     type Output = Self;
 
-    fn sub(self, rhs: Self) -> Self::Output {
+    #[inline(always)]
+    fn sub(self, _: Self) -> Self::Output {
         None
     }
 }
@@ -342,9 +349,24 @@ impl Sub for None {
 impl Neg for None {
     type Output = Self;
 
+    #[inline(always)]
     fn neg(self) -> Self::Output {
         None
     }
+}
+
+impl<T> Add<None> for Cache<T> {
+    type Output = Cache<T>;
+
+    #[inline(always)]
+    fn add(self, _: None) -> Self::Output {
+        self
+    }
+}
+
+impl<T> AddAssign<None> for Cache<T> {
+    #[inline(always)]
+    fn add_assign(&mut self, _: None) {}
 }
 
 impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
@@ -538,19 +560,11 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         node.children[child_index].get_start_index()
     }
 
-    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {
-        None
-    }
-
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
         None
     }
 
     fn value_to_update(x: &T) -> Self::CacheUpdate {
-        None
-    }
-
-    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {
         None
     }
 }

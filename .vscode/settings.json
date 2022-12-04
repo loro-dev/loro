@@ -3,6 +3,7 @@
     "arbtest",
     "clippy",
     "flate",
+    "heapless",
     "Leeeon",
     "LOGSTORE",
     "nextest",
