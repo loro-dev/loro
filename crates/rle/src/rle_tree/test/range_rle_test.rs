@@ -36,47 +36,6 @@ fn delete() {
 }
 
 #[test]
-fn update_at_cursor() {
-    let mut tree: RleTree<Range<usize>, RangeTreeTrait> = RleTree::default();
-    tree.insert(0, 0..10);
-    tree.insert(10, 11..20);
-    tree.insert(19, 21..30);
-    tree.insert(28, 31..40);
-    for cursor in tree.iter_range(3, Some(7)) {
-        // SAFETY: it's a test
-        unsafe {
-            cursor.0.update_with_split(
-                |v| {
-                    v.start = 4;
-                    v.end = 5;
-                },
-                &mut |_, _| {},
-            )
-        }
-    }
-
-    // 12..16
-    for cursor in tree.iter_range(8, Some(12)) {
-        // SAFETY: it's a test
-        unsafe {
-            cursor.0.update_with_split(
-                |v| {
-                    v.start = 13;
-                    v.end = 15;
-                },
-                &mut |_, _| {},
-            )
-        }
-    }
-
-    let arr: Vec<_> = tree.iter().map(|x| (*x.as_ref()).clone()).collect();
-    assert_eq!(
-        arr,
-        vec![0..3, 4..5, 7..10, 11..12, 13..15, 16..20, 21..30, 31..40]
-    );
-}
-
-#[test]
 fn insert_50times() {
     let mut tree: RleTree<Range<usize>, RangeTreeTrait> = RleTree::default();
     for i in (0..100).step_by(2) {
