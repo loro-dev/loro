@@ -169,9 +169,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         let index = self.get_self_index()?;
         let parent = self.parent_mut()?;
         if index > 0 {
-            Some((&mut parent.children[index - 1], Either::Left))
+            Some((&mut parent.children[index - 1].node, Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((&mut parent.children[index + 1], Either::Right))
+            Some((&mut parent.children[index + 1].node, Either::Right))
         } else {
             None
         }
@@ -347,10 +347,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     }
 
     #[inline(always)]
-    pub fn cache(&self) -> &A::Cache {
+    pub fn cache(&self) -> A::Cache {
         match self {
-            Node::Internal(x) => &x.cache,
-            Node::Leaf(x) => &x.cache,
+            Node::Internal(x) => x.cache,
+            Node::Leaf(x) => x.cache,
         }
     }
 

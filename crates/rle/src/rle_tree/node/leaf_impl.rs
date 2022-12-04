@@ -272,12 +272,12 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         U: FnOnce(&mut T),
     {
         if len == 0 {
-            return Ok(self.cache);
+            return Ok(Default::default());
         }
 
         if offset == 0 && self.children[child_index].atom_len() == len {
             update_fn(&mut self.children[child_index]);
-            return Ok(self.cache);
+            return Ok(Default::default());
         }
 
         let left = if offset == 0 {
@@ -296,7 +296,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         };
 
         let mut target = self.children[child_index].slice(offset, offset + len);
+        let old_cache = A::value_to_update(&target);
         update_fn(&mut target);
+        let update = A::value_to_update(&target) - old_cache;
 
         if let Some(left) = left {
             self.children[child_index] = left;
@@ -306,21 +308,21 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 if let Some(right) = right {
                     if left.is_mergable(&right, &()) {
                         left.merge(&right, &());
-                        Ok(self.cache)
+                        Ok(update)
                     } else {
                         self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify, true)
-                            .map(|x| ())
-                            .map_err(|(_, new)| new)
+                            .map(|x| (x + update))
+                            .map_err(|(x, new)| (x + update, new))
                     }
                 } else {
-                    Ok(())
+                    Ok(update)
                 }
             } else if let Some(right) = right {
                 if target.is_mergable(&right, &()) {
                     target.merge(&right, &());
                     self.insert_at_pos(Position::Start, child_index + 1, 0, target, notify, true)
-                        .map(|x| ())
-                        .map_err(|(_, new)| new)
+                        .map(|x| (x + update))
+                        .map_err(|(x, new)| (x + update, new))
                 } else {
                     let result = self.insert_at_pos(
                         Position::Start,
@@ -330,7 +332,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                         notify,
                         true,
                     );
-                    if let Err((_, mut new)) = result {
+                    if let Err((x, mut new)) = result {
                         if self.children.len() >= child_index + 2 {
                             // insert one element should not cause Err
                             self.insert_at_pos(
@@ -344,7 +346,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                             .map(|x| ())
                             .map_err(|(_, new)| new)
                             .unwrap();
-                            Err(new)
+                            Err((x + update, new))
                         } else {
                             let new_insert_index = child_index + 2 - self.children.len();
                             // insert one element should not cause Err
@@ -359,27 +361,27 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                                     true,
                                 )
                                 .unwrap();
-                            Err(new)
+                            Err((x + update, new))
                         }
                     } else {
                         self.insert_at_pos(Position::Start, child_index + 2, 0, right, notify, true)
-                            .map(|x| ())
-                            .map_err(|(_, new)| new)
+                            .map(|x| (x + update))
+                            .map_err(|(x, new)| (x + update, new))
                     }
                 }
             } else {
                 self.insert_at_pos(pos, child_index + 1, offset, target, notify, true)
-                    .map(|x| ())
-                    .map_err(|(_, new)| new)
+                    .map(|x| (x + update))
+                    .map_err(|(x, new)| (x + update, new))
             }
         } else {
             self.children[child_index] = target;
             if let Some(right) = right {
                 self.insert_at_pos(Position::Start, child_index + 1, 0, right, notify, true)
-                    .map(|x| ())
-                    .map_err(|(_, new)| new)
+                    .map(|x| (x + update))
+                    .map_err(|(x, new)| (x + update, new))
             } else {
-                Ok(())
+                Ok(update)
             }
         }
     }

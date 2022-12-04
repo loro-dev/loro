@@ -268,7 +268,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         );
         let mut node = leaf.parent.as_mut();
         if let Err(new) = result {
-            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
+            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new.1);
             while let Err((update, new)) = result {
                 let old_node_index = node.get_index_in_parent().unwrap();
                 // result is err, so we're sure parent is valid

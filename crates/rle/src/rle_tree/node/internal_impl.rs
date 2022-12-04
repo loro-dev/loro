@@ -54,8 +54,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         debug_assert!(keep_num >= A::MIN_CHILDREN_NUM);
         let mut update = A::CacheUpdate::default();
         for mut child in self.children.drain(keep_num..) {
-            update = A::merge_cache_update(update, A::cache_to_update(child.cache()));
-            child.set_parent(other.into());
+            update = A::merge_cache_update(update, A::cache_to_update(child.cache));
+            child.node.set_parent(other.into());
             other.children.push(child);
         }
 
@@ -108,14 +108,22 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let mut last: Option<NonNull<LeafNode<'a, T, A>>> = None;
             for child in self.children.iter() {
                 if let Some(ref mut last) = last {
-                    assert_eq!(child.as_leaf().unwrap().prev, Some(*last), "{:#?}", &self);
+                    assert_eq!(
+                        child.node.as_leaf().unwrap().prev,
+                        Some(*last),
+                        "{:#?}",
+                        &self
+                    );
                     // SAFETY: for test
                     unsafe {
-                        assert_eq!(last.as_ref().next, Some(child.as_leaf().unwrap().into()))
+                        assert_eq!(
+                            last.as_ref().next,
+                            Some(child.node.as_leaf().unwrap().into())
+                        )
                     };
-                    *last = child.as_leaf().unwrap().into();
+                    *last = child.node.as_leaf().unwrap().into();
                 } else {
-                    last = Some(child.as_leaf().unwrap().into());
+                    last = Some(child.node.as_leaf().unwrap().into());
                 }
             }
         }
@@ -211,7 +219,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
                     // start and end are at the same child
-                    match self.children[direct_delete_end].deref_mut() {
+                    match self.children[direct_delete_end].node.deref_mut() {
                         Node::Internal(node) => {
                             match node._delete(
                                 Some(del_from),
@@ -241,7 +249,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             }
                         }
                     }
-                    visited.push((depth, self.children[direct_delete_end].deref_mut().into()));
+                    visited.push((
+                        depth,
+                        self.children[direct_delete_end].node.deref_mut().into(),
+                    ));
                     handled = true;
                 }
             }
@@ -362,7 +373,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         self.connect_leaf(direct_delete_start, direct_delete_end - 1);
         let mut update = A::CacheUpdate::default();
         for item in self.children.drain(direct_delete_start..direct_delete_end) {
-            update = A::merge_cache_update(update, A::cache_to_update(item.cache()))
+            update = A::merge_cache_update(update, A::cache_to_update(item.cache))
         }
 
         A::neg_update(update)
@@ -460,7 +471,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 }
 
                 A::update_cache_internal(origin_root_internal, None);
-                self.children.push(origin_root);
+                self.children.push(Child::from(origin_root));
             }
 
             let ptr = self.into();
@@ -562,8 +573,8 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         left_inner.parent = Some(NonNull::new(self).unwrap());
         new.as_internal_mut().unwrap().parent = Some(self.into());
-        self.children.push(left);
-        self.children.push(new);
+        self.children.push(Child::from(left));
+        self.children.push(Child::from(new));
         // TODO: perf
         A::update_cache_internal(self, None);
     }
@@ -596,7 +607,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             ..
         } = A::find_pos_internal(self, index);
         let child = &mut self.children[child_index];
-        let result = match child.deref_mut() {
+        let result = match child.node.deref_mut() {
             Node::Internal(child) => child.insert(relative_idx, value, notify),
             Node::Leaf(child) => child.insert(relative_idx, value, notify),
         };
@@ -799,7 +810,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             if child_index < self.children.len() {
                 new.set_parent(self.into());
                 update = A::merge_cache_update(update, A::cache_to_update(new.cache()));
-                self.children.insert(child_index, new);
+                self.children.insert(child_index, Child::from(new));
             } else {
                 new.set_parent((&mut *ans.as_internal_mut().unwrap()).into());
                 ans.as_internal_mut()
@@ -812,7 +823,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         } else {
             new.set_parent(self.into());
             let update = A::cache_to_update(new.cache());
-            self.children.insert(child_index, new);
+            self.children.insert(child_index, Child::from(new));
             Ok(update)
         }
     }
