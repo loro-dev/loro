@@ -107,6 +107,8 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         &mut self.leaf.as_mut().children[self.index]
     }
 
+    /// Some of the caches may be wrong when this fn is invoked, or when the function end
+    ///
     /// # Safety
     ///
     /// we need to make sure that the cursor is still valid
@@ -126,25 +128,21 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         let leaf = &mut node.children[index];
         leaf.parent_cache = leaf.node.cache().into();
         match result {
-            Ok(hint) => {
-                A::update_cache_internal(node, Some(hint));
-                node.check();
+            Ok(_) => {
+                // TODO: perf
+                A::update_cache_internal(node, None);
             }
-            Err((hint, new)) => {
-                A::update_cache_internal(node, Some(hint));
-                A::check_cache_internal(node);
+            Err((_, new)) => {
+                // TODO: perf
+                A::update_cache_internal(node, None);
                 let mut result = node.insert_at_pos(index + 1, new);
-                A::check_cache_internal(node);
-                while let Err((hint, new)) = result {
+                while let Err((_, new)) = result {
                     let index = node.get_index_in_parent().unwrap();
                     // result is err, so we're sure parent is valid
                     node = node.parent.unwrap().as_mut();
                     node.children[index].parent_cache = node.children[index].node.cache().into();
                     result = node.insert_at_pos(index + 1, new);
-                    A::check_cache_internal(node);
                 }
-
-                node.check();
             }
         }
 
@@ -155,8 +153,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
             A::update_cache_internal(node, Some(update));
             node.check()
         }
-
-        node.check();
     }
 
     /// # Safety
