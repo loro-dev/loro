@@ -1,10 +1,10 @@
 use std::{
     iter::Sum,
-    ops::{Add, AddAssign, Deref, Neg, Sub},
+    ops::{Add, AddAssign, Neg, Sub},
 };
 
 use rle::{
-    rle_tree::{node::Node, tree_trait::FindPosResult, HeapMode, Position},
+    rle_tree::{tree_trait::FindPosResult, HeapMode, Position},
     HasLength, RleTreeTrait,
 };
 
@@ -13,25 +13,11 @@ use super::string_pool::PoolString;
 #[derive(Debug, Clone, Copy)]
 pub(super) struct UnicodeTreeTrait<const SIZE: usize>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TextLength {
     pub utf8: i32,
-    pub utf16: Option<i32>,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Cache {
-    pub text_len: TextLength,
-    pub unknown_elem_len: isize,
-}
-
-impl Default for TextLength {
-    fn default() -> Self {
-        Self {
-            utf8: 0,
-            utf16: Some(0),
-        }
-    }
+    pub utf16: i32,
+    pub unknown_elem_len: i32,
 }
 
 impl Sub for TextLength {
@@ -40,10 +26,8 @@ impl Sub for TextLength {
     fn sub(self, rhs: Self) -> Self::Output {
         TextLength {
             utf8: self.utf8 - rhs.utf8,
-            utf16: match (self.utf16, rhs.utf16) {
-                (Some(u), Some(o)) => Some(u - o),
-                _ => None,
-            },
+            utf16: self.utf16 - rhs.utf16,
+            unknown_elem_len: self.unknown_elem_len - rhs.unknown_elem_len,
         }
     }
 }
@@ -54,29 +38,8 @@ impl Neg for TextLength {
     fn neg(self) -> Self::Output {
         TextLength {
             utf8: -self.utf8,
-            utf16: self.utf16.map(|x| -x),
-        }
-    }
-}
-
-impl Neg for Cache {
-    type Output = Cache;
-
-    fn neg(self) -> Self::Output {
-        Self {
-            text_len: -self.text_len,
+            utf16: -self.utf16,
             unknown_elem_len: -self.unknown_elem_len,
-        }
-    }
-}
-
-impl Sub for Cache {
-    type Output = Cache;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Cache {
-            text_len: self.text_len - rhs.text_len,
-            unknown_elem_len: self.unknown_elem_len - rhs.unknown_elem_len,
         }
     }
 }
@@ -87,11 +50,8 @@ impl Add for TextLength {
     fn add(self, rhs: Self) -> Self::Output {
         TextLength {
             utf8: self.utf8 + rhs.utf8,
-            utf16: if let (Some(a), Some(b)) = (self.utf16, rhs.utf16) {
-                Some(a + b)
-            } else {
-                None
-            },
+            utf16: self.utf16 + rhs.utf16,
+            unknown_elem_len: self.unknown_elem_len + rhs.unknown_elem_len,
         }
     }
 }
@@ -99,76 +59,26 @@ impl Add for TextLength {
 impl AddAssign for TextLength {
     fn add_assign(&mut self, rhs: Self) {
         self.utf8 += rhs.utf8;
-        match &mut self.utf16 {
-            a @ Some(_) => match rhs.utf16 {
-                Some(y) => {
-                    *a = Some(a.unwrap() + y);
-                }
-                None => {
-                    *a = None;
-                }
-            },
-            None => {}
-        }
-    }
-}
-
-impl AddAssign for Cache {
-    fn add_assign(&mut self, rhs: Self) {
-        self.text_len += rhs.text_len;
+        self.utf16 += rhs.utf16;
         self.unknown_elem_len += rhs.unknown_elem_len;
-    }
-}
-
-impl Add for Cache {
-    type Output = Cache;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Cache {
-            text_len: self.text_len + rhs.text_len,
-            unknown_elem_len: self.unknown_elem_len + rhs.unknown_elem_len,
-        }
     }
 }
 
 impl Sum for TextLength {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         let mut u8 = 0;
-        let mut u16 = Some(0);
+        let mut u16 = 0;
+        let mut unknown = 0;
         for item in iter {
             u8 += item.utf8;
-            if let (Some(a), Some(b)) = (u16, item.utf16) {
-                u16 = Some(a + b);
-            } else {
-                u16 = None;
-            }
+            u16 += item.utf16;
+            unknown += item.unknown_elem_len;
         }
 
         Self {
             utf8: u8,
             utf16: u16,
-        }
-    }
-}
-
-impl Sum for Cache {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let mut utf8 = 0;
-        let mut utf16 = Some(0);
-        let mut unknown_elem_len = 0;
-        for item in iter {
-            utf8 += item.text_len.utf8;
-            unknown_elem_len += item.unknown_elem_len;
-            if let (Some(a), Some(b)) = (utf16, item.text_len.utf16) {
-                utf16 = Some(a + b);
-            } else {
-                utf16 = None;
-            }
-        }
-
-        Self {
-            text_len: TextLength { utf8, utf16 },
-            unknown_elem_len,
+            unknown_elem_len: unknown,
         }
     }
 }
@@ -178,8 +88,8 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     type Int = usize;
 
-    type CacheUpdate = Cache;
-    type Cache = Cache;
+    type CacheUpdate = TextLength;
+    type Cache = TextLength;
 
     type Arena = HeapMode;
 
@@ -187,14 +97,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>,
     ) -> Self::CacheUpdate {
         let old = node.cache;
-        node.cache = node
-            .children()
-            .iter()
-            .map(|x| Cache {
-                text_len: x.text_len(),
-                unknown_elem_len: x.range.is_unknown() as isize,
-            })
-            .sum();
+        node.cache = node.children().iter().map(|x| x.text_len()).sum();
 
         node.cache - old
     }
@@ -212,17 +115,8 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         match hint {
             Some(diff) => {
                 node.cache += diff;
-                if node.cache.unknown_elem_len == 0 && node.cache.text_len.utf16.is_none() {
-                    node.cache.text_len.utf16 = Some(
-                        node.children()
-                            .iter()
-                            .map(|x| x.cache.text_len.utf16.unwrap())
-                            .sum::<i32>(),
-                    );
-                }
-
                 debug_assert_eq!(
-                    node.children().iter().map(|x| x.cache).sum::<Cache>(),
+                    node.children().iter().map(|x| x.cache).sum::<TextLength>(),
                     node.cache,
                 );
 
@@ -265,7 +159,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         let mut node = unsafe { node.parent().as_ref() };
         loop {
             for i in 0..child_index {
-                index += node.children()[i].cache.text_len.utf8 as usize;
+                index += node.children()[i].cache.utf8 as usize;
             }
 
             if let Some(parent) = node.parent() {
@@ -281,11 +175,11 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     }
 
     fn len_leaf(node: &rle::rle_tree::node::LeafNode<'_, PoolString, Self>) -> Self::Int {
-        node.cache.text_len.utf8 as usize
+        node.cache.utf8 as usize
     }
 
     fn len_internal(node: &rle::rle_tree::node::InternalNode<'_, PoolString, Self>) -> Self::Int {
-        node.cache.text_len.utf8 as usize
+        node.cache.utf8 as usize
     }
 
     fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
@@ -293,10 +187,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
     }
 
     fn value_to_update(x: &PoolString) -> Self::CacheUpdate {
-        Cache {
-            text_len: x.text_len(),
-            unknown_elem_len: x.range.is_unknown() as isize,
-        }
+        x.text_len()
     }
 }
 
@@ -315,7 +206,7 @@ where
 
     let mut last_len = 0;
     for (i, child) in node.children().iter().enumerate() {
-        last_len = f(child.cache.text_len);
+        last_len = f(child.cache);
         if index <= last_len {
             return FindPosResult::new(i, index, Position::get_pos(index, last_len));
         }
@@ -341,11 +232,12 @@ where
     }
 
     for (i, child) in node.children().iter().enumerate() {
-        if index < f(child) {
-            return FindPosResult::new(i, index, Position::get_pos(index, f(child)));
+        let last = f(child);
+        if index < last {
+            return FindPosResult::new(i, index, Position::get_pos(index, last));
         }
 
-        index -= f(child);
+        index -= last;
     }
 
     assert_eq!(index, 0);
@@ -471,6 +363,23 @@ pub mod test {
         } else {
             Ok(())
         }
+    }
+    #[test]
+    fn failed_3() {
+        apply(&mut [
+            Delete {
+                pos: 46598,
+                len: 86,
+            },
+            Insert {
+                pos: 0,
+                value: 20485,
+            },
+            InsertUnknown { pos: 4, len: 250 },
+            InsertUnknown { pos: 57, len: 123 },
+            InsertUnknown { pos: 179, len: 9 },
+            Delete { pos: 333, len: 54 },
+        ])
     }
 
     #[test]

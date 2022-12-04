@@ -265,7 +265,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
             if !handled {
                 if let Some(del_from) = to_del_start_offset {
-                    print!("Start");
                     // handle deletions at the start
                     visited.push((
                         depth,

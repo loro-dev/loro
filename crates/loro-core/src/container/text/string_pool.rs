@@ -235,7 +235,8 @@ impl PoolString {
     pub fn text_len(&self) -> TextLength {
         TextLength {
             utf8: self.range.atom_len() as i32,
-            utf16: self.utf16_length,
+            utf16: self.utf16_length.unwrap_or(0),
+            unknown_elem_len: self.range.is_unknown() as i32,
         }
     }
 

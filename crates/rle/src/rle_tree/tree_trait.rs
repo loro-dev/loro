@@ -294,6 +294,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 }
 
 impl Position {
+    #[inline(always)]
     pub fn get_pos(index: usize, len: usize) -> Position {
         if index == 0 {
             Position::Start
