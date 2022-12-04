@@ -1388,6 +1388,7 @@ dependencies = [
  "color-backtrace",
  "crdt-list",
  "ctor",
+ "debug-log",
  "enum-as-inner",
  "fxhash",
  "heapless",

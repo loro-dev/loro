@@ -729,13 +729,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         start: Option<A::Int>,
         end: Option<A::Int>,
         notify: &mut F,
-    ) -> Result<
-        A::CacheUpdate,
-        (
-            A::CacheUpdate,
-            <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>,
-        ),
-    >
+    ) -> InsertResult<'a, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {

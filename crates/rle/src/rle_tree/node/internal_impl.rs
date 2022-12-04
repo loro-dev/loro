@@ -1,7 +1,6 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Error, Formatter},
-    mem::transmute,
     ops::DerefMut,
 };
 
@@ -204,7 +203,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             return Ok(Default::default());
         }
 
-        println!("---------");
+        debug_log::group!("_delete");
         let (direct_delete_start, to_del_start_offset) =
             from.map_or((0, None), |x| self._delete_start(x));
         let (direct_delete_end, to_del_end_offset) =
@@ -219,7 +218,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let mut handled = false;
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
-                    print!("Meet");
+                    debug_log::debug_log!("Meet");
                     // start and end are at the same child
                     let child = &mut self.children[direct_delete_end];
                     match child.node.deref_mut() {
@@ -305,22 +304,32 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                     }
                 }
                 if let Some(del_to) = to_del_end_offset {
-                    print!("End");
                     // handle deletions at the end
                     visited.push((
                         depth,
                         NonNull::new(&mut *self.children[direct_delete_end].node).unwrap(),
                     ));
                     let child = &mut self.children[direct_delete_end];
+                    debug_log::group!("End");
                     match child.node.deref_mut() {
                         Node::Internal(node) => {
                             match node._delete(None, Some(del_to), visited, depth + 1, notify) {
                                 Ok(hint) => {
                                     child.cache += hint;
+                                    debug_log::debug_log!(
+                                        "ok, \ncache = {:?}\nactual = {:?}",
+                                        child.cache,
+                                        child.node.cache()
+                                    );
                                     update += hint;
                                 }
                                 Err((hint, new)) => {
                                     child.cache += hint;
+                                    debug_log::debug_log!(
+                                        "ok, \ncache = {:?}\nactual = {:?}",
+                                        child.cache,
+                                        child.node.cache()
+                                    );
                                     // even if we panic here it can still work
                                     insertions.push((direct_delete_end + 1, new));
                                     update += hint;
@@ -331,10 +340,20 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             match node.delete(None, Some(del_to), notify) {
                                 Ok(hint) => {
                                     child.cache += hint;
+                                    debug_log::debug_log!(
+                                        "ok, \ncache = {:?}\nactual = {:?}",
+                                        child.cache,
+                                        child.node.cache()
+                                    );
                                     update += hint;
                                 }
                                 Err((hint, new)) => {
                                     child.cache += hint;
+                                    debug_log::debug_log!(
+                                        "err, \ncache = {:?}\nactual = {:?}",
+                                        child.cache,
+                                        child.node.cache()
+                                    );
                                     // even if we panic here it can still work
                                     insertions.push((direct_delete_end + 1, new));
                                     update += hint;
@@ -342,12 +361,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             }
                         }
                     }
+                    debug_log::group_end!();
                 }
             }
         }
 
         if deleted_len > 0 {
-            print!("Range");
+            debug_log::debug_log!("Range");
             update += self.drain_children(direct_delete_start, direct_delete_end);
         }
 
@@ -355,11 +375,11 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         let mut result = Ok(());
         for mut insertion in insertions {
             if insertion.0 >= direct_delete_end && deleted_len > 0 {
-                print!("S");
+                debug_log::debug_log!("S");
                 insertion.0 -= deleted_len as usize;
             }
 
-            print!("M");
+            debug_log::debug_log!("m");
             match self._insert_with_split(insertion.0, insertion.1) {
                 Ok(hint) => {
                     update += hint;
@@ -372,12 +392,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             }
         }
 
+        debug_log::debug_dbg!(&update);
         A::update_cache_internal(self, Some(update));
         if let Err(new) = &mut result {
             A::update_cache_internal(new.as_internal_mut().unwrap(), None);
         }
 
-        println!("=======");
+        debug_log::group_end!();
 
         match result {
             Ok(_) => Ok(update),
@@ -668,6 +689,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        debug_log::group!("DELETE");
         debug_assert!(self.is_root());
         let mut old_zipper = SmallVec::new();
         match self._delete(start, end, &mut old_zipper, 1, notify) {
@@ -716,18 +738,14 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 continue;
             }
 
-            let mut to_delete: bool = false;
-            if let Some((sibling, either)) = node.get_a_sibling() {
-                // if has sibling, borrow or merge to it
-                let sibling: &mut Node<'a, T, A> =
-                        // SAFETY: node's sibling points to a valid descendant of self
-                        unsafe {transmute(sibling)};
-                if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
-                    node.merge_to_sibling(sibling, either, notify);
-                    to_delete = true;
-                } else {
-                    node.borrow_from_sibling(sibling, either, notify);
-                }
+            let to_delete: bool;
+            if let Some(index) = node.get_self_index() {
+                let parent = node.parent_mut().unwrap();
+                debug_log::debug_log!("borrow/merge sibling");
+                let Some(should_delete) = parent.balance_child(index, notify) else {
+                    continue;
+                };
+                to_delete = should_delete;
             } else {
                 continue;
             }
@@ -763,11 +781,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
 
         self._root_shrink_levels_if_one_child();
+        debug_log::group_end!();
     }
 
     fn _root_shrink_levels_if_one_child(&mut self) -> FxHashSet<NonNull<Node<'a, T, A>>> {
         let mut ans: HashSet<_, _> = FxHashSet::default();
         while self.children.len() == 1 && self.children[0].node.as_internal().is_some() {
+            debug_log::debug_log!("Shrink");
             let mut child = self.children.pop().unwrap();
             ans.insert(child.node.deref().into());
             let child_ptr = child.node.as_internal_mut().unwrap();
@@ -800,7 +820,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let (mut update, mut ans) = self._split();
             if child_index < self.children.len() {
                 new.set_parent(self.into());
-                update = update + A::cache_to_update(new.cache());
+                update += A::cache_to_update(new.cache());
                 self.children.insert(child_index, Child::from(new));
             } else {
                 new.set_parent((&mut *ans.as_internal_mut().unwrap()).into());
@@ -816,6 +836,34 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             let update = A::cache_to_update(new.cache());
             self.children.insert(child_index, Child::from(new));
             Ok(update)
+        }
+    }
+
+    fn balance_child<F>(&mut self, index: usize, notify: &mut F) -> Option<bool>
+    where
+        F: FnMut(&T, *mut LeafNode<'_, T, A>),
+    {
+        if self.children.len() == 1 {
+            return None;
+        }
+
+        let (sibling_index, either) = if index > 0 {
+            (index - 1, Either::Left)
+        } else {
+            (index + 1, Either::Right)
+        };
+        let (node, sibling) = arref::array_mut_ref!(&mut self.children, [index, sibling_index]);
+        if node.node.children_num() + sibling.node.children_num() <= A::MAX_CHILDREN_NUM {
+            node.node
+                .merge_to_sibling(&mut sibling.node, either, notify);
+            sibling.cache = sibling.node.cache();
+            Some(true)
+        } else {
+            node.node
+                .borrow_from_sibling(&mut sibling.node, either, notify);
+            node.cache = node.node.cache();
+            sibling.cache = sibling.node.cache();
+            Some(false)
         }
     }
 

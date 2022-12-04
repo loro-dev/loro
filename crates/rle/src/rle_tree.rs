@@ -83,7 +83,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .unwrap()
                 .insert(index, value, &mut |_a, _b| {})
                 .unwrap();
-        })
+        });
+        self.debug_check();
     }
 
     /// `notify` would be invoke if a new element is inserted/moved to a new leaf node.
@@ -293,7 +294,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             node.as_internal_mut()
                 .unwrap()
                 .delete(start, end, &mut |_, _| {});
-        })
+        });
+        self.debug_check();
     }
 
     pub fn delete_range_notify<F>(

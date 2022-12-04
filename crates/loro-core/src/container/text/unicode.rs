@@ -203,6 +203,12 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>,
         hint: Option<Self::CacheUpdate>,
     ) -> Self::CacheUpdate {
+        if cfg!(test) || cfg!(debug_assert) {
+            for child in node.children() {
+                debug_assert_eq!(child.cache, child.node.cache());
+            }
+        }
+
         match hint {
             Some(diff) => {
                 node.cache += diff;
@@ -220,11 +226,6 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
                     node.cache,
                 );
 
-                if cfg!(test) || cfg!(debug_assert) {
-                    for child in node.children() {
-                        debug_assert_eq!(child.cache, child.node.cache());
-                    }
-                }
                 diff
             }
             None => {
@@ -355,7 +356,7 @@ where
     )
 }
 
-#[cfg(any(test, feature = "test_utils"))]
+#[cfg(feature = "test_utils")]
 pub mod test {
     use std::sync::{Arc, Mutex};
 
