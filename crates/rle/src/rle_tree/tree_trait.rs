@@ -424,6 +424,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<Zero>) -> Zero {
         if node.children.is_empty() {
+            node.cache.end = node.cache.start;
             return Zero;
         }
 
