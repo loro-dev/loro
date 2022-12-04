@@ -24,10 +24,25 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
     Leaf(LeafNode<'a, T, A>),
 }
 
+#[derive(Debug)]
+pub struct Child<'a, T: Rle, A: RleTreeTrait<T>> {
+    pub node: ArenaBoxedNode<'a, T, A>,
+    pub cache: A::Cache,
+}
+
+impl<'a, T: Rle, A: RleTreeTrait<T>> Child<'a, T, A> {
+    pub fn from(node: ArenaBoxedNode<'a, T, A>) -> Self {
+        Self {
+            cache: node.cache(),
+            node,
+        }
+    }
+}
+
 pub struct InternalNode<'a, T: Rle + 'a, A: RleTreeTrait<T> + 'a> {
     bump: &'a A::Arena,
     pub(crate) parent: Option<NonNull<InternalNode<'a, T, A>>>,
-    pub(super) children: ArenaVec<'a, T, A, ArenaBoxedNode<'a, T, A>>,
+    pub(super) children: ArenaVec<'a, T, A, Child<'a, T, A>>,
     pub cache: A::Cache,
     _pin: PhantomPinned,
     _a: PhantomData<A>,
@@ -71,7 +86,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             Self::Internal(node) => node
                 .children
                 .first()
-                .and_then(|child| child.get_first_leaf()),
+                .and_then(|child| child.node.get_first_leaf()),
             Self::Leaf(node) => Some(node),
         }
     }
@@ -82,7 +97,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             Self::Internal(node) => node
                 .children
                 .first_mut()
-                .and_then(|child| child.get_first_leaf_mut()),
+                .and_then(|child| child.node.get_first_leaf_mut()),
             Self::Leaf(node) => Some(node),
         }
     }
@@ -90,7 +105,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     #[inline]
     pub(crate) fn get_last_leaf(&self) -> Option<&LeafNode<'a, T, A>> {
         match self {
-            Self::Internal(node) => node.children.last().and_then(|child| child.get_last_leaf()),
+            Self::Internal(node) => node
+                .children
+                .last()
+                .and_then(|child| child.node.get_last_leaf()),
             Self::Leaf(node) => Some(node),
         }
     }
@@ -130,7 +148,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             let ans = parent
                 .children
                 .iter()
-                .position(|child| match (child.deref(), self) {
+                .position(|child| match (child.node.deref(), self) {
                     (Node::Internal(a), Node::Internal(b)) => std::ptr::eq(a, b),
                     (Node::Leaf(a), Node::Leaf(b)) => std::ptr::eq(a, b),
                     _ => false,
@@ -147,13 +165,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         })
     }
 
-    pub(crate) fn get_a_sibling(&self) -> Option<(&Self, Either)> {
+    pub(crate) fn get_a_sibling(&mut self) -> Option<(&Self, Either)> {
         let index = self.get_self_index()?;
-        let parent = self.parent()?;
+        let parent = self.parent_mut()?;
         if index > 0 {
-            Some((&parent.children[index - 1], Either::Left))
+            Some((&mut parent.children[index - 1].node, Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((&parent.children[index + 1], Either::Right))
+            Some((&mut parent.children[index + 1].node, Either::Right))
         } else {
             None
         }
@@ -180,7 +198,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let self_node = self.as_internal_mut().unwrap();
                     let ptr = NonNull::new(&mut *sibling).unwrap();
                     for mut child in self_node.children.drain(..) {
-                        child.set_parent(ptr);
+                        child.node.set_parent(ptr);
                         sibling.children.push(child);
                     }
                 }
@@ -200,7 +218,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     sibling.children.splice(
                         0..0,
                         self_node.children.drain(0..).map(|mut x| {
-                            x.set_parent(ptr);
+                            x.node.set_parent(ptr);
                             x
                         }),
                     );
@@ -251,7 +269,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                     let self_ptr = NonNull::new(&mut *self_node).unwrap();
                     let sibling_drain =
                         sibling.children.drain(A::MIN_CHILDREN_NUM..).map(|mut x| {
-                            x.set_parent(self_ptr);
+                            x.node.set_parent(self_ptr);
                             x
                         });
                     self_node.children.splice(0..0, sibling_drain);
@@ -279,7 +297,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
                             .children
                             .drain(0..sibling_len - A::MIN_CHILDREN_NUM)
                             .map(|mut x| {
-                                x.set_parent(self_ptr);
+                                x.node.set_parent(self_ptr);
                                 x
                             }),
                     );
@@ -328,8 +346,12 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
     pub(crate) fn update_cache(&mut self) {
         match self {
-            Node::Internal(node) => A::update_cache_internal(node),
-            Node::Leaf(node) => A::update_cache_leaf(node),
+            Node::Internal(node) => {
+                A::update_cache_internal(node);
+            }
+            Node::Leaf(node) => {
+                A::update_cache_leaf(node);
+            }
         }
     }
 
@@ -338,10 +360,18 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         match self {
             Node::Internal(node) => {
                 for child in node.children.deref() {
-                    child.recursive_visit_all(f);
+                    child.node.recursive_visit_all(f);
                 }
             }
             Node::Leaf(_) => {}
+        }
+    }
+
+    #[inline(always)]
+    pub fn cache(&self) -> A::Cache {
+        match self {
+            Node::Internal(x) => x.cache,
+            Node::Leaf(x) => x.cache,
         }
     }
 }

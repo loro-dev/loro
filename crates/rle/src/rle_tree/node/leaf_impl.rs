@@ -163,7 +163,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
             if !node
                 .children
                 .iter()
-                .any(|x| std::ptr::eq(x.as_leaf().unwrap(), self))
+                .any(|x| std::ptr::eq(x.node.as_leaf().unwrap(), self))
             {
                 return true;
             }
@@ -173,7 +173,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 if !parent
                     .children()
                     .iter()
-                    .any(|x| std::ptr::eq(x.as_internal().unwrap(), node))
+                    .any(|x| std::ptr::eq(x.node.as_internal().unwrap(), node))
                 {
                     return true;
                 }
@@ -792,7 +792,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> LeafNode<'a, T, A> {
         parent
             .children
             .iter()
-            .position(|child| std::ptr::eq(child.as_leaf().unwrap(), self))
+            .position(|child| std::ptr::eq(child.node.as_leaf().unwrap(), self))
     }
 
     #[inline(always)]

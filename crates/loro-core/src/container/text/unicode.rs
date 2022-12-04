@@ -63,22 +63,21 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     type Arena = HeapMode;
 
-    fn update_cache_leaf(node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>) {
+    fn update_cache_leaf(
+        node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>,
+    ) -> Self::Cache {
         node.cache = node
             .children()
             .iter()
-            .fold(TextLength::default(), |acc, cur| acc + cur.text_len())
+            .fold(TextLength::default(), |acc, cur| acc + cur.text_len());
+        node.cache
     }
 
-    fn update_cache_internal(node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>) {
-        node.cache = node
-            .children()
-            .iter()
-            .map(|x| match &**x {
-                rle::rle_tree::node::Node::Internal(x) => x.cache,
-                rle::rle_tree::node::Node::Leaf(x) => x.cache,
-            })
-            .sum()
+    fn update_cache_internal(
+        node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>,
+    ) -> Self::Cache {
+        node.cache = node.children().iter().map(|x| x.cache).sum();
+        node.cache
     }
 
     fn find_pos_internal(
@@ -110,7 +109,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         let mut node = unsafe { node.parent().as_ref() };
         loop {
             for i in 0..child_index {
-                index += node.children()[i].len();
+                index += node.children()[i].cache.utf8 as usize;
             }
 
             if let Some(parent) = node.parent() {
@@ -149,7 +148,7 @@ where
 
     let mut last_cache = 0;
     for (i, child) in node.children().iter().enumerate() {
-        last_cache = match child.deref() {
+        last_cache = match child.node.deref() {
             Node::Internal(x) => {
                 if index <= f(x.cache) {
                     return FindPosResult::new(i, index, Position::get_pos(index, f(x.cache)));

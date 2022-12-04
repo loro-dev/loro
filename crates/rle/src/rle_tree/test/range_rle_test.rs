@@ -113,9 +113,9 @@ fn delete_that_need_borrow_from_sibling() {
             // Left [ 0..1, 6..7 ]
             // Right [8..9, 10..11, 12..13, 14..15]
             let left = &node.as_internal().unwrap().children[0];
-            assert_eq!(left.as_leaf().unwrap().cache, 2);
+            assert_eq!(left.node.as_leaf().unwrap().cache, 2);
             let right = &node.as_internal().unwrap().children[1];
-            assert_eq!(right.as_leaf().unwrap().cache, 4);
+            assert_eq!(right.node.as_leaf().unwrap().cache, 4);
         })
     }
 
@@ -125,9 +125,9 @@ fn delete_that_need_borrow_from_sibling() {
             // Left [ 0..1, 8..9, 10..11 ]
             // Right [12..13, 14..15]
             let left = &node.as_internal().unwrap().children[0];
-            assert_eq!(left.as_leaf().unwrap().cache, 3);
+            assert_eq!(left.node.as_leaf().unwrap().cache, 3);
             let right = &node.as_internal().unwrap().children[1];
-            assert_eq!(right.as_leaf().unwrap().cache, 2);
+            assert_eq!(right.node.as_leaf().unwrap().cache, 2);
         })
     }
 

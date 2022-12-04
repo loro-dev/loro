@@ -108,7 +108,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         return None;
                     }
 
-                    node = &internal_node.children[result.child_index];
+                    node = &internal_node.children[result.child_index].node;
                     index = result.offset;
                 }
                 Node::Leaf(leaf) => {
@@ -142,7 +142,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         return None;
                     }
 
-                    node = &internal_node.children[result.child_index];
+                    node = &internal_node.children[result.child_index].node;
                     index = result.offset;
                 }
                 Node::Leaf(leaf) => {
@@ -172,10 +172,78 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     }
 
     #[inline]
-    pub fn get_mut(&mut self, index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
-        let cursor = self.get(index);
-        // SAFETY: this is safe because we have exclusive ref to the tree
-        cursor.map(|x| unsafe { SafeCursorMut::from(x.0) })
+    pub(crate) fn get_cursor_ge_mut(
+        &mut self,
+        mut index: A::Int,
+    ) -> Option<SafeCursorMut<'_, T, A>> {
+        let mut node = self.root_mut();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if result.child_index >= internal_node.children.len() {
+                        return None;
+                    }
+
+                    node = &mut internal_node.children[result.child_index].node;
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if result.child_index >= leaf.children.len() {
+                        return None;
+                    }
+
+                    if result.child_index == leaf.children.len() - 1
+                        && leaf.next().is_none()
+                        && !result.found
+                        && (result.pos == Position::After || result.pos == Position::End)
+                    {
+                        return None;
+                    }
+
+                    return Some(SafeCursorMut::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, mut index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
+        let mut node = self.root_mut();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if !result.found {
+                        return None;
+                    }
+
+                    node = &mut internal_node.children[result.child_index].node;
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if !result.found {
+                        return None;
+                    }
+
+                    return Some(SafeCursorMut::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
+                }
+            }
+        }
     }
 
     #[inline]

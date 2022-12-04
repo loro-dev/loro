@@ -289,7 +289,7 @@ impl<
                 let mut del_end = None;
                 for i in 0..internal.children().len() {
                     let child = &internal.children()[i];
-                    if child.is_empty() {
+                    if child.node.is_empty() {
                         del_start.get_or_insert(i);
                         del_end = Some(i + 1);
                     }

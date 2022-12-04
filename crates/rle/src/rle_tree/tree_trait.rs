@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug, ops::Deref};
+use std::{cmp::Ordering, fmt::Debug};
 
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
 
@@ -75,13 +75,15 @@ pub type ArenaVec<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Vec<'a, V
 pub type ArenaBox<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Boxed<'a, V>;
 #[allow(type_alias_bounds)]
 pub type ArenaBoxedNode<'a, T, A: RleTreeTrait<T>> = ArenaBox<'a, T, A, Node<'a, T, A>>;
+pub type InsertResult<'a, T, A: RleTreeTrait<T>> =
+    Result<A::Cache, (A::Cache, <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>)>;
 
 pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug + FromPrimitive;
-    type Cache: Default + Debug + Eq + Clone;
-    /// The allocation method used for [crate::RleTree].
+    type Cache: Default + Debug + Eq + Clone + Copy;
+    /// The allocation method of [crate::RleTree].
     /// There are two modes provided:
     ///
     /// - [crate::rle_tree::HeapMode] will use Box to allocate nodes
@@ -91,8 +93,8 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// So you cannot use smart pointer in [crate::rle_tree::BumpMode] directly. You should wrap it inside [bumpalo]'s Box.
     type Arena: Arena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>);
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>);
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Self::Cache;
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> Self::Cache;
 
     /// - `child_index` can only equal to children.len() when index out of range
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
@@ -141,16 +143,18 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     type Cache = usize;
     type Arena = TreeArena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> usize {
         node.cache = node
             .children()
             .iter()
             .map(|x| HasLength::content_len(x))
             .sum();
+        node.cache
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) {
-        node.cache = node.children().iter().map(|x| Node::len(x)).sum();
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> usize {
+        node.cache = node.children().iter().map(|x| x.cache).sum();
+        node.cache
     }
 
     fn find_pos_internal(
@@ -163,20 +167,10 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
         let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
-            last_cache = match child.deref() {
-                Node::Internal(x) => {
-                    if index <= x.cache {
-                        return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
-                    }
-                    x.cache
-                }
-                Node::Leaf(x) => {
-                    if index <= x.cache {
-                        return FindPosResult::new(i, index, Position::get_pos(index, child.len()));
-                    }
-                    x.cache
-                }
-            };
+            last_cache = child.cache;
+            if index <= last_cache {
+                return FindPosResult::new(i, index, Position::get_pos(index, last_cache));
+            }
 
             index -= last_cache;
         }
@@ -217,7 +211,10 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     }
 
     fn check_cache_internal(node: &InternalNode<'_, T, Self>) {
-        assert_eq!(node.cache, node.children().iter().map(|x| x.len()).sum());
+        assert_eq!(
+            node.cache,
+            node.children().iter().map(|x| x.node.len()).sum()
+        );
     }
 
     fn check_cache_leaf(node: &LeafNode<'_, T, Self>) {
@@ -239,7 +236,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         let mut node = unsafe { node.parent.as_ref() };
         loop {
             for i in 0..child_index {
-                index += node.children[i].len();
+                index += node.children[i].node.len();
             }
 
             if let Some(parent) = node.parent {
@@ -295,24 +292,26 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     type Cache = Cache<T::Int>;
     type Arena = TreeArena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) {
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Cache<T::Int> {
         if node.children.is_empty() {
             node.cache.end = node.cache.start;
-            return;
+            return node.cache;
         }
 
         // TODO: Maybe panic if overlap?
         node.cache.end = node.children().last().unwrap().get_end_index();
         node.cache.start = node.children()[0].get_start_index();
+        node.cache
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) {
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> Self::Cache {
         if node.children.is_empty() {
-            return;
+            return node.cache;
         }
 
-        node.cache.end = get_cache(node.children().last().unwrap()).end;
-        node.cache.start = get_cache(&node.children()[0]).start;
+        node.cache.end = node.children().last().unwrap().cache.end;
+        node.cache.start = node.children()[0].cache.start;
+        node.cache
     }
 
     fn find_pos_internal(
@@ -334,7 +333,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         let ans = node
             .children
             .binary_search_by(|x| {
-                let cache = get_cache(x);
+                let cache = x.cache;
                 if index < cache.start {
                     Ordering::Greater
                 } else if index > cache.end {
@@ -348,20 +347,14 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
                     FindPosResult::new_not_found(
                         x,
                         index,
-                        get_pos_global(index, get_cache(&node.children[x])),
+                        get_pos_global(index, node.children[x].cache),
                     )
                 },
-                |x| {
-                    FindPosResult::new(
-                        x,
-                        index,
-                        get_pos_global(index, get_cache(&node.children[x])),
-                    )
-                },
+                |x| FindPosResult::new(x, index, get_pos_global(index, node.children[x].cache)),
             );
         if ans.pos == Position::End {
             if ans.child_index + 1 < node.children.len()
-                && index == get_cache(&node.children[ans.child_index + 1]).start
+                && index == node.children[ans.child_index + 1].cache.start
             {
                 FindPosResult::new(ans.child_index + 1, index, Position::Start)
             } else {
@@ -468,13 +461,9 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
         assert_eq!(
             node.cache.end,
-            node.children()
-                .iter()
-                .map(|x| get_cache(x).end)
-                .max()
-                .unwrap()
+            node.children().iter().map(|x| x.cache.end).max().unwrap()
         );
-        assert_eq!(node.cache.start, get_cache(&node.children()[0]).start);
+        assert_eq!(node.cache.start, node.children[0].cache.start);
     }
 
     fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int {

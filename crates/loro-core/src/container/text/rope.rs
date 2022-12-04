@@ -79,12 +79,12 @@ impl Rope {
                             unreachable!();
                         }
 
-                        node = &internal_node.children()[result.child_index];
+                        node = &internal_node.children()[result.child_index].node;
                         index = result.offset;
                         ans += internal_node.children()[0..result.child_index]
                             .iter()
                             .map(|x| {
-                                dst_cache(match &**x {
+                                dst_cache(match &*x.node {
                                     Node::Internal(x) => x.cache,
                                     Node::Leaf(x) => x.cache,
                                 })
