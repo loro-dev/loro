@@ -83,8 +83,9 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug + FromPrimitive;
-    type Cache: Default + Debug + Eq + Clone + Copy;
-    /// The allocation method of [crate::RleTree].
+    type CacheUpdate: Copy + Default + Debug;
+    type Cache: Default + Debug + Eq + Clone;
+    /// The allocation method used for [crate::RleTree].
     /// There are two modes provided:
     ///
     /// - [crate::rle_tree::HeapMode] will use Box to allocate nodes
@@ -94,8 +95,11 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// So you cannot use smart pointer in [crate::rle_tree::BumpMode] directly. You should wrap it inside [bumpalo]'s Box.
     type Arena: Arena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Self::Cache;
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> Self::Cache;
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Self::CacheUpdate;
+    fn update_cache_internal(
+        node: &mut InternalNode<'_, T, Self>,
+        hint: Option<Self::CacheUpdate>,
+    ) -> Self::CacheUpdate;
 
     /// - `child_index` can only equal to children.len() when index out of range
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
@@ -120,6 +124,11 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn len_internal(node: &InternalNode<'_, T, Self>) -> Self::Int;
     fn check_cache_leaf(_node: &LeafNode<'_, T, Self>) {}
     fn check_cache_internal(_node: &InternalNode<'_, T, Self>) {}
+
+    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate;
+    fn cache_to_update(x: &Self::Cache) -> Self::CacheUpdate;
+    fn value_to_update(x: &T) -> Self::CacheUpdate;
+    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate;
 }
 
 #[derive(Debug, Default)]
@@ -141,21 +150,22 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
     type Int = usize;
 
+    type CacheUpdate = isize;
     type Cache = usize;
     type Arena = TreeArena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> usize {
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> isize {
         node.cache = node
             .children()
             .iter()
             .map(|x| HasLength::content_len(x))
             .sum();
-        node.cache
+        0
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> usize {
-        node.cache = node.children().iter().map(|x| x.cache).sum();
-        node.cache
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<isize>) -> isize {
+        node.cache = node.children().iter().map(|x| Node::len(x)).sum();
+        0
     }
 
     fn find_pos_internal(
@@ -251,6 +261,22 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
         index
     }
+
+    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {
+        0
+    }
+
+    fn cache_to_update(x: &Self::Cache) -> Self::CacheUpdate {
+        0
+    }
+
+    fn value_to_update(x: &T) -> Self::CacheUpdate {
+        0
+    }
+
+    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {
+        -x
+    }
 }
 
 impl Position {
@@ -290,6 +316,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     type Int = T::Int;
 
+    type CacheUpdate = ();
     type Cache = Cache<T::Int>;
     type Arena = TreeArena;
 
@@ -305,7 +332,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         node.cache
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>) -> Self::Cache {
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<()>) {
         if node.children.is_empty() {
             return node.cache;
         }
@@ -470,6 +497,14 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
     fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int {
         node.children[child_index].get_start_index()
     }
+
+    fn merge_cache_update(a: Self::CacheUpdate, b: Self::CacheUpdate) -> Self::CacheUpdate {}
+
+    fn cache_to_update(x: &Self::Cache) -> Self::CacheUpdate {}
+
+    fn value_to_update(x: &T) -> Self::CacheUpdate {}
+
+    fn neg_update(x: Self::CacheUpdate) -> Self::CacheUpdate {}
 }
 
 #[inline]

@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, Position, SafeCursor, UnsafeCursor},
+    rle_tree::{node::LeafNode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
@@ -22,7 +22,7 @@ use super::y_span::{YSpan, YSpanTreeTrait};
 // marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
 #[derive(Debug, Clone, EnumAsInner, PartialEq, Eq)]
-pub(super) enum Marker {
+pub enum Marker {
     Insert {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
@@ -41,6 +41,33 @@ impl ZeroElement for Marker {
 }
 
 impl Marker {
+    pub(super) fn as_cursor_mut<'a, 'b>(
+        &'a mut self,
+        id: ID,
+    ) -> Option<SafeCursorMut<'b, YSpan, YSpanTreeTrait>> {
+        match self {
+            Marker::Insert { ptr, len: _ } => {
+                // SAFETY: tree data is always valid
+                let node = unsafe { ptr.as_mut() };
+                let position = node.children().iter().position(|x| x.contain_id(id))?;
+                let child = &node.children()[position];
+                let start_counter = child.id.counter;
+                let offset = id.counter - start_counter;
+                // SAFETY: we transform lifetime from SafeCursor<'static> to SafeCursor<'b> to suit the need.
+                // Its safety is guaranteed by the caller, who has access to the underlying tree
+                unsafe {
+                    std::mem::transmute(Some(SafeCursorMut::from_leaf(
+                        node,
+                        position,
+                        offset as usize,
+                        Position::from_offset(offset as isize, child.atom_len()),
+                        0,
+                    )))
+                }
+            }
+            Marker::Delete(_) => None,
+        }
+    }
     pub(super) fn as_cursor<'a, 'b>(
         &'a self,
         id: ID,
@@ -168,7 +195,7 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct CursorMap(RangeMap<u128, Marker>);
+pub struct CursorMap(RangeMap<u128, Marker>);
 
 impl Deref for CursorMap {
     type Target = RangeMap<u128, Marker>;
@@ -191,16 +218,14 @@ pub(super) fn make_notify(
             span.id.into(),
             Marker::Insert {
                 // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
-                ptr: unsafe {
-                    NonNull::new_unchecked(leaf as usize as *mut LeafNode<'static, _, _>)
-                },
+                ptr: unsafe { NonNull::new_unchecked(std::mem::transmute(leaf)) },
                 len: span.atom_len(),
             },
         );
     }
 }
 
-pub(super) struct IdSpanQueryResult {
+pub struct IdSpanQueryResult {
     pub inserts: Vec<(ID, UnsafeCursor<'static, YSpan, YSpanTreeTrait>)>,
     pub deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)>,
 }

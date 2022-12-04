@@ -114,6 +114,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        let update = A::value_to_update(&value);
         let leaf = self.leaf.as_mut();
         // println!("insert cursor {:?}", self);
         // println!("insert value {:?}", value);
@@ -121,21 +122,24 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         let result = leaf.insert_at_pos(self.pos, self.index, self.offset, value, notify, false);
         // dbg!(&leaf);
         let mut node = leaf.parent.as_mut();
-        if let Err(new) = result {
-            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
-            while let Err(new) = result {
-                let old_node_index = node.get_index_in_parent().unwrap();
-                // result is err, so we're sure parent is valid
-                node = node.parent.unwrap().as_mut();
-                result = node.insert_at_pos(old_node_index + 1, new);
+        match result {
+            Ok(hint) => {
+                A::update_cache_internal(node, Some(hint));
             }
-        } else {
-            A::update_cache_internal(node);
+            Err((hint, new)) => {
+                let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
+                while let Err((update, new)) = result {
+                    let old_node_index = node.get_index_in_parent().unwrap();
+                    // result is err, so we're sure parent is valid
+                    node = node.parent.unwrap().as_mut();
+                    result = node.insert_at_pos(old_node_index + 1, new);
+                }
+            }
         }
 
         while node.parent.is_some() {
             node = node.parent.unwrap().as_mut();
-            A::update_cache_internal(node);
+            A::update_cache_internal(node, Some(update));
         }
     }
 
@@ -265,19 +269,21 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         let mut node = leaf.parent.as_mut();
         if let Err(new) = result {
             let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
-            while let Err(new) = result {
+            while let Err((update, new)) = result {
                 let old_node_index = node.get_index_in_parent().unwrap();
                 // result is err, so we're sure parent is valid
                 node = node.parent.unwrap().as_mut();
                 result = node.insert_at_pos(old_node_index + 1, new);
             }
         } else {
-            A::update_cache_internal(node);
+            // TODO: Perf
+            A::update_cache_internal(node, None);
         }
 
         while node.parent.is_some() {
             node = node.parent.unwrap().as_mut();
-            A::update_cache_internal(node);
+            // TODO: Perf
+            A::update_cache_internal(node, None);
         }
     }
 }
@@ -307,10 +313,28 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
             PhantomData,
         )
     }
+}
 
+impl<'tree, T: Rle, A: RleTreeTrait<T>> RawSafeCursor<'tree, T, A, Im> {
     #[inline]
     pub fn from_leaf(
         leaf: &LeafNode<'tree, T, A>,
+        index: usize,
+        offset: usize,
+        pos: Position,
+        len: usize,
+    ) -> Self {
+        Self(
+            UnsafeCursor::new(leaf.into(), index, offset, pos, len),
+            PhantomData,
+        )
+    }
+}
+
+impl<'tree, T: Rle, A: RleTreeTrait<T>> RawSafeCursor<'tree, T, A, Mut> {
+    #[inline]
+    pub fn from_leaf(
+        leaf: &mut LeafNode<'tree, T, A>,
         index: usize,
         offset: usize,
         pos: Position,
@@ -328,6 +352,12 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
     pub fn as_tree_ref(&self) -> &'tree T {
         // SAFETY: SafeCursor is a shared reference to the tree
         unsafe { self.0.as_ref() }
+    }
+
+    #[inline]
+    pub fn as_tree_mut(&mut self) -> &'tree mut T {
+        // SAFETY: SafeCursor is a shared reference to the tree
+        unsafe { self.0.as_mut() }
     }
 
     #[inline]
@@ -406,10 +436,10 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe {
             let leaf = self.0.leaf.as_mut();
-            A::update_cache_leaf(leaf);
+            let mut update = A::update_cache_leaf(leaf);
             let mut node = leaf.parent.as_mut();
             loop {
-                A::update_cache_internal(node);
+                update = A::update_cache_internal(node, Some(update));
                 match node.parent {
                     Some(mut parent) => node = parent.as_mut(),
                     None => return,

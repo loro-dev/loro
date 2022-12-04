@@ -41,7 +41,6 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op};
 pub(crate) type InternalString = DefaultAtom;
 pub(crate) use container::Container;
 
-
 pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use log_store::LogStore;
 pub use loro::LoroCore;
@@ -49,3 +48,6 @@ pub use value::LoroValue;
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
+
+#[cfg(feature = "test_utils")]
+pub use container::text;

@@ -32,6 +32,10 @@ pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
 
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
+        assert!(
+            A::MAX_CHILDREN_NUM > 3,
+            "MAX_CHILDREN_NUM must be greater than 3"
+        );
         RleTreeBuilder {
             bump: Default::default(),
             node_builder: |bump: &A::Arena| {
@@ -58,7 +62,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         if let Some(value) = self.with_node_mut(|node| {
-            let leaf = node.get_first_leaf();
+            let leaf = node.get_first_leaf_mut();
             if let Some(leaf) = leaf {
                 // SAFETY: we have exclusive ref to the tree
                 let cursor = unsafe { SafeCursorMut::new(leaf.into(), 0, 0, Position::Start, 0) };
@@ -264,16 +268,16 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn iter_mut_in<'a>(
         &'a mut self,
-        start: Option<SafeCursor<'a, T, A>>,
+        start: Option<SafeCursorMut<'a, T, A>>,
         end: Option<SafeCursor<'a, T, A>>,
     ) -> iter::IterMut<'a, T, A> {
         if start.is_none() && end.is_none() {
             self.iter_mut()
         } else {
-            let leaf = self.root().get_first_leaf().unwrap();
+            let leaf = self.root_mut().get_first_leaf_mut().unwrap();
             // SAFETY: this is safe because we know there are at least one element in the tree
             let start =
-                start.unwrap_or_else(|| SafeCursor::from_leaf(leaf, 0, 0, Position::Start, 0));
+                start.unwrap_or_else(|| SafeCursorMut::from_leaf(leaf, 0, 0, Position::Start, 0));
 
             // SAFETY: we have exclusive ref to the tree, so it's safe to have an exclusive ref to its elements
             let start: SafeCursorMut<'a, T, A> = unsafe { SafeCursorMut::from(start.0) };
@@ -444,7 +448,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                         .entry(node.parent.unwrap())
                         .or_default();
                 } else {
-                    A::update_cache_internal(node);
+                    // TODO: Perf, give hint
+                    A::update_cache_internal(node, None);
                 }
             }
         }

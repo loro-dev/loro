@@ -165,13 +165,13 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         })
     }
 
-    pub(crate) fn get_a_sibling(&mut self) -> Option<(&Self, Either)> {
+    pub(crate) fn get_a_sibling(&mut self) -> Option<(&mut Self, Either)> {
         let index = self.get_self_index()?;
         let parent = self.parent_mut()?;
         if index > 0 {
-            Some((&mut parent.children[index - 1].node, Either::Left))
+            Some((&mut parent.children[index - 1], Either::Left))
         } else if index + 1 < parent.children.len() {
-            Some((&mut parent.children[index + 1].node, Either::Right))
+            Some((&mut parent.children[index + 1], Either::Right))
         } else {
             None
         }
@@ -237,8 +237,9 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             }
         }
 
-        self.update_cache();
-        sibling.update_cache();
+        // TODO: Perf
+        self.update_cache(None);
+        sibling.update_cache(None);
     }
 
     #[inline(always)]
@@ -321,37 +322,15 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
             }
         }
 
-        self.update_cache();
-        sibling.update_cache();
+        // TODO: perf
+        self.update_cache(None);
+        sibling.update_cache(None);
     }
 
-    pub(crate) fn remove(&mut self) {
-        if let Some(leaf) = self.as_leaf_mut() {
-            let next = leaf.next;
-            let prev = leaf.prev;
-            if let Some(mut next) = next {
-                // SAFETY: it is safe here
-                unsafe { next.as_mut() }.prev = prev;
-            }
-            if let Some(mut prev) = prev {
-                // SAFETY: it is safe here
-                unsafe { prev.as_mut() }.next = next;
-            }
-        }
-
-        let index = self.get_self_index().unwrap();
-        let parent = self.parent_mut().unwrap();
-        for _ in parent.children.drain(index..index + 1) {}
-    }
-
-    pub(crate) fn update_cache(&mut self) {
+    pub(crate) fn update_cache(&mut self, update: Option<A::CacheUpdate>) -> A::CacheUpdate {
         match self {
-            Node::Internal(node) => {
-                A::update_cache_internal(node);
-            }
-            Node::Leaf(node) => {
-                A::update_cache_leaf(node);
-            }
+            Node::Internal(node) => A::update_cache_internal(node, update),
+            Node::Leaf(node) => A::update_cache_leaf(node),
         }
     }
 
@@ -368,10 +347,29 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
     }
 
     #[inline(always)]
-    pub fn cache(&self) -> A::Cache {
+    pub fn cache(&self) -> &A::Cache {
         match self {
-            Node::Internal(x) => x.cache,
-            Node::Leaf(x) => x.cache,
+            Node::Internal(x) => &x.cache,
+            Node::Leaf(x) => &x.cache,
+        }
+    }
+
+    pub(crate) fn is_deleted(&self) -> bool {
+        match self {
+            Node::Internal(node) => {
+                let mut node = node;
+                while let Some(parent) = node.parent() {
+                    if self.get_self_index().is_none() {
+                        return true;
+                    }
+
+                    // SAFETY: parent is a valid pointer
+                    node = unsafe { parent.as_ref() };
+                }
+
+                false
+            }
+            Node::Leaf(x) => x.is_deleted(),
         }
     }
 }

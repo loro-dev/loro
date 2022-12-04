@@ -22,7 +22,7 @@ pub struct StringPool {
 pub struct PoolString {
     pub(super) pool: Weak<Mutex<StringPool>>,
     pub(super) range: SliceRange,
-    pub(super) utf16_length: Option<u32>,
+    pub(super) utf16_length: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -95,7 +95,7 @@ impl StringPool {
         PoolString {
             pool: Arc::downgrade(this),
             range,
-            utf16_length: Some(encode_utf16(s).count() as u32),
+            utf16_length: Some(encode_utf16(s).count() as i32),
         }
     }
 
@@ -210,7 +210,7 @@ impl Sliceable for PoolString {
             Self {
                 pool: Weak::clone(&self.pool),
                 range,
-                utf16_length: Some(utf16_length as u32),
+                utf16_length: Some(utf16_length as i32),
             }
         }
     }
@@ -226,7 +226,7 @@ impl PoolString {
                 let borrow = pool.lock().unwrap();
                 let str = borrow.slice(&slice.0);
                 let utf16_length = encode_utf16(str).count();
-                Some(utf16_length as u32)
+                Some(utf16_length as i32)
             },
             range: slice,
         }
@@ -234,7 +234,7 @@ impl PoolString {
 
     pub fn text_len(&self) -> TextLength {
         TextLength {
-            utf8: self.range.atom_len() as u32,
+            utf8: self.range.atom_len() as i32,
             utf16: self.utf16_length,
         }
     }

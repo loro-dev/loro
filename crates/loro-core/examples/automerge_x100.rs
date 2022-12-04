@@ -4,7 +4,7 @@ fn main() {}
 #[cfg(feature = "test_utils")]
 fn main() {
     const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
-    use std::io::Read;
+    use std::{io::Read, time::Instant};
 
     use flate2::read::GzDecoder;
     use loro_core::LoroCore;
@@ -18,6 +18,7 @@ fn main() {
     println!("Txn: {}", txns.unwrap().as_array().unwrap().len());
 
     let mut loro = LoroCore::default();
+    let start = Instant::now();
     for _ in 0..100 {
         for (_, txn) in txns.unwrap().as_array().unwrap().iter().enumerate() {
             let mut text = loro.get_text("text");
@@ -37,4 +38,5 @@ fn main() {
             }
         }
     }
+    println!("{}", start.elapsed().as_millis());
 }

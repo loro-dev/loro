@@ -654,6 +654,30 @@ mod test {
     }
 
     #[test]
+    fn case_new_cache() {
+        test_multi_sites(
+            3,
+            &mut [
+                Ins {
+                    content: 35108,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 35624,
+                    pos: 0,
+                    site: 0,
+                },
+                Del {
+                    pos: 0,
+                    len: 5,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn case_two() {
         test_multi_sites(
             3,

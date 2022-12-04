@@ -7,7 +7,7 @@ use super::{
     unicode::{find_pos_internal, find_pos_leaf, TextLength, UnicodeTreeTrait},
 };
 
-type A = UnicodeTreeTrait<8>;
+type A = UnicodeTreeTrait<16>;
 type Inner = RleTree<PoolString, A>;
 
 #[derive(Debug, Default)]
