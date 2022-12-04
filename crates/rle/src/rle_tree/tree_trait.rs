@@ -81,9 +81,9 @@ pub type ArenaBox<'a, T, A: RleTreeTrait<T>, V> = <A::Arena as Arena>::Boxed<'a,
 pub type ArenaBoxedNode<'a, T, A: RleTreeTrait<T>> = ArenaBox<'a, T, A, Node<'a, T, A>>;
 #[allow(type_alias_bounds)]
 pub type InsertResult<'a, T, A: RleTreeTrait<T>> = Result<
-    A::CacheUpdate,
+    A::CacheInParent,
     (
-        A::CacheUpdate,
+        A::CacheInParent,
         <A::Arena as Arena>::Boxed<'a, Node<'a, T, A>>,
     ),
 >;
@@ -92,20 +92,17 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     const MAX_CHILDREN_NUM: usize;
     const MIN_CHILDREN_NUM: usize = Self::MAX_CHILDREN_NUM / 2;
     type Int: num::Integer + Copy + Debug + FromPrimitive;
-    type CacheUpdate: Copy
-        + Default
-        + Debug
-        + Neg<Output = Self::CacheUpdate>
-        + Add<Output = Self::CacheUpdate>
-        + AddAssign<Self::CacheUpdate>
-        + Sub<Output = Self::CacheUpdate>;
-    type Cache: Default
+    type CacheInParent: Default
         + Debug
         + Eq
         + Clone
         + Copy
-        + Add<Self::CacheUpdate, Output = Self::Cache>
-        + AddAssign<Self::CacheUpdate>;
+        + Neg<Output = Self::CacheInParent>
+        + Add<Output = Self::CacheInParent>
+        + AddAssign<Self::CacheInParent>
+        + Sub<Output = Self::CacheInParent>
+        + From<Self::Cache>;
+    type Cache: Default + Debug + Eq + Clone + Copy;
     /// The allocation method used for [crate::RleTree].
     /// There are two modes provided:
     ///
@@ -116,11 +113,11 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     /// So you cannot use smart pointer in [crate::rle_tree::BumpMode] directly. You should wrap it inside [bumpalo]'s Box.
     type Arena: Arena;
 
-    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Self::CacheUpdate;
+    fn update_cache_leaf(node: &mut LeafNode<'_, T, Self>) -> Self::CacheInParent;
     fn update_cache_internal(
         node: &mut InternalNode<'_, T, Self>,
-        hint: Option<Self::CacheUpdate>,
-    ) -> Self::CacheUpdate;
+        hint: Option<Self::CacheInParent>,
+    ) -> Self::CacheInParent;
 
     /// - `child_index` can only equal to children.len() when index out of range
     /// - We need the `offset` so we can perform `find_pos_internal(child, new_search_index)`.
@@ -145,9 +142,7 @@ pub trait RleTreeTrait<T: Rle>: Sized + Debug {
     fn len_internal(node: &InternalNode<'_, T, Self>) -> Self::Int;
     fn check_cache_leaf(_node: &LeafNode<'_, T, Self>) {}
     fn check_cache_internal(_node: &InternalNode<'_, T, Self>) {}
-
-    fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate;
-    fn value_to_update(x: &T) -> Self::CacheUpdate;
+    fn value_to_update(x: &T) -> Self::CacheInParent;
 }
 
 #[derive(Debug, Default)]
@@ -169,7 +164,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
     type Int = usize;
 
-    type CacheUpdate = isize;
+    type CacheInParent = isize;
     type Cache = isize;
     type Arena = TreeArena;
 
@@ -193,8 +188,8 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
                     node.children()
                         .iter()
                         .map(|x| {
-                            debug_assert_eq!(x.cache, x.node.cache());
-                            x.cache
+                            debug_assert_eq!(x.parent_cache, x.node.cache());
+                            x.parent_cache
                         })
                         .sum()
                 )
@@ -204,8 +199,8 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
                     .children()
                     .iter()
                     .map(|x| {
-                        debug_assert_eq!(x.cache, x.node.cache());
-                        x.cache
+                        debug_assert_eq!(x.parent_cache, x.node.cache());
+                        x.parent_cache
                     })
                     .sum();
             }
@@ -223,8 +218,8 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
 
         let mut last_cache = 0;
         for (i, child) in node.children().iter().enumerate() {
-            debug_assert_eq!(child.cache, child.node.cache());
-            last_cache = child.cache as usize;
+            debug_assert_eq!(child.parent_cache, child.node.cache());
+            last_cache = child.parent_cache as usize;
             if index <= last_cache {
                 return FindPosResult::new(i, index, Position::get_pos(index, last_cache));
             }
@@ -311,11 +306,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         index
     }
 
-    fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
-        x
-    }
-
-    fn value_to_update(x: &T) -> Self::CacheUpdate {
+    fn value_to_update(x: &T) -> Self::CacheInParent {
         x.atom_len() as isize
     }
 }
@@ -349,7 +340,7 @@ fn get_cache<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena>(
     }
 }
 
-#[derive(Clone, Default, Debug, Copy)]
+#[derive(Clone, Default, Debug, Copy, PartialEq, Eq)]
 pub struct Zero;
 impl AddAssign for Zero {
     #[inline(always)]
@@ -397,6 +388,12 @@ impl<T: Integer> AddAssign<Zero> for Cache<T> {
     fn add_assign(&mut self, _: Zero) {}
 }
 
+impl<T: Integer> From<Cache<T>> for Zero {
+    fn from(_: Cache<T>) -> Self {
+        Zero
+    }
+}
+
 impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
     for GlobalTreeTrait<T, MAX_CHILD, TreeArena>
 {
@@ -406,7 +403,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
     type Int = T::Int;
 
-    type CacheUpdate = Zero;
+    type CacheInParent = Zero;
     type Cache = Cache<T::Int>;
     type Arena = TreeArena;
 
@@ -428,8 +425,8 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
             return Zero;
         }
 
-        node.cache.end = node.children().last().unwrap().cache.end;
-        node.cache.start = node.children()[0].cache.start;
+        node.cache.end = node.children().last().unwrap().node.cache().end;
+        node.cache.start = node.children()[0].node.cache().start;
         Zero
     }
 
@@ -592,20 +589,20 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
 
         assert_eq!(
             node.cache.end,
-            node.children().iter().map(|x| x.cache.end).max().unwrap()
+            node.children()
+                .iter()
+                .map(|x| x.node.cache().end)
+                .max()
+                .unwrap()
         );
-        assert_eq!(node.cache.start, node.children[0].cache.start);
+        assert_eq!(node.cache.start, node.children[0].node.cache().start);
     }
 
     fn get_index(node: &LeafNode<'_, T, Self>, child_index: usize) -> Self::Int {
         node.children[child_index].get_start_index()
     }
 
-    fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
-        Zero
-    }
-
-    fn value_to_update(x: &T) -> Self::CacheUpdate {
+    fn value_to_update(x: &T) -> Self::CacheInParent {
         Zero
     }
 }

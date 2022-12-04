@@ -191,9 +191,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         value: T,
         notify: &mut F,
     ) -> Result<
-        A::CacheUpdate,
+        A::CacheInParent,
         (
-            A::CacheUpdate,
+            A::CacheInParent,
             <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>,
         ),
     >
@@ -479,7 +479,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         &mut self,
         mut updates: Vec<(usize, SmallVec<[T; 2]>)>,
         notify: &mut F,
-    ) -> Result<A::CacheUpdate, (A::CacheUpdate, Vec<ArenaBoxedNode<'bump, T, A>>)>
+    ) -> Result<A::CacheInParent, (A::CacheInParent, Vec<ArenaBoxedNode<'bump, T, A>>)>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -587,9 +587,9 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         &mut self,
         result: Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>,
     ) -> Result<
-        A::CacheUpdate,
+        A::CacheInParent,
         (
-            A::CacheUpdate,
+            A::CacheInParent,
             <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>,
         ),
     > {

@@ -27,13 +27,13 @@ pub enum Node<'a, T: Rle, A: RleTreeTrait<T>> {
 #[derive(Debug)]
 pub struct Child<'a, T: Rle, A: RleTreeTrait<T>> {
     pub node: ArenaBoxedNode<'a, T, A>,
-    pub cache: A::Cache,
+    pub parent_cache: A::CacheInParent,
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Child<'a, T, A> {
     pub fn from(node: ArenaBoxedNode<'a, T, A>) -> Self {
         Self {
-            cache: node.cache(),
+            parent_cache: node.cache().into(),
             node,
         }
     }
@@ -327,7 +327,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         sibling.update_cache(None);
     }
 
-    pub(crate) fn update_cache(&mut self, update: Option<A::CacheUpdate>) -> A::CacheUpdate {
+    pub(crate) fn update_cache(&mut self, update: Option<A::CacheInParent>) -> A::CacheInParent {
         match self {
             Node::Internal(node) => A::update_cache_internal(node, update),
             Node::Leaf(node) => A::update_cache_leaf(node),

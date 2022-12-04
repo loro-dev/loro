@@ -122,31 +122,40 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         // dbg!(&leaf);
         let result = leaf.insert_at_pos(self.pos, self.index, self.offset, value, notify, false);
         // dbg!(&leaf);
-        let self_index = leaf.get_index_in_parent().unwrap();
-        let leaf = &mut node.children[self_index];
-        leaf.cache = leaf.node.cache();
+        let index = leaf.get_index_in_parent().unwrap();
+        let leaf = &mut node.children[index];
+        leaf.parent_cache = leaf.node.cache().into();
         match result {
             Ok(hint) => {
                 A::update_cache_internal(node, Some(hint));
+                node.check();
             }
             Err((hint, new)) => {
                 A::update_cache_internal(node, Some(hint));
-                let mut result = node.insert_at_pos(self_index + 1, new);
-                while let Err((update, new)) = result {
-                    let old_node_index = node.get_index_in_parent().unwrap();
+                A::check_cache_internal(node);
+                let mut result = node.insert_at_pos(index + 1, new);
+                A::check_cache_internal(node);
+                while let Err((hint, new)) = result {
+                    let index = node.get_index_in_parent().unwrap();
                     // result is err, so we're sure parent is valid
                     node = node.parent.unwrap().as_mut();
-                    result = node.insert_at_pos(old_node_index + 1, new);
+                    node.children[index].parent_cache = node.children[index].node.cache().into();
+                    result = node.insert_at_pos(index + 1, new);
+                    A::check_cache_internal(node);
                 }
+
+                node.check();
             }
         }
 
         while node.parent.is_some() {
             let index = node.get_index_in_parent().unwrap();
             node = node.parent.unwrap().as_mut();
-            node.children[index].cache += update;
+            node.children[index].parent_cache = node.children[index].node.cache().into();
             A::update_cache_internal(node, Some(update));
+            node.check()
         }
+
         node.check();
     }
 

@@ -424,8 +424,11 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     ) where
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut internal_updates_map: HashMap<NonNull<_>, Vec<(usize, A::CacheUpdate, Vec<_>)>, _> =
-            FxHashMap::default();
+        let mut internal_updates_map: HashMap<
+            NonNull<_>,
+            Vec<(usize, A::CacheInParent, Vec<_>)>,
+            _,
+        > = FxHashMap::default();
         for (mut leaf, updates) in iter {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };

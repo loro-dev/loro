@@ -83,7 +83,7 @@ impl Rope {
                         index = result.offset;
                         ans += internal_node.children()[0..result.child_index]
                             .iter()
-                            .map(|x| dst_cache(x.cache))
+                            .map(|x| dst_cache(x.parent_cache))
                             .sum::<usize>();
                     }
                     Node::Leaf(leaf) => {

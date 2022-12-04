@@ -88,14 +88,14 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     type Int = usize;
 
-    type CacheUpdate = TextLength;
+    type CacheInParent = TextLength;
     type Cache = TextLength;
 
     type Arena = HeapMode;
 
     fn update_cache_leaf(
         node: &mut rle::rle_tree::node::LeafNode<'_, PoolString, Self>,
-    ) -> Self::CacheUpdate {
+    ) -> Self::CacheInParent {
         let old = node.cache;
         node.cache = node.children().iter().map(|x| x.text_len()).sum();
 
@@ -104,11 +104,11 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
 
     fn update_cache_internal(
         node: &mut rle::rle_tree::node::InternalNode<'_, PoolString, Self>,
-        hint: Option<Self::CacheUpdate>,
-    ) -> Self::CacheUpdate {
+        hint: Option<Self::CacheInParent>,
+    ) -> Self::CacheInParent {
         if cfg!(test) || cfg!(debug_assert) {
             for child in node.children() {
-                debug_assert_eq!(child.cache, child.node.cache());
+                debug_assert_eq!(child.parent_cache, child.node.cache());
             }
         }
 
@@ -116,7 +116,10 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
             Some(diff) => {
                 node.cache += diff;
                 debug_assert_eq!(
-                    node.children().iter().map(|x| x.cache).sum::<TextLength>(),
+                    node.children()
+                        .iter()
+                        .map(|x| x.parent_cache)
+                        .sum::<TextLength>(),
                     node.cache,
                 );
 
@@ -124,7 +127,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
             }
             None => {
                 let old = node.cache;
-                node.cache = node.children().iter().map(|x| x.cache).sum();
+                node.cache = node.children().iter().map(|x| x.parent_cache).sum();
                 node.cache - old
             }
         }
@@ -159,7 +162,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         let mut node = unsafe { node.parent().as_ref() };
         loop {
             for i in 0..child_index {
-                index += node.children()[i].cache.utf8 as usize;
+                index += node.children()[i].parent_cache.utf8 as usize;
             }
 
             if let Some(parent) = node.parent() {
@@ -182,11 +185,7 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         node.cache.utf8 as usize
     }
 
-    fn cache_to_update(x: Self::Cache) -> Self::CacheUpdate {
-        x
-    }
-
-    fn value_to_update(x: &PoolString) -> Self::CacheUpdate {
+    fn value_to_update(x: &PoolString) -> Self::CacheInParent {
         x.text_len()
     }
 }
@@ -206,7 +205,7 @@ where
 
     let mut last_len = 0;
     for (i, child) in node.children().iter().enumerate() {
-        last_len = f(child.cache);
+        last_len = f(child.parent_cache);
         if index <= last_len {
             return FindPosResult::new(i, index, Position::get_pos(index, last_len));
         }
