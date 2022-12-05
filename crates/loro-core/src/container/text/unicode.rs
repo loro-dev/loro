@@ -177,14 +177,17 @@ impl<const SIZE: usize> RleTreeTrait<PoolString> for UnicodeTreeTrait<SIZE> {
         index
     }
 
+    #[inline(always)]
     fn len_leaf(node: &rle::rle_tree::node::LeafNode<'_, PoolString, Self>) -> Self::Int {
         node.cache.utf8 as usize
     }
 
+    #[inline(always)]
     fn len_internal(node: &rle::rle_tree::node::InternalNode<'_, PoolString, Self>) -> Self::Int {
         node.cache.utf8 as usize
     }
 
+    #[inline(always)]
     fn value_to_update(x: &PoolString) -> Self::CacheInParent {
         x.text_len()
     }

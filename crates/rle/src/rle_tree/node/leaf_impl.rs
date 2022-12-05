@@ -680,35 +680,36 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         Ok(())
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn next(&self) -> Option<&Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.next.map(|p| p.as_ref()) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn next_mut(&mut self) -> Option<&mut Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.next.map(|mut p| p.as_mut()) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn prev(&self) -> Option<&Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.prev.map(|p| p.as_ref()) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn prev_mut(&mut self) -> Option<&mut Self> {
         // SAFETY: internal variant ensure prev and next are valid reference
         unsafe { self.prev.map(|mut p| p.as_mut()) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn children(&self) -> &<<A as RleTreeTrait<T>>::Arena as Arena>::Vec<'bump, T> {
         &self.children
     }
 
+    #[inline(always)]
     pub fn parent(&self) -> &NonNull<InternalNode<'bump, T, A>> {
         &self.parent
     }

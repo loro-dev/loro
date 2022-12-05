@@ -19,6 +19,7 @@ use crate::{
 use super::*;
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
+    #[inline(always)]
     pub fn new(bump: &'a A::Arena, parent: Option<NonNull<Self>>) -> Self {
         Self {
             bump,
@@ -63,7 +64,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         -update
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn children(&self) -> &[Child<'a, T, A>] {
         &self.children
     }
@@ -557,6 +558,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
+    #[inline(always)]
     fn _delete_start(&mut self, from: A::Int) -> (usize, Option<A::Int>) {
         let from = A::find_pos_internal(self, from);
         if from.pos == Position::Start || from.pos == Position::Before {
@@ -566,6 +568,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
+    #[inline(always)]
     fn _delete_end(&mut self, to: A::Int) -> (usize, Option<A::Int>) {
         let to = A::find_pos_internal(self, to);
         if to.pos == Position::End || to.pos == Position::After {
@@ -575,6 +578,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         }
     }
 
+    #[inline]
     pub fn insert<F>(&mut self, index: A::Int, value: T, notify: &mut F) -> InsertResult<'a, T, A>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
@@ -662,6 +666,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         Ok(update)
     }
 
+    #[inline]
     pub(crate) fn insert_at_pos(
         &mut self,
         index: usize,
@@ -813,7 +818,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         ans
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_root(&self) -> bool {
         self.parent.is_none()
     }
@@ -893,6 +898,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         A::update_cache_internal(self, hint);
     }
 
+    #[inline(always)]
     pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
         &self.parent
     }

@@ -240,11 +240,12 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         }
 
         for (i, child) in node.children().iter().enumerate() {
-            if index < HasLength::content_len(child) {
-                return FindPosResult::new(i, index, Position::get_pos(index, child.content_len()));
+            let len = HasLength::content_len(child);
+            if index < len {
+                return FindPosResult::new(i, index, Position::get_pos(index, len));
             }
 
-            index -= HasLength::content_len(child);
+            index -= len;
         }
 
         FindPosResult::new(
@@ -254,10 +255,12 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         )
     }
 
+    #[inline(always)]
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> usize {
         node.cache as usize
     }
 
+    #[inline(always)]
     fn len_internal(node: &InternalNode<'_, T, Self>) -> usize {
         node.cache as usize
     }
@@ -306,6 +309,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         index
     }
 
+    #[inline(always)]
     fn value_to_update(x: &T) -> Self::CacheInParent {
         x.atom_len() as isize
     }
@@ -556,10 +560,12 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         }
     }
 
+    #[inline(always)]
     fn len_leaf(node: &LeafNode<'_, T, Self>) -> Self::Int {
         node.cache.end - node.cache.start
     }
 
+    #[inline(always)]
     fn len_internal(node: &InternalNode<'_, T, Self>) -> Self::Int {
         node.cache.end - node.cache.start
     }

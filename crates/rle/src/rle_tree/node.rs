@@ -165,18 +165,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
         })
     }
 
-    pub(crate) fn get_a_sibling(&mut self) -> Option<(&mut Self, Either)> {
-        let index = self.get_self_index()?;
-        let parent = self.parent_mut()?;
-        if index > 0 {
-            Some((&mut parent.children[index - 1].node, Either::Left))
-        } else if index + 1 < parent.children.len() {
-            Some((&mut parent.children[index + 1].node, Either::Right))
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn set_parent(&mut self, parent: NonNull<InternalNode<'a, T, A>>) {
         match self {
             Node::Internal(node) => node.parent = Some(parent),
