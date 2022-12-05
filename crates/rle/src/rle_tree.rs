@@ -66,7 +66,8 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
             if let Some(leaf) = leaf {
                 // SAFETY: we have exclusive ref to the tree
                 let cursor = unsafe { SafeCursorMut::new(leaf.into(), 0, 0, Position::Start, 0) };
-                cursor.insert_before_notify(value, notify);
+                // SAFETY: cache is correct when calling
+                unsafe { cursor.insert_before_notify(value, notify) };
                 None
             } else {
                 Some(value)
@@ -74,8 +75,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }) {
             self.insert_notify(A::Int::from_u8(0).unwrap(), value, notify);
         }
-
-        self.debug_check();
     }
 
     #[inline]
@@ -86,8 +85,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .insert(index, value, &mut |_a, _b| {})
                 .unwrap();
         });
-
-        self.debug_check();
     }
 
     /// `notify` would be invoke if a new element is inserted/moved to a new leaf node.
@@ -298,7 +295,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .unwrap()
                 .delete(start, end, &mut |_, _| {});
         });
-        self.debug_check();
     }
 
     pub fn delete_range_notify<F>(
@@ -312,8 +308,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         self.with_node_mut(|node| {
             node.as_internal_mut().unwrap().delete(start, end, notify);
         });
-
-        self.debug_check();
     }
 
     /// reviewed by @Leeeon233
@@ -368,7 +362,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
 
         self.update_with_gathered_map(updates_map, notify);
-        self.debug_check();
     }
 
     /// the updated elements will only be notified when the leaf node is split
@@ -413,7 +406,6 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         }
 
         self.update_with_gathered_map(updates_map, notify);
-        self.debug_check();
     }
 
     #[allow(clippy::type_complexity)]

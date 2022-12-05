@@ -65,7 +65,8 @@ impl Interaction {
                 _println!("Insert {{from: {}, len: {}}},", from, len);
                 if *use_cursor {
                     if let Some(cursor) = tree.get_mut(from) {
-                        cursor.insert_before_notify(value, notify)
+                        // SAFETY: we will update the cache to correct state in this fn afterwards
+                        unsafe { cursor.insert_before_notify(value, notify) }
                     } else {
                         tree.insert_notify(from, value, notify);
                     }

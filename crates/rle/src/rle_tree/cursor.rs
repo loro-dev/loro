@@ -111,7 +111,8 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
     ///
     /// # Safety
     ///
-    /// we need to make sure that the cursor is still valid
+    /// - We need to make sure that the cursor is still valid
+    /// - It's caller's responsibility to keep the cache correct
     pub unsafe fn insert_notify<F>(mut self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
@@ -151,7 +152,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
             node = node.parent.unwrap().as_mut();
             node.children[index].parent_cache = node.children[index].node.cache().into();
             A::update_cache_internal(node, Some(update));
-            node.check()
         }
     }
 
@@ -421,7 +421,11 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     }
 
     /// self should be moved here, because after mutating self should be invalidate
-    pub fn insert_before_notify<F>(self, value: T, notify: &mut F)
+    ///
+    /// # Safety
+    ///
+    /// It's caller's responsibility to keep the cache correct
+    pub unsafe fn insert_before_notify<F>(self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
