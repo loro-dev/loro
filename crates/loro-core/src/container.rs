@@ -22,6 +22,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
+mod pool_mapping;
 pub mod registry;
 
 pub mod list;
