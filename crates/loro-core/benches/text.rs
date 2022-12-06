@@ -4,6 +4,8 @@ const RAW_DATA: &[u8; 901823] = include_bytes!("automerge-paper.json.gz");
 #[cfg(feature = "test_utils")]
 mod run {
     use std::io::Read;
+    use std::time::Duration;
+    use std::time::Instant;
 
     use super::*;
     use arbitrary::Unstructured;
@@ -131,43 +133,49 @@ mod run {
         drop(b);
         let mut b = c.benchmark_group("sync");
         b.bench_function("B4Parallel", |b| {
-            b.iter(|| {
-                let mut loro = LoroCore::default();
-                let mut loro_b = LoroCore::default();
-                let mut i = 0;
-                for txn in txns.unwrap().as_array().unwrap() {
-                    i += 1;
-                    if i > 1000 {
-                        break;
-                    }
+            b.iter_custom(|iters| {
+                let mut value = Duration::new(0, 0);
+                for _ in 0..iters {
+                    let mut i = 0;
+                    let mut loro = LoroCore::default();
+                    let mut loro_b = LoroCore::default();
+                    for txn in txns.unwrap().as_array().unwrap() {
+                        i += 1;
+                        if i > 1000 {
+                            break;
+                        }
 
-                    let mut text = loro.get_text("text");
-                    let patches = txn
-                        .as_object()
-                        .unwrap()
-                        .get("patches")
-                        .unwrap()
-                        .as_array()
-                        .unwrap();
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(&loro, pos, del_here).unwrap();
-                        text.insert(&loro, pos, ins_content).unwrap();
-                    }
+                        let mut text = loro.get_text("text");
+                        let patches = txn
+                            .as_object()
+                            .unwrap()
+                            .get("patches")
+                            .unwrap()
+                            .as_array()
+                            .unwrap();
+                        for patch in patches {
+                            let pos = patch[0].as_u64().unwrap() as usize;
+                            let del_here = patch[1].as_u64().unwrap() as usize;
+                            let ins_content = patch[2].as_str().unwrap();
+                            text.delete(&loro, pos, del_here).unwrap();
+                            text.insert(&loro, pos, ins_content).unwrap();
+                        }
 
-                    let mut text = loro_b.get_text("text");
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(&loro_b, pos, del_here).unwrap();
-                        text.insert(&loro_b, pos, ins_content).unwrap();
+                        let mut text = loro_b.get_text("text");
+                        for patch in patches {
+                            let pos = patch[0].as_u64().unwrap() as usize;
+                            let del_here = patch[1].as_u64().unwrap() as usize;
+                            let ins_content = patch[2].as_str().unwrap();
+                            text.delete(&loro_b, pos, del_here).unwrap();
+                            text.insert(&loro_b, pos, ins_content).unwrap();
+                        }
+                        let start = Instant::now();
+                        loro_b.import(loro.export(loro_b.vv()));
+                        loro.import(loro_b.export(loro.vv()));
+                        value += start.elapsed();
                     }
-                    loro_b.import(loro.export(loro_b.vv()));
-                    loro.import(loro_b.export(loro.vv()));
                 }
+                value
             })
         });
     }

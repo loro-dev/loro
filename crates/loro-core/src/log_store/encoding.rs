@@ -114,6 +114,14 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
             clients.push(client_id);
             idx
         });
+        for dep in change.deps.iter() {
+            let client_id = dep.client_id;
+            client_id_to_idx.entry(client_id).or_insert_with(|| {
+                let idx = clients.len() as ClientIdx;
+                clients.push(client_id);
+                idx
+            });
+        }
         change_num += 1;
     }
 
@@ -311,7 +319,7 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 }
 
 impl LogStore {
-    pub fn encode_snapshot(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
+    pub fn encode_changes(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
         let encoded = encode_changes(self, vv);
         let mut ans = vec![compress_cfg as u8];
         let buf = if compress_cfg {
@@ -324,7 +332,7 @@ impl LogStore {
         ans
     }
 
-    pub fn decode_snapshot(&mut self, input: &[u8]) {
+    pub fn decode_changes(&mut self, input: &[u8]) {
         let compress_cfg = *input.first().unwrap() > 0;
         let encoded = if compress_cfg {
             from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
@@ -334,11 +342,10 @@ impl LogStore {
         decode_changes(self, encoded);
     }
 
-    pub fn export_store(&self, compress_cfg: bool) -> Vec<u8> {
-        let encoded = snapshot::export_snapshot(self);
+    pub fn export_entire_snapshot(&self, compress_cfg: bool) -> Vec<u8> {
+        let encoded = snapshot::export_entire_snapshot(self);
         let mut ans = vec![compress_cfg as u8];
         let buf = if compress_cfg {
-            // TODO: columnar compress use read/write mode
             compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
         } else {
             to_vec(&encoded).unwrap()
@@ -347,13 +354,13 @@ impl LogStore {
         ans
     }
 
-    pub fn import_store(&mut self, input: &[u8]) {
+    pub fn import_entire_snapshot(&mut self, input: &[u8]) {
         let compress_cfg = *input.first().unwrap() > 0;
         let encoded = if compress_cfg {
             from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
         } else {
             from_bytes(&input[1..]).unwrap()
         };
-        snapshot::import_snapshot(self, encoded);
+        snapshot::import_entire_snapshot(self, encoded);
     }
 }

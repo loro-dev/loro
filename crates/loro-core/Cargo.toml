@@ -70,3 +70,7 @@ harness = false
 [[bench]]
 name = "encode"
 harness = false
+
+[[bench]]
+name = "snapshot"
+harness = false

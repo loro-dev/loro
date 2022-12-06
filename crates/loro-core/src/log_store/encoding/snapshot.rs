@@ -18,10 +18,18 @@ use crate::{
     ContainerType, InternalString, LogStore, VersionVector,
 };
 
-use super::{
-    container::{merge_2_u32_u64, split_u64_2_u32},
-    ChangeEncoding, ClientIdx, Clients, DepsEncoding,
-};
+use super::{ChangeEncoding, ClientIdx, Clients, DepsEncoding};
+pub fn split_u64_2_u32(a: u64) -> (u32, u32) {
+    let high_byte = (a >> 32) as u32;
+    let low_byte = a as u32;
+    (high_byte, low_byte)
+}
+
+pub fn merge_2_u32_u64(a: u32, b: u32) -> u64 {
+    let high_byte = (a as u64) << 32;
+    let low_byte = b as u64;
+    high_byte | low_byte
+}
 type Containers = Vec<Vec<u8>>;
 
 #[columnar(vec, ser, de)]
@@ -53,7 +61,7 @@ pub(super) struct SnapshotEncoded {
     keys: Vec<InternalString>,
 }
 
-pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
+pub(super) fn export_entire_snapshot(store: &LogStore) -> SnapshotEncoded {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
@@ -135,7 +143,7 @@ pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
     }
 }
 
-pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
+pub(super) fn import_entire_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
     let SnapshotEncoded {
         changes: change_encodings,
         ops,

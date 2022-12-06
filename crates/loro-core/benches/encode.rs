@@ -38,42 +38,58 @@ mod run {
             }
         });
         let mut b = c.benchmark_group("encode");
-        b.bench_function("B4_encode_compress", |b| {
+        b.bench_function("B4_encode_changes_compress", |b| {
             b.iter(|| {
-                let _ = loro.encode_snapshot(&VersionVector::new(), true);
+                let _ = loro.encode_changes(&VersionVector::new(), true);
             })
         });
-        b.bench_function("B4_decode_compress", |b| {
-            let buf = loro.encode_snapshot(&VersionVector::new(), true);
+        b.bench_function("B4_decode_changes_compress", |b| {
+            let buf = loro.encode_changes(&VersionVector::new(), true);
             let mut store2 = LoroCore::default();
-            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
             b.iter(|| {
-                store2.decode_snapshot(&buf);
+                store2.decode_changes(&buf);
             })
         });
-        b.bench_function("B4_encode_no_compress", |b| {
+        b.bench_function("B4_encode_changes_no_compress", |b| {
             b.iter(|| {
-                let _ = loro.encode_snapshot(&VersionVector::new(), false);
+                let _ = loro.encode_changes(&VersionVector::new(), false);
             })
         });
-        b.bench_function("B4_decode_no_compress", |b| {
-            let buf = loro.encode_snapshot(&VersionVector::new(), false);
+        b.bench_function("B4_decode_changes_no_compress", |b| {
+            let buf = loro.encode_changes(&VersionVector::new(), false);
             let mut store2 = LoroCore::default();
-            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
             b.iter(|| {
-                store2.decode_snapshot(&buf);
+                store2.decode_changes(&buf);
             })
         });
-        b.bench_function("B4_export_no_compress", |b| {
+        b.bench_function("B4_decode_changes_no_compress_with_apply", |b| {
+            let buf = loro.encode_changes(&VersionVector::new(), false);
+            let mut store2 = LoroCore::default();
+            store2.get_list("list").insert(&store2, 0, "lll").unwrap();
             b.iter(|| {
-                let _ = loro.export_store(false);
+                store2.decode_changes(&buf);
             })
         });
-        b.bench_function("B4_import_no_compress", |b| {
-            let buf = loro.export_store(false);
-            // store2.get_list("list").insert(&store2, 0, "lll").unwrap();
+        b.bench_function("B4_export_snapshot_compress", |b| {
             b.iter(|| {
-                let _ = LoroCore::import_store(&buf, Default::default(), None);
+                let _ = loro.export_entire_snapshot(true);
+            })
+        });
+        b.bench_function("B4_import_snapshot_compress", |b| {
+            let buf = loro.export_entire_snapshot(true);
+            b.iter(|| {
+                let _ = LoroCore::import_entire_snapshot(&buf, Default::default(), None);
+            })
+        });
+        b.bench_function("B4_export_snapshot_no_compress", |b| {
+            b.iter(|| {
+                let _ = loro.export_entire_snapshot(false);
+            })
+        });
+        b.bench_function("B4_import_snapshot_no_compress", |b| {
+            let buf = loro.export_entire_snapshot(false);
+            b.iter(|| {
+                let _ = LoroCore::import_entire_snapshot(&buf, Default::default(), None);
             })
         });
     }

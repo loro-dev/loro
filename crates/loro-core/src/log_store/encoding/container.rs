@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
 use serde_columnar::{from_bytes, to_vec};
 
@@ -7,135 +9,11 @@ use crate::{
         map::{MapContainer, ValueSlot},
         registry::ContainerInstance,
         text::TextContainer,
-        Container,
+        Container, ContainerID,
     },
     version::TotalOrderStamp,
     LoroValue,
 };
-
-pub fn split_u64_2_u32(a: u64) -> (u32, u32) {
-    let high_byte = (a >> 32) as u32;
-    let low_byte = a as u32;
-    (high_byte, low_byte)
-}
-
-pub fn merge_2_u32_u64(a: u32, b: u32) -> u64 {
-    let high_byte = (a as u64) << 32;
-    let low_byte = b as u64;
-    high_byte | low_byte
-}
-
-pub(crate) trait ContainerExport {
-    type PoolItem: Serialize + for<'de> Deserialize<'de>;
-    type BorrowPool<'a>: IntoIterator<Item = &'a Self::PoolItem>
-    where
-        Self: 'a;
-    type Pool: IntoIterator<Item = Self::PoolItem>;
-    type RangeItem: Serialize + for<'de> Deserialize<'de>;
-    type Range: IntoIterator<Item = Self::RangeItem>;
-    fn export_pool(&self) -> Self::BorrowPool<'_>;
-    fn export_ranges(&self) -> Self::Range;
-    fn import_pool(&mut self, pool: Self::Pool);
-    fn import_ranges(&mut self, range: Self::Range);
-}
-
-impl ContainerExport for ListContainer {
-    type PoolItem = LoroValue;
-    type BorrowPool<'a> = Vec<&'a LoroValue>;
-    type Pool = Vec<LoroValue>;
-    type RangeItem = u32;
-    type Range = Vec<u32>;
-
-    fn export_pool(&self) -> Self::BorrowPool<'_> {
-        self.raw_data.iter().collect()
-    }
-
-    fn export_ranges(&self) -> Self::Range {
-        self.state
-            .iter()
-            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
-            .collect()
-    }
-
-    fn import_pool(&mut self, pool: Self::Pool) {
-        self.raw_data = pool.into();
-    }
-
-    fn import_ranges(&mut self, range: Self::Range) {
-        let mut index = 0;
-        for r in range.chunks(2) {
-            let s = r[0];
-            let e = r[1];
-            self.state.insert(index, (s..e).into());
-            index += (e - s) as usize;
-        }
-    }
-}
-
-impl ContainerExport for TextContainer {
-    type PoolItem = u8;
-    type BorrowPool<'a> = Vec<&'a u8>;
-    type Pool = Vec<u8>;
-    type RangeItem = u32;
-    type Range = Vec<u32>;
-
-    fn export_pool(&self) -> Self::BorrowPool<'_> {
-        self.raw_str.data.iter().collect()
-    }
-
-    fn export_ranges(&self) -> Self::Range {
-        self.state
-            .iter()
-            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
-            .collect()
-    }
-
-    fn import_pool(&mut self, pool: Self::Pool) {
-        self.raw_str.data = pool;
-    }
-
-    fn import_ranges(&mut self, range: Self::Range) {
-        let mut index = 0;
-        for r in range.chunks(2) {
-            let s = r[0];
-            let e = r[1];
-            self.state.insert(index, (s..e).into());
-            index += (e - s) as usize;
-        }
-    }
-}
-
-impl ContainerExport for MapContainer {
-    type PoolItem = LoroValue;
-    type BorrowPool<'a> = Vec<&'a LoroValue>;
-    type Pool = Vec<LoroValue>;
-
-    type RangeItem = (String, u32, TotalOrderStamp);
-
-    type Range = Vec<(String, u32, TotalOrderStamp)>;
-
-    fn export_pool(&self) -> Self::BorrowPool<'_> {
-        self.pool.iter().collect()
-    }
-
-    fn export_ranges(&self) -> Self::Range {
-        self.state
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.value, v.order))
-            .collect::<Vec<_>>()
-    }
-
-    fn import_pool(&mut self, pool: Self::Pool) {
-        self.pool = pool.into();
-    }
-
-    fn import_ranges(&mut self, range: Self::Range) {
-        for (k, v, o) in range.into_iter() {
-            self.state
-                .insert(k.into(), ValueSlot { value: v, order: o });
-        }
-    }
-}
 
 impl Serialize for ListContainer {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -143,9 +21,14 @@ impl Serialize for ListContainer {
         S: serde::Serializer,
     {
         let mut tuple = serializer.serialize_tuple(3)?;
+        let range = self
+            .state
+            .iter()
+            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
+            .collect::<Vec<_>>();
         tuple.serialize_element(&self.id())?;
-        tuple.serialize_element(&self.export_pool())?;
-        tuple.serialize_element(&self.export_ranges())?;
+        tuple.serialize_element(self.raw_data.deref())?;
+        tuple.serialize_element(&range)?;
         tuple.end()
     }
 }
@@ -155,10 +38,17 @@ impl<'de> Deserialize<'de> for ListContainer {
     where
         D: serde::Deserializer<'de>,
     {
-        let (id, pool, range) = Deserialize::deserialize(deserializer)?;
+        let (id, pool, range): (ContainerID, Vec<LoroValue>, Vec<u32>) =
+            Deserialize::deserialize(deserializer)?;
         let mut container = Self::new(id);
-        container.import_pool(pool);
-        container.import_ranges(range);
+        container.raw_data = pool.into();
+        let mut index = 0;
+        for r in range.chunks(2) {
+            let s = r[0];
+            let e = r[1];
+            container.state.insert(index, (s..e).into());
+            index += (e - s) as usize;
+        }
         Ok(container)
     }
 }
@@ -169,15 +59,15 @@ impl Serialize for TextContainer {
         S: serde::Serializer,
     {
         let mut tuple = serializer.serialize_tuple(3)?;
-        // let pool = compress(
-        //     &self.export_pool().into_iter().copied().collect::<Vec<_>>(),
-        //     &Default::default(),
-        // )
-        // .unwrap();
+        let pool = &self.raw_str.data;
+        let range = &self
+            .state
+            .iter()
+            .flat_map(|v| [v.get_sliced().0.start, v.get_sliced().0.end])
+            .collect::<Vec<_>>();
         tuple.serialize_element(&self.id())?;
-        // tuple.serialize_element(&pool)?;
-        tuple.serialize_element(&self.export_pool())?;
-        tuple.serialize_element(&self.export_ranges())?;
+        tuple.serialize_element(pool)?;
+        tuple.serialize_element(range)?;
         tuple.end()
     }
 }
@@ -187,12 +77,17 @@ impl<'de> Deserialize<'de> for TextContainer {
     where
         D: serde::Deserializer<'de>,
     {
-        let (id, pool, range): (_, Vec<u8>, _) = Deserialize::deserialize(deserializer)?;
+        let (id, pool, range): (ContainerID, Vec<u8>, Vec<u32>) =
+            Deserialize::deserialize(deserializer)?;
         let mut container = Self::new(id);
-        // println!("pool: {:?}", &pool.len());
-        // container.import_pool(decompress(&pool).unwrap());
-        container.import_pool(pool);
-        container.import_ranges(range);
+        container.raw_str.data = pool;
+        let mut index = 0;
+        for r in range.chunks(2) {
+            let s = r[0];
+            let e = r[1];
+            container.state.insert(index, (s..e).into());
+            index += (e - s) as usize;
+        }
         Ok(container)
     }
 }
@@ -203,15 +98,15 @@ impl Serialize for MapContainer {
         S: serde::Serializer,
     {
         let mut tuple = serializer.serialize_tuple(3)?;
-        // let pool = compress(
-        //     &self.export_pool().into_iter().copied().collect::<Vec<_>>(),
-        //     &Default::default(),
-        // )
-        // .unwrap();
+        let pool = self.pool.deref();
+        let range = &self
+            .state
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.value, v.order))
+            .collect::<Vec<_>>();
         tuple.serialize_element(&self.id())?;
-        // tuple.serialize_element(&pool)?;
-        tuple.serialize_element(&self.export_pool())?;
-        tuple.serialize_element(&self.export_ranges())?;
+        tuple.serialize_element(pool)?;
+        tuple.serialize_element(range)?;
         tuple.end()
     }
 }
@@ -221,12 +116,18 @@ impl<'de> Deserialize<'de> for MapContainer {
     where
         D: serde::Deserializer<'de>,
     {
-        let (id, pool, range): (_, _, _) = Deserialize::deserialize(deserializer)?;
+        let (id, pool, range): (
+            ContainerID,
+            Vec<LoroValue>,
+            Vec<(String, u32, TotalOrderStamp)>,
+        ) = Deserialize::deserialize(deserializer)?;
         let mut container = Self::new(id);
-        // println!("pool: {:?}", &pool.len());
-        // container.import_pool(decompress(&pool).unwrap());
-        container.import_pool(pool);
-        container.import_ranges(range);
+        container.pool = pool.into();
+        for (k, v, o) in range.into_iter() {
+            container
+                .state
+                .insert(k.into(), ValueSlot { value: v, order: o });
+        }
         Ok(container)
     }
 }
