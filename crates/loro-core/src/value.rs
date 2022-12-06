@@ -6,7 +6,6 @@ use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
-    context::Context,
     delta::DeltaItem,
     event::{Diff, Index, Path},
     Container,

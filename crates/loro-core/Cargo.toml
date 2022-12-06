@@ -9,22 +9,19 @@ edition = "2021"
 string_cache = "0.8.3"
 rle = { path = "../rle" }
 smallvec = "1.8.0"
-smartstring = "1.0.1"
+smartstring = { version = "1.0.1" }
 fxhash = "0.2.1"
 ring = "0.16.20"
-pin-project = "1.0.10"
 serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0.31"
-im = "15.1.0"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
 crdt-list = { version = "0.3.0" }
 owning_ref = "0.4.1"
+postcard = "1.0.2"
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1.1.7", optional = true }
 tabled = { version = "0.10.0", optional = true }
-colored = "2.0.0"
-bit-vec = "0.6.3"
 wasm-bindgen = { version = "0.2.83", optional = true }
 serde-wasm-bindgen = { version = "0.4.5", optional = true }
 js-sys = { version = "0.3.60", optional = true }

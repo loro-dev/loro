@@ -1,9 +1,11 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
+mod encode_updates;
 mod encoding;
 mod import;
 mod iter;
+
 use crate::LoroValue;
 pub(crate) use import::ImportContext;
 use std::{
@@ -13,7 +15,6 @@ use std::{
 
 use fxhash::FxHashMap;
 
-use crate::context::Context;
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
 
@@ -44,14 +45,14 @@ pub struct GcConfig {
 impl Default for GcConfig {
     fn default() -> Self {
         GcConfig {
-            gc: true,
+            gc: false,
             snapshot_interval: 6 * MONTH,
         }
     }
 }
 
 type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
-type RemoteClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>>;
+type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -101,21 +102,14 @@ impl LogStore {
             .map(|changes| changes.get(id.counter as usize).unwrap().element)
     }
 
-    pub fn export(
-        &self,
-        remote_vv: &VersionVector,
-    ) -> FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> {
-        let mut ans: FxHashMap<ClientID, RleVecWithIndex<Change<RemoteOp>, ChangeMergeCfg>> =
-            Default::default();
+    pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<ClientID, Vec<Change<RemoteOp>>> {
+        let mut ans: FxHashMap<ClientID, Vec<Change<RemoteOp>>> = Default::default();
         let self_vv = self.vv();
         let diff = self_vv.diff(remote_vv);
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
-                let vec = ans
-                    .entry(change.id.client_id)
-                    .or_insert_with(|| RleVecWithIndex::new_cfg(self.get_change_merge_cfg()));
-
+                let vec = ans.entry(change.id.client_id).or_insert_with(Vec::new);
                 vec.push(self.change_to_export_format(change));
             }
         }
