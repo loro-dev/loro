@@ -132,7 +132,7 @@ where
 }
 
 fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp>> {
-    let mut result = Vec::with_capacity(changes.data.len() + 1);
+    let mut result = Vec::with_capacity(changes.data.len());
     let mut last_lamport = changes.meta.lamport;
     let mut last_timestamp = changes.meta.timestamp;
     let mut counter: Counter = changes.meta.counter;
