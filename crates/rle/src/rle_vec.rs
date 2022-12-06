@@ -580,35 +580,6 @@ impl<T: Sliceable + HasLength> Sliceable for Vec<T> {
     }
 }
 
-pub fn slice_vec_by<T, F>(vec: &Vec<T>, index: F, start: usize, end: usize) -> Vec<T>
-where
-    F: Fn(&T) -> usize,
-    T: Sliceable + HasLength,
-{
-    if start >= end || vec.is_empty() {
-        return Vec::new();
-    }
-
-    let start = start - index(&vec[0]);
-    let end = end - index(&vec[0]);
-    let mut ans = Vec::new();
-    let mut index = 0;
-    for i in 0..vec.len() {
-        if index >= end {
-            break;
-        }
-
-        let len = vec[i].atom_len();
-        if start < index + len {
-            ans.push(vec[i].slice(start.saturating_sub(index), (end - index).min(len)))
-        }
-
-        index += len;
-    }
-
-    ans
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
