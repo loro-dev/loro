@@ -1,7 +1,7 @@
 use loro_core::{
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
-    ContainerType, List, LoroCore, Map, Text,
+    ContainerType, List, LoroCore, Map, Text, VersionVector,
 };
 use std::ops::{Deref, DerefMut};
 use wasm_bindgen::prelude::*;
@@ -90,6 +90,24 @@ impl Loro {
         } else {
             Err(JsValue::from_str("Container not found"))
         }
+    }
+
+    #[inline(always)]
+    pub fn version(&self) -> Vec<u8> {
+        self.0.vv().encode()
+    }
+
+    pub fn export_updates(&self, version: Option<Vec<u8>>) -> JsResult<Vec<u8>> {
+        let vv = match version {
+            Some(x) => VersionVector::decode(&x)?,
+            None => Default::default(),
+        };
+
+        Ok(self.0.export_updates(&vv))
+    }
+
+    pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
+        Ok(self.0.import_updates(&data)?)
     }
 }
 

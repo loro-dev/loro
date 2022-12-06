@@ -6,6 +6,8 @@ use crate::id::ClientID;
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
     UnmatchedContext { expected: ClientID, found: ClientID },
+    #[error("Decode version vector error. Please provide correct version.")]
+    DecodeVersionVectorError,
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

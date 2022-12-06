@@ -13,13 +13,16 @@ import {
 } from "https://deno.land/std@0.165.0/testing/asserts.ts";
 const { __dirname } = __(import.meta);
 
-const wasm = await Deno.readFile(
+let wasm: Uint8Array | undefined;
+
+const beforeAll = Deno.readFile(
   resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
-);
+).then(x => {wasm = x});
 
 Deno.test({
   name: "loro_wasm",
 }, async (t) => {
+  await beforeAll;
   await init(wasm);
   setPanicHook();
   const loro = new Loro();
@@ -58,6 +61,7 @@ Deno.test({
 });
 
 Deno.test({ name: "test prelim" }, async (t) => {
+  await beforeAll;
   await init(wasm);
   setPanicHook();
   const loro = new Loro();

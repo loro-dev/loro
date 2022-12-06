@@ -1,6 +1,7 @@
 {
   "tasks": {
     "build": "wasm-pack build --target web .",
+    "build-dnt": "deno run -A scripts/build.ts",
     "test": "deno test --allow-read"
   },
   "test": {

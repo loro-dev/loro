@@ -10,15 +10,15 @@ export function App() {
     (async () => {
       await init();
       const loro = new Loro();
-      const a = loro.get_text_container("ha");
-      a.insert(0, "hello world");
-      a.delete(6, 5);
-      a.insert(6, "everyone");
-      console.log(a.get_value());
-      const b = loro.get_map_container("ha");
-      b.set("ab", 123);
-      console.log(b.get_value());
-      console.log(a.get_value());
+      const a = loro.getText("ha");
+      a.insert(loro, 0, "hello world");
+      a.delete(loro, 6, 5);
+      a.insert(loro, 6, "everyone");
+      console.log(a.value);
+      const b = loro.getMap("ha");
+      b.set(loro, "ab", 123);
+      console.log(b.value);
+      console.log(a.value);
     })();
   }, []);
 

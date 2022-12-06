@@ -3,9 +3,8 @@ use std::sync::{Arc, RwLock};
 use crate::LoroValue;
 use fxhash::FxHashMap;
 
-
 use crate::{
-    change::{Change},
+    change::Change,
     configure::Configure,
     container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
     event::{Observer, SubscriptionID},

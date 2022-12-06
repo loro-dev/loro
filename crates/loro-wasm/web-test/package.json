@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "loro-wasm": "../pkg",
+    "loro-wasm": "../npm",
     "preact": "^10.11.2"
   },
   "devDependencies": {
