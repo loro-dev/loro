@@ -186,11 +186,11 @@ impl Container for TextContainer {
         let mut ans_str = String::new();
         for v in self.state.iter() {
             let content = v.as_ref();
-            if content.slice.is_unknown() {
+            if content.is_unknown() {
                 panic!("Unknown range when getting value");
             }
 
-            ans_str.push_str(content.slice.as_str_unchecked());
+            ans_str.push_str(content.as_str_unchecked());
         }
 
         LoroValue::String(ans_str.into_boxed_str())
@@ -200,8 +200,10 @@ impl Container for TextContainer {
         if gc && self.raw_str.should_update_aliveness(self.text_len()) {
             self.raw_str
                 .update_aliveness(self.state.iter().filter_map(|x| {
-                    let Some(bytes) = x.as_ref().slice.as_bytes() else {return None};
-                    Some(bytes.start() as u32..bytes.end() as u32)
+                    x.as_ref()
+                        .slice
+                        .as_ref()
+                        .map(|x| x.start() as u32..x.end() as u32)
                 }))
         }
 

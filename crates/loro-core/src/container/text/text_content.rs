@@ -32,10 +32,8 @@ impl SliceRange {
 
     pub fn from_pool_string(p: &PoolString) -> Self {
         match &p.slice {
-            super::string_pool::PoolSlice::Unknown(x) => Self::new_unknown(*x as u32),
-            super::string_pool::PoolSlice::Bytes(bytes) => {
-                Self(bytes.start() as u32..bytes.end() as u32)
-            }
+            Some(x) => Self(x.start() as u32..x.end() as u32),
+            None => Self::new_unknown(p.unknown_len),
         }
     }
 }
