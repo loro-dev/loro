@@ -46,9 +46,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "append-only-bytes"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "152ab2c484122762282f93b32b904fc427b9453ee6ecbfa1b9eed104d9d2f55a"
+checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
 
 [[package]]
 name = "arbitrary"
