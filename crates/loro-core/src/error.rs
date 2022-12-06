@@ -12,6 +12,8 @@ pub enum LoroError {
     // InvalidHeader { expected: String, found: String },
     // #[error("unknown data store error")]
     // Unknown,
+    #[error("Decode error.")]
+    DecodeError(Box<str>),
 }
 
 #[cfg(feature = "wasm")]

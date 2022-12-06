@@ -221,14 +221,12 @@ fn check_synced(sites: &mut [LoroCore]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             {
                 debug_log::group!("Import {}", i);
-                a.import_updates(&b.export_updates(&a.vv()).unwrap())
-                    .unwrap();
+                a.import_updates(&b.export_updates(&a.vv())).unwrap();
                 debug_log::group_end!();
             }
             {
                 debug_log::group!("Import {}", j);
-                b.import_updates(&a.export_updates(&b.vv()).unwrap())
-                    .unwrap();
+                b.import_updates(&a.export_updates(&b.vv())).unwrap();
                 debug_log::group_end!();
             }
             check_eq(a, b);

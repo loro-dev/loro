@@ -50,7 +50,7 @@ fn main() {
     assert_eq!(buf, buf2);
     let json2 = loro.to_json();
     assert_eq!(json1, json2);
-    let update_buf = loro.export_updates(&Default::default()).unwrap();
+    let update_buf = loro.export_updates(&Default::default());
     println!("Updates have {} bytes", update_buf.len());
     let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(&update_buf).unwrap();

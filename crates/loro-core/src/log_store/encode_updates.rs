@@ -7,7 +7,7 @@ use crate::{
     container::ContainerID,
     id::{ClientID, Counter, ID},
     op::{RemoteContent, RemoteOp},
-    LogStore, LoroCore, VersionVector,
+    LogStore, LoroCore, LoroError, VersionVector,
 };
 
 use super::RemoteClientChanges;
@@ -47,7 +47,7 @@ struct EncodedChange {
 }
 
 impl LogStore {
-    pub fn encode_updates(&self, from: &VersionVector) -> Result<Vec<u8>, postcard::Error> {
+    pub fn export_updates(&self, from: &VersionVector) -> Vec<u8> {
         let changes = self.export(from);
         let mut updates = Updates {
             changes: Vec::with_capacity(changes.len()),
@@ -57,7 +57,7 @@ impl LogStore {
             updates.changes.push(encoded);
         }
 
-        postcard::to_allocvec(&updates)
+        postcard::to_allocvec(&updates).unwrap()
     }
 
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
@@ -180,12 +180,12 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 }
 
 impl LoroCore {
-    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, postcard::Error> {
-        self.log_store.read().unwrap().encode_updates(from)
+    pub fn export_updates(&self, from: &VersionVector) -> Vec<u8> {
+        self.log_store.read().unwrap().export_updates(from)
     }
 
-    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
+    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
         let ans = self.log_store.write().unwrap().import_updates(input);
-        ans
+        ans.map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
     }
 }
