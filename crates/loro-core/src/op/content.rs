@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
+use serde::{Deserialize, Serialize};
 
 use crate::container::{
     list::list_op::{InnerListOp, ListOp},
@@ -24,11 +25,10 @@ pub enum InnerContent {
     Map(InnerMapSet),
 }
 
-#[derive(EnumAsInner, Debug)]
+#[derive(EnumAsInner, Debug, Serialize, Deserialize)]
 pub enum RemoteContent {
     Map(MapSet),
     List(ListOp),
-    Dyn(Box<dyn InsertContentTrait>),
 }
 
 impl Clone for RemoteContent {
@@ -36,7 +36,6 @@ impl Clone for RemoteContent {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
-            Self::Dyn(arg0) => Self::Dyn(arg0.clone_content()),
         }
     }
 }
@@ -93,7 +92,6 @@ impl HasLength for RemoteContent {
     fn content_len(&self) -> usize {
         match self {
             RemoteContent::Map(x) => x.content_len(),
-            RemoteContent::Dyn(x) => x.content_len(),
             RemoteContent::List(x) => x.content_len(),
         }
     }
@@ -103,7 +101,6 @@ impl Sliceable for RemoteContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             RemoteContent::Map(x) => RemoteContent::Map(x.slice(from, to)),
-            RemoteContent::Dyn(x) => RemoteContent::Dyn(x.slice_content(from, to)),
             RemoteContent::List(x) => RemoteContent::List(x.slice(from, to)),
         }
     }
@@ -117,7 +114,6 @@ impl Mergable for RemoteContent {
         match (self, other) {
             (RemoteContent::Map(x), RemoteContent::Map(y)) => x.is_mergable(y, &()),
             (RemoteContent::List(x), RemoteContent::List(y)) => x.is_mergable(y, &()),
-            (RemoteContent::Dyn(x), RemoteContent::Dyn(y)) => x.is_mergable_content(&**y),
             _ => false,
         }
     }
@@ -135,7 +131,6 @@ impl Mergable for RemoteContent {
                 RemoteContent::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            RemoteContent::Dyn(x) => x.merge_content(&**_other.as_dyn().unwrap()),
         }
     }
 }

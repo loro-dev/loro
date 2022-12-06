@@ -3,6 +3,7 @@ use std::ops::DerefMut;
 use std::ops::Deref;
 
 use rle::Mergable;
+use serde::Deserialize;
 use serde::Serialize;
 use smartstring::LazyCompact;
 
@@ -63,6 +64,13 @@ impl From<String> for SmString {
     }
 }
 
+impl From<Box<str>> for SmString {
+    fn from(s: Box<str>) -> Self {
+        let s: &str = &s;
+        SmString(s.into())
+    }
+}
+
 impl From<&str> for SmString {
     fn from(s: &str) -> Self {
         SmString(s.into())
@@ -75,5 +83,15 @@ impl Serialize for SmString {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SmString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(s.into())
     }
 }

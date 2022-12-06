@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Error, Formatter},
+    mem::transmute,
     ops::DerefMut,
 };
 
@@ -899,6 +900,10 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     }
 
     #[inline(always)]
+    pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
+        &self.parent
+    }
+
     pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
         &self.parent
     }
