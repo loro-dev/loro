@@ -9,7 +9,7 @@ use tracing::instrument;
 
 use fxhash::FxHashMap;
 
-use rle::{HasLength, RleVecWithIndex, Sliceable};
+use rle::{slice_vec_by, HasLength, RleVecWithIndex, Sliceable};
 
 use crate::{
     container::{registry::ContainerInstance, Container, ContainerID},
@@ -329,7 +329,12 @@ impl LogStore {
             let other_start_ctr = changes.first().unwrap().ctr_start();
             match other_start_ctr.cmp(&self_end_ctr) {
                 std::cmp::Ordering::Less => {
-                    *changes = changes.slice((self_end_ctr - other_start_ctr) as usize, usize::MAX);
+                    *changes = slice_vec_by(
+                        changes,
+                        |x| x.id.counter as usize,
+                        self_end_ctr as usize,
+                        usize::MAX,
+                    );
                 }
                 std::cmp::Ordering::Equal => {}
                 std::cmp::Ordering::Greater => {
