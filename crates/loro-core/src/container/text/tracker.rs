@@ -318,8 +318,9 @@ impl Tracker {
                 let yspan =
                     self.content
                         .get_yspan_at_pos(id, *pos, slice.content_len(), slice.clone());
-                // SAFETY: we know this is safe because in [YataImpl::insert_after] there is no access to shared elements
-                unsafe { crdt_list::yata::integrate::<YataImpl>(self, yspan) };
+                self.with_context(|this, context| {
+                    crdt_list::yata::integrate::<YataImpl>(this, yspan, context)
+                });
             }
             InnerListOp::Delete(span) => {
                 let mut spans = self

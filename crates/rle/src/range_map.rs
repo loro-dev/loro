@@ -101,7 +101,8 @@ impl<
     /// So we can travel from the first cursor to modify each element gradually
     pub fn set_small_range(&mut self, start: Index, value: Value) {
         let end = start + Index::from_usize(std::cmp::max(value.atom_len(), 1)).unwrap();
-        let cursor = self.tree.get_cursor_ge(start);
+        #[allow(clippy::type_complexity)]
+        let cursor = self.tree.get_cursor_ge_mut(start);
         if cursor.is_none() {
             self.tree.insert(
                 start,
@@ -118,7 +119,8 @@ impl<
         let mut cur_leaf = unsafe { cursor.0.leaf.as_mut() };
         let mut cur_ptr = cur_leaf.into();
         let mut index = cursor.0.index;
-        let mut elem = &mut cur_leaf.children[index];
+        let mut iter_children = cur_leaf.children.iter_mut().skip(index);
+        let mut elem = iter_children.next().unwrap();
         let elem_end = elem.index + Index::from_usize(elem.atom_len()).unwrap();
         // there are a lot of updates are in-place, we can update them directly and return
         // because cache won't change
@@ -146,11 +148,15 @@ impl<
             // element contains the target range
             let offset = (start - elem.index).as_();
             let leaf: NonNull<_> = cur_leaf.into();
+            #[allow(clippy::type_complexity)]
+            let leaf: NonNull<
+                LeafNode<'_, WithIndex<Value, Index>, RangeMapTrait<Index, Value, TreeArena>>,
+                // SAFETY: ignore lifetime to bypass tree mut borrow check
+            > = unsafe { std::mem::transmute(leaf) };
 
             self.tree.update_at_cursors(
                 &mut [UnsafeCursor {
-                    // SAFETY: ignore lifetime to bypass tree mut borrow check
-                    leaf: unsafe { std::mem::transmute(leaf) },
+                    leaf,
                     index,
                     offset,
                     pos: crate::rle_tree::Position::Middle,
@@ -208,15 +214,16 @@ impl<
             }
 
             // move to next element
-            if index + 1 < cur_leaf.children().len() {
+            if let Some(next) = iter_children.next() {
                 index += 1;
-                elem = &mut cur_leaf.children[index];
+                elem = next;
             } else {
                 if let Some(next) = cur_leaf.next_mut() {
                     visited_nodes.insert(cur_ptr, cur_data);
                     cur_ptr = next.into();
                     cur_data = Default::default();
                     cur_leaf = next;
+                    iter_children = cur_leaf.children.iter_mut().skip(0);
                 } else {
                     visited_nodes.insert(cur_ptr, cur_data);
                     // is the last element of the tree
@@ -224,7 +231,7 @@ impl<
                 }
 
                 index = 0;
-                elem = &mut cur_leaf.children[index];
+                elem = iter_children.next().unwrap();
             }
         }
 
@@ -335,6 +342,23 @@ impl<
             let x = x.as_tree_ref();
             (x.index, &x.value)
         })
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, index: Index) -> Option<&mut Value> {
+        let cursor = self.tree.get_mut(index);
+        if let Some(mut cursor) = cursor {
+            match cursor.pos() {
+                crate::rle_tree::Position::Before
+                | crate::rle_tree::Position::End
+                | crate::rle_tree::Position::After => None,
+                crate::rle_tree::Position::Start | crate::rle_tree::Position::Middle => {
+                    Some(&mut cursor.as_tree_mut().value)
+                }
+            }
+        } else {
+            None
+        }
     }
 
     #[inline]

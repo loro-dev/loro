@@ -1,6 +1,7 @@
 use std::{
     collections::{BinaryHeap, HashSet},
     fmt::{Debug, Error, Formatter},
+    mem::transmute,
     ops::DerefMut,
 };
 
@@ -174,7 +175,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
             if let (Some(del_from), Some(del_to)) = (to_del_start_offset, to_del_end_offset) {
                 if direct_delete_start - 1 == direct_delete_end {
                     // start and end are at the same child
-                    visited.push((depth, self.children[direct_delete_end].deref().into()));
                     match self.children[direct_delete_end].deref_mut() {
                         Node::Internal(node) => {
                             if let Err(new) = node._delete(
@@ -193,6 +193,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                             }
                         }
                     }
+                    visited.push((depth, self.children[direct_delete_end].deref_mut().into()));
                     handled = true;
                 }
             }
@@ -593,7 +594,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                 // if has sibling, borrow or merge to it
                 let sibling: &mut Node<'a, T, A> =
                         // SAFETY: node's sibling points to a valid descendant of self
-                        unsafe { &mut *((sibling as *const _) as usize as *mut _) };
+                        unsafe {transmute(sibling)};
                 if node.children_num() + sibling.children_num() <= A::MAX_CHILDREN_NUM {
                     node.merge_to_sibling(sibling, either, notify);
                     to_delete = true;
@@ -611,7 +612,26 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
                         zipper.push((reverse_depth + 1, *ptr));
                     }
                 }
-                node.remove();
+                {
+                    // remove node
+                    let this = node;
+                    if let Some(leaf) = this.as_leaf_mut() {
+                        let next = leaf.next;
+                        let prev = leaf.prev;
+                        if let Some(mut next) = next {
+                            // SAFETY: it is safe here
+                            unsafe { next.as_mut() }.prev = prev;
+                        }
+                        if let Some(mut prev) = prev {
+                            // SAFETY: it is safe here
+                            unsafe { prev.as_mut() }.next = next;
+                        }
+                    }
+
+                    let index = this.get_self_index().unwrap();
+                    let parent = this.parent_mut().unwrap();
+                    for _ in parent.children.drain(index..index + 1) {}
+                };
             }
         }
 

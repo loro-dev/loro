@@ -205,7 +205,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
             }
 
             // SAFETY: we are sure that the cursor is valid
-            let node = unsafe { start.leaf.as_ref() };
+            let node = unsafe { start.leaf.as_mut() };
             match node.children.get(start.index) {
                 Some(_) => {
                     if let Some(end) = &self.end_cursor {
@@ -257,7 +257,7 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> Iterator for IterMut<'tree, T, A> {
                     start.pos = Position::Start;
                     return ans;
                 }
-                None => match node.next() {
+                None => match node.next_mut() {
                     Some(next) => {
                         start.leaf = next.into();
                         start.index = 0;

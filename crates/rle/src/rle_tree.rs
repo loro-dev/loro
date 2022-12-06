@@ -58,7 +58,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
         if let Some(value) = self.with_node_mut(|node| {
-            let leaf = node.get_first_leaf();
+            let leaf = node.get_first_leaf_mut();
             if let Some(leaf) = leaf {
                 // SAFETY: we have exclusive ref to the tree
                 let cursor = unsafe { SafeCursorMut::new(leaf.into(), 0, 0, Position::Start, 0) };
@@ -172,10 +172,78 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     }
 
     #[inline]
-    pub fn get_mut(&mut self, index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
-        let cursor = self.get(index);
-        // SAFETY: this is safe because we have exclusive ref to the tree
-        cursor.map(|x| unsafe { SafeCursorMut::from(x.0) })
+    pub(crate) fn get_cursor_ge_mut(
+        &mut self,
+        mut index: A::Int,
+    ) -> Option<SafeCursorMut<'_, T, A>> {
+        let mut node = self.root_mut();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if result.child_index >= internal_node.children.len() {
+                        return None;
+                    }
+
+                    node = &mut internal_node.children[result.child_index];
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if result.child_index >= leaf.children.len() {
+                        return None;
+                    }
+
+                    if result.child_index == leaf.children.len() - 1
+                        && leaf.next().is_none()
+                        && !result.found
+                        && (result.pos == Position::After || result.pos == Position::End)
+                    {
+                        return None;
+                    }
+
+                    return Some(SafeCursorMut::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, mut index: A::Int) -> Option<SafeCursorMut<'_, T, A>> {
+        let mut node = self.root_mut();
+        loop {
+            match node {
+                Node::Internal(internal_node) => {
+                    let result = A::find_pos_internal(internal_node, index);
+                    if !result.found {
+                        return None;
+                    }
+
+                    node = &mut internal_node.children[result.child_index];
+                    index = result.offset;
+                }
+                Node::Leaf(leaf) => {
+                    let result = A::find_pos_leaf(leaf, index);
+                    if !result.found {
+                        return None;
+                    }
+
+                    return Some(SafeCursorMut::from_leaf(
+                        leaf,
+                        result.child_index,
+                        result.offset,
+                        result.pos,
+                        0,
+                    ));
+                }
+            }
+        }
     }
 
     #[inline]
@@ -196,16 +264,16 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn iter_mut_in<'a>(
         &'a mut self,
-        start: Option<SafeCursor<'a, T, A>>,
+        start: Option<SafeCursorMut<'a, T, A>>,
         end: Option<SafeCursor<'a, T, A>>,
     ) -> iter::IterMut<'a, T, A> {
         if start.is_none() && end.is_none() {
             self.iter_mut()
         } else {
-            let leaf = self.root().get_first_leaf().unwrap();
+            let leaf = self.root_mut().get_first_leaf_mut().unwrap();
             // SAFETY: this is safe because we know there are at least one element in the tree
             let start =
-                start.unwrap_or_else(|| SafeCursor::from_leaf(leaf, 0, 0, Position::Start, 0));
+                start.unwrap_or_else(|| SafeCursorMut::from_leaf(leaf, 0, 0, Position::Start, 0));
 
             // SAFETY: we have exclusive ref to the tree, so it's safe to have an exclusive ref to its elements
             let start: SafeCursorMut<'a, T, A> = unsafe { SafeCursorMut::from(start.0) };

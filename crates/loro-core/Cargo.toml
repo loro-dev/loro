@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-string_cache = "0.8.3"
+string_cache = "0.8.4"
 rle = { path = "../rle" }
 smallvec = "1.8.0"
 smartstring = { version = "1.0.1" }
@@ -16,7 +16,7 @@ serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0.31"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
-crdt-list = { version = "0.3.0" }
+crdt-list = { version = "0.4.0" }
 owning_ref = "0.4.1"
 postcard = "1.0.2"
 rand = { version = "0.8.5", optional = true }
