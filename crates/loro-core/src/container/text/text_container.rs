@@ -41,7 +41,7 @@ impl TextContainer {
     pub(crate) fn new(id: ContainerID) -> Self {
         Self {
             id,
-            raw_str: StringPool::default(),
+            raw_str: Arc::new(Mutex::new(StringPool::default())),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
         }
@@ -197,7 +197,13 @@ impl Container for TextContainer {
     }
 
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]> {
-        if gc && self.raw_str.should_update_aliveness(self.text_len()) {
+        if gc
+            && self
+                .raw_str
+                .lock()
+                .unwrap()
+                .should_update_aliveness(self.text_len())
+        {
             self.raw_str
                 .update_aliveness(self.state.iter().filter_map(|x| {
                     x.as_ref()
@@ -223,7 +229,7 @@ impl Container for TextContainer {
                         if gc {
                             let mut start = 0;
                             let mut pos_start = pos;
-                            for span in self.raw_str.get_aliveness(&r.0) {
+                            for span in self.raw_str.lock().unwrap().get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
                                         ans.push(RemoteContent::List(ListOp::Insert {
@@ -298,7 +304,7 @@ impl Container for TextContainer {
                         let s = if slice.is_unknown() {
                             " ".repeat(slice.atom_len())
                         } else {
-                            self.raw_str.slice(&slice.0).to_owned()
+                            self.raw_str.lock().unwrap().slice(&slice.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(*pos);
@@ -384,7 +390,7 @@ impl Container for TextContainer {
                         let s = if content.is_unknown() {
                             " ".repeat(content.atom_len())
                         } else {
-                            self.raw_str.slice(&content.0).to_owned()
+                            self.raw_str.lock().unwrap().slice(&content.0).to_owned()
                         };
                         let mut delta = Delta::new();
                         delta.retain(pos);

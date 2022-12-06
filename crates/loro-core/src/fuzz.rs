@@ -217,14 +217,22 @@ fn check_eq(site_a: &mut LoroCore, site_b: &mut LoroCore) {
 fn check_synced(sites: &mut [LoroCore]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
-            debug_log!("-------------------------------");
-            debug_log!("checking {} with {}", i, j);
-            debug_log!("-------------------------------");
-
+            debug_log::group!("checking {} with {}", i, j);
             let (a, b) = array_mut_ref!(sites, [i, j]);
-            a.import(b.export(a.vv()));
-            b.import(a.export(b.vv()));
-            check_eq(a, b)
+            {
+                debug_log::group!("Import {}", i);
+                a.import_updates(&b.export_updates(&a.vv()).unwrap())
+                    .unwrap();
+                debug_log::group_end!();
+            }
+            {
+                debug_log::group!("Import {}", j);
+                b.import_updates(&a.export_updates(&b.vv()).unwrap())
+                    .unwrap();
+                debug_log::group_end!();
+            }
+            check_eq(a, b);
+            debug_log::group_end!();
         }
     }
 }
@@ -432,9 +440,10 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.apply_action(action);
     }
 
-    debug_log!("=================================");
+    debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
     check_synced(&mut sites);
+    debug_log::group_end!();
 }
 
 #[cfg(test)]

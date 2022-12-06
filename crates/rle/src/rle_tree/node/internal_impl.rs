@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Error, Formatter},
+    mem::transmute,
     ops::DerefMut,
 };
 

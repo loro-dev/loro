@@ -1,8 +1,9 @@
 use rle::{HasLength, Mergable, Sliceable};
+use serde::{Deserialize, Serialize};
 
 use crate::{ContentType, InsertContentTrait, InternalString, LoroValue};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MapSet {
     pub(crate) key: InternalString,
     pub(crate) value: LoroValue,

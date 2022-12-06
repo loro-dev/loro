@@ -1,4 +1,3 @@
-use colored::Colorize;
 use debug_log::debug_log;
 use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
@@ -327,7 +326,7 @@ impl Tracker {
                 let mut spans = self
                     .content
                     .get_active_id_spans(span.start() as usize, span.atom_len());
-                debug_log!("DELETED SPANS={}", format!("{:#?}", &spans).red());
+                debug_log!("DELETED SPANS={}", format!("{:#?}", &spans));
                 self.update_spans(&spans, StatusChange::Delete);
 
                 if span.is_reversed() && span.atom_len() > 1 {

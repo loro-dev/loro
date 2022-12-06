@@ -12,8 +12,6 @@ use std::{
     fmt::Debug,
 };
 
-#[allow(unused)]
-use colored::Colorize;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};

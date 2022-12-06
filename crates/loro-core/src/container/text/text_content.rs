@@ -2,12 +2,13 @@ use std::ops::Range;
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
+use serde::{Deserialize, Serialize};
 
 use crate::{smstring::SmString, LoroValue};
 
 use super::string_pool::PoolString;
 
-#[derive(PartialEq, Debug, EnumAsInner, Clone)]
+#[derive(PartialEq, Debug, EnumAsInner, Clone, Serialize, Deserialize)]
 pub enum ListSlice {
     // TODO: use Box<[LoroValue]> ?
     RawData(Vec<LoroValue>),
@@ -110,7 +111,7 @@ impl HasLength for ListSlice {
 impl Sliceable for ListSlice {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            ListSlice::RawStr(s) => ListSlice::RawStr(s.0[from..to].into()),
+            ListSlice::RawStr(s) => ListSlice::RawStr(s[from..to].into()),
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
             ListSlice::RawData(x) => ListSlice::RawData(x[from..to].to_vec()),
         }
