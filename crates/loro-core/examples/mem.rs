@@ -2,7 +2,6 @@
 // #[global_allocator]
 // static GLOBAL: Jemalloc = Jemalloc;
 
-#[cfg(mem)]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -23,7 +22,6 @@ pub fn main() {
     drop(s);
     let txns = json.as_object().unwrap().get("txns");
     let start = Instant::now();
-    #[cfg(mem)]
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
     let mut text = loro.get_text("text");
@@ -53,7 +51,6 @@ pub fn main() {
     drop(d);
     #[cfg(feature = "test_utils")]
     loro.debug_inspect();
-    #[cfg(mem)]
     drop(profiler);
     // e.advance().unwrap();
     // let new_new_heap = alloc_stats.read().unwrap();

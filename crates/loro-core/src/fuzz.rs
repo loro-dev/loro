@@ -663,36 +663,23 @@ mod test {
     }
 
     #[test]
-    fn simplest() {
+    fn case_new_cache() {
         test_multi_sites(
-            2,
-            &mut [Ins {
-                content: 1,
-                pos: 0,
-                site: 0,
-            }],
-        )
-    }
-
-    #[test]
-    fn encode() {
-        test_multi_sites(
-            8,
+            3,
             &mut [
                 Ins {
-                    content: 0,
-                    pos: 1840611456097844714,
-                    site: 0,
+                    content: 35108,
+                    pos: 0,
+                    site: 2,
                 },
                 Ins {
-                    content: 0,
-                    pos: 2825745054957034,
-                    site: 10,
+                    content: 35624,
+                    pos: 0,
+                    site: 0,
                 },
-                Sync { from: 10, to: 0 },
                 Del {
-                    pos: 1125899890065408,
-                    len: 1840611456097844714,
+                    pos: 0,
+                    len: 5,
                     site: 0,
                 },
             ],

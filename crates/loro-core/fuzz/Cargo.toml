@@ -59,3 +59,9 @@ name = "encode"
 path = "fuzz_targets/encode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "unicode"
+path = "fuzz_targets/unicode.rs"
+test = false
+doc = false

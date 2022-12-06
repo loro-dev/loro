@@ -48,3 +48,6 @@ pub use value::LoroValue;
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
+
+#[cfg(feature = "test_utils")]
+pub use container::text;

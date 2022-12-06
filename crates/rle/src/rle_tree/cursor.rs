@@ -107,35 +107,51 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         &mut self.leaf.as_mut().children[self.index]
     }
 
+    /// Some of the caches may be wrong when this fn is invoked, or when the function end
+    ///
     /// # Safety
     ///
-    /// we need to make sure that the cursor is still valid
+    /// - We need to make sure that the cursor is still valid
+    /// - It's caller's responsibility to keep the cache correct
     pub unsafe fn insert_notify<F>(mut self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        let update = A::value_to_update(&value);
         let leaf = self.leaf.as_mut();
+        let mut node = leaf.parent.as_mut();
         // println!("insert cursor {:?}", self);
         // println!("insert value {:?}", value);
         // dbg!(&leaf);
         let result = leaf.insert_at_pos(self.pos, self.index, self.offset, value, notify, false);
         // dbg!(&leaf);
-        let mut node = leaf.parent.as_mut();
-        if let Err(new) = result {
-            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
-            while let Err(new) = result {
-                let old_node_index = node.get_index_in_parent().unwrap();
-                // result is err, so we're sure parent is valid
-                node = node.parent.unwrap().as_mut();
-                result = node.insert_at_pos(old_node_index + 1, new);
+        let index = leaf.get_index_in_parent().unwrap();
+        let leaf = &mut node.children[index];
+        leaf.parent_cache = leaf.node.cache().into();
+        match result {
+            Ok(_) => {
+                // TODO: perf
+                A::update_cache_internal(node, None);
             }
-        } else {
-            A::update_cache_internal(node);
+            Err((_, new)) => {
+                // TODO: perf
+                A::update_cache_internal(node, None);
+                let mut result = node.insert_at_pos(index + 1, new);
+                while let Err((_, new)) = result {
+                    let index = node.get_index_in_parent().unwrap();
+                    // result is err, so we're sure parent is valid
+                    node = node.parent.unwrap().as_mut();
+                    node.children[index].parent_cache = node.children[index].node.cache().into();
+                    result = node.insert_at_pos(index + 1, new);
+                }
+            }
         }
 
         while node.parent.is_some() {
+            let index = node.get_index_in_parent().unwrap();
             node = node.parent.unwrap().as_mut();
-            A::update_cache_internal(node);
+            node.children[index].parent_cache = node.children[index].node.cache().into();
+            A::update_cache_internal(node, Some(update));
         }
     }
 
@@ -241,44 +257,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> UnsafeCursor<'tree, T, A> {
         }
 
         None
-    }
-
-    /// move cursor forward
-    ///
-    /// # Safety
-    ///
-    /// self should still be valid pointer
-    pub unsafe fn update_with_split<F, U>(mut self, update_fn: U, notify: &mut F)
-    where
-        F: for<'a> FnMut(&T, *mut LeafNode<'a, T, A>),
-        U: FnOnce(&mut T),
-    {
-        let leaf = self.leaf.as_mut();
-        let result = leaf.update_at_pos(
-            self.pos,
-            self.index,
-            self.offset,
-            self.len,
-            update_fn,
-            notify,
-        );
-        let mut node = leaf.parent.as_mut();
-        if let Err(new) = result {
-            let mut result = node.insert_at_pos(leaf.get_index_in_parent().unwrap() + 1, new);
-            while let Err(new) = result {
-                let old_node_index = node.get_index_in_parent().unwrap();
-                // result is err, so we're sure parent is valid
-                node = node.parent.unwrap().as_mut();
-                result = node.insert_at_pos(old_node_index + 1, new);
-            }
-        } else {
-            A::update_cache_internal(node);
-        }
-
-        while node.parent.is_some() {
-            node = node.parent.unwrap().as_mut();
-            A::update_cache_internal(node);
-        }
     }
 }
 
@@ -430,10 +408,10 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
         // SAFETY: SafeCursorMut is a exclusive reference to the tree
         unsafe {
             let leaf = self.0.leaf.as_mut();
-            A::update_cache_leaf(leaf);
+            let mut update = A::update_cache_leaf(leaf);
             let mut node = leaf.parent.as_mut();
             loop {
-                A::update_cache_internal(node);
+                update = A::update_cache_internal(node, Some(update));
                 match node.parent {
                     Some(mut parent) => node = parent.as_mut(),
                     None => return,
@@ -443,7 +421,11 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     }
 
     /// self should be moved here, because after mutating self should be invalidate
-    pub fn insert_before_notify<F>(self, value: T, notify: &mut F)
+    ///
+    /// # Safety
+    ///
+    /// It's caller's responsibility to keep the cache correct
+    pub unsafe fn insert_before_notify<F>(self, value: T, notify: &mut F)
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
@@ -470,15 +452,6 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>> SafeCursorMut<'tree, T, A> {
     {
         // SAFETY: we know the cursor is a valid pointer
         unsafe { self.0.shift(shift).unwrap().insert_notify(value, notify) }
-    }
-
-    pub fn update_with_split<F, U>(self, update: U, notify: &mut F)
-    where
-        F: for<'a> FnMut(&T, *mut LeafNode<'a, T, A>),
-        U: FnOnce(&mut T),
-    {
-        // SAFETY: we know the cursor is a valid pointer
-        unsafe { self.0.update_with_split(update, notify) }
     }
 }
 

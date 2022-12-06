@@ -4,8 +4,8 @@
     "deny": "cargo deny check",
     "fuzz": "cargo fuzz run",
     "quick-fuzz": "deno run -A ./scripts/fuzz.ts text recursive encoding",
-    "mem": "RUSTFLAGS='--cfg=mem' cargo run --example mem -r --features=test_utils",
-    "flame": "cargo flamegraph --example text_sync --features=test_utils --root",
+    "mem": "cargo run --example mem -r --features=test_utils",
+    "flame": "cargo flamegraph --example automerge_x100 --features=test_utils --root",
     "bench": "cargo bench --features test_utils"
   }
 }

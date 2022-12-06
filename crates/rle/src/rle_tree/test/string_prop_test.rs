@@ -317,6 +317,56 @@ mod string_proptest {
         }
     }
 
+    #[test]
+    fn failed_cursor_insert_0() {
+        run_test(vec![
+            Insert {
+                insert_at: 0,
+                content: "aaaaaaaaaaaaaaaaaaa".into(),
+            },
+            Insert {
+                insert_at: 2945881,
+                content: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            },
+            Insert {
+                insert_at: 1679282,
+                content: "aaaaaaaaaaaaa".into(),
+            },
+            Insert {
+                insert_at: 68609,
+                content: "aaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            },
+            Insert {
+                insert_at: 2133507,
+                content: "aaaaaaaaaaaaaaaaa".into(),
+            },
+            Insert {
+                insert_at: 65748,
+                content: "aaaaaaaaaaaaaaaaaaa".into(),
+            },
+            Delete {
+                from: 9599253,
+                len: 3,
+            },
+            Delete {
+                from: 758600,
+                len: 6,
+            },
+            Insert {
+                insert_at: 9824700,
+                content: "pjtnminfsdcfkgpnkjqmxk".into(),
+            },
+            Delete {
+                from: 1327669,
+                len: 6,
+            },
+            Insert {
+                insert_at: 3915312,
+                content: "wabxntdtlgmxmzqsliaaoirlrmt".into(),
+            },
+        ]);
+    }
+
     proptest! {
         #[test]
         fn test_tree_string_op_the_same(

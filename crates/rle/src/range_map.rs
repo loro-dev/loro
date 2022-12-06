@@ -167,7 +167,6 @@ impl<
                 },
                 &mut |_, _| {},
             );
-
             return;
         }
 
@@ -296,7 +295,7 @@ impl<
                 let mut del_end = None;
                 for i in 0..internal.children().len() {
                     let child = &internal.children()[i];
-                    if child.is_empty() {
+                    if child.node.is_empty() {
                         del_start.get_or_insert(i);
                         del_end = Some(i + 1);
                     }
@@ -306,7 +305,7 @@ impl<
                     internal.drain_children(start, end);
                 }
 
-                internal.update_cache();
+                internal.update_cache(None);
                 if let Some(parent) = internal.parent {
                     visited_internal_nodes.insert(parent);
                 }

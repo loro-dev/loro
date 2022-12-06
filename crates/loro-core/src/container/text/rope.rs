@@ -32,7 +32,7 @@ impl Rope {
     pub fn utf16_to_utf8(&self, index: usize) -> usize {
         self.process_cursor_at(
             index,
-            |x| x.utf16.unwrap() as usize,
+            |x| x.utf16 as usize,
             |x| x.utf16_length.unwrap() as usize,
             |x| x.utf8 as usize,
             |x| x.atom_len(),
@@ -45,7 +45,7 @@ impl Rope {
             index,
             |x| x.utf8 as usize,
             |x| x.atom_len(),
-            |x| x.utf16.unwrap() as usize,
+            |x| x.utf16 as usize,
             |x| x.utf16_length.unwrap() as usize,
             |s, src_offset| s.utf8_index_to_utf16(src_offset),
         )
@@ -79,16 +79,11 @@ impl Rope {
                             unreachable!();
                         }
 
-                        node = &internal_node.children()[result.child_index];
+                        node = &internal_node.children()[result.child_index].node;
                         index = result.offset;
                         ans += internal_node.children()[0..result.child_index]
                             .iter()
-                            .map(|x| {
-                                dst_cache(match &**x {
-                                    Node::Internal(x) => x.cache,
-                                    Node::Leaf(x) => x.cache,
-                                })
-                            })
+                            .map(|x| dst_cache(x.parent_cache))
                             .sum::<usize>();
                     }
                     Node::Leaf(leaf) => {
