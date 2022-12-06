@@ -267,13 +267,13 @@ pub mod test {
 
     #[derive(Default)]
     pub struct TestRope {
-        pool: Arc<Mutex<StringPool>>,
+        pool: StringPool,
         rope: RleTree<PoolString, UnicodeTreeTrait<4>>,
     }
 
     impl TestRope {
         fn insert(&mut self, pos: usize, s: &str) {
-            let s = StringPool::alloc_pool_string(&self.pool, s);
+            let s = self.pool.alloc(s);
             self.rope.insert(pos, s);
         }
 
@@ -282,10 +282,7 @@ pub mod test {
         }
 
         fn insert_unknown(&mut self, pos: usize, len: usize) {
-            self.rope.insert(
-                pos,
-                PoolString::from_slice(&self.pool, SliceRange::new_unknown(len as u32)),
-            );
+            self.rope.insert(pos, PoolString::new_unknown(len));
         }
     }
 

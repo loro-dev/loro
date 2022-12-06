@@ -5,6 +5,8 @@ use rle::{HasLength, Mergable, Sliceable};
 
 use crate::{smstring::SmString, LoroValue};
 
+use super::string_pool::PoolString;
+
 #[derive(PartialEq, Debug, EnumAsInner, Clone)]
 pub enum ListSlice {
     // TODO: use Box<[LoroValue]> ?
@@ -26,6 +28,15 @@ impl SliceRange {
 
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
+    }
+
+    pub fn from_pool_string(p: &PoolString) -> Self {
+        match &p.slice {
+            super::string_pool::PoolSlice::Unknown(x) => Self::new_unknown(*x as u32),
+            super::string_pool::PoolSlice::Bytes(bytes) => {
+                Self(bytes.start() as u32..bytes.end() as u32)
+            }
+        }
     }
 }
 
