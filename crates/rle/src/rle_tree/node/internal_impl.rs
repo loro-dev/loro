@@ -903,10 +903,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
     pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
         &self.parent
     }
-
-    pub fn parent(&self) -> &Option<NonNull<InternalNode<'a, T, A>>> {
-        &self.parent
-    }
 }
 
 impl<'a, T: Rle, A: RleTreeTrait<T>> Debug for InternalNode<'a, T, A> {
