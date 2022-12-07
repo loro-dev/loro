@@ -1,4 +1,4 @@
-import { init, Loro, PrelimList, PrelimMap, PrelimText } from "../mod.ts";
+import { init, Loro, LoroMap, PrelimList, PrelimMap, PrelimText } from "../mod.ts";
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
 import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 import {
@@ -43,11 +43,12 @@ Deno.test({
   });
 
   await t.step("get container by id", () => {
-    assertThrows(() => {
-      const id = b.id;
-      const b2 = loro.getContainerById(id);
-      assertEquals(b2, b);
-    });
+    const id = b.id;
+    const b2 = loro.getContainerById(id) as LoroMap;
+    assertEquals(b2.value, b.value);
+    assertEquals(b2.id, id);
+    b2.set(loro, "0", 12);
+    assertEquals(b2.value, b.value);
   });
 });
 
@@ -66,7 +67,6 @@ Deno.test({ name: "sync" }, async (t) => {
     assertEquals(text.value, "a hello world");
     const map = loro.getMap("map");
     map.set(loro, "key", "value");
-    console.log(loro.toJson());
   });
 });
 

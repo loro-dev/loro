@@ -322,13 +322,9 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
 pub mod wasm {
     use fxhash::FxHashMap;
     use js_sys::{Array, Object};
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
-    use crate::{container::ContainerID as _ContainerID, LoroValue};
-
-    #[wasm_bindgen]
-    pub struct ContainerID(_ContainerID);
+    use crate::{container::ContainerID, id::ID, ContainerType, LoroError, LoroValue};
 
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
@@ -353,8 +349,16 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(ref container_id) => {
-                serde_wasm_bindgen::to_value(container_id).unwrap()
+            LoroValue::Unresolved(container_id) => {
+                let id = *container_id;
+                let map = Object::new();
+                js_sys::Reflect::set(
+                    &map,
+                    &JsValue::from_str("UnresolvedContainer"),
+                    &JsValue::from(id),
+                )
+                .unwrap();
+                map.into_js_result().unwrap()
             }
         }
     }
@@ -402,6 +406,92 @@ pub mod wasm {
                 map.into()
             } else {
                 unreachable!()
+            }
+        }
+    }
+
+    impl From<ContainerID> for JsValue {
+        fn from(id: ContainerID) -> Self {
+            let map = Object::new();
+            match id {
+                ContainerID::Root {
+                    name,
+                    container_type,
+                } => {
+                    js_sys::Reflect::set(
+                        &map,
+                        &JsValue::from_str("root"),
+                        &name.to_string().into(),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &map,
+                        &JsValue::from_str("type"),
+                        &container_type.to_string().into(),
+                    )
+                    .unwrap();
+                }
+                ContainerID::Normal { id, container_type } => {
+                    js_sys::Reflect::set(&map, &JsValue::from_str("id"), &id.to_string().into())
+                        .unwrap();
+                    js_sys::Reflect::set(
+                        &map,
+                        &JsValue::from_str("type"),
+                        &container_type.to_string().into(),
+                    )
+                    .unwrap();
+                }
+            }
+
+            map.into_js_result().unwrap()
+        }
+    }
+
+    impl TryFrom<JsValue> for ContainerID {
+        type Error = LoroError;
+
+        fn try_from(value: JsValue) -> Result<Self, Self::Error> {
+            if !value.is_object() {
+                return Err(LoroError::DecodeError(
+                    "Given ContainerId is not an object".into(),
+                ));
+            }
+
+            let object = value.unchecked_into::<Object>();
+            if js_sys::Reflect::has(&object, &"id".into())? {
+                let Some(id) = js_sys::Reflect::get(&object, &"id".into())
+                        .unwrap()
+                        .as_string() else {
+                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
+                        };
+                let Ok(Some(Ok(container_type))) = js_sys::Reflect::get(&object, &"type".into())
+                        .map(|x| {
+                            x.as_string().map(|y| ContainerType::try_from(y.as_str()))
+                        }) else {
+                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
+                        };
+                Ok(ContainerID::Normal {
+                    id: ID::try_from(id.as_str())?,
+                    container_type,
+                })
+            } else if js_sys::Reflect::has(&object, &"root".into())? {
+                let Some(name) = js_sys::Reflect::get(&object, &"root".into())
+                        .unwrap()
+                        .as_string() else {
+                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
+                        };
+                let Ok(Some(Ok(container_type))) = js_sys::Reflect::get(&object, &"type".into())
+                        .map(|x| {
+                            x.as_string().map(|y| ContainerType::try_from(y.as_str()))
+                        }) else {
+                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
+                        };
+                Ok(ContainerID::Root {
+                    name: name.into(),
+                    container_type,
+                })
+            } else {
+                Err(LoroError::DecodeError("ContainerId is not valid".into()))
             }
         }
     }
@@ -624,7 +714,6 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
 #[cfg(feature = "json")]
 mod json_test {
     use crate::{fx_map, LoroValue};
-    use fxhash::FxHashMap;
 
     #[test]
     fn list() {

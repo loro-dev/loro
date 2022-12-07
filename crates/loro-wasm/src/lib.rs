@@ -6,6 +6,7 @@ use loro_core::{
 };
 use std::ops::{Deref, DerefMut};
 use wasm_bindgen::prelude::*;
+mod log;
 mod prelim;
 pub use prelim::{PrelimList, PrelimMap, PrelimText};
 
@@ -37,6 +38,21 @@ impl Deref for Loro {
     }
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const TYPES: &'static str = r#"
+export type ContainerType = "Text" | "Map" | "List";
+export type ContainerID = { id: string; type: ContainerType } | {
+  root: string;
+  type: ContainerType;
+};
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "ContainerID")]
+    pub type JsContainerID;
+}
+
 impl DerefMut for Loro {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -48,6 +64,11 @@ impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self(LoroCore::default())
+    }
+
+    #[wasm_bindgen(js_name = "clientId", method, getter)]
+    pub fn client_id(&self) -> u64 {
+        self.0.client_id()
     }
 
     #[wasm_bindgen(js_name = "getText")]
@@ -68,9 +89,9 @@ impl Loro {
         Ok(LoroList(list))
     }
 
-    #[wasm_bindgen(js_name = "getContainerById")]
-    pub fn get_container_by_id(&mut self, container_id: JsValue) -> JsResult<JsValue> {
-        let container_id: ContainerID = serde_wasm_bindgen::from_value(container_id)?;
+    #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
+    pub fn get_container_by_id(&mut self, container_id: JsContainerID) -> JsResult<JsValue> {
+        let container_id: ContainerID = container_id.to_owned().try_into()?;
         let ty = container_id.container_type();
         let container = self.0.get_container(&container_id);
         if let Some(container) = container {
@@ -159,8 +180,9 @@ impl LoroText {
     }
 
     #[wasm_bindgen(js_name = "id", method, getter)]
-    pub fn id(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = self.0.id().into();
+        value.into()
     }
 }
 
@@ -190,12 +212,14 @@ impl LoroMap {
 
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&self) -> JsValue {
-        self.0.get_value().into()
+        let value = self.0.get_value();
+        value.into()
     }
 
     #[wasm_bindgen(js_name = "id", method, getter)]
-    pub fn id(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = self.0.id().into();
+        value.into()
     }
 
     #[wasm_bindgen(js_name = "getValueDeep")]
@@ -261,8 +285,9 @@ impl LoroList {
     }
 
     #[wasm_bindgen(js_name = "id", method, getter)]
-    pub fn id(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.0.id()).unwrap()
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = self.0.id().into();
+        value.into()
     }
 
     #[wasm_bindgen(js_name = "value", method, getter)]

@@ -6,17 +6,21 @@
 //!
 use crate::{
     event::{Observer, SubscriptionID},
+    fx_map,
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::{IdSpanVector, VersionVector},
-    InternalString, LoroValue, ID,
+    InternalString, LoroError, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use std::{any::Any, fmt::Debug};
+use std::{
+    any::Any,
+    fmt::{Debug, Display},
+};
 
 pub mod registry;
 
@@ -34,6 +38,31 @@ pub enum ContainerType {
     List,
     // TODO: Users can define their own container types.
     // Custom(u16),
+}
+
+impl Display for ContainerType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ContainerType::Text => "Text",
+            ContainerType::Map => "Map",
+            ContainerType::List => "List",
+        })
+    }
+}
+
+impl TryFrom<&str> for ContainerType {
+    type Error = LoroError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "Text" => Ok(ContainerType::Text),
+            "Map" => Ok(ContainerType::Map),
+            "List" => Ok(ContainerType::List),
+            _ => Err(LoroError::DecodeError(
+                ("Unknown container type".to_string() + value).into(),
+            )),
+        }
+    }
 }
 
 pub trait Container: Debug + Any + Unpin {

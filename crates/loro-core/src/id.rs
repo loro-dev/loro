@@ -2,7 +2,10 @@ use std::fmt::{Debug, Display};
 
 use serde::{Deserialize, Serialize};
 
-use crate::span::{CounterSpan, IdSpan};
+use crate::{
+    span::{CounterSpan, IdSpan},
+    LoroError,
+};
 
 pub type ClientID = u64;
 pub type Counter = i32;
@@ -22,7 +25,26 @@ impl Debug for ID {
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("c{}:{}", self.client_id, self.counter).as_str())
+        f.write_str(format!("{}@{}", self.counter, self.client_id).as_str())
+    }
+}
+
+impl TryFrom<&str> for ID {
+    type Error = LoroError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let splitted: Vec<_> = value.split('@').collect();
+        if splitted.len() != 2 {
+            return Err(LoroError::DecodeError("Invalid ID format".into()));
+        }
+
+        let counter = splitted[0]
+            .parse::<Counter>()
+            .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
+        let client_id = splitted[1]
+            .parse::<ClientID>()
+            .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
+        Ok(ID { client_id, counter })
     }
 }
 
