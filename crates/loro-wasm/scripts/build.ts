@@ -1,38 +1,65 @@
-import { build, emptyDir } from "https://deno.land/x/dnt@0.32.0/mod.ts";
+// deno run -A build.ts debug
+// deno run -A build.ts release
+// deno run -A build.ts release web
+// deno run -A build.ts release nodejs
+let profile = "dev";
+let target_dir = "debug";
 
-async function main() {
-  await emptyDir("./npm");
-
-  await build({
-    entryPoints: ["./mod.ts"],
-    outDir: "./npm",
-    shims: {
-      // see JS docs for overview and more options
-      deno: true
-    },
-    test: false,
-    package: {
-      // package.json properties
-      name: "loro-wasm",
-      version: "0.0.1",
-      description: "",
-      license: "MIT",
-      repository: {
-        type: "git",
-        url: "git+https://github.com/loro-dev/loro.git",
-      },
-      bugs: {
-        url: "https://github.com/loro-dev/loro/issues",
-      },
-    },
-    packageManager: "pnpm"
-  });
-
-  // post build steps
-  await Deno.copyFile("LICENSE", "npm/LICENSE");
-  await Deno.copyFile("README.md", "npm/README.md");
-  await Deno.copyFile("pkg/loro_wasm_bg.wasm", "npm/esm/pkg/loro_wasm_bg.wasm");
-  await Deno.copyFile("pkg/loro_wasm_bg.wasm", "npm/script/pkg/loro_wasm_bg.wasm");
+switch (Deno.args[0]) {
+  case "debug":
+    break;
+  case "release":
+    profile = "release";
+    target_dir = "release";
+    break;
 }
 
-main();
+const TARGETS = ["bundler", "web", "nodejs"];
+
+async function build() {
+  const startTime = performance.now();
+  await Deno.run({
+    cmd: `cargo build --target wasm32-unknown-unknown --profile ${profile}`
+      .split(" "),
+  }).status();
+  if (Deno.args[1] != null) {
+    if (!TARGETS.includes(Deno.args[1])) {
+      throw new Error(`Invalid target ${Deno.args[1]}`);
+    }
+
+    for (const cmd of genCommands(Deno.args[1])) {
+      await Deno.run({ cmd: cmd.split(" ") }).status();
+    }
+    return;
+  }
+
+  for (const target of TARGETS) {
+    await buildTarget(target);
+  }
+
+  console.log(
+    "✅",
+    "Build complete in",
+    (performance.now() - startTime) / 1000,
+    "s",
+  );
+}
+
+async function buildTarget(target: string) {
+  console.log("🏗️  Building target", `[${target}]`);
+  for (const cmd of genCommands(target)) {
+    console.log(">", cmd);
+    await Deno.run({ cmd: cmd.split(" ") }).status();
+  }
+  console.log()
+}
+
+function genCommands(target: string): string[] {
+  return [
+    `rm -rf ./${target}`,
+    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${target_dir}/loro_wasm.wasm`,
+    `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`,
+  ];
+}
+
+build();

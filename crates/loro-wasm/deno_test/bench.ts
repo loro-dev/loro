@@ -1,15 +1,11 @@
-import { init, Loro } from "../mod.ts";
+import init, { Loro } from "../web/loro_wasm.js";
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
 import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 
 const { __dirname } = __(import.meta);
 import * as compress from "https://deno.land/x/compress@v0.4.5/zlib/mod.ts";
 
-const wasm = await init(
-  await Deno.readFile(
-    resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
-  ),
-);
+const wasm = await init();
 
 const automerge = resolve(
   __dirname,
@@ -41,32 +37,44 @@ function apply() {
 }
 
 function encode_updates(loro: Loro): Uint8Array {
-  return loro.exportUpdates();
+  return loro.exportUpdates(undefined);
 }
 
 function decode_updates(updates: Uint8Array): Loro {
   const loro = new Loro();
   loro.importUpdates(updates);
-  return loro
+  return loro;
 }
-
 
 console.log("Encoded updates size", encoded.byteLength);
 console.log("Encoded snapshot size", snapshot.byteLength);
 console.log("WASM buffer size", wasm.memory.buffer.byteLength);
 
-Deno.bench("[Apply] Loro WASM apply Automerge dataset", () => {apply().free()});
-Deno.bench("[Encode.Updates] Loro WASM encode updates Automerge dataset", () => {
-  encode_updates(loro);
+Deno.bench("[Apply] Loro WASM apply Automerge dataset", () => {
+  apply().free();
 });
-Deno.bench("[Decode.Updates] Loro WASM decode updates Automerge dataset", () => {
-  decode_updates(encoded);
-});
+Deno.bench(
+  "[Encode.Updates] Loro WASM encode updates Automerge dataset",
+  () => {
+    encode_updates(loro);
+  },
+);
+Deno.bench(
+  "[Decode.Updates] Loro WASM decode updates Automerge dataset",
+  () => {
+    decode_updates(encoded);
+  },
+);
 
-Deno.bench("[Encode.Snapshot] Loro WASM encode snapshot Automerge dataset", () => {
-  loro.exportSnapshot();
-});
-Deno.bench("[Decode.Snapshot] Loro WASM decode snapshot Automerge dataset", () => {
-  Loro.importSnapshot(snapshot);
-});
-
+Deno.bench(
+  "[Encode.Snapshot] Loro WASM encode snapshot Automerge dataset",
+  () => {
+    loro.exportSnapshot();
+  },
+);
+Deno.bench(
+  "[Decode.Snapshot] Loro WASM decode snapshot Automerge dataset",
+  () => {
+    Loro.importSnapshot(snapshot);
+  },
+);

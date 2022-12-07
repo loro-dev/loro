@@ -1,0 +1,12 @@
+{
+  "name": "loro-wasm",
+  "version": "0.1.0",
+  "description": "",
+  "main": "nodejs/loro_wasm.js",
+  "module": "bundler/loro_wasm.js",
+  "scripts": {
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

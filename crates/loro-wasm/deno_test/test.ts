@@ -1,17 +1,10 @@
-import { init, Loro, LoroMap, PrelimList, PrelimMap, PrelimText } from "../mod.ts";
-import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
-import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
+import init, { Loro, LoroMap, PrelimList, PrelimMap, PrelimText } from "../web/loro_wasm.js";
 import {
   assertEquals,
   assertThrows,
 } from "https://deno.land/std@0.165.0/testing/asserts.ts";
-const { __dirname } = __(import.meta);
 
-await init(
-  await Deno.readFile(
-    resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
-  ),
-);
+await init();
 
 Deno.test({
   name: "loro_wasm",
@@ -58,12 +51,12 @@ Deno.test({ name: "sync" }, async (t) => {
     const text = loro.getText("text");
     text.insert(loro, 0, "hello world");
     const loro_bk = new Loro();
-    loro_bk.importUpdates(loro.exportUpdates());
+    loro_bk.importUpdates(loro.exportUpdates(undefined));
     assertEquals(loro_bk.toJson(), loro.toJson());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.value, "hello world");
     text_bk.insert(loro_bk, 0, "a ");
-    loro.importUpdates(loro_bk.exportUpdates());
+    loro.importUpdates(loro_bk.exportUpdates(undefined));
     assertEquals(text.value, "a hello world");
     const map = loro.getMap("map");
     map.set(loro, "key", "value");

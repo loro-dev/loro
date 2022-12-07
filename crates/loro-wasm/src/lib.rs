@@ -38,15 +38,6 @@ impl Deref for Loro {
     }
 }
 
-#[wasm_bindgen(typescript_custom_section)]
-const TYPES: &'static str = r#"
-export type ContainerType = "Text" | "Map" | "List";
-export type ContainerID = { id: string; type: ContainerType } | {
-  root: string;
-  type: ContainerType;
-};
-"#;
-
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(typescript_type = "ContainerID")]
@@ -349,3 +340,17 @@ impl Default for Loro {
         Self::new()
     }
 }
+
+#[wasm_bindgen(typescript_custom_section)]
+const TYPES: &'static str = r#"
+export type ContainerType = "Text" | "Map" | "List";
+export type ContainerID = { id: string; type: ContainerType } | {
+  root: string;
+  type: ContainerType;
+};
+
+interface Loro {
+    exportUpdates(version?: Uint8Array): Uint8Array;
+    getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
+}
+"#;
