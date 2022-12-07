@@ -323,6 +323,9 @@ impl<
         self.tree.delete_range(start, end);
     }
 
+    /// Return the values overlap with the given range
+    ///
+    /// Note that the returned values may exceed the given range
     #[inline]
     pub fn get_range(&self, start: Index, end: Index) -> impl Iterator<Item = &Value> {
         self.tree
@@ -330,6 +333,10 @@ impl<
             .map(|x| &x.as_tree_ref().value)
     }
 
+    /// Return the values overlap with the given range and their indexes
+    ///
+    /// Note that the returned values may exceed the given range
+    ///
     /// TODO: need double check this method
     #[inline]
     pub fn get_range_with_index(
@@ -340,6 +347,19 @@ impl<
         self.tree.iter_range(start, Some(end)).map(|x| {
             let x = x.as_tree_ref();
             (x.index, &x.value)
+        })
+    }
+
+    /// Return the values contained by the given range, the returned values are sliced by the given range
+    #[inline]
+    pub fn get_range_sliced(
+        &self,
+        start: Index,
+        end: Index,
+    ) -> impl Iterator<Item = (Index, Value)> + '_ {
+        self.tree.iter_range(start, Some(end)).map(|x| {
+            let sliced = x.get_sliced();
+            (sliced.index, sliced.value)
         })
     }
 
