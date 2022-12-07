@@ -10,7 +10,7 @@ import initWasm, {
   PrelimText,
   setPanicHook,
 } from "./pkg/loro_wasm.js";
-import { InitInput } from "./pkg/loro_wasm.d.ts";
+import { InitInput, InitOutput } from "./pkg/loro_wasm.d.ts";
 
 export {
   ContainerID,
@@ -27,11 +27,12 @@ export {
 // Extend the interfaces here, to provide richer type information
 declare module "./pkg/loro_wasm.js" {
   interface Loro {
-    export_updates(version?: Uint8Array): Uint8Array;
+    exportUpdates(version?: Uint8Array): Uint8Array;
   }
 }
 
-export async function init(module_or_path?: InitInput | Promise<InitInput>) {
-  await initWasm(module_or_path);
+export async function init(module_or_path?: InitInput | Promise<InitInput>): Promise<InitOutput> {
+  const out = await initWasm(module_or_path);
   setPanicHook();
+  return out
 }

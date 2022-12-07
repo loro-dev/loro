@@ -1,10 +1,4 @@
-import {
-  init,
-  Loro,
-  PrelimList,
-  PrelimMap,
-  PrelimText,
-} from "../mod.ts";
+import { init, Loro, PrelimList, PrelimMap, PrelimText } from "../mod.ts";
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
 import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 import {
@@ -13,13 +7,11 @@ import {
 } from "https://deno.land/std@0.165.0/testing/asserts.ts";
 const { __dirname } = __(import.meta);
 
-let wasm: Uint8Array | undefined;
-
-const beforeAll = Deno.readFile(
-  resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
-).then(x => {wasm = x});
-await beforeAll;
-await init(wasm);
+await init(
+  await Deno.readFile(
+    resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
+  ),
+);
 
 Deno.test({
   name: "loro_wasm",
@@ -59,24 +51,24 @@ Deno.test({
   });
 });
 
-Deno.test({name: "sync"}, async (t) => {
+Deno.test({ name: "sync" }, async (t) => {
   await t.step("sync", () => {
     const loro = new Loro();
     const text = loro.getText("text");
     text.insert(loro, 0, "hello world");
     const loro_bk = new Loro();
-    loro_bk.import_updates(loro.export_updates());
-    assertEquals(loro_bk.to_json(), loro.to_json());
+    loro_bk.importUpdates(loro.exportUpdates());
+    assertEquals(loro_bk.toJson(), loro.toJson());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.value, "hello world");
     text_bk.insert(loro_bk, 0, "a ");
-    loro.import_updates(loro_bk.export_updates());
+    loro.importUpdates(loro_bk.exportUpdates());
     assertEquals(text.value, "a hello world");
     const map = loro.getMap("map");
     map.set(loro, "key", "value");
-    console.log(loro.to_json())
-  })
-})
+    console.log(loro.toJson());
+  });
+});
 
 Deno.test({ name: "test prelim" }, async (t) => {
   const loro = new Loro();

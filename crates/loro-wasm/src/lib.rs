@@ -98,7 +98,18 @@ impl Loro {
         self.0.vv().encode()
     }
 
-    #[wasm_bindgen(skip_typescript)]
+    #[wasm_bindgen(js_name = "exportSnapshot")]
+    pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
+        Ok(self.0.encode_snapshot())
+    }
+
+    #[wasm_bindgen(js_name = "importSnapshot")]
+    pub fn import_snapshot(input: Vec<u8>) -> Self {
+        let core = LoroCore::decode_snapshot(&input, None, Default::default());
+        Self(core)
+    }
+
+    #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
     pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
             None
@@ -115,10 +126,12 @@ impl Loro {
         Ok(self.0.export_updates(&vv))
     }
 
+    #[wasm_bindgen(js_name = "importUpdates")]
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
         Ok(self.0.import_updates(&data)?)
     }
 
+    #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
         let json = self.0.to_json();
         Ok(json.into())
