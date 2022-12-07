@@ -121,7 +121,7 @@ impl Loro {
 
     pub fn to_json(&self) -> JsResult<JsValue> {
         let json = self.0.to_json();
-        Ok(serde_wasm_bindgen::to_value(&json)?)
+        Ok(json.into())
     }
 }
 

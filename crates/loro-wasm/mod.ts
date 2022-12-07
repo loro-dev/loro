@@ -24,6 +24,7 @@ export {
   PrelimText,
 };
 
+// Extend the interfaces here, to provide richer type information
 declare module "./pkg/loro_wasm.js" {
   interface Loro {
     export_updates(version?: Uint8Array): Uint8Array;

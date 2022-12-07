@@ -66,7 +66,15 @@ Deno.test({name: "sync"}, async (t) => {
     text.insert(loro, 0, "hello world");
     const loro_bk = new Loro();
     loro_bk.import_updates(loro.export_updates());
-    console.log(loro_bk.to_json())
+    assertEquals(loro_bk.to_json(), loro.to_json());
+    const text_bk = loro_bk.getText("text");
+    assertEquals(text_bk.value, "hello world");
+    text_bk.insert(loro_bk, 0, "a ");
+    loro.import_updates(loro_bk.export_updates());
+    assertEquals(text.value, "a hello world");
+    const map = loro.getMap("map");
+    map.set(loro, "key", "value");
+    console.log(loro.to_json())
   })
 })
 
