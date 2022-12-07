@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "build": "wasm-pack build --target web .",
+    "build": "wasm-pack build --release --target web .",
     "build-dnt": "deno run -A scripts/build.ts",
     "test": "deno test --allow-read",
     "bench": "deno bench --allow-read ./deno_test/bench.ts"

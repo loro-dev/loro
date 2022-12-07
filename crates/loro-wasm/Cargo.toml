@@ -15,7 +15,3 @@ console_error_panic_hook = { version = "0.1.6", optional = true }
 
 [features]
 default = ["console_error_panic_hook"]
-
-[profile.release]
-# Tell `rustc` to optimize for small code size.
-opt-level = "s"
