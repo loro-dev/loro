@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use ctor::ctor;
 
@@ -201,48 +202,6 @@ fn test_recursive_should_panic() {
     let mut text_b = store_b.get_text("text_b");
     text_a.insert(&store_a, 0, "012").unwrap();
     text_b.insert(&store_a, 1, "34").unwrap();
-}
-
-#[test]
-#[cfg(feature = "json")]
-fn test_encode_state() {
-    let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut list = store.get_list("list");
-    list.insert(&store, 0, "some thing").unwrap();
-    list.insert(&store, 1, "some thing").unwrap();
-    list.insert(&store, 2, "some thing").unwrap();
-    list.insert(&store, 3, "some thing else").unwrap();
-    let id = list
-        .insert(&store, 4, ContainerType::List)
-        .unwrap()
-        .unwrap();
-    let mut list2 = store.get_list(id);
-    list2.insert(&store, 0, "some hahaha").unwrap();
-    let start = Instant::now();
-    let buf = store.export_store(true);
-    println!(
-        "size: {:?} bytes time: {} ms",
-        buf.len(),
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
-    let store2 = LoroCore::import_store(&buf, Default::default(), Some(2));
-
-    // store2
-    //     .get_text("text")
-    //     .insert(&store2, 0, "some text")
-    //     .unwrap();
-
-    // store2.decode_snapshot(&buf);
-    println!("############\n\n");
-    let buf2 = store2.encode_snapshot(&VersionVector::new(), true);
-    store.decode_snapshot(&buf2);
-    println!("decode time: {} ms", start.elapsed().as_millis());
-    println!("store: {}", store.to_json().to_json_pretty());
-    println!("store2: {}", store2.to_json().to_json_pretty());
-    assert_eq!(store.to_json(), store2.to_json());
-    // let buf2 = store2.encode_snapshot(&VersionVector::new());
-    // assert_eq!(buf, buf2);
 }
 
 #[test]

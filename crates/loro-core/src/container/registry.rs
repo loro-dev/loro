@@ -41,12 +41,11 @@ impl ContainerIdx {
 }
 
 // TODO: replace this with a fat pointer?
-#[derive(Debug, EnumAsInner, Serialize, Deserialize)]
+#[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
     List(Box<ListContainer>),
     Text(Box<TextContainer>),
     Map(Box<MapContainer>),
-    #[serde(skip)]
     Dyn(Box<dyn Container>),
 }
 

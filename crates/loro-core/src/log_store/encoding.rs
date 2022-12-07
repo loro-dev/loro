@@ -15,12 +15,13 @@ use crate::{
     dag::Dag,
     id::{ClientID, Counter, ID},
     op::{Op, RemoteContent, RemoteOp},
+    smstring::SmString,
     span::{HasIdSpan, HasLamportSpan},
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
 
-mod container;
-mod snapshot;
+// mod container;
+// mod snapshot;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
@@ -172,7 +173,6 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
                             (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                         }
                     },
-                    crate::op::RemoteContent::Dyn(_) => unreachable!(),
                 };
                 op_len += 1;
                 ops.push(OpEncoding {
@@ -302,7 +302,7 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 
         changes
             .entry(client_id)
-            .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
+            .or_insert_with(|| Vec::new())
             .push(change);
     }
     // TODO: using the one with fewer changes to import
@@ -333,26 +333,26 @@ impl LogStore {
         decode_changes(self, encoded);
     }
 
-    pub fn export_store(&self, compress_cfg: bool) -> Vec<u8> {
-        let encoded = snapshot::export_snapshot(self);
-        let mut ans = vec![compress_cfg as u8];
-        let buf = if compress_cfg {
-            // TODO: columnar compress use read/write mode
-            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
-        } else {
-            to_vec(&encoded).unwrap()
-        };
-        ans.extend(buf);
-        ans
-    }
+    // pub fn export_store(&self, compress_cfg: bool) -> Vec<u8> {
+    //     let encoded = snapshot::export_snapshot(self);
+    //     let mut ans = vec![compress_cfg as u8];
+    //     let buf = if compress_cfg {
+    //         // TODO: columnar compress use read/write mode
+    //         compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+    //     } else {
+    //         to_vec(&encoded).unwrap()
+    //     };
+    //     ans.extend(buf);
+    //     ans
+    // }
 
-    pub fn import_store(&mut self, input: &[u8]) {
-        let compress_cfg = *input.first().unwrap() > 0;
-        let encoded = if compress_cfg {
-            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
-        } else {
-            from_bytes(&input[1..]).unwrap()
-        };
-        snapshot::import_snapshot(self, encoded);
-    }
+    // pub fn import_store(&mut self, input: &[u8]) {
+    //     let compress_cfg = *input.first().unwrap() > 0;
+    //     let encoded = if compress_cfg {
+    //         from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
+    //     } else {
+    //         from_bytes(&input[1..]).unwrap()
+    //     };
+    //     snapshot::import_snapshot(self, encoded);
+    // }
 }
