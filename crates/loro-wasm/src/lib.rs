@@ -157,6 +157,17 @@ impl Loro {
         let json = self.0.to_json();
         Ok(json.into())
     }
+
+    pub fn subscribe(&mut self, f: js_sys::Function) -> u64 {
+        self.0.subscribe_deep(Box::new(move |_| {
+            // TODO: convert event
+            let _ = f.call0(&JsValue::NULL);
+        }))
+    }
+
+    pub fn unsubscribe(&mut self, subscription: u64) -> bool {
+        self.0.unsubscribe_deep(subscription)
+    }
 }
 
 #[wasm_bindgen]

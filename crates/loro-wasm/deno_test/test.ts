@@ -35,7 +35,7 @@ Deno.test({
     assertEquals(b.getValueDeep(loro), { ab: 123, hh: "hello world Text" });
   });
 
-  await t.step("wrong context throw error", () => {
+  await t.step("should throw error when using the wrong context", () => {
     assertThrows(() => {
       const loro2 = new Loro();
       bText.insert(loro2, 0, "hello world Text");
@@ -69,6 +69,23 @@ Deno.test({ name: "sync" }, async (t) => {
     map.set(loro, "key", "value");
   });
 });
+
+Deno.test("subscribe", () => {
+    const loro = new Loro();
+    const text = loro.getText("text");
+    let count = 0;
+    const sub = loro.subscribe(() => {
+      count += 1;
+    });
+    text.insert(loro, 0, "hello world");
+    assertEquals(count, 1);
+    text.insert(loro, 0, "hello world");
+    assertEquals(count, 2);
+    loro.unsubscribe(sub);
+    text.insert(loro, 0, "hello world");
+    assertEquals(count, 2);
+
+})
 
 Deno.test({ name: "test prelim" }, async (t) => {
   const loro = new Loro();
