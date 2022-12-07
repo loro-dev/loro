@@ -1,10 +1,15 @@
 use js_sys::Uint8Array;
 use loro_core::{
+    configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
+    log_store::GcConfig,
     ContainerType, List, LoroCore, Map, Text, VersionVector,
 };
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 use wasm_bindgen::prelude::*;
 mod log;
 mod prelim;
@@ -50,11 +55,35 @@ impl DerefMut for Loro {
     }
 }
 
+struct MathRandom;
+impl SecureRandomGenerator for MathRandom {
+    fn fill_byte(&self, dest: &mut [u8]) {
+        let mut bytes: [u8; 8] = js_sys::Math::random().to_be_bytes();
+        let mut index = 0;
+        let mut count = 0;
+        while index < dest.len() {
+            dest[index] = bytes[count];
+            index += 1;
+            count += 1;
+            if count == 8 {
+                bytes = js_sys::Math::random().to_be_bytes();
+                count = 0;
+            }
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self(LoroCore::default())
+        let cfg: Configure = Configure {
+            change: Default::default(),
+            gc: GcConfig::default().with_gc(false),
+            get_time: || js_sys::Date::now() as i64,
+            rand: Arc::new(MathRandom),
+        };
+        Self(LoroCore::new(cfg, None))
     }
 
     #[wasm_bindgen(js_name = "clientId", method, getter)]
@@ -149,15 +178,21 @@ impl Loro {
         Ok(json.into())
     }
 
-    pub fn subscribe(&mut self, f: js_sys::Function) -> u64 {
+    pub fn subscribe(&mut self, f: js_sys::Function) -> u32 {
         self.0.subscribe_deep(Box::new(move |_| {
             // TODO: convert event
             let _ = f.call0(&JsValue::NULL);
         }))
     }
 
-    pub fn unsubscribe(&mut self, subscription: u64) -> bool {
+    pub fn unsubscribe(&mut self, subscription: u32) -> bool {
         self.0.unsubscribe_deep(subscription)
+    }
+}
+
+impl Default for Loro {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -332,12 +367,6 @@ impl LoroList {
             }
         };
         Ok(container)
-    }
-}
-
-impl Default for Loro {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

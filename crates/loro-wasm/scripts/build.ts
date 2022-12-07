@@ -15,13 +15,10 @@ switch (Deno.args[0]) {
 }
 
 const TARGETS = ["bundler", "web", "nodejs"];
+const startTime = performance.now();
 
 async function build() {
-  const startTime = performance.now();
-  await Deno.run({
-    cmd: `cargo build --target wasm32-unknown-unknown --profile ${profile}`
-      .split(" "),
-  }).status();
+  await cargoBuild();
   if (Deno.args[1] != null) {
     if (!TARGETS.includes(Deno.args[1])) {
       throw new Error(`Invalid target ${Deno.args[1]}`);
@@ -45,6 +42,13 @@ async function build() {
   );
 }
 
+async function cargoBuild() {
+  await Deno.run({
+    cmd: `cargo build --target wasm32-unknown-unknown --profile ${profile}`
+      .split(" "),
+  }).status();
+}
+
 async function buildTarget(target: string) {
   console.log("🏗️  Building target", `[${target}]`);
   for (const cmd of genCommands(target)) {
@@ -58,7 +62,7 @@ function genCommands(target: string): string[] {
   return [
     `rm -rf ./${target}`,
     `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${target_dir}/loro_wasm.wasm`,
-    `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`,
+    ...(profile == "dev" ? [] : [`wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`]),
   ];
 }
 

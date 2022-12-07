@@ -62,4 +62,4 @@ pub struct MapDiff {
 
 pub type Observer = Box<dyn FnMut(&Event)>;
 
-pub type SubscriptionID = u64;
+pub type SubscriptionID = u32;

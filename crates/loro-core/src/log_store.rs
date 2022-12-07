@@ -51,6 +51,13 @@ impl Default for GcConfig {
     }
 }
 
+impl GcConfig {
+    #[inline(always)]
+    pub fn with_gc(self, gc: bool) -> Self {
+        Self { gc, ..self }
+    }
+}
+
 type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
 type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
 

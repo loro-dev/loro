@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    configure::rand_u64,
     container::{registry::ContainerRegistry, ContainerID},
     event::{Event, Index, Observer, Path, RawEvent, SubscriptionID},
 };
@@ -14,6 +13,7 @@ pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
     root_observers: FxHashMap<SubscriptionID, Observer>,
     latest_deleted: FxHashSet<ContainerID>,
+    event_counter: SubscriptionID,
 }
 
 #[derive(Default)]
@@ -281,7 +281,7 @@ impl Hierarchy {
         observer: Observer,
         deep: bool,
     ) -> SubscriptionID {
-        let id = rand_u64();
+        let id = self.next_id();
         if deep {
             self.nodes
                 .entry(container.clone())
@@ -298,6 +298,12 @@ impl Hierarchy {
         id
     }
 
+    fn next_id(&mut self) -> SubscriptionID {
+        let ans = self.event_counter;
+        self.event_counter += 1;
+        ans
+    }
+
     pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) -> bool {
         if let Some(x) = self.nodes.get_mut(container) {
             x.observers.remove(&id).is_some()
@@ -308,7 +314,7 @@ impl Hierarchy {
     }
 
     pub fn subscribe_root(&mut self, observer: Observer) -> SubscriptionID {
-        let id = rand_u64();
+        let id = self.next_id();
         self.root_observers.insert(id, observer);
         id
     }
