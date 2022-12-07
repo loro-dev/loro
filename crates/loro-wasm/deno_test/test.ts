@@ -1,10 +1,10 @@
-import init, {
+import {
+  init,
   Loro,
   PrelimList,
   PrelimMap,
   PrelimText,
-  setPanicHook,
-} from "../pkg/loro_wasm.js";
+} from "../mod.ts";
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
 import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 import {
@@ -18,13 +18,12 @@ let wasm: Uint8Array | undefined;
 const beforeAll = Deno.readFile(
   resolve(__dirname, "../pkg/loro_wasm_bg.wasm"),
 ).then(x => {wasm = x});
+await beforeAll;
+await init(wasm);
 
 Deno.test({
   name: "loro_wasm",
 }, async (t) => {
-  await beforeAll;
-  await init(wasm);
-  setPanicHook();
   const loro = new Loro();
   const a = loro.getText("ha");
   a.insert(loro, 0, "hello world");
@@ -60,10 +59,18 @@ Deno.test({
   });
 });
 
+Deno.test({name: "sync"}, async (t) => {
+  await t.step("sync", () => {
+    const loro = new Loro();
+    const text = loro.getText("text");
+    text.insert(loro, 0, "hello world");
+    const loro_bk = new Loro();
+    loro_bk.import_updates(loro.export_updates());
+    console.log(loro_bk.to_json())
+  })
+})
+
 Deno.test({ name: "test prelim" }, async (t) => {
-  await beforeAll;
-  await init(wasm);
-  setPanicHook();
   const loro = new Loro();
   const map = loro.getMap("map");
   const list = loro.getList("list");

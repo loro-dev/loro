@@ -1,3 +1,4 @@
+use js_sys::Uint8Array;
 use loro_core::{
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
@@ -97,7 +98,15 @@ impl Loro {
         self.0.vv().encode()
     }
 
-    pub fn export_updates(&self, version: Option<Vec<u8>>) -> JsResult<Vec<u8>> {
+    #[wasm_bindgen(skip_typescript)]
+    pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
+        let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
+            None
+        } else {
+            let arr: Uint8Array = Uint8Array::new(version);
+            Some(arr.to_vec())
+        };
+
         let vv = match version {
             Some(x) => VersionVector::decode(&x)?,
             None => Default::default(),
@@ -108,6 +117,11 @@ impl Loro {
 
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
         Ok(self.0.import_updates(&data)?)
+    }
+
+    pub fn to_json(&self) -> JsResult<JsValue> {
+        let json = self.0.to_json();
+        Ok(serde_wasm_bindgen::to_value(&json)?)
     }
 }
 
