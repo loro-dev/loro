@@ -12,6 +12,7 @@ use std::{
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
+use tracing::debug;
 
 use fxhash::FxHashMap;
 
@@ -79,7 +80,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pub(crate) hierarchy: Hierarchy,
+    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
     _pin: PhantomPinned,
 }
 
@@ -110,16 +111,21 @@ impl LogStore {
     }
 
     pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<ClientID, Vec<Change<RemoteOp>>> {
+        debug!("exporting");
         let mut ans: FxHashMap<ClientID, Vec<Change<RemoteOp>>> = Default::default();
         let self_vv = self.vv();
         let diff = self_vv.diff(remote_vv);
+        debug!("diff");
         for span in diff.left.iter() {
             let changes = self.get_changes_slice(span.id_span());
+            debug!("s");
             for change in changes.iter() {
                 let vec = ans.entry(change.id.client_id).or_insert_with(Vec::new);
+                debug!("a");
                 vec.push(self.change_to_export_format(change));
             }
         }
+        debug!("ans");
 
         ans
     }
@@ -356,10 +362,9 @@ impl LogStore {
     where
         for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
     {
-        let mut hierarchy = std::mem::take(&mut self.hierarchy);
-        let result = f(self, &mut hierarchy);
-        assert!(self.hierarchy.is_empty());
-        self.hierarchy = hierarchy;
+        let h = self.hierarchy.clone();
+        let mut h = h.lock().unwrap();
+        let result = f(self, &mut h);
         result
     }
 

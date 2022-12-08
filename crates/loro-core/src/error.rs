@@ -12,6 +12,8 @@ pub enum LoroError {
     DecodeError(Box<str>),
     #[error("Js error ({0})")]
     JsError(Box<str>),
+    #[error("Cannot get lock or the lock is poisoned")]
+    LockError,
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

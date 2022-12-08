@@ -71,8 +71,10 @@ impl Actor {
             root_value.apply(&event.relative_path, &event.diff);
         }));
 
+        let log_store = actor.loro.log_store.write().unwrap();
+        let mut hierarchy = log_store.hierarchy.lock().unwrap();
         let text = Rc::clone(&actor.text_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Box::new(move |event| {
                 let mut text = text.borrow_mut();
@@ -103,7 +105,7 @@ impl Actor {
         );
 
         let map = Rc::clone(&actor.map_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
             Box::new(move |event| {
                 let mut map = map.borrow_mut();
@@ -128,7 +130,7 @@ impl Actor {
         );
 
         let list = Rc::clone(&actor.list_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Box::new(move |event| {
                 let mut list = list.borrow_mut();
@@ -160,6 +162,8 @@ impl Actor {
             false,
         );
 
+        drop(hierarchy);
+        drop(log_store);
         actor.text_containers.push(actor.loro.get_text("text"));
         actor.map_containers.push(actor.loro.get_map("map"));
         actor.list_containers.push(actor.loro.get_list("list"));
@@ -613,10 +617,10 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
-                .import_updates(&b_doc.export_updates(&a_doc.vv()))
+                .import_updates(&b_doc.export_updates(&a_doc.vv()).unwrap())
                 .unwrap();
             b_doc
-                .import_updates(&a_doc.export_updates(&b_doc.vv()))
+                .import_updates(&a_doc.export_updates(&b_doc.vv()).unwrap())
                 .unwrap();
             check_eq(a, b);
             debug_log::group_end!();

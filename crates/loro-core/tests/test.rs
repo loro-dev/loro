@@ -30,6 +30,16 @@ fn example() {
 }
 
 #[test]
+fn subscribe_deep() {
+    let mut doc = LoroCore::default();
+    doc.subscribe_deep(Box::new(move |event| {
+        println!("event: {:?}", event);
+    }));
+    let mut text = doc.get_text("root");
+    text.insert(&doc, 0, "abc").unwrap();
+}
+
+#[test]
 #[cfg(feature = "json")]
 fn text_observe() {
     let mut doc = LoroCore::default();

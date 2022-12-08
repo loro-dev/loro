@@ -78,7 +78,11 @@ impl LoroCore {
 
     pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
         let mut store = self.log_store.write().unwrap();
-        store.import(changes)
+        let events = store.import(changes);
+        let h = store.hierarchy.clone();
+        let mut h = h.try_lock().unwrap();
+        drop(store);
+        h.send_notifications(events);
     }
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
@@ -105,6 +109,8 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
+            .lock()
+            .unwrap()
             .subscribe_root(observer)
     }
 
@@ -113,6 +119,8 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
+            .lock()
+            .unwrap()
             .unsubscribe_root(subscription)
     }
 }

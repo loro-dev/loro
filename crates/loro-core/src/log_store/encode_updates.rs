@@ -1,6 +1,7 @@
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use tracing::{debug, instrument};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -47,17 +48,23 @@ struct EncodedChange {
 }
 
 impl LogStore {
-    pub fn export_updates(&self, from: &VersionVector) -> Vec<u8> {
+    #[instrument(skip_all)]
+    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
+        tracing::debug!("Export update");
         let changes = self.export(from);
+        tracing::debug!("GET Changes");
         let mut updates = Updates {
             changes: Vec::with_capacity(changes.len()),
         };
+        tracing::debug!("Changes");
         for (_, changes) in changes {
             let encoded = convert_changes_to_encoded(changes.into_iter());
             updates.changes.push(encoded);
         }
 
-        postcard::to_allocvec(&updates).unwrap()
+        tracing::debug!("Postcard");
+        postcard::to_allocvec(&updates)
+            .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
     }
 
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
@@ -180,8 +187,19 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 }
 
 impl LoroCore {
-    pub fn export_updates(&self, from: &VersionVector) -> Vec<u8> {
-        self.log_store.read().unwrap().export_updates(from)
+    #[instrument(skip_all)]
+    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
+        debug!("Inner Export Updates");
+        match self.log_store.try_read() {
+            Ok(x) => {
+                debug!("get lock!");
+                x.export_updates(from)
+            }
+            Err(_) => {
+                debug!("failed to get lock Err");
+                Err(LoroError::LockError)
+            }
+        }
     }
 
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {

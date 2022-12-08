@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::{super::pool::Pool, InnerMapSet};
-use crate::{container::registry::ContainerRegistry, op::OwnedRichOp};
+use crate::{container::registry::ContainerRegistry, hierarchy::DeferredNotifier, op::OwnedRichOp};
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
@@ -101,11 +101,13 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        self.notify_local(&mut store, old_version, new_version, |this| {
+        let h = store.hierarchy.clone();
+        let mut h = h.try_lock().unwrap();
+        self.update_hierarchy_if_container_is_overwritten(&key, &mut h);
+        self.notify_local(&mut store, &mut h, old_version, new_version, |this| {
             vec![Diff::Map(calculate_map_diff(this, &key, new_value_idx))]
         });
 
-        self.update_hierarchy_if_container_is_overwritten(&key, &mut store);
         self.state.insert(
             key,
             ValueSlot {
@@ -144,52 +146,61 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        self.notify_local(&mut store, old_version, new_version, |this| {
-            let diff = calculate_map_diff(this, &key, value);
-            vec![Diff::Map(diff)]
-        });
-
-        store.hierarchy.add_child(&self.id, &container_id);
-        self.update_hierarchy_if_container_is_overwritten(&key, &mut store);
+        let hierarchy = store.hierarchy.clone();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        hierarchy.add_child(&self.id, &container_id);
+        self.update_hierarchy_if_container_is_overwritten(&key, &mut hierarchy);
+        self.notify_local(
+            &mut store,
+            &mut hierarchy,
+            old_version,
+            new_version,
+            |this| {
+                let diff = calculate_map_diff(this, &key, value);
+                vec![Diff::Map(diff)]
+            },
+        );
 
         self.state.insert(key, ValueSlot { value, order });
         container_id
     }
 
     #[inline(always)]
-    fn notify_local<F>(
-        &mut self,
-        store: &mut LogStore,
+    fn notify_local<'a, 'b, F>(
+        &'a mut self,
+        store: &'a mut LogStore,
+        hierarchy: &'b mut Hierarchy,
         old_version: Frontiers,
         new_version: Frontiers,
         get_diff: F,
-    ) where
+    ) -> Option<DeferredNotifier<'b>>
+    where
         F: FnOnce(&mut Self) -> Vec<Diff>,
     {
-        if store.hierarchy.should_notify(&self.id) {
-            store.with_hierarchy(|store, hierarchy| {
-                let event = RawEvent {
-                    diff: get_diff(self),
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                };
+        if hierarchy.should_notify(&self.id) {
+            let event = RawEvent {
+                diff: get_diff(self),
+                local: true,
+                old_version,
+                new_version,
+                container_id: self.id.clone(),
+            };
 
-                hierarchy.notify(event, &store.reg);
-            });
+            Some(hierarchy.defer().with_notify(event, &store.reg))
+        } else {
+            None
         }
     }
 
     fn update_hierarchy_if_container_is_overwritten(
         &mut self,
         key: &InternalString,
-        store: &mut LogStore,
+        h: &mut Hierarchy,
     ) {
         if let Some(old_value) = self.state.get(key) {
             let v = &self.pool[old_value.value];
             if let Some(container) = v.as_unresolved() {
-                store.hierarchy.remove_child(&self.id, container);
+                h.remove_child(&self.id, container);
             }
         }
     }

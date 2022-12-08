@@ -17,7 +17,8 @@ use crate::{
     id::ClientID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
-    version::IdSpanVector, LoroError, LoroValue,
+    version::IdSpanVector,
+    LoroError, LoroValue,
 };
 
 use super::{
@@ -420,7 +421,13 @@ pub trait ContainerWrapper {
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
             x.subscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 observer,
                 false,
             )
@@ -434,7 +441,13 @@ pub trait ContainerWrapper {
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
             x.subscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 observer,
                 true,
             )
@@ -448,7 +461,13 @@ pub trait ContainerWrapper {
     ) -> Result<(), LoroError> {
         self.with_container_checked(ctx, |x| {
             x.unsubscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 subscription,
             )
         })

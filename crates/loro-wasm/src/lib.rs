@@ -77,6 +77,7 @@ impl SecureRandomGenerator for MathRandom {
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
+        tracing::info!("Loro::new");
         let cfg: Configure = Configure {
             change: Default::default(),
             gc: GcConfig::default().with_gc(false),
@@ -152,6 +153,7 @@ impl Loro {
 
     #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
     pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
+        tracing::debug!("Export updates");
         let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
             None
         } else {
@@ -164,11 +166,13 @@ impl Loro {
             None => Default::default(),
         };
 
-        Ok(self.0.export_updates(&vv))
+        tracing::debug!("VV {:?}", &vv);
+        Ok(self.0.export_updates(&vv)?)
     }
 
     #[wasm_bindgen(js_name = "importUpdates")]
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
+        tracing::debug!("Import updates");
         Ok(self.0.import_updates(&data)?)
     }
 
@@ -181,7 +185,7 @@ impl Loro {
     pub fn subscribe(&mut self, f: js_sys::Function) -> u32 {
         self.0.subscribe_deep(Box::new(move |_| {
             // TODO: convert event
-            let _ = f.call0(&JsValue::NULL);
+            f.call0(&JsValue::NULL).unwrap();
         }))
     }
 
@@ -211,8 +215,9 @@ impl LoroText {
         Ok(())
     }
 
-    #[wasm_bindgen(js_name = "value", method, getter)]
-    pub fn get_value(&self) -> String {
+    #[allow(clippy::inherent_to_string)]
+    #[wasm_bindgen(js_name = "toString")]
+    pub fn to_string(&self) -> String {
         self.0.get_value().as_string().unwrap().to_string()
     }
 

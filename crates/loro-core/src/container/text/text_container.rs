@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex, RwLockWriteGuard};
 
 use rle::HasLength;
 use smallvec::SmallVec;
@@ -75,12 +71,15 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        if store.hierarchy.should_notify(&self.id) {
+        let h = store.hierarchy.clone();
+        let mut h = h.try_lock().unwrap();
+        if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(text.to_owned());
             self.notify_local(
-                &mut store,
+                store,
+                &mut h,
                 vec![Diff::Text(delta)],
                 old_version,
                 new_version,
@@ -113,12 +112,15 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        if store.hierarchy.should_notify(&self.id) {
+        let h = store.hierarchy.clone();
+        let mut h = h.try_lock().unwrap();
+        if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
             self.notify_local(
-                &mut store,
+                store,
+                &mut h,
                 vec![Diff::Text(delta)],
                 old_version,
                 new_version,
@@ -130,22 +132,21 @@ impl TextContainer {
 
     fn notify_local(
         &mut self,
-        store: &mut LogStore,
+        store: RwLockWriteGuard<LogStore>,
+        h: &mut Hierarchy,
         diff: Vec<Diff>,
         old_version: SmallVec<[ID; 2]>,
         new_version: SmallVec<[ID; 2]>,
     ) {
-        store.with_hierarchy(|store, hierarchy| {
-            let event = RawEvent {
-                diff,
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-            };
+        let event = RawEvent {
+            diff,
+            local: true,
+            old_version,
+            new_version,
+            container_id: self.id.clone(),
+        };
 
-            hierarchy.notify(event, &store.reg);
-        });
+        h.notify(event, store);
     }
 
     pub fn text_len(&self) -> usize {

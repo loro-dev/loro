@@ -1,10 +1,12 @@
-import init, { Loro, LoroMap, PrelimList, PrelimMap, PrelimText } from "../web/loro_wasm.js";
+import init, { setPanicHook, Loro, LoroMap, PrelimList, PrelimMap, PrelimText, enableDebug } from "../web/loro_wasm.js";
 import {
   assertEquals,
   assertThrows,
 } from "https://deno.land/std@0.165.0/testing/asserts.ts";
 
 await init();
+setPanicHook();
+enableDebug();
 
 Deno.test({
   name: "loro_wasm",
@@ -46,6 +48,42 @@ Deno.test({
 });
 
 Deno.test({ name: "sync" }, async (t) => {
+  await t.step("two insert at beginning", () => {
+    const a = new Loro();
+    const b = new Loro();
+    const aText = a.getText("text");
+    const bText = b.getText("text");
+    aText.insert(a, 0, "a");
+    let bytes = a.exportUpdates(undefined);
+    console.log(bytes);
+  })
+
+  await t.step("two insert at beginning", () => {
+    const a = new Loro();
+    const b = new Loro();
+    let a_version: undefined | Uint8Array = undefined;
+    let b_version: undefined | Uint8Array = undefined;
+    a.subscribe(() => {
+      let exported = a.exportUpdates(a_version);
+      console.log(exported.byteLength);
+      console.log("CC")
+      b.importUpdates(exported);
+      console.log("DD")
+      a_version = a.version();
+    });
+    b.subscribe(() => {
+      a.importUpdates(b.exportUpdates(b_version));
+      b_version = b.version();
+    })
+    const aText = a.getText("text");
+    const bText = b.getText("text");
+    aText.insert(a, 0, "abc")
+    // aText.insert(a, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
+    // bText.insert(b, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
+    console.log("KKKKKKKKKKK");
+    assertEquals(aText.toString(), bText.toString());
+  })
+
   await t.step("sync", () => {
     const loro = new Loro();
     const text = loro.getText("text");
@@ -54,10 +92,10 @@ Deno.test({ name: "sync" }, async (t) => {
     loro_bk.importUpdates(loro.exportUpdates(undefined));
     assertEquals(loro_bk.toJson(), loro.toJson());
     const text_bk = loro_bk.getText("text");
-    assertEquals(text_bk.value, "hello world");
+    assertEquals(text_bk.toString(), "hello world");
     text_bk.insert(loro_bk, 0, "a ");
     loro.importUpdates(loro_bk.exportUpdates(undefined));
-    assertEquals(text.value, "a hello world");
+    assertEquals(text.toString(), "a hello world");
     const map = loro.getMap("map");
     map.set(loro, "key", "value");
   });

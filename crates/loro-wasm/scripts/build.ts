@@ -62,7 +62,7 @@ function genCommands(target: string): string[] {
   return [
     `rm -rf ./${target}`,
     `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${target_dir}/loro_wasm.wasm`,
-    ...(profile == "dev" ? [] : [`wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`]),
+    // ...(profile == "dev" ? [] : [`wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`]),
   ];
 }
 

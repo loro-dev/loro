@@ -1,5 +1,8 @@
 // TODO: refactor, extract common code with text
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -21,7 +24,7 @@ use crate::{
     context::Context,
     delta::Delta,
     event::{Diff, Index, RawEvent},
-    hierarchy::Hierarchy,
+    hierarchy::{DeferredNotifier, Hierarchy},
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
@@ -112,17 +115,21 @@ impl ListContainer {
         );
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        if store.hierarchy.should_notify(&self.id) {
+        let mutex = store.hierarchy.clone();
+        let mut h = mutex.try_lock().unwrap();
+        if h.should_notify(&self.id) {
             let value = self.raw_data.slice(&slice)[0].clone();
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(vec![value]);
             self.notify_local(
                 &mut store,
+                &mut h,
                 vec![Diff::List(delta)],
                 old_version,
                 new_version,
-            )
+            );
+            drop(store);
         }
 
         Some(id)
@@ -133,7 +140,11 @@ impl ListContainer {
         let mut store = m.write().unwrap();
         let (container_id, _) = store.create_container(obj);
         // Update hierarchy info
-        store.hierarchy.add_child(&self.id, &container_id);
+        store
+            .hierarchy
+            .try_lock()
+            .unwrap()
+            .add_child(&self.id, &container_id);
 
         // TODO: we can avoid this lock
         drop(store);
@@ -173,44 +184,49 @@ impl ListContainer {
 
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
+        let hierarchy = store.hierarchy.clone();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+
         // Update hierarchy info
-        self.update_hierarchy_on_delete(&mut store.hierarchy, pos, len);
+        self.update_hierarchy_on_delete(&mut hierarchy, pos, len);
 
         self.state.delete_range(Some(pos), Some(pos + len));
 
-        if store.hierarchy.should_notify(&self.id) {
+        if hierarchy.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
-            self.notify_local(
+            let notifier = self.notify_local(
                 &mut store,
+                &mut hierarchy,
                 vec![Diff::List(delta)],
                 old_version,
                 new_version,
-            )
+            );
+            drop(store);
+            notifier.send_notifications();
         }
 
         Some(id)
     }
 
-    fn notify_local(
-        &mut self,
-        store: &mut LogStore,
+    fn notify_local<'a, 'b, 'c>(
+        &'a mut self,
+        store: &'c mut LogStore,
+        hierarchy: &'b mut Hierarchy,
         diff: Vec<Diff>,
         old_version: SmallVec<[ID; 2]>,
         new_version: SmallVec<[ID; 2]>,
-    ) {
-        store.with_hierarchy(|store, hierarchy| {
-            let event = RawEvent {
-                diff,
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-            };
+    ) -> DeferredNotifier<'b> {
+        let event = RawEvent {
+            diff,
+            local: true,
+            old_version,
+            new_version,
+            container_id: self.id.clone(),
+        };
 
-            hierarchy.notify(event, &store.reg);
-        });
+        hierarchy.defer().with_notify(event, &store.reg)
     }
 
     fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
