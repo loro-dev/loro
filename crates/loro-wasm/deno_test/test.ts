@@ -1,4 +1,12 @@
-import init, { setPanicHook, Loro, LoroMap, PrelimList, PrelimMap, PrelimText, enableDebug } from "../web/loro_wasm.js";
+import init, {
+  enableDebug,
+  Loro,
+  LoroMap,
+  PrelimList,
+  PrelimMap,
+  PrelimText,
+  setPanicHook,
+} from "../web/loro_wasm.js";
 import {
   assertEquals,
   assertThrows,
@@ -56,33 +64,41 @@ Deno.test({ name: "sync" }, async (t) => {
     aText.insert(a, 0, "a");
     let bytes = a.exportUpdates(undefined);
     console.log(bytes);
-  })
+  });
 
   await t.step("two insert at beginning", () => {
     const a = new Loro();
     const b = new Loro();
     let a_version: undefined | Uint8Array = undefined;
     let b_version: undefined | Uint8Array = undefined;
-    a.subscribe(() => {
-      let exported = a.exportUpdates(a_version);
-      console.log(exported.byteLength);
-      console.log("CC")
-      b.importUpdates(exported);
-      console.log("DD")
-      a_version = a.version();
+    a.subscribe((local: boolean) => {
+      if (local) {
+        let exported = a.exportUpdates(a_version);
+        console.log(exported.byteLength);
+        console.log("CC");
+        b.importUpdates(exported);
+        console.log("DD");
+        a_version = a.version();
+      }
     });
-    b.subscribe(() => {
-      a.importUpdates(b.exportUpdates(b_version));
-      b_version = b.version();
-    })
+    b.subscribe((local: boolean) => {
+      if (local) {
+        console.log("B Subscribed");
+        let exported = b.exportUpdates(b_version);
+        console.log("Exported");
+        a.importUpdates(exported);
+        console.log("Import");
+        b_version = b.version();
+      }
+    });
     const aText = a.getText("text");
     const bText = b.getText("text");
-    aText.insert(a, 0, "abc")
+    aText.insert(a, 0, "abc");
     // aText.insert(a, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
     // bText.insert(b, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
     console.log("KKKKKKKKKKK");
     assertEquals(aText.toString(), bText.toString());
-  })
+  });
 
   await t.step("sync", () => {
     const loro = new Loro();
@@ -102,21 +118,20 @@ Deno.test({ name: "sync" }, async (t) => {
 });
 
 Deno.test("subscribe", () => {
-    const loro = new Loro();
-    const text = loro.getText("text");
-    let count = 0;
-    const sub = loro.subscribe(() => {
-      count += 1;
-    });
-    text.insert(loro, 0, "hello world");
-    assertEquals(count, 1);
-    text.insert(loro, 0, "hello world");
-    assertEquals(count, 2);
-    loro.unsubscribe(sub);
-    text.insert(loro, 0, "hello world");
-    assertEquals(count, 2);
-
-})
+  const loro = new Loro();
+  const text = loro.getText("text");
+  let count = 0;
+  const sub = loro.subscribe(() => {
+    count += 1;
+  });
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 1);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 2);
+  loro.unsubscribe(sub);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 2);
+});
 
 Deno.test({ name: "test prelim" }, async (t) => {
   const loro = new Loro();

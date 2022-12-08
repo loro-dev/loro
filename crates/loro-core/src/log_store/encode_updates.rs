@@ -51,19 +51,15 @@ struct EncodedChange {
 impl LogStore {
     #[instrument(skip_all)]
     pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
-        tracing::debug!("Export update");
         let changes = self.export(from);
-        tracing::debug!("GET Changes");
         let mut updates = Updates {
             changes: Vec::with_capacity(changes.len()),
         };
-        tracing::debug!("Changes");
         for (_, changes) in changes {
             let encoded = convert_changes_to_encoded(changes.into_iter());
             updates.changes.push(encoded);
         }
 
-        tracing::debug!("Postcard");
         postcard::to_allocvec(&updates)
             .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
     }

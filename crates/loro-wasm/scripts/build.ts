@@ -43,10 +43,19 @@ async function build() {
 }
 
 async function cargoBuild() {
-  await Deno.run({
+  const status = await Deno.run({
     cmd: `cargo build --target wasm32-unknown-unknown --profile ${profile}`
       .split(" "),
   }).status();
+  if (!status.success) {
+    console.log(
+      "❌",
+      "Build failed in",
+      (performance.now() - startTime) / 1000,
+      "s",
+    );
+    Deno.exit(status.code);
+  }
 }
 
 async function buildTarget(target: string) {

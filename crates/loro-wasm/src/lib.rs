@@ -153,7 +153,6 @@ impl Loro {
 
     #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
     pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
-        tracing::debug!("Export updates");
         let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
             None
         } else {
@@ -166,7 +165,6 @@ impl Loro {
             None => Default::default(),
         };
 
-        tracing::debug!("VV {:?}", &vv);
         Ok(self.0.export_updates(&vv)?)
     }
 
@@ -182,10 +180,11 @@ impl Loro {
         Ok(json.into())
     }
 
+    // TODO: convert event and event sub config
     pub fn subscribe(&mut self, f: js_sys::Function) -> u32 {
-        self.0.subscribe_deep(Box::new(move |_| {
-            // TODO: convert event
-            f.call0(&JsValue::NULL).unwrap();
+        self.0.subscribe_deep(Box::new(move |e| {
+            f.call1(&JsValue::NULL, &JsValue::from_bool(e.local))
+                .unwrap();
         }))
     }
 
