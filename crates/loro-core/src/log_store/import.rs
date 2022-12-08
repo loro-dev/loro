@@ -1,4 +1,3 @@
-use crate::event::Path;
 use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,

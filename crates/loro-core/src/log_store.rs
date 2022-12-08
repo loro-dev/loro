@@ -12,7 +12,6 @@ use std::{
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock},
 };
-use tracing::debug;
 
 use fxhash::FxHashMap;
 
@@ -351,7 +350,6 @@ impl LogStore {
         self.reg.get_or_create_container_idx(container)
     }
 
-    // TODO: this feels like a dumb way to bypass lifetime issue, but I don't have better idea right now :(
     #[inline(always)]
     pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
     where
@@ -359,8 +357,7 @@ impl LogStore {
     {
         let h = self.hierarchy.clone();
         let mut h = h.lock().unwrap();
-        let result = f(self, &mut h);
-        result
+        f(self, &mut h)
     }
 
     pub fn to_json(&self) -> LoroValue {

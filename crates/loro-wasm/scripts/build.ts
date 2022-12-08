@@ -30,9 +30,9 @@ async function build() {
     return;
   }
 
-  for (const target of TARGETS) {
-    await buildTarget(target);
-  }
+  await Promise.all(TARGETS.map(target => {
+    return buildTarget(target);
+  }));
 
   console.log(
     "✅",
@@ -71,7 +71,7 @@ function genCommands(target: string): string[] {
   return [
     `rm -rf ./${target}`,
     `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${target_dir}/loro_wasm.wasm`,
-    // ...(profile == "dev" ? [] : [`wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`]),
+    ...(profile == "dev" ? [] : [`wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`]),
   ];
 }
 

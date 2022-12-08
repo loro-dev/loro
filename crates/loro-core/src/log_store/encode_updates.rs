@@ -185,30 +185,20 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 impl LoroCore {
     #[instrument(skip_all)]
     pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
-        debug!("Inner Export Updates");
         match self.log_store.try_read() {
-            Ok(x) => {
-                debug!("get lock!");
-                x.export_updates(from)
-            }
-            Err(_) => {
-                debug!("failed to get lock Err");
-                Err(LoroError::LockError)
-            }
+            Ok(x) => x.export_updates(from),
+            Err(_) => Err(LoroError::LockError),
         }
     }
 
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        debug_log::group!("Import at {}", self.client_id());
         let ans = self.log_store.write().unwrap().import_updates(input);
-        let ans = match ans {
+        match ans {
             Ok(events) => {
                 self.notify(events);
                 Ok(())
             }
             Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
-        };
-        debug_log::group_end!();
-        ans
+        }
     }
 }
