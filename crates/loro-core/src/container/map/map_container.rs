@@ -112,13 +112,13 @@ impl MapContainer {
 
         let ans = if h.should_notify(self.id()) {
             let diff = vec![Diff::Map(calculate_map_diff(self, &key, new_value_idx))];
-            Some(RawEvent {
+            h.get_abs_path(&store.reg, self.id()).map(|x| RawEvent {
                 diff,
                 container_id: self.id.clone(),
                 old_version,
                 new_version,
                 local: true,
-                abs_path: h.get_abs_path(&store.reg, self.id()).unwrap(),
+                abs_path: x,
             })
         } else {
             None
@@ -174,14 +174,16 @@ impl MapContainer {
             debug_log::debug_log!("SHOULD NOTIFY");
             let diff = calculate_map_diff(self, &key, value);
             (
-                Some(RawEvent {
-                    container_id: self.id.clone(),
-                    old_version,
-                    new_version,
-                    local: true,
-                    diff: vec![Diff::Map(diff)],
-                    abs_path: hierarchy.get_abs_path(&store.reg, self.id()).unwrap(),
-                }),
+                hierarchy
+                    .get_abs_path(&store.reg, self.id())
+                    .map(|x| RawEvent {
+                        container_id: self.id.clone(),
+                        old_version,
+                        new_version,
+                        local: true,
+                        diff: vec![Diff::Map(diff)],
+                        abs_path: x,
+                    }),
                 container_id,
             )
         } else {

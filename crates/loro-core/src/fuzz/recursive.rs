@@ -1071,6 +1071,42 @@ mod failed_tests {
     }
 
     #[test]
+    fn maybe_because_of_hierarchy() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Sync { from: 1, to: 2 },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 1,
+                    container_idx: 2,
+                    pos: 0,
+                    value: 45232,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn list_slice_err() {
         test_multi_sites(
             5,

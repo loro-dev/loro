@@ -149,6 +149,10 @@ impl Hierarchy {
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
             let Some(node) = self.nodes.get(node_id) else {
+                if node_id.is_root() {
+                    path.push(Index::Key(node_id.name().into()));
+                    break;
+                }
                 // Deleted node 
                 return None;
             };

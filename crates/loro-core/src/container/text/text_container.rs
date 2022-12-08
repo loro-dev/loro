@@ -71,19 +71,20 @@ impl TextContainer {
 
         // notify
         let h = store.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
+        let h = h.try_lock().unwrap();
         if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(text.to_owned());
-            Some(RawEvent {
-                diff: vec![Diff::Text(delta)],
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-                abs_path: h.get_abs_path(&store.reg, self.id()).unwrap(),
-            })
+            h.get_abs_path(&store.reg, self.id())
+                .map(|abs_path| RawEvent {
+                    diff: vec![Diff::Text(delta)],
+                    local: true,
+                    old_version,
+                    new_version,
+                    container_id: self.id.clone(),
+                    abs_path,
+                })
         } else {
             None
         }
@@ -113,20 +114,21 @@ impl TextContainer {
 
         // notify
         let h = store.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
+        let h = h.try_lock().unwrap();
         self.state.delete_range(Some(pos), Some(pos + len));
         if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
-            Some(RawEvent {
-                diff: vec![Diff::Text(delta)],
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-                abs_path: h.get_abs_path(&store.reg, self.id()).unwrap(),
-            })
+            h.get_abs_path(&store.reg, self.id())
+                .map(|abs_path| RawEvent {
+                    diff: vec![Diff::Text(delta)],
+                    local: true,
+                    old_version,
+                    new_version,
+                    container_id: self.id.clone(),
+                    abs_path,
+                })
         } else {
             None
         }
