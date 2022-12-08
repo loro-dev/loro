@@ -1,4 +1,4 @@
-use std::{fmt::Debug, ptr::NonNull};
+use std::{cell::RefCell, fmt::Debug, ptr::NonNull, rc::Rc};
 
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -7,7 +7,7 @@ use crate::{
     rle_tree::{
         node::{InternalNode, LeafNode},
         tree_trait::GlobalTreeTrait,
-        Arena, HeapMode, UnsafeCursor, VecTrait,
+        Arena, HeapMode, SafeCursor, UnsafeCursor, VecTrait,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };
@@ -328,9 +328,7 @@ impl<
     /// Note that the returned values may exceed the given range
     #[inline]
     pub fn get_range(&self, start: Index, end: Index) -> impl Iterator<Item = &Value> {
-        self.tree
-            .iter_range(start, Some(end))
-            .map(|x| &x.as_tree_ref().value)
+        self.iter_range(start, end).map(|(_, b)| b)
     }
 
     /// Return the values overlap with the given range and their indexes
@@ -344,10 +342,7 @@ impl<
         start: Index,
         end: Index,
     ) -> impl Iterator<Item = (Index, &Value)> {
-        self.tree.iter_range(start, Some(end)).map(|x| {
-            let x = x.as_tree_ref();
-            (x.index, &x.value)
-        })
+        self.iter_range(start, end)
     }
 
     /// Return the values contained by the given range, the returned values are sliced by the given range
@@ -395,6 +390,30 @@ impl<
         } else {
             None
         }
+    }
+
+    pub fn iter_range(&self, start: Index, end: Index) -> impl Iterator<Item = (Index, &Value)> {
+        let mut cursor = if start < end {
+            self.tree.get_cursor_ge(start)
+        } else {
+            None
+        };
+        std::iter::from_fn(move || loop {
+            if let Some(inner) = std::mem::take(&mut cursor) {
+                cursor = inner.next_elem_start();
+                let item = inner.as_tree_ref();
+                if item.get_end_index() <= start {
+                    continue;
+                } else if item.index >= end {
+                    return None;
+                } else {
+                    let ans = (item.index, &item.value);
+                    return Some(ans);
+                }
+            } else {
+                return None;
+            }
+        })
     }
 
     #[inline]

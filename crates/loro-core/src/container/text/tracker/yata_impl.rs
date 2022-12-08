@@ -19,7 +19,7 @@ use super::{
     Tracker,
 };
 
-// TODO: may use a simpler data structure here
+// TODO: maybe we can opt this
 #[derive(Default, Debug)]
 pub struct OpSpanSet {
     map: Vec<Range<u128>>,
