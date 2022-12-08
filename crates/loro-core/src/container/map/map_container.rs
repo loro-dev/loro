@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::{super::pool::Pool, InnerMapSet};
-use crate::{container::registry::ContainerRegistry, hierarchy::DeferredNotifier, op::OwnedRichOp};
+use crate::{container::registry::ContainerRegistry, op::OwnedRichOp};
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
@@ -20,7 +20,7 @@ use crate::{
     span::HasLamport,
     value::LoroValue,
     version::{Frontiers, IdSpanVector, TotalOrderStamp},
-    InternalString, LogStore,
+    InternalString,
 };
 
 use super::MapSet;
@@ -59,24 +59,29 @@ impl MapContainer {
         ctx: &C,
         key: InternalString,
         value: P,
-    ) -> Option<ContainerID> {
+    ) -> (Option<RawEvent>, Option<ContainerID>) {
         let (value, maybe_container) = value.convert_value();
         if let Some(prelim) = maybe_container {
-            let container_id = self.insert_obj(ctx, key, value.into_container().unwrap());
+            let (event, container_id) = self.insert_obj(ctx, key, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
             let container = Arc::clone(store.get_container(&container_id).unwrap());
             drop(store);
             prelim.integrate(ctx, &container);
-            Some(container_id)
+            (event, Some(container_id))
         } else {
             let value = value.into_value().unwrap();
-            self.insert_value(ctx, key, value);
-            None
+            let event = self.insert_value(ctx, key, value);
+            (event, None)
         }
     }
 
-    fn insert_value<C: Context>(&mut self, ctx: &C, key: InternalString, value: LoroValue) {
+    fn insert_value<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+        value: LoroValue,
+    ) -> Option<RawEvent> {
         assert!(value.as_unresolved().is_none(), "To insert a container to map, you should use insert_obj method or insert with a Prelim container value");
         let value_index = self.pool.alloc(value).start;
         let new_value_idx = value_index;
@@ -104,9 +109,20 @@ impl MapContainer {
         let h = store.hierarchy.clone();
         let mut h = h.try_lock().unwrap();
         self.update_hierarchy_if_container_is_overwritten(&key, &mut h);
-        self.notify_local(&mut store, &mut h, old_version, new_version, |this| {
-            vec![Diff::Map(calculate_map_diff(this, &key, new_value_idx))]
-        });
+
+        let ans = if h.should_notify(self.id()) {
+            let diff = vec![Diff::Map(calculate_map_diff(self, &key, new_value_idx))];
+            Some(RawEvent {
+                diff,
+                container_id: self.id.clone(),
+                old_version,
+                new_version,
+                local: true,
+                abs_path: h.get_abs_path(&store.reg, self.id()).unwrap(),
+            })
+        } else {
+            None
+        };
 
         self.state.insert(
             key,
@@ -115,6 +131,8 @@ impl MapContainer {
                 order,
             },
         );
+
+        ans
     }
 
     fn insert_obj<C: Context>(
@@ -122,7 +140,8 @@ impl MapContainer {
         ctx: &C,
         key: InternalString,
         obj: ContainerType,
-    ) -> ContainerID {
+    ) -> (Option<RawEvent>, ContainerID) {
+        debug_log::debug_log!("Insert Obj");
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
@@ -150,46 +169,27 @@ impl MapContainer {
         let mut hierarchy = hierarchy.try_lock().unwrap();
         hierarchy.add_child(&self.id, &container_id);
         self.update_hierarchy_if_container_is_overwritten(&key, &mut hierarchy);
-        self.notify_local(
-            &mut store,
-            &mut hierarchy,
-            old_version,
-            new_version,
-            |this| {
-                let diff = calculate_map_diff(this, &key, value);
-                vec![Diff::Map(diff)]
-            },
-        );
 
-        self.state.insert(key, ValueSlot { value, order });
-        container_id
-    }
-
-    #[inline(always)]
-    fn notify_local<'a, 'b, F>(
-        &'a mut self,
-        store: &'a mut LogStore,
-        hierarchy: &'b mut Hierarchy,
-        old_version: Frontiers,
-        new_version: Frontiers,
-        get_diff: F,
-    ) -> Option<DeferredNotifier<'b>>
-    where
-        F: FnOnce(&mut Self) -> Vec<Diff>,
-    {
-        if hierarchy.should_notify(&self.id) {
-            let event = RawEvent {
-                diff: get_diff(self),
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-            };
-
-            Some(hierarchy.defer().with_notify(event, &store.reg))
+        let ans = if hierarchy.should_notify(self.id()) {
+            debug_log::debug_log!("SHOULD NOTIFY");
+            let diff = calculate_map_diff(self, &key, value);
+            (
+                Some(RawEvent {
+                    container_id: self.id.clone(),
+                    old_version,
+                    new_version,
+                    local: true,
+                    diff: vec![Diff::Map(diff)],
+                    abs_path: hierarchy.get_abs_path(&store.reg, self.id()).unwrap(),
+                }),
+                container_id,
+            )
         } else {
-            None
-        }
+            debug_log::debug_log!("no NOTIFY");
+            (None, container_id)
+        };
+        self.state.insert(key, ValueSlot { value, order });
+        ans
     }
 
     fn update_hierarchy_if_container_is_overwritten(
@@ -206,8 +206,8 @@ impl MapContainer {
     }
 
     #[inline]
-    pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) {
-        self.insert_value(ctx, key, LoroValue::Null);
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) -> Option<RawEvent> {
+        self.insert_value(ctx, key, LoroValue::Null)
     }
 
     pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
@@ -419,13 +419,11 @@ impl Map {
         key: &str,
         value: V,
     ) -> Result<Option<ContainerID>, crate::LoroError> {
-        self.with_container_checked(ctx, |map| map.insert(ctx, key.into(), value))
+        self.with_event(ctx, |map| map.insert(ctx, key.into(), value))
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), crate::LoroError> {
-        self.with_container_checked(ctx, |map| {
-            map.delete(ctx, key.into());
-        })
+        self.with_event(ctx, |map| (map.delete(ctx, key.into()), ()))
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
@@ -460,7 +458,9 @@ impl ContainerWrapper for Map {
     {
         let mut container_instance = self.instance.lock().unwrap();
         let map = container_instance.as_map_mut().unwrap();
-        f(map)
+        let ans = f(map);
+        drop(container_instance);
+        ans
     }
 
     fn client_id(&self) -> ClientID {

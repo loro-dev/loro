@@ -76,12 +76,11 @@ impl LogStore {
     /// - Update the rest of the log store state.
     ///
     #[instrument(skip_all)]
-    pub fn import(&mut self, mut changes: RemoteClientChanges) -> Vec<(RawEvent, Path)> {
+    pub fn import(&mut self, mut changes: RemoteClientChanges) -> Vec<RawEvent> {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
             return vec![];
         }
 
-        debug_log::group!("Import at {}", self.this_client_id);
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         self.lock_related_containers(&changes, &mut container_map);
         let (next_vv, next_frontiers) = self.push_changes(changes, &mut container_map);
@@ -108,19 +107,24 @@ impl LogStore {
 
         let events = self.get_events(&mut context);
         self.update_version_info(context.new_vv, next_frontiers);
-        debug_log::group_end!();
         events
     }
 
     #[instrument(skip_all)]
-    fn get_events(&mut self, context: &mut ImportContext) -> Vec<(RawEvent, Path)> {
+    fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
         let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
+        let mut h = self.hierarchy.try_lock().unwrap();
+        let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
             .filter(|x| !deleted.contains(&x.0))
         {
+            let Some(abs_path) = h.get_abs_path(reg, &id) else {
+                continue;
+            };
             let raw_event = RawEvent {
+                abs_path,
                 diff,
                 container_id: id,
                 old_version: context.old_frontiers.clone(),
@@ -130,16 +134,10 @@ impl LogStore {
             events.push(raw_event);
         }
 
-        let mut h = self.hierarchy.try_lock().unwrap();
-        let reg = &self.reg;
         // notify event in the order of path length
         // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
-        let mut event_and_paths = events
-            .into_iter()
-            .filter_map(|x| h.get_path(reg, &x.container_id, None).map(|y| (x, y)))
-            .collect::<Vec<_>>();
-        event_and_paths.sort_by_cached_key(|x| x.1.len());
-        event_and_paths
+        events.sort_by_cached_key(|x| x.abs_path.len());
+        events
     }
 
     fn update_version_info(&mut self, next_vv: VersionVector, next_frontiers: VersionVector) {

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::RwLockWriteGuard};
+use std::{fmt::Debug, os::macos::raw, sync::RwLockWriteGuard};
 
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -38,6 +38,8 @@ impl Debug for Node {
         f.debug_struct("Node")
             .field("parent", &self.parent)
             .field("children", &self.children)
+            .field("observers.len", &self.observers.len())
+            .field("deep_observers.len", &self.deep_observers.len())
             .finish()
     }
 }
@@ -123,8 +125,14 @@ impl Hierarchy {
         None
     }
 
+    #[inline(always)]
+    pub fn get_abs_path(&self, reg: &ContainerRegistry, descendant: &ContainerID) -> Option<Path> {
+        let path = self.get_path(reg, descendant, None);
+        path.and_then(|x| if x.is_empty() { None } else { Some(x) })
+    }
+
     pub fn get_path(
-        &mut self,
+        &self,
         reg: &ContainerRegistry,
         descendant: &ContainerID,
         target: Option<&ContainerID>,
@@ -206,29 +214,29 @@ impl Hierarchy {
         false
     }
 
-    pub(crate) fn notify<'a, 'b>(
+    pub(crate) fn notify_without_path<'a, 'b>(
         &'a mut self,
-        raw_event: RawEvent,
+        mut raw_event: RawEvent,
         store: RwLockWriteGuard<'b, LogStore>,
     ) {
         let reg = &store.reg;
-        let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
+
+        if raw_event.abs_path.is_empty() {
+            let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
             return ;
         };
+            raw_event.abs_path = absolute_path;
+        }
         drop(store);
-        self.notify_with_path(raw_event, absolute_path);
+        self.notify(raw_event);
     }
 
-    /// Create a deferred notifier that will notify all the events when it's dropped
-    #[inline(always)]
-    pub(crate) fn defer<'a>(&'a mut self) -> DeferredNotifier<'a> {
-        DeferredNotifier::new(self)
-    }
-
-    fn notify_with_path(&mut self, raw_event: RawEvent, absolute_path: Path) {
+    pub fn notify(&mut self, raw_event: RawEvent) {
+        debug_log::debug_log!("notify {:#?}", &raw_event);
+        debug_log::debug_dbg!(&self);
         let target_id = raw_event.container_id;
         let mut event = Event {
-            absolute_path,
+            absolute_path: raw_event.abs_path,
             relative_path: Default::default(),
             old_version: raw_event.old_version,
             new_version: raw_event.new_version,
@@ -270,6 +278,7 @@ impl Hierarchy {
         }
 
         if !self.root_observers.is_empty() {
+            debug_log::debug_log!("notify root");
             event.relative_path = event.absolute_path.clone();
             event.current_target = None;
             for (_, observer) in self.root_observers.iter_mut() {
@@ -298,6 +307,8 @@ impl Hierarchy {
                 .observers
                 .insert(id, observer);
         }
+        debug_log::debug_log!("Subscribe {:?}", container);
+        debug_log::debug_dbg!(&self);
         id
     }
 
@@ -326,56 +337,9 @@ impl Hierarchy {
         self.root_observers.remove(&sub).is_some()
     }
 
-    pub fn send_notifications(&mut self, events: Vec<(RawEvent, Path)>) {
-        for (event, path) in events {
-            self.notify_with_path(event, path);
-        }
-    }
-}
-
-pub(crate) struct DeferredNotifier<'a> {
-    hierarchy: &'a mut Hierarchy,
-    notifications: Vec<(RawEvent, Path)>,
-}
-
-impl<'a> DeferredNotifier<'a> {
-    #[inline(always)]
-    pub fn new(hierarchy: &'a mut Hierarchy) -> Self {
-        Self {
-            hierarchy,
-            notifications: Default::default(),
-        }
-    }
-
-    #[inline]
-    pub fn with_notify(mut self, raw_event: RawEvent, reg: &ContainerRegistry) -> Self {
-        let Some(absolute_path) = self.hierarchy.get_path(reg, &raw_event.container_id, None) else {
-            return self;
-        };
-        self.notifications.push((raw_event, absolute_path));
-        self
-    }
-
-    #[inline]
-    pub fn push_event_with_abs_path(&mut self, raw_event: RawEvent, path: Path) {
-        self.notifications.push((raw_event, path));
-    }
-
-    #[inline(always)]
-    pub fn send_notifications(self) {
-        drop(self)
-    }
-
-    #[inline(always)]
-    pub fn get_notifications(mut self) -> Vec<(RawEvent, Path)> {
-        std::mem::take(&mut self.notifications)
-    }
-}
-
-impl<'a> Drop for DeferredNotifier<'a> {
-    fn drop(&mut self) {
-        for (raw_event, path) in self.notifications.drain(..) {
-            self.hierarchy.notify_with_path(raw_event, path);
+    pub fn send_notifications(&mut self, events: Vec<RawEvent>) {
+        for event in events {
+            self.notify(event);
         }
     }
 }

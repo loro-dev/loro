@@ -11,6 +11,7 @@ pub struct RawEvent {
     pub new_version: Frontiers,
     pub local: bool,
     pub diff: Vec<Diff>,
+    pub abs_path: Path,
 }
 
 #[derive(Debug)]
