@@ -900,6 +900,36 @@ mod test {
     }
 
     #[test]
+    fn simplify_checkout() {
+        test_multi_sites(
+            8,
+            &mut [
+                Ins {
+                    content: 35368,
+                    pos: 73184288580830345,
+                    site: 16,
+                },
+                Ins {
+                    content: 4,
+                    pos: 18446744073693037568,
+                    site: 255,
+                },
+                SyncAll,
+                Del {
+                    pos: 18377562991809527818,
+                    len: 9955211391596233732,
+                    site: 137,
+                },
+                Ins {
+                    content: 1028,
+                    pos: 283674009020420,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn case_encode() {
         test_single_client_encode(vec![Ins {
             content: 49087,

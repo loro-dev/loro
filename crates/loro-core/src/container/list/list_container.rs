@@ -27,7 +27,6 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
-    version::IdSpanVector,
     LoroError,
 };
 
@@ -384,15 +383,7 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_retreat(&mut self, spans: &IdSpanVector) {
-        self.tracker.retreat(spans);
-    }
-
-    fn track_forward(&mut self, spans: &IdSpanVector) {
-        self.tracker.forward(spans);
-    }
-
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+    fn tracker_init(&mut self, vv: &crate::VersionVector) {
         if (!vv.is_empty() || self.tracker.start_vv().is_empty())
             && self.tracker.all_vv() >= vv
             && vv >= self.tracker.start_vv()
@@ -401,6 +392,10 @@ impl Container for ListContainer {
         } else {
             self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
+    }
+
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+        self.tracker.checkout(vv)
     }
 
     fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, _: &mut ImportContext) {

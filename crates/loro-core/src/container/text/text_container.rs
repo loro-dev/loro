@@ -313,16 +313,8 @@ impl Container for TextContainer {
         }
     }
 
-    fn track_retreat(&mut self, spans: &IdSpanVector) {
-        self.tracker.retreat(spans);
-    }
-
-    fn track_forward(&mut self, spans: &IdSpanVector) {
-        self.tracker.forward(spans);
-    }
-
     #[instrument(skip_all)]
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+    fn tracker_init(&mut self, vv: &crate::VersionVector) {
         if (!vv.is_empty() || self.tracker.start_vv().is_empty())
             && self.tracker.all_vv() >= vv
             && vv >= self.tracker.start_vv()
@@ -331,6 +323,11 @@ impl Container for TextContainer {
         } else {
             self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
+    }
+
+    #[instrument(skip_all)]
+    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+        self.tracker.checkout(vv)
     }
 
     #[instrument(skip_all)]

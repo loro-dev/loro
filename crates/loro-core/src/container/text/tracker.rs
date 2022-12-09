@@ -54,7 +54,6 @@ pub struct Tracker {
     ///
     /// Because sometimes we don't actually need to checkout to the version.
     /// So we may cache the changes then applying them when we really need to.
-    cached_fake_current_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -88,7 +87,6 @@ impl Tracker {
             #[cfg(feature = "test_utils")]
             client_id: 0,
             current_vv: start_vv.clone(),
-            cached_fake_current_vv: start_vv.clone(),
             all_vv: start_vv.clone(),
             start_vv,
         }
@@ -104,7 +102,7 @@ impl Tracker {
     }
 
     pub fn contains(&self, id: ID) -> bool {
-        !self.cached_fake_current_vv.includes_id(id) && self.all_vv.includes_id(id)
+        self.all_vv.includes_id(id)
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
@@ -134,23 +132,14 @@ impl Tracker {
     }
 
     pub fn checkout(&mut self, vv: &VersionVector) {
-        self.cached_fake_current_vv = vv.clone();
-    }
-
-    fn real_checkout(&mut self) {
-        if self.current_vv == self.cached_fake_current_vv {
+        if &self.current_vv == vv {
             return;
         }
 
-        let diff = self.current_vv.diff(&self.cached_fake_current_vv);
+        let diff = self.current_vv.diff(vv);
         self.real_retreat(&diff.left);
         self.real_forward(&diff.right);
-        debug_assert_eq!(&self.current_vv, &self.cached_fake_current_vv);
-    }
-
-    pub fn forward(&mut self, spans: &IdSpanVector) {
-        self.cached_fake_current_vv.forward(spans);
-        self.all_vv.forward(spans);
+        debug_assert_eq!(&self.current_vv, vv);
     }
 
     pub fn track_apply(&mut self, rich_op: &RichOp) {
@@ -160,14 +149,17 @@ impl Tracker {
             .all_vv()
             .includes_id(id.inc(content.atom_len() as Counter - 1))
         {
-            self.forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            self.real_forward(&id.to_span(content.atom_len()).to_id_span_vec());
             return;
         }
 
         if self.all_vv().includes_id(id) {
             let this_ctr = self.all_vv().get(&id.client_id).unwrap();
             let shift = this_ctr - id.counter;
-            self.forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.real_forward(&id.to_span(shift as usize).to_id_span_vec());
+            if shift as usize >= content.atom_len() {
+                unreachable!();
+            }
             self.apply(
                 id.inc(shift),
                 &content.slice(shift as usize, content.atom_len()),
@@ -235,11 +227,6 @@ impl Tracker {
         )
     }
 
-    pub fn retreat(&mut self, spans: &IdSpanVector) {
-        self.cached_fake_current_vv.retreat(spans);
-        self.all_vv.forward(spans);
-    }
-
     fn real_retreat(&mut self, spans: &IdSpanVector) {
         if spans.is_empty() {
             return;
@@ -304,12 +291,9 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, id: ID, content: &InnerContent) {
-        self.real_checkout();
         assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         self.current_vv
-            .set_end(id.inc(content.content_len() as i32));
-        self.cached_fake_current_vv
             .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
         let text_content = content.as_list().expect("Content is not for list");
@@ -389,7 +373,6 @@ impl Tracker {
 
     pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
         self.checkout(from);
-        self.real_checkout();
         EffectIter::new(self, target)
     }
 

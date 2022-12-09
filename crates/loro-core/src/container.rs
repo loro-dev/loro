@@ -6,11 +6,10 @@
 //!
 use crate::{
     event::{Observer, SubscriptionID},
-    fx_map,
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
-    version::{IdSpanVector, VersionVector},
+    version::VersionVector,
     InternalString, LoroError, LoroValue, ID,
 };
 
@@ -69,8 +68,6 @@ pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
     fn get_value(&self) -> LoroValue;
-    // TODO: need a custom serializer
-    // fn serialize(&self) -> Vec<u8>;
 
     /// convert an op content to exported format that includes the raw data
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]>;
@@ -78,13 +75,8 @@ pub trait Container: Debug + Any + Unpin {
     /// convert an op content to compact imported format
     fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
-    /// Tracker need to retreat in order to apply the op.
-    /// TODO: can be merged into checkout
-    fn track_retreat(&mut self, spans: &IdSpanVector);
-
-    /// Tracker need to forward in order to apply the op.
-    /// TODO: can be merged into checkout
-    fn track_forward(&mut self, spans: &IdSpanVector);
+    /// Initialize tracker at the target version
+    fn tracker_init(&mut self, vv: &VersionVector);
 
     /// Tracker need to checkout to target version in order to apply the op.
     fn tracker_checkout(&mut self, vv: &VersionVector);

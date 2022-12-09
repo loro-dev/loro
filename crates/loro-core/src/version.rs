@@ -343,6 +343,28 @@ impl VersionVector {
         None
     }
 
+    pub fn extend_to_include_vv(&mut self, vv: &VersionVector) {
+        for (&client_id, &counter) in vv.iter() {
+            if let Some(my_counter) = self.get_mut(&client_id) {
+                if *my_counter < counter {
+                    *my_counter = counter;
+                }
+            } else {
+                self.0.insert(client_id, counter);
+            }
+        }
+    }
+
+    pub fn extend_to_include_last_id(&mut self, id: ID) {
+        if let Some(counter) = self.get_mut(&id.client_id) {
+            if *counter <= id.counter {
+                *counter = id.counter + 1;
+            }
+        } else {
+            self.set_last(id)
+        }
+    }
+
     pub fn extend_to_include(&mut self, span: IdSpan) {
         if let Some(counter) = self.get_mut(&span.client_id) {
             if *counter < span.counter.end() {
@@ -407,7 +429,7 @@ impl VersionVector {
 
     #[inline(always)]
     pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
-        postcard::from_bytes(bytes).map_err(|_|LoroError::DecodeVersionVectorError)
+        postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
 }
 

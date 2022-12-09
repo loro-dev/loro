@@ -187,8 +187,10 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 pub(crate) struct IterReturn<'a, T> {
     pub retreat: IdSpanVector,
     pub forward: IdSpanVector,
+    /// data is a reference, it need to be sliced by the counter_range to get the underlying data
     pub data: &'a T,
-    pub slice: Range<Counter>,
+    /// data[slice] is the data we want to return
+    pub slice: Range<i32>,
 }
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
@@ -273,6 +275,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             smallvec::smallvec![node.id_start().inc(slice_from - 1)]
         };
         let path = self.dag.find_path(&self.frontier, &deps);
+        debug_log::group!("Dag Causal");
+        debug_log::debug_dbg!(&deps);
+        debug_log::debug_dbg!(&path);
+        debug_log::group_end!();
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
         Some(IterReturn {
