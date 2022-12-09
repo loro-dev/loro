@@ -30,6 +30,9 @@ jobs:
     
     - run: rustup toolchain install stable --profile minimal
     - run: rustup target add wasm32-unknown-unknown
+    - uses: jetli/wasm-bindgen-action@v0.2.0
+      with:
+        version: 'latest'
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose
