@@ -31,6 +31,14 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
+/// This is a subset of VersionVector, it only includes the counters of a subset of the clients.
+/// If the counter is zero, then it means the client is not in the target version
+///
+/// It's used to represent the changed part of the version vector.
+#[repr(transparent)]
+#[derive(Debug, Clone)]
+pub struct VersionVectorSubset(pub VersionVector);
+
 // TODO: use new type
 pub type Frontiers = SmallVec<[ID; 2]>;
 
@@ -234,6 +242,67 @@ impl VersionVector {
         }
 
         ans
+    }
+
+    /// Returns two iterators that cover the differences between two version vectors.
+    ///
+    /// - The first iterator contains the spans that are in `self` but not in `rhs`
+    /// - The second iterator contains the spans that are in `rhs` but not in `self`
+    pub fn diff_iter<'a>(
+        &'a self,
+        rhs: &'a Self,
+    ) -> (
+        impl Iterator<Item = IdSpan> + 'a,
+        impl Iterator<Item = IdSpan> + 'a,
+    ) {
+        (self.sub_iter(rhs), rhs.sub_iter(self))
+    }
+
+    /// Returns the spans that are in `self` but not in `rhs`
+    pub fn sub_iter<'a>(&'a self, rhs: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
+        self.iter().filter_map(move |(client_id, &counter)| {
+            if let Some(&rhs_counter) = rhs.get(client_id) {
+                if counter > rhs_counter {
+                    Some(IdSpan {
+                        client_id: *client_id,
+                        counter: CounterSpan {
+                            start: rhs_counter,
+                            end: counter,
+                        },
+                    })
+                } else {
+                    None
+                }
+            } else {
+                Some(IdSpan {
+                    client_id: *client_id,
+                    counter: CounterSpan {
+                        start: 0,
+                        end: counter,
+                    },
+                })
+            }
+        })
+    }
+
+    pub fn sub_vec(&self, rhs: &Self) -> IdSpanVector {
+        self.sub_iter(rhs)
+            .map(|x| (x.client_id, x.counter))
+            .collect()
+    }
+
+    pub fn to_spans(&self) -> IdSpanVector {
+        self.iter()
+            .map(|(client_id, &counter)| {
+                (
+                    *client_id,
+                    CounterSpan {
+                        start: 0,
+                        end: counter,
+                    },
+                )
+            })
+            .collect()
     }
 
     #[inline]

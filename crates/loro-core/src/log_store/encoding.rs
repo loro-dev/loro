@@ -346,7 +346,7 @@ fn decode_changes(
         old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
         old_vv: Default::default(),
-        spans: vv.diff(&Default::default()).left,
+        spans: vv.to_spans(),
         new_vv: vv,
         diff: Default::default(),
     };

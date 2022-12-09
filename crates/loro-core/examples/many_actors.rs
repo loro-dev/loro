@@ -1,7 +1,7 @@
 use loro_core::{LoroCore, LoroValue};
 
 fn main() {
-    let mut actors: Vec<_> = (0..200).map(|_| LoroCore::default()).collect();
+    let mut actors: Vec<_> = (0..500).map(|_| LoroCore::default()).collect();
     for (i, actor) in actors.iter_mut().enumerate() {
         let mut list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();

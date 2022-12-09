@@ -259,7 +259,7 @@ impl LogStore {
             let mut already_checkout = FxHashSet::default();
             for iter in store.iter_causal(
                 &common_ancestors,
-                context.new_vv.diff(&common_ancestors_vv).left,
+                context.new_vv.sub_vec(&common_ancestors_vv),
             ) {
                 debug_log::debug_dbg!(&iter);
                 debug_log::debug_dbg!(&current_vv);
