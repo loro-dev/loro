@@ -77,7 +77,6 @@ impl SecureRandomGenerator for MathRandom {
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        tracing::info!("Loro::new");
         let cfg: Configure = Configure {
             change: Default::default(),
             gc: GcConfig::default().with_gc(false),
@@ -170,7 +169,6 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "importUpdates")]
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
-        tracing::debug!("Import updates");
         Ok(self.0.import_updates(&data)?)
     }
 

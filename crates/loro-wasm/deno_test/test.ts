@@ -59,35 +59,19 @@ Deno.test({ name: "sync" }, async (t) => {
   await t.step("two insert at beginning", () => {
     const a = new Loro();
     const b = new Loro();
-    const aText = a.getText("text");
-    const bText = b.getText("text");
-    aText.insert(a, 0, "a");
-    let bytes = a.exportUpdates(undefined);
-    console.log(bytes);
-  });
-
-  await t.step("two insert at beginning", () => {
-    const a = new Loro();
-    const b = new Loro();
     let a_version: undefined | Uint8Array = undefined;
     let b_version: undefined | Uint8Array = undefined;
     a.subscribe((local: boolean) => {
       if (local) {
         let exported = a.exportUpdates(a_version);
-        console.log(exported.byteLength);
-        console.log("CC");
         b.importUpdates(exported);
-        console.log("DD");
         a_version = a.version();
       }
     });
     b.subscribe((local: boolean) => {
       if (local) {
-        console.log("B Subscribed");
         let exported = b.exportUpdates(b_version);
-        console.log("Exported");
         a.importUpdates(exported);
-        console.log("Import");
         b_version = b.version();
       }
     });
@@ -96,7 +80,6 @@ Deno.test({ name: "sync" }, async (t) => {
     aText.insert(a, 0, "abc");
     // aText.insert(a, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
     // bText.insert(b, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
-    console.log("KKKKKKKKKKK");
     assertEquals(aText.toString(), bText.toString());
   });
 
