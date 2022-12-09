@@ -29,6 +29,7 @@ jobs:
         tool: nextest
     
     - run: rustup toolchain install stable --profile minimal
+    - run: rustup target add wasm32-unknown-unknown
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose
