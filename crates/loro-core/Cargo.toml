@@ -30,6 +30,7 @@ arref = "0.1.0"
 serde_columnar = { version = "0.1.0" }
 debug-log = "0.1.4"
 tracing = { version = "0.1.37" }
+append-only-bytes = { version = "0.1.4", features = ["u32_range"] }
 
 [dev-dependencies]
 serde_json = "1.0.87"

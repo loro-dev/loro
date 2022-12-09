@@ -1,10 +1,6 @@
-use std::{
-    fmt,
-    ops::Range,
-    str::Chars,
-    sync::{Arc, Mutex, Weak},
-};
+use std::{fmt, ops::Range, str::Chars};
 
+use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
 use crate::smstring::SmString;
@@ -13,16 +9,16 @@ use super::{text_content::SliceRange, unicode::TextLength};
 
 #[derive(Debug, Default)]
 pub struct StringPool {
-    data: Vec<u8>,
+    data: AppendOnlyBytes,
     alive_ranges: RleVecWithIndex<Alive>,
     deleted: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct PoolString {
-    pub(super) pool: Weak<Mutex<StringPool>>,
-    pub(super) range: SliceRange,
-    pub(super) utf16_length: Option<i32>,
+    pub(super) slice: Option<BytesSlice>,
+    pub(super) unknown_len: u32,
+    pub(super) utf16_length: i32,
 }
 
 #[derive(Debug)]
@@ -74,10 +70,11 @@ impl Sliceable for Alive {
 
 impl StringPool {
     #[inline(always)]
-    pub fn alloc(&mut self, s: &str) -> Range<u32> {
-        let ans = self.data.len() as u32..self.data.len() as u32 + s.len() as u32;
-        self.data.extend_from_slice(s.as_bytes());
-        ans
+    pub fn alloc(&mut self, s: &str) -> PoolString {
+        let start = self.data.len();
+        self.data.push_slice(s.as_bytes());
+        let end = self.data.len();
+        self.data.slice(start..end).into()
     }
 
     #[inline(always)]
@@ -86,16 +83,6 @@ impl StringPool {
         // SAFETY: we are sure the range is valid utf8
         unsafe {
             std::str::from_utf8_unchecked(&self.data[range.start as usize..range.end as usize])
-        }
-    }
-
-    pub fn alloc_pool_string(this: &Arc<Mutex<Self>>, s: &str) -> PoolString {
-        let mut pool = this.lock().unwrap();
-        let range = SliceRange(pool.alloc(s));
-        PoolString {
-            pool: Arc::downgrade(this),
-            range,
-            utf16_length: Some(encode_utf16(s).count() as i32),
         }
     }
 
@@ -137,7 +124,7 @@ impl StringPool {
         let mut alive_ranges = RleVecWithIndex::new();
         let mut last = 0;
         let mut deleted = 0;
-        let mut data: Vec<Range<u32>> = iter.collect();
+        let mut data: Vec<Range<u32>> = iter.filter(|x| x.atom_len() > 0).collect();
         data.sort_by_key(|x| x.start);
         for range in data {
             if range.start > last {
@@ -167,90 +154,138 @@ impl StringPool {
 }
 
 impl HasLength for PoolString {
+    #[inline(always)]
     fn content_len(&self) -> usize {
-        self.range.atom_len()
+        self.slice
+            .as_ref()
+            .map_or(self.unknown_len as usize, |x| x.atom_len())
     }
 }
 
 impl Mergable for PoolString {
-    fn is_mergable(&self, other: &Self, conf: &()) -> bool
+    fn is_mergable(&self, other: &Self, _: &()) -> bool
     where
         Self: Sized,
     {
-        self.range.is_mergable(&other.range, conf)
+        match (&self.slice, &other.slice) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.can_merge(b),
+            _ => false,
+        }
     }
 
-    fn merge(&mut self, other: &Self, conf: &())
+    fn merge(&mut self, other: &Self, _: &())
     where
         Self: Sized,
     {
-        self.range.merge(&other.range, conf);
-        if let (Some(u), Some(other_u)) = (self.utf16_length, other.utf16_length) {
-            self.utf16_length = Some(u + other_u);
-        } else {
-            self.utf16_length = None;
+        match &mut self.slice {
+            Some(a) => {
+                let b = other.slice.as_ref().unwrap();
+                a.merge(b, &());
+                self.utf16_length += other.utf16_length;
+            }
+            None => {
+                self.unknown_len += other.unknown_len;
+            }
         }
     }
 }
 
 impl Sliceable for PoolString {
     fn slice(&self, from: usize, to: usize) -> Self {
-        let range = self.range.slice(from, to);
-        if range.is_unknown() {
-            Self {
-                pool: self.pool.clone(),
-                range,
-                utf16_length: None,
+        match self.slice.as_ref() {
+            Some(bytes) => {
+                let bytes = bytes.slice(from, to);
+                // SAFETY: we are sure it's valid utf-8 str
+                let utf16 = get_utf16_len(&bytes);
+                Self {
+                    utf16_length: utf16 as i32,
+                    slice: Some(bytes),
+                    unknown_len: 0,
+                }
             }
-        } else {
-            let mutex = self.pool.upgrade().unwrap();
-            let borrow = mutex.lock().unwrap();
-            let str = borrow.slice(&range.0);
-            let utf16_length = encode_utf16(str).count();
-            Self {
-                pool: Weak::clone(&self.pool),
-                range,
-                utf16_length: Some(utf16_length as i32),
-            }
+            None => Self::new_unknown(to - from),
+        }
+    }
+}
+
+#[inline(always)]
+fn get_utf16_len(bytes: &BytesSlice) -> usize {
+    let str = bytes_to_str(bytes);
+    let utf16 = encode_utf16(str).count();
+    utf16
+}
+
+#[inline(always)]
+fn bytes_to_str(bytes: &BytesSlice) -> &str {
+    // SAFETY: we are sure the range is valid utf8
+    let str = unsafe { std::str::from_utf8_unchecked(&bytes[..]) };
+    str
+}
+
+impl From<BytesSlice> for PoolString {
+    #[inline(always)]
+    fn from(slice: BytesSlice) -> Self {
+        Self {
+            utf16_length: get_utf16_len(&slice) as i32,
+            slice: Some(slice),
+            unknown_len: 0,
         }
     }
 }
 
 impl PoolString {
-    pub fn from_slice(pool: &Arc<Mutex<StringPool>>, slice: SliceRange) -> Self {
+    pub fn as_str_unchecked(&self) -> &str {
+        let slice = self.slice.as_ref().unwrap();
+        bytes_to_str(slice)
+    }
+
+    pub fn new_unknown(len: usize) -> Self {
         Self {
-            pool: Arc::downgrade(pool),
-            utf16_length: if slice.is_unknown() {
-                None
-            } else {
-                let borrow = pool.lock().unwrap();
-                let str = borrow.slice(&slice.0);
-                let utf16_length = encode_utf16(str).count();
-                Some(utf16_length as i32)
-            },
-            range: slice,
+            slice: None,
+            unknown_len: len as u32,
+            utf16_length: 0,
+        }
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.slice.is_none()
+    }
+
+    pub fn from_slice_range(pool: &StringPool, range: SliceRange) -> Self {
+        if range.is_unknown() {
+            Self {
+                utf16_length: 0,
+                slice: None,
+                unknown_len: range.atom_len() as u32,
+            }
+        } else {
+            let slice = pool
+                .data
+                .slice(range.0.start as usize..range.0.end as usize);
+            slice.into()
         }
     }
 
     pub fn text_len(&self) -> TextLength {
         TextLength {
-            utf8: self.range.atom_len() as i32,
-            utf16: self.utf16_length.unwrap_or(0),
-            unknown_elem_len: self.range.is_unknown() as i32,
+            utf8: self.content_len() as i32,
+            utf16: if self.unknown_len > 0 {
+                0
+            } else {
+                self.utf16_length
+            },
+            unknown_elem_len: self.is_unknown() as i32,
         }
     }
 
     pub fn utf16_index_to_utf8(&self, end: usize) -> usize {
-        let mutex = self.pool.upgrade().unwrap();
-        let borrow = mutex.lock().unwrap();
-        let str = borrow.slice(&self.range.0);
+        let str = bytes_to_str(self.slice.as_ref().unwrap());
         utf16_index_to_utf8(str, end)
     }
 
     pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
-        let mutex = self.pool.upgrade().unwrap();
-        let borrow = mutex.lock().unwrap();
-        let str = borrow.slice(&self.range.0);
+        let str = bytes_to_str(self.slice.as_ref().unwrap());
         encode_utf16(&str[..end]).count()
     }
 }

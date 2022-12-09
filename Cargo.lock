@@ -45,6 +45,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
+name = "append-only-bytes"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
+
+[[package]]
 name = "arbitrary"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -729,6 +735,7 @@ dependencies = [
 name = "loro-core"
 version = "0.1.0"
 dependencies = [
+ "append-only-bytes",
  "arbitrary",
  "arbtest",
  "arref",
@@ -1319,6 +1326,7 @@ dependencies = [
 name = "rle"
 version = "0.1.0"
 dependencies = [
+ "append-only-bytes",
  "arref",
  "bumpalo",
  "color-backtrace",
