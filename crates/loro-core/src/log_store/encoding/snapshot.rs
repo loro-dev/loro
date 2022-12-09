@@ -49,7 +49,6 @@ pub enum EncodedStateContent {
     Text {
         pool: Vec<u8>,
         state_len: u32,
-        utf_16: i32,
     },
 }
 
@@ -82,15 +81,7 @@ impl StateContent {
                     values: values_encoded,
                 }
             }
-            StateContent::Text {
-                pool,
-                state_len,
-                utf_16,
-            } => EncodedStateContent::Text {
-                pool,
-                state_len,
-                utf_16,
-            },
+            StateContent::Text { pool, state_len } => EncodedStateContent::Text { pool, state_len },
         }
     }
 }
@@ -123,15 +114,7 @@ impl EncodedStateContent {
                     values: values_decoded,
                 }
             }
-            EncodedStateContent::Text {
-                pool,
-                state_len,
-                utf_16,
-            } => StateContent::Text {
-                pool,
-                state_len,
-                utf_16,
-            },
+            EncodedStateContent::Text { pool, state_len } => StateContent::Text { pool, state_len },
         }
     }
 }

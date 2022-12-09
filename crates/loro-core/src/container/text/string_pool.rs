@@ -153,14 +153,14 @@ impl StringPool {
     }
 
     #[inline]
-    pub fn get_inner_ref(&self) -> &[u8] {
-        &self.data
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
     }
 
     #[inline]
-    pub fn from_data(data: Vec<u8>) -> Self {
+    pub(crate) fn from_data(bytes: AppendOnlyBytes) -> Self {
         Self {
-            data,
+            data: bytes,
             ..Default::default()
         }
     }

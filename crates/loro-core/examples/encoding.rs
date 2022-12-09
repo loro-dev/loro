@@ -39,9 +39,16 @@ fn main() {
     let json1 = loro.to_json();
 
     println!(
-        "{} bytes, overhead {} bytes. used {}ms",
+        "{} bytes, used {}ms",
         buf.len(),
-        0,
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
+    let buf_snapshot = loro.encode_snapshot(false);
+
+    println!(
+        "{} bytes, used {}ms",
+        buf_snapshot.len(),
         start.elapsed().as_millis()
     );
     let mut loro = LoroCore::default();

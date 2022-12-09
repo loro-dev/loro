@@ -26,7 +26,6 @@ pub enum StateContent {
     Text {
         pool: Vec<u8>,
         state_len: u32,
-        utf_16: i32,
     },
 }
 

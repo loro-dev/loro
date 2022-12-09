@@ -1,8 +1,6 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
+use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
 use smallvec::SmallVec;
 use tracing::instrument;
@@ -401,10 +399,10 @@ impl Container for TextContainer {
 
     fn initialize_pool_mapping(&mut self) {
         let mut pool_mapping = PoolMapping::default();
-        let pool = self.raw_str.try_lock().unwrap();
         for value in self.state.iter() {
-            let range = value.get_sliced().range.0;
-            let old = pool.deref().get_inner_ref();
+            let range = value.get_sliced().slice.unwrap();
+            let range = range.start() as u32..range.end() as u32;
+            let old = self.raw_str.as_bytes();
             pool_mapping.push_state_slice(range, old);
         }
         pool_mapping.push_state_slice_finish();
@@ -414,16 +412,9 @@ impl Container for TextContainer {
     fn encode_and_release_pool_mapping(&mut self) -> StateContent {
         let pool_mapping = self.pool_mapping.take().unwrap();
         let state_len = pool_mapping.new_state_len;
-        // TODO:
-        let utf_16 = EncodeUtf16 {
-            chars: self.get_value().as_string().unwrap().chars(),
-            extra: 0,
-        }
-        .count() as i32;
         StateContent::Text {
             pool: pool_mapping.inner(),
             state_len,
-            utf_16,
         }
     }
 
@@ -432,8 +423,11 @@ impl Container for TextContainer {
         content: &InnerContent,
         gc: bool,
     ) -> SmallVec<[InnerContent; 1]> {
-        let pool = self.raw_str.try_lock().unwrap();
-        let old_pool = if gc { None } else { Some(pool.get_inner_ref()) };
+        let old_pool = if gc {
+            None
+        } else {
+            Some(self.raw_str.as_bytes())
+        };
         match content {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
@@ -456,20 +450,12 @@ impl Container for TextContainer {
     }
 
     fn to_import_snapshot(&mut self, state_content: StateContent) {
-        if let StateContent::Text {
-            pool,
-            state_len,
-            utf_16,
-        } = state_content
-        {
-            let string_pool = StringPool::from_data(pool);
-            self.raw_str = Arc::new(Mutex::new(string_pool));
-            let pool_string = PoolString {
-                pool: Arc::downgrade(&self.raw_str),
-                range: (0..state_len).into(),
-                utf16_length: Some(utf_16),
-            };
-            self.state.insert(0, pool_string)
+        if let StateContent::Text { pool, state_len } = state_content {
+            let mut append_only_bytes = AppendOnlyBytes::with_capacity(pool.len());
+            let pool_string = append_only_bytes.slice(0..state_len as usize).into();
+            append_only_bytes.push_slice(&pool);
+            self.raw_str = StringPool::from_data(append_only_bytes);
+            self.state.insert(0, pool_string);
         } else {
             unreachable!()
         }
