@@ -35,7 +35,7 @@ fn main() {
         }
     });
     let start = Instant::now();
-    let buf = loro.encode_snapshot(&VersionVector::new(), false);
+    let buf = loro.encode_changes(&VersionVector::new(), false);
     let json1 = loro.to_json();
 
     println!(
@@ -45,9 +45,9 @@ fn main() {
         start.elapsed().as_millis()
     );
     let mut loro = LoroCore::default();
-    loro.decode_snapshot(&buf);
+    loro.decode_changes(&buf);
     println!("decode used {}ms", start.elapsed().as_millis());
-    let buf2 = loro.encode_snapshot(&VersionVector::new(), false);
+    let buf2 = loro.encode_changes(&VersionVector::new(), false);
     assert_eq!(buf, buf2);
     let json2 = loro.to_json();
     assert_eq!(json1, json2);

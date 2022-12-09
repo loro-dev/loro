@@ -86,25 +86,25 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
-    pub fn encode_snapshot(&self, vv: &VersionVector, compress: bool) -> Vec<u8> {
+    pub fn encode_changes(&self, vv: &VersionVector, compress: bool) -> Vec<u8> {
         let store = self.log_store.read().unwrap();
-        store.encode_snapshot(vv, compress)
+        store.encode_changes(vv, compress)
     }
 
-    pub fn decode_snapshot(&mut self, input: &[u8]) {
-        self.log_store().try_write().unwrap().decode_snapshot(input);
+    pub fn decode_changes(&mut self, input: &[u8]) {
+        self.log_store().try_write().unwrap().decode_changes(input);
     }
 
-    // pub fn export_store(&self, compress: bool) -> Vec<u8> {
-    //     let store = self.log_store.read().unwrap();
-    //     store.export_store(compress)
-    // }
+    pub fn encode_snapshot(&self, compress: bool) -> Vec<u8> {
+        let store = self.log_store.read().unwrap();
+        store.encode_snapshot(compress)
+    }
 
-    // pub fn import_store(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
-    //     let store = LogStore::new(cfg, client_id);
-    //     store.write().unwrap().import_store(input);
-    //     Self { log_store: store }
-    // }
+    pub fn decode_snapshot(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
+        let store = LogStore::new(cfg, client_id);
+        store.write().unwrap().decode_snapshot(input);
+        Self { log_store: store }
+    }
 
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {

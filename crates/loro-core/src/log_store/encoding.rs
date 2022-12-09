@@ -21,7 +21,7 @@ use crate::{
 };
 
 // mod container;
-// mod snapshot;
+mod snapshot;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
@@ -310,7 +310,7 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 }
 
 impl LogStore {
-    pub fn encode_snapshot(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
+    pub fn encode_changes(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
         let encoded = encode_changes(self, vv);
         let mut ans = vec![compress_cfg as u8];
         let buf = if compress_cfg {
@@ -323,7 +323,7 @@ impl LogStore {
         ans
     }
 
-    pub fn decode_snapshot(&mut self, input: &[u8]) {
+    pub fn decode_changes(&mut self, input: &[u8]) {
         let compress_cfg = *input.first().unwrap() > 0;
         let encoded = if compress_cfg {
             from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
@@ -332,27 +332,4 @@ impl LogStore {
         };
         decode_changes(self, encoded);
     }
-
-    // pub fn export_store(&self, compress_cfg: bool) -> Vec<u8> {
-    //     let encoded = snapshot::export_snapshot(self);
-    //     let mut ans = vec![compress_cfg as u8];
-    //     let buf = if compress_cfg {
-    //         // TODO: columnar compress use read/write mode
-    //         compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
-    //     } else {
-    //         to_vec(&encoded).unwrap()
-    //     };
-    //     ans.extend(buf);
-    //     ans
-    // }
-
-    // pub fn import_store(&mut self, input: &[u8]) {
-    //     let compress_cfg = *input.first().unwrap() > 0;
-    //     let encoded = if compress_cfg {
-    //         from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
-    //     } else {
-    //         from_bytes(&input[1..]).unwrap()
-    //     };
-    //     snapshot::import_snapshot(self, encoded);
-    // }
 }

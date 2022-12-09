@@ -205,6 +205,32 @@ fn test_recursive_should_panic() {
 }
 
 #[test]
+fn test_encode_snapshot_list() {
+    let mut store = LoroCore::new(Default::default(), Some(1));
+    let mut list = store.get_list("list");
+    for i in 0..10 {
+        list.insert(&store, 0, i).unwrap();
+    }
+    list.insert(&store, 0, "some thing").unwrap();
+    list.delete(&store, 2, 3).unwrap();
+    list.delete(&store, 4, 2).unwrap();
+    let start = Instant::now();
+    let buf = store.encode_snapshot(false);
+    println!(
+        "size: {:?} bytes time: {} ms",
+        buf.len(),
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
+    let store2 = LoroCore::decode_snapshot(&buf, Default::default(), Some(1));
+    println!("decode time: {} ms", start.elapsed().as_millis());
+    println!("store1 json:\n{}", store.to_json().to_json_pretty());
+    println!("store2 json:\n{}", store2.to_json().to_json_pretty());
+    assert_eq!(store.to_json(), store2.to_json());
+    // assert_eq!(buf, buf2);
+}
+
+#[test]
 fn test_encode_state_text() {
     let mut store = LoroCore::new(Default::default(), Some(1));
     let mut text = store.get_text("text");
@@ -215,7 +241,7 @@ fn test_encode_state_text() {
     text.delete(&store, 2, 10).unwrap();
     text.delete(&store, 4, 12).unwrap();
     let start = Instant::now();
-    let buf = store.encode_snapshot(&VersionVector::new(), false);
+    let buf = store.encode_changes(&VersionVector::new(), false);
     println!(
         "size: {:?} bytes time: {} ms",
         buf.len(),
@@ -223,10 +249,10 @@ fn test_encode_state_text() {
     );
     let start = Instant::now();
     let mut store2 = LoroCore::new(Default::default(), Some(1));
-    store2.decode_snapshot(&buf);
+    store2.decode_changes(&buf);
     println!("decode time: {} ms", start.elapsed().as_millis());
     assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_snapshot(&VersionVector::new(), false);
+    let buf2 = store2.encode_changes(&VersionVector::new(), false);
     assert_eq!(buf, buf2);
 }
 
@@ -239,18 +265,18 @@ fn test_encode_state_map() {
     map.insert(&store, "cc", 12).unwrap();
     map.delete(&store, "cc").unwrap();
     let start = Instant::now();
-    let buf = store.encode_snapshot(&VersionVector::new(), false);
+    let buf = store.encode_changes(&VersionVector::new(), false);
     println!(
         "size: {:?} bytes time: {} ms",
         buf.len(),
         start.elapsed().as_millis()
     );
     let mut store2 = LoroCore::new(Default::default(), Some(1));
-    store2.decode_snapshot(&buf);
+    store2.decode_changes(&buf);
     println!("store2: {}", store.to_json().to_json_pretty());
     println!("store2: {}", store2.to_json().to_json_pretty());
     assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_snapshot(&VersionVector::new(), false);
+    let buf2 = store2.encode_changes(&VersionVector::new(), false);
     assert_eq!(buf, buf2);
 }
 

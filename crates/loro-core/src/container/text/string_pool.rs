@@ -151,6 +151,19 @@ impl StringPool {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+
+    #[inline]
+    pub fn get_inner_ref(&self) -> &[u8] {
+        &self.data
+    }
+
+    #[inline]
+    pub fn from_data(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            ..Default::default()
+        }
+    }
 }
 
 impl HasLength for PoolString {

@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
 use rle::HasLength;
 use smallvec::SmallVec;
@@ -7,6 +10,7 @@ use tracing::instrument;
 use crate::{
     container::{
         list::list_op::{InnerListOp, ListOp},
+        pool_mapping::{PoolMapping, StateContent},
         registry::{ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
     },
@@ -23,7 +27,7 @@ use crate::{
 
 use super::{
     rope::Rope,
-    string_pool::{Alive, PoolString, StringPool},
+    string_pool::{Alive, EncodeUtf16, PoolString, StringPool},
     text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
 };
@@ -34,6 +38,7 @@ pub struct TextContainer {
     state: Rope,
     raw_str: StringPool,
     tracker: Tracker,
+    pool_mapping: Option<PoolMapping<u8>>,
 }
 
 impl TextContainer {
@@ -43,6 +48,7 @@ impl TextContainer {
             raw_str: StringPool::default(),
             tracker: Tracker::new(Default::default(), 0),
             state: Default::default(),
+            pool_mapping: None,
         }
     }
 
@@ -390,6 +396,82 @@ impl Container for TextContainer {
 
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
+        }
+    }
+
+    fn initialize_pool_mapping(&mut self) {
+        let mut pool_mapping = PoolMapping::default();
+        let pool = self.raw_str.try_lock().unwrap();
+        for value in self.state.iter() {
+            let range = value.get_sliced().range.0;
+            let old = pool.deref().get_inner_ref();
+            pool_mapping.push_state_slice(range, old);
+        }
+        pool_mapping.push_state_slice_finish();
+        self.pool_mapping = Some(pool_mapping);
+    }
+
+    fn encode_and_release_pool_mapping(&mut self) -> StateContent {
+        let pool_mapping = self.pool_mapping.take().unwrap();
+        let state_len = pool_mapping.new_state_len;
+        // TODO:
+        let utf_16 = EncodeUtf16 {
+            chars: self.get_value().as_string().unwrap().chars(),
+            extra: 0,
+        }
+        .count() as i32;
+        StateContent::Text {
+            pool: pool_mapping.inner(),
+            state_len,
+            utf_16,
+        }
+    }
+
+    fn to_export_snapshot(
+        &mut self,
+        content: &InnerContent,
+        gc: bool,
+    ) -> SmallVec<[InnerContent; 1]> {
+        let pool = self.raw_str.try_lock().unwrap();
+        let old_pool = if gc { None } else { Some(pool.get_inner_ref()) };
+        match content {
+            InnerContent::List(op) => match op {
+                InnerListOp::Insert { slice, pos } => {
+                    let new_slice = self
+                        .pool_mapping
+                        .as_mut()
+                        .unwrap()
+                        .convert_ops_slice(slice.0.clone(), old_pool);
+                    new_slice
+                        .into_iter()
+                        .map(|slice| InnerContent::List(InnerListOp::Insert { slice, pos: *pos }))
+                        .collect()
+                }
+                InnerListOp::Delete(span) => {
+                    SmallVec::from([InnerContent::List(InnerListOp::Delete(*span))])
+                }
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn to_import_snapshot(&mut self, state_content: StateContent) {
+        if let StateContent::Text {
+            pool,
+            state_len,
+            utf_16,
+        } = state_content
+        {
+            let string_pool = StringPool::from_data(pool);
+            self.raw_str = Arc::new(Mutex::new(string_pool));
+            let pool_string = PoolString {
+                pool: Arc::downgrade(&self.raw_str),
+                range: (0..state_len).into(),
+                utf16_length: Some(utf_16),
+            };
+            self.state.insert(0, pool_string)
+        } else {
+            unreachable!()
         }
     }
 }

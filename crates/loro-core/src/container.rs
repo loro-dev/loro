@@ -14,6 +14,7 @@ use crate::{
     InternalString, LoroError, LoroValue, ID,
 };
 
+use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -22,7 +23,9 @@ use std::{
     fmt::{Debug, Display},
 };
 
-mod pool_mapping;
+use self::pool_mapping::{PoolMapping, StateContent};
+
+pub mod pool_mapping;
 pub mod registry;
 
 pub mod list;
@@ -70,8 +73,22 @@ pub trait Container: Debug + Any + Unpin {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
     fn get_value(&self) -> LoroValue;
-    // TODO: need a custom serializer
-    // fn serialize(&self) -> Vec<u8>;
+
+    /// Initialize the pool mapping in current state for this container
+    fn initialize_pool_mapping(&mut self);
+
+    /// Encode and release the pool mapping, and return the encoded bytes.
+    fn encode_and_release_pool_mapping(&mut self) -> StateContent;
+
+    /// Convert an op content to new op content(s) that includes the data of the new state of the pool mapping.
+    fn to_export_snapshot(
+        &mut self,
+        content: &InnerContent,
+        gc: bool,
+    ) -> SmallVec<[InnerContent; 1]>;
+
+    /// Decode the pool mapping from the bytes and apply it to the container.
+    fn to_import_snapshot(&mut self, state_content: StateContent);
 
     /// convert an op content to exported format that includes the raw data
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]>;

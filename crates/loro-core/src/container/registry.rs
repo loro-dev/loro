@@ -170,6 +170,46 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.to_import(content),
         }
     }
+
+    fn to_export_snapshot(
+        &mut self,
+        content: &crate::op::InnerContent,
+        gc: bool,
+    ) -> SmallVec<[crate::op::InnerContent; 1]> {
+        match self {
+            ContainerInstance::Map(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::Text(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::Dyn(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::List(x) => x.to_export_snapshot(content, gc),
+        }
+    }
+
+    fn initialize_pool_mapping(&mut self) {
+        match self {
+            ContainerInstance::Map(x) => x.initialize_pool_mapping(),
+            ContainerInstance::Text(x) => x.initialize_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.initialize_pool_mapping(),
+            ContainerInstance::List(x) => x.initialize_pool_mapping(),
+        }
+    }
+
+    fn encode_and_release_pool_mapping(&mut self) -> super::pool_mapping::StateContent {
+        match self {
+            ContainerInstance::Map(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::Text(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::List(x) => x.encode_and_release_pool_mapping(),
+        }
+    }
+
+    fn to_import_snapshot(&mut self, state_content: super::pool_mapping::StateContent) {
+        match self {
+            ContainerInstance::Map(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::Text(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::List(x) => x.to_import_snapshot(state_content),
+        }
+    }
 }
 
 impl ContainerInstance {

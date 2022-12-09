@@ -1,28 +1,140 @@
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use serde_columnar::columnar;
+use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
     container::{
         list::list_op::{DeleteSpan, InnerListOp},
-        map::InnerMapSet,
-        registry::{ContainerIdx, ContainerInstance},
-        Container,
+        map::{InnerMapSet, ValueSlot},
+        pool_mapping::StateContent,
+        registry::ContainerIdx,
+        Container, ContainerID,
     },
     dag::remove_included_frontiers,
     id::{ClientID, ID},
     op::{InnerContent, Op},
     span::{HasIdSpan, HasLamportSpan},
-    ContainerType, InternalString, LogStore, VersionVector,
+    version::TotalOrderStamp,
+    ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
 
-use super::{
-    container::{merge_2_u32_u64, split_u64_2_u32},
-    ChangeEncoding, ClientIdx, Clients, DepsEncoding,
-};
-type Containers = Vec<Vec<u8>>;
+use super::{ChangeEncoding, ClientIdx, Clients, DepsEncoding};
+pub fn split_u64_2_u32(a: u64) -> (u32, u32) {
+    let high_byte = (a >> 32) as u32;
+    let low_byte = a as u32;
+    (high_byte, low_byte)
+}
+
+pub fn merge_2_u32_u64(a: u32, b: u32) -> u64 {
+    let high_byte = (a as u64) << 32;
+    let low_byte = b as u64;
+    high_byte | low_byte
+}
+type Containers = Vec<ContainerID>;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum EncodedStateContent {
+    List {
+        pool: Vec<LoroValue>,
+        state_len: u32,
+    },
+    Map {
+        pool: Vec<LoroValue>,
+        // TODO: rle
+        keys: Vec<usize>,
+        values: Vec<(u32, u32, u32)>,
+    },
+    Text {
+        pool: Vec<u8>,
+        state_len: u32,
+        utf_16: i32,
+    },
+}
+
+impl StateContent {
+    fn into_encoded(
+        self,
+        key_to_idx: &FxHashMap<InternalString, usize>,
+        client_id_to_idx: &FxHashMap<ClientID, ClientIdx>,
+    ) -> EncodedStateContent {
+        match self {
+            StateContent::List { pool, state_len } => EncodedStateContent::List { pool, state_len },
+            StateContent::Map { pool, keys, values } => {
+                let mut keys_encoded = Vec::new();
+                let mut values_encoded = Vec::new();
+                for (k, v) in keys.into_iter().zip(values.into_iter()) {
+                    let ValueSlot {
+                        value,
+                        order: TotalOrderStamp { lamport, client_id },
+                    } = v;
+                    keys_encoded.push(*key_to_idx.get(&k).unwrap());
+                    values_encoded.push((
+                        value,
+                        lamport,
+                        *client_id_to_idx.get(&client_id).unwrap(),
+                    ));
+                }
+                EncodedStateContent::Map {
+                    pool,
+                    keys: keys_encoded,
+                    values: values_encoded,
+                }
+            }
+            StateContent::Text {
+                pool,
+                state_len,
+                utf_16,
+            } => EncodedStateContent::Text {
+                pool,
+                state_len,
+                utf_16,
+            },
+        }
+    }
+}
+
+impl EncodedStateContent {
+    pub fn into_state(self, keys: &Vec<InternalString>, clients: &Clients) -> StateContent {
+        match self {
+            EncodedStateContent::List { pool, state_len } => StateContent::List { pool, state_len },
+            EncodedStateContent::Map {
+                pool,
+                keys: m_keys,
+                values,
+            } => {
+                let mut keys_decoded = Vec::new();
+                let mut values_decoded = Vec::new();
+                for (k, v) in m_keys.into_iter().zip(values.into_iter()) {
+                    let (value, lamport, client_idx) = v;
+                    keys_decoded.push(keys[k].clone());
+                    values_decoded.push(ValueSlot {
+                        value,
+                        order: TotalOrderStamp {
+                            lamport,
+                            client_id: clients[client_idx as usize].clone(),
+                        },
+                    });
+                }
+                StateContent::Map {
+                    pool,
+                    keys: keys_decoded,
+                    values: values_decoded,
+                }
+            }
+            EncodedStateContent::Text {
+                pool,
+                state_len,
+                utf_16,
+            } => StateContent::Text {
+                pool,
+                state_len,
+                utf_16,
+            },
+        }
+    }
+}
 
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,10 +162,38 @@ pub(super) struct SnapshotEncoded {
     deps: Vec<DepsEncoding>,
     clients: Clients,
     containers: Containers,
+    container_states: Vec<EncodedStateContent>,
     keys: Vec<InternalString>,
 }
 
-pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
+fn convert_inner_content(
+    op_content: &InnerContent,
+    key_to_idx: &mut FxHashMap<InternalString, usize>,
+    keys: &mut Vec<InternalString>,
+) -> (usize, u64, bool) {
+    let (prop, value, is_del) = match &op_content {
+        InnerContent::List(list_op) => match list_op {
+            InnerListOp::Insert { slice, pos } => {
+                (*pos, merge_2_u32_u64(slice.0.start, slice.0.end), false)
+            }
+            InnerListOp::Delete(span) => (span.pos as usize, span.len as u64, true),
+        },
+        InnerContent::Map(map_set) => {
+            let InnerMapSet { key, value } = map_set;
+            (
+                *key_to_idx.entry(key.clone()).or_insert_with(|| {
+                    keys.push(key.clone());
+                    keys.len() - 1
+                }),
+                *value as u64,
+                false,
+            )
+        }
+    };
+    (prop, value, is_del)
+}
+
+pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> SnapshotEncoded {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
@@ -64,11 +204,9 @@ pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
     }
 
     let (_, containers) = store.reg.export();
-    let mut container_states = Vec::with_capacity(containers.len());
     for container_id in containers.iter() {
         let container = store.reg.get(container_id).unwrap();
-        let state = container.lock().unwrap().export_state();
-        container_states.push(state);
+        container.try_lock().unwrap().initialize_pool_mapping();
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -87,31 +225,22 @@ pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
             let op_len = change.ops.len() as u32;
             for op in change.ops.iter() {
                 let container_idx = op.container;
-                let (prop, value, is_del) = match &op.content {
-                    InnerContent::List(list_op) => match list_op {
-                        InnerListOp::Insert { slice, pos } => {
-                            (*pos, merge_2_u32_u64(slice.0.start, slice.0.end), false)
-                        }
-                        InnerListOp::Delete(span) => (span.pos as usize, span.len as u64, true),
-                    },
-                    InnerContent::Map(map_set) => {
-                        let InnerMapSet { key, value } = map_set;
-                        (
-                            *key_to_idx.entry(key.clone()).or_insert_with(|| {
-                                keys.push(key.clone());
-                                keys.len() - 1
-                            }),
-                            *value as u64,
-                            false,
-                        )
-                    }
-                };
-                ops.push(SnapshotOpEncoding {
-                    container: container_idx.to_u32(),
-                    prop,
-                    value,
-                    is_del,
-                });
+                let container_id = store.reg.get_id(container_idx).unwrap();
+                let container = store.reg.get(container_id).unwrap();
+                let new_ops = container
+                    .try_lock()
+                    .unwrap()
+                    .to_export_snapshot(&op.content, gc);
+                for op_content in new_ops {
+                    let (prop, value, is_del) =
+                        convert_inner_content(&op_content, &mut key_to_idx, &mut keys);
+                    ops.push(SnapshotOpEncoding {
+                        container: container_idx.to_u32(),
+                        prop,
+                        value,
+                        is_del,
+                    });
+                }
             }
 
             changes.push(ChangeEncoding {
@@ -125,32 +254,45 @@ pub(super) fn export_snapshot(store: &LogStore) -> SnapshotEncoded {
         }
     }
 
+    let container_states = containers
+        .iter()
+        .map(|container_id| {
+            let container = store.reg.get(container_id).unwrap();
+            container
+                .try_lock()
+                .unwrap()
+                .encode_and_release_pool_mapping()
+                .into_encoded(&key_to_idx, &client_id_to_idx)
+        })
+        .collect();
+
     SnapshotEncoded {
         changes,
         ops,
         deps,
         clients,
-        containers: container_states,
+        containers,
+        container_states,
         keys,
     }
 }
 
-pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
+pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
     let SnapshotEncoded {
         changes: change_encodings,
         ops,
         deps,
         clients,
         containers,
+        container_states,
         keys,
     } = encoded;
 
     if change_encodings.is_empty() {
         // register
-        if !containers.is_empty() {
-            for buf in containers.into_iter() {
-                let container_ins = ContainerInstance::import_state(buf);
-                store.reg.insert(container_ins.id().clone(), container_ins);
+        if !container_states.is_empty() {
+            for container_id in containers.into_iter() {
+                store.get_or_create_container(&container_id);
             }
         }
         return;
@@ -160,9 +302,10 @@ pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
 
-    for buf in containers.into_iter() {
-        let container_ins = ContainerInstance::import_state(buf);
-        store.reg.insert(container_ins.id().clone(), container_ins);
+    for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
+        let container = store.get_or_create_container(&container_id);
+        let state = pool_mapping.into_state(&keys, &clients);
+        container.try_lock().unwrap().to_import_snapshot(state)
     }
 
     for change_encoding in change_encodings {
@@ -269,4 +412,21 @@ pub(super) fn import_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
 
     store.vv = vv;
     store.frontiers = frontiers.get_frontiers();
+}
+
+impl LogStore {
+    pub fn encode_snapshot(&self, compress_cfg: bool) -> Vec<u8> {
+        let encoded = encode_snapshot(self, self.cfg.gc.gc);
+        let cfg = if compress_cfg {
+            CompressConfig::default()
+        } else {
+            CompressConfig::from_level(0, 0)
+        };
+        compress(&to_vec(&encoded).unwrap(), &cfg).unwrap()
+    }
+
+    pub fn decode_snapshot(&mut self, input: &[u8]) {
+        let encoded = from_bytes(&decompress(&input).unwrap()).unwrap();
+        decode_snapshot(self, encoded);
+    }
 }
