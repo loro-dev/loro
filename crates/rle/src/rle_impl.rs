@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::{rle_trait::GlobalIndex, HasIndex, HasLength, Mergable, Sliceable};
+use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use num::{cast, Integer, NumCast};
 use smallvec::{Array, SmallVec};
 
@@ -75,5 +76,39 @@ impl<T: HasLength + Sliceable, A: Array<Item = T>> Sliceable for SmallVec<A> {
         }
 
         ans
+    }
+}
+
+impl HasLength for AppendOnlyBytes {
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl HasLength for BytesSlice {
+    fn content_len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl Sliceable for BytesSlice {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        self.slice_clone(from..to)
+    }
+}
+
+impl Mergable for BytesSlice {
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        self.can_merge(other)
+    }
+
+    fn merge(&mut self, other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        self.try_merge(other).unwrap()
     }
 }
