@@ -3,9 +3,9 @@ use loro_core::{LoroCore, LoroValue};
 fn main() {
     let mut actors: Vec<_> = (0..500).map(|_| LoroCore::default()).collect();
     for (i, actor) in actors.iter_mut().enumerate() {
-        let mut list = actor.get_list("list");
+        let mut map = actor.get_map("map");
         let value: LoroValue = i.to_string().into();
-        list.insert(actor, 0, value).unwrap();
+        map.insert(actor, &i.to_string(), value).unwrap();
     }
 
     for i in 1..actors.len() {

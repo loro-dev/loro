@@ -136,20 +136,13 @@ impl Tracker {
             return;
         }
 
-        let mut self_vv = std::mem::take(&mut self.current_vv);
-
+        let self_vv = std::mem::take(&mut self.current_vv);
         {
             let diff = self_vv.diff_iter(vv);
             self.retreat(diff.0);
             self.forward(diff.1);
         }
-
-        for (client_id, counter) in self.current_vv.iter() {
-            self_vv.insert(*client_id, *counter);
-        }
-
-        self.current_vv = self_vv;
-        debug_assert_eq!(&self.current_vv, vv);
+        self.current_vv = vv.clone();
     }
 
     pub fn track_apply(&mut self, rich_op: &RichOp) {
