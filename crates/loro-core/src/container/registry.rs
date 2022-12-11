@@ -7,7 +7,6 @@ use enum_as_inner::EnumAsInner;
 
 use fxhash::FxHashMap;
 use owning_ref::OwningRefMut;
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::instrument;
 

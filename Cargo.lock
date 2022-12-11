@@ -1344,9 +1344,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520222b6f07ee150126e79842687c567c2eeb9043648065c9f0d2e22adeeaa7c"
+checksum = "774a5997b44f99b17866e559efff9138852415e32a07d04029bafb0e53ceff2a"
 dependencies = [
  "flate2",
  "itertools",
@@ -1358,9 +1358,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbbc55f793dde5998bba28398fab7440edcddf02e7b60665dbd60cfa1bb5e039"
+checksum = "6e234d18e1962ae8f30b17f861eb12bc455021a7db42fe60b6a0e4754055531a"
 dependencies = [
  "darling",
  "proc-macro2 1.0.47",

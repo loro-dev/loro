@@ -1,11 +1,11 @@
 use fxhash::FxHashMap;
-use rle::{HasLength, RleVec, RleVecWithIndex};
+use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 use tracing::instrument;
 
 use crate::{
-    change::{Change, ChangeMergeCfg, Lamport, Timestamp},
+    change::{Change, Lamport, Timestamp},
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
@@ -14,9 +14,9 @@ use crate::{
     },
     dag::Dag,
     id::{ClientID, Counter, ID},
-    op::{Op, RemoteContent, RemoteOp},
+    op::{RemoteContent, RemoteOp},
     smstring::SmString,
-    span::{HasIdSpan, HasLamportSpan},
+    span::HasIdSpan,
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
 
@@ -302,7 +302,7 @@ fn decode_changes(store: &mut LogStore, encoded: Encoded) {
 
         changes
             .entry(client_id)
-            .or_insert_with(|| Vec::new())
+            .or_insert_with(Vec::new)
             .push(change);
     }
     // TODO: using the one with fewer changes to import
@@ -314,7 +314,6 @@ impl LogStore {
         let encoded = encode_changes(self, vv);
         let mut ans = vec![compress_cfg as u8];
         let buf = if compress_cfg {
-            // TODO: columnar compress use read/write mode
             compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
         } else {
             to_vec(&encoded).unwrap()

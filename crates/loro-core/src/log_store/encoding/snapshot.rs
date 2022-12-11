@@ -87,7 +87,7 @@ impl StateContent {
 }
 
 impl EncodedStateContent {
-    pub fn into_state(self, keys: &Vec<InternalString>, clients: &Clients) -> StateContent {
+    pub fn into_state(self, keys: &[InternalString], clients: &Clients) -> StateContent {
         match self {
             EncodedStateContent::List { pool, state_len } => StateContent::List { pool, state_len },
             EncodedStateContent::Map {
@@ -104,7 +104,7 @@ impl EncodedStateContent {
                         value,
                         order: TotalOrderStamp {
                             lamport,
-                            client_id: clients[client_idx as usize].clone(),
+                            client_id: clients[client_idx as usize],
                         },
                     });
                 }
@@ -400,16 +400,24 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
 impl LogStore {
     pub fn encode_snapshot(&self, compress_cfg: bool) -> Vec<u8> {
         let encoded = encode_snapshot(self, self.cfg.gc.gc);
-        let cfg = if compress_cfg {
-            CompressConfig::default()
+        let mut ans = vec![compress_cfg as u8];
+        let buf = if compress_cfg {
+            // TODO: columnar compress use read/write mode
+            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
         } else {
-            CompressConfig::from_level(0, 0)
+            to_vec(&encoded).unwrap()
         };
-        compress(&to_vec(&encoded).unwrap(), &cfg).unwrap()
+        ans.extend(buf);
+        ans
     }
 
     pub fn decode_snapshot(&mut self, input: &[u8]) {
-        let encoded = from_bytes(&decompress(&input).unwrap()).unwrap();
+        let compress_cfg = *input.first().unwrap() > 0;
+        let encoded = if compress_cfg {
+            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
+        } else {
+            from_bytes(&input[1..]).unwrap()
+        };
         decode_snapshot(self, encoded);
     }
 }

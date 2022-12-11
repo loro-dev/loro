@@ -1,8 +1,5 @@
 // TODO: refactor, extract common code with text
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},

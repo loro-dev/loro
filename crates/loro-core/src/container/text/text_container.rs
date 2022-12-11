@@ -25,7 +25,7 @@ use crate::{
 
 use super::{
     rope::Rope,
-    string_pool::{Alive, EncodeUtf16, PoolString, StringPool},
+    string_pool::{Alive, PoolString, StringPool},
     text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
 };
@@ -63,7 +63,6 @@ impl TextContainer {
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
-        let range = slice.clone();
         self.state.insert(pos, slice);
         let op = Op::new(
             id,
@@ -452,8 +451,8 @@ impl Container for TextContainer {
     fn to_import_snapshot(&mut self, state_content: StateContent) {
         if let StateContent::Text { pool, state_len } = state_content {
             let mut append_only_bytes = AppendOnlyBytes::with_capacity(pool.len());
-            let pool_string = append_only_bytes.slice(0..state_len as usize).into();
             append_only_bytes.push_slice(&pool);
+            let pool_string = append_only_bytes.slice(0..state_len as usize).into();
             self.raw_str = StringPool::from_data(append_only_bytes);
             self.state.insert(0, pool_string);
         } else {

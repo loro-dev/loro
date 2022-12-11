@@ -163,12 +163,12 @@ impl MapPoolMapping {
     }
 }
 mod test {
-    use crate::container::text::text_content::SliceRange;
-
-    use super::PoolMapping;
 
     #[test]
     fn mapping() {
+        use crate::container::text::text_content::SliceRange;
+
+        use super::PoolMapping;
         let old_pool = vec![7, 8, 9, 6, 5];
         let old_state = vec![0..1, 3..4, 2..3];
 

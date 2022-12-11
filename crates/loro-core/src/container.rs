@@ -14,7 +14,6 @@ use crate::{
     InternalString, LoroError, LoroValue, ID,
 };
 
-use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -23,7 +22,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use self::pool_mapping::{PoolMapping, StateContent};
+use self::pool_mapping::StateContent;
 
 pub mod pool_mapping;
 pub mod registry;

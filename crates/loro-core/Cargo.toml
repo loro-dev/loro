@@ -28,7 +28,7 @@ js-sys = { version = "0.3.60", optional = true }
 serde_json = { version = "1.0.87", optional = true }
 arref = "0.1.0"
 debug-log = "0.1.4"
-serde_columnar = { version = "0.1.0" }
+serde_columnar = { version = "0.2.2" }
 tracing = { version = "0.1.37" }
 append-only-bytes = { version = "0.1.4", features = ["u32_range"] }
 
