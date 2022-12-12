@@ -1,7 +1,10 @@
 /// distribute the num to a array, where the sum of the array is num
 /// and each element is in the range [min, max]
 pub(super) fn distribute(mut num: usize, min: usize, max: usize) -> Vec<usize> {
-    debug_assert!(num >= min);
+    if num <= max {
+        return vec![num];
+    }
+
     let n = num / min;
     let mut arr = vec![min; n];
     num -= n * min;

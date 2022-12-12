@@ -477,6 +477,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         ans
     }
 
+    // TODO: refactor
     pub(crate) fn apply_updates<F>(
         &mut self,
         mut updates: Vec<(usize, SmallVec<[T; 4]>)>,
@@ -506,6 +507,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                 }
             }
 
+            // TODO: try merging here?
             Ok(A::update_cache_leaf(self))
         } else {
             let mut new_children: SmallVec<[_; 64]> = SmallVec::new();
