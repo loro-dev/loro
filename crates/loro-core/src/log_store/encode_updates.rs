@@ -74,6 +74,25 @@ impl LogStore {
 
         Ok(self.import(changes))
     }
+
+    #[instrument(skip_all)]
+    pub fn import_updates_batch(
+        &mut self,
+        batch: &[Vec<u8>],
+    ) -> Result<Vec<RawEvent>, postcard::Error> {
+        let mut changes: RemoteClientChanges = Default::default();
+        for input in batch {
+            let updates: Updates = postcard::from_bytes(input)?;
+            for encoded in updates.changes {
+                changes
+                    .entry(encoded.meta.client)
+                    .or_default()
+                    .append(&mut convert_encoded_to_changes(encoded));
+            }
+        }
+
+        Ok(self.import(changes))
+    }
 }
 
 fn convert_changes_to_encoded<I>(mut changes: I) -> EncodedClientChanges
@@ -197,6 +216,21 @@ impl LoroCore {
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
         debug_log::group!("Import updates at {}", self.client_id());
         let ans = self.log_store.write().unwrap().import_updates(input);
+        let ans = match ans {
+            Ok(events) => {
+                self.notify(events);
+                Ok(())
+            }
+            Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
+        };
+        debug_log::group_end!();
+        ans
+    }
+
+    #[instrument(skip_all)]
+    pub fn import_updates_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
+        debug_log::group!("Import updates at {}", self.client_id());
+        let ans = self.log_store.write().unwrap().import_updates_batch(input);
         let ans = match ans {
             Ok(events) => {
                 self.notify(events);
