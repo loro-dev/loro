@@ -4,7 +4,17 @@ use std::rc::Rc;
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
+use loro_core::context::Context;
 use loro_core::{ContainerType, LoroCore, LoroValue};
+
+#[test]
+fn example_list() {
+    let mut doc = LoroCore::default();
+    let mut list = doc.get_list("list");
+    list.insert(&doc, 0, 11).unwrap();
+    list.insert(&doc, 1, 22).unwrap();
+    dbg!(&doc.log_store());
+}
 
 #[test]
 #[cfg(feature = "json")]

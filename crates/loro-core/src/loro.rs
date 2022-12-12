@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::{event::RawEvent, LoroValue};
 use fxhash::FxHashMap;
+use tracing::instrument;
 
 use crate::{
     change::Change,
@@ -125,6 +126,7 @@ impl LoroCore {
             .unsubscribe_root(subscription)
     }
 
+    #[instrument(skip_all)]
     pub fn notify(&self, events: Vec<RawEvent>) {
         let store = self.log_store.read().unwrap();
         let hierarchy = store.hierarchy.clone();

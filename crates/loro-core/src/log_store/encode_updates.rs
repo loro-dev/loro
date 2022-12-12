@@ -64,6 +64,7 @@ impl LogStore {
             .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
     }
 
+    #[instrument(skip_all)]
     pub fn import_updates(&mut self, input: &[u8]) -> Result<Vec<RawEvent>, postcard::Error> {
         let updates: Updates = postcard::from_bytes(input)?;
         let mut changes: RemoteClientChanges = Default::default();
@@ -134,6 +135,7 @@ where
     }
 }
 
+#[instrument(skip_all)]
 fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp>> {
     let mut result = Vec::with_capacity(changes.data.len());
     let mut last_lamport = changes.meta.lamport;
@@ -191,6 +193,7 @@ impl LoroCore {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
         debug_log::group!("Import updates at {}", self.client_id());
         let ans = self.log_store.write().unwrap().import_updates(input);

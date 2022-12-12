@@ -1,11 +1,14 @@
 use loro_core::{LoroCore, LoroValue};
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    let mut actors: Vec<_> = (0..500).map(|_| LoroCore::default()).collect();
+    let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+    let mut actors: Vec<_> = (0..200).map(|_| LoroCore::default()).collect();
     for (i, actor) in actors.iter_mut().enumerate() {
-        let mut map = actor.get_map("map");
+        let mut list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();
-        map.insert(actor, &i.to_string(), value).unwrap();
+        list.insert(actor, 0, value).unwrap();
     }
 
     for i in 1..actors.len() {
@@ -17,4 +20,5 @@ fn main() {
         let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
         b.import(a.export(b.vv()));
     }
+    drop(profiler);
 }

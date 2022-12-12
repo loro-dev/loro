@@ -39,9 +39,10 @@ async function build() {
 }
 
 async function cargoBuild() {
+  const cmd  = `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+  console.log(cmd);
   const status = await Deno.run({
-    cmd: `cargo build --target wasm32-unknown-unknown --profile release`
-      .split(" "),
+    cmd: cmd.split(" "),
     cwd: LoroWasmDir,
   }).status();
   if (!status.success) {
