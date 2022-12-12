@@ -80,6 +80,7 @@ impl LogStore {
         &mut self,
         batch: &[Vec<u8>],
     ) -> Result<Vec<RawEvent>, postcard::Error> {
+        // FIXME: changes may not be continuous
         let mut changes: RemoteClientChanges = Default::default();
         for input in batch {
             let updates: Updates = postcard::from_bytes(input)?;
