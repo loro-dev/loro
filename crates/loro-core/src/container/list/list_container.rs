@@ -241,7 +241,9 @@ impl ListContainer {
     }
 
     pub fn check(&mut self) {
-        self.tracker.as_mut().map(|x| x.check());
+        if let Some(x) = self.tracker.as_mut() {
+            x.check()
+        }
     }
 
     #[cfg(feature = "test_utils")]
