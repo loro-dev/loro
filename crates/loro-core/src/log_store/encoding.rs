@@ -194,6 +194,15 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
         });
     }
 
+    // println!("changes: {:?} bytes\nops: {:?} bytes\ndeps: {:?} bytes\nclients: {:?} bytes\ncontainers: {:?} bytes\nkeys: {:?} bytes\n", 
+    //     to_vec(&changes).unwrap().len(),
+    //     to_vec(&ops).unwrap().len(),
+    //     to_vec(&deps).unwrap().len(),
+    //     to_vec(&clients).unwrap().len(),
+    //     to_vec(&container_ids).unwrap().len(),
+    //     to_vec(&keys).unwrap().len(),
+    // );
+
     Encoded {
         changes,
         ops,
