@@ -18,7 +18,6 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
-    version::IdSpanVector,
 };
 
 use super::{
@@ -33,7 +32,7 @@ pub struct TextContainer {
     id: ContainerID,
     state: Rope,
     raw_str: Arc<Mutex<StringPool>>,
-    tracker: Tracker,
+    tracker: Option<Tracker>,
 }
 
 impl TextContainer {
@@ -41,7 +40,7 @@ impl TextContainer {
         Self {
             id,
             raw_str: Arc::new(Mutex::new(StringPool::default())),
-            tracker: Tracker::new(Default::default(), 0),
+            tracker: None,
             state: Default::default(),
         }
     }
@@ -139,7 +138,9 @@ impl TextContainer {
     }
 
     pub fn check(&mut self) {
-        self.tracker.check();
+        if let Some(x) = self.tracker.as_mut() {
+            x.check()
+        }
     }
 
     #[cfg(feature = "test_utils")]
@@ -315,29 +316,28 @@ impl Container for TextContainer {
 
     #[instrument(skip_all)]
     fn tracker_init(&mut self, vv: &crate::VersionVector) {
-        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
-            && self.tracker.all_vv() >= vv
-            && vv >= self.tracker.start_vv()
-        {
-            self.tracker.checkout(vv);
-        } else {
-            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+        match &mut self.tracker {
+            Some(tracker) => {
+                if (!vv.is_empty() || tracker.start_vv().is_empty())
+                    && tracker.all_vv() >= vv
+                    && vv >= tracker.start_vv()
+                {
+                } else {
+                    self.tracker = Some(Tracker::new(vv.clone(), Counter::MAX / 2));
+                }
+            }
+            None => {
+                self.tracker = Some(Tracker::new(vv.clone(), Counter::MAX / 2));
+            }
         }
     }
 
-    #[instrument(skip_all)]
     fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
-        self.tracker.checkout(vv)
+        self.tracker.as_mut().unwrap().checkout(vv)
     }
 
-    #[instrument(skip_all)]
-    fn track_apply(
-        &mut self,
-        _: &mut Hierarchy,
-        rich_op: &RichOp,
-        _import_context: &mut ImportContext,
-    ) {
-        self.tracker.track_apply(rich_op);
+    fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, _: &mut ImportContext) {
+        self.tracker.as_mut().unwrap().track_apply(rich_op);
     }
 
     #[instrument(skip_all)]
@@ -350,6 +350,8 @@ impl Container for TextContainer {
         let mut diff = vec![];
         for effect in self
             .tracker
+            .as_mut()
+            .unwrap()
             .iter_effects(&import_context.old_vv, &import_context.spans)
         {
             match effect {
@@ -386,6 +388,8 @@ impl Container for TextContainer {
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
         }
+
+        self.tracker = None;
     }
 }
 
