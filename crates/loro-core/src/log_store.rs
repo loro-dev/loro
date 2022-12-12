@@ -112,8 +112,7 @@ impl LogStore {
     pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<ClientID, Vec<Change<RemoteOp>>> {
         let mut ans: FxHashMap<ClientID, Vec<Change<RemoteOp>>> = Default::default();
         let self_vv = self.vv();
-        let diff = self_vv.diff(remote_vv);
-        for span in diff.left.iter() {
+        for span in self_vv.sub_iter(remote_vv) {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
                 let vec = ans.entry(change.id.client_id).or_insert_with(Vec::new);

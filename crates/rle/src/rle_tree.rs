@@ -342,7 +342,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         U: FnMut(&mut T),
         F: FnMut(&T, *mut LeafNode<T, A>),
     {
-        let mut updates_map: HashMap<NonNull<_>, Vec<(_, SmallVec<[T; 2]>)>, _> =
+        let mut updates_map: HashMap<NonNull<_>, Vec<(_, SmallVec<[T; 4]>)>, _> =
             FxHashMap::default();
         for cursor in cursors {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
@@ -384,24 +384,23 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
                 .push((cursor, arg));
         }
 
-        let mut updates_map: HashMap<_, Vec<(_, SmallVec<[T; 2]>)>, _> = FxHashMap::default();
+        let mut updates_map: HashMap<_, Vec<(_, SmallVec<[T; 4]>)>, _> = FxHashMap::default();
         for ((mut leaf, index), args) in cursor_map.iter() {
             // SAFETY: we has the exclusive reference to the tree and the cursor is valid
             let leaf = unsafe { leaf.as_mut() };
-            let input_args = args.iter().map(|x| x.1).collect::<Vec<_>>();
             let updates = leaf.pure_updates_at_same_index(
                 *index,
-                &args.iter().map(|x| x.0.offset).collect::<Vec<_>>(),
-                &args.iter().map(|x| x.0.len).collect::<Vec<_>>(),
-                &input_args,
+                args.iter().map(|x| x.0.offset),
+                args.iter().map(|x| x.0.len),
+                args.iter().map(|x| x.1),
                 update_fn,
             );
 
-            if let Some(update) = updates {
+            if !updates.is_empty() {
                 updates_map
                     .entry(leaf.into())
                     .or_default()
-                    .push((*index, update.into_iter().collect()));
+                    .push((*index, updates));
             }
         }
 
@@ -411,7 +410,7 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
     #[allow(clippy::type_complexity)]
     fn update_with_gathered_map<F, M>(
         &mut self,
-        iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, SmallVec<[T; 2]>)>, M>,
+        iter: HashMap<NonNull<LeafNode<T, A>>, Vec<(usize, SmallVec<[T; 4]>)>, M>,
         notify: &mut F,
     ) where
         F: FnMut(&T, *mut LeafNode<T, A>),

@@ -387,7 +387,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         offset: usize,
         len: usize,
         update_fn: &mut U,
-    ) -> Option<SmallVec<[T; 2]>>
+    ) -> Option<SmallVec<[T; 4]>>
     where
         U: FnMut(&mut T),
     {
@@ -437,28 +437,30 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         Some(ans)
     }
 
-    pub(crate) fn pure_updates_at_same_index<U, Arg>(
+    #[inline(always)]
+    pub(crate) fn pure_updates_at_same_index<'a, U, Arg, Lens, Offsets, Args>(
         &self,
         child_index: usize,
-        offsets: &[usize],
-        lens: &[usize],
-        args: &[&Arg],
+        offsets: Offsets,
+        mut lens: Lens,
+        mut args: Args,
         update_fn: &mut U,
-    ) -> Option<SmallVec<[T; 2]>>
+    ) -> SmallVec<[T; 4]>
     where
         U: FnMut(&mut T, &Arg),
+        Offsets: Iterator<Item = usize>,
+        Lens: Iterator<Item = usize>,
+        Args: Iterator<Item = &'a Arg>,
+        Arg: 'a,
     {
-        if offsets.is_empty() {
-            return None;
-        }
-
-        let mut ans: SmallVec<[T; 2]> = SmallVec::new();
-        ans.push(self.children[child_index].clone());
+        let mut ans: SmallVec<[T; 4]> = SmallVec::new();
         let ans_len = self.children[child_index].atom_len();
-        for i in 0..offsets.len() {
-            let offset = offsets[i];
-            let len = lens[i];
-            let arg = &args[i];
+        for (_, offset) in offsets.enumerate() {
+            if ans.is_empty() {
+                ans.push(self.children[child_index].clone());
+            }
+            let len = lens.next().unwrap();
+            let arg = args.next().unwrap();
             // TODO: can be optimized if needed
             let mut target_spans = ans.slice(offset, offset + len);
             for span in target_spans.iter_mut() {
@@ -472,79 +474,70 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
 
         debug_assert_eq!(ans_len, ans.iter().map(|x| x.atom_len()).sum());
-        Some(ans)
+        ans
     }
 
     pub(crate) fn apply_updates<F>(
         &mut self,
-        mut updates: Vec<(usize, SmallVec<[T; 2]>)>,
+        mut updates: Vec<(usize, SmallVec<[T; 4]>)>,
         notify: &mut F,
     ) -> Result<A::CacheInParent, (A::CacheInParent, Vec<ArenaBoxedNode<'bump, T, A>>)>
     where
         F: FnMut(&T, *mut LeafNode<'_, T, A>),
     {
+        if updates.is_empty() {
+            return Ok(self.cache.into());
+        }
+
+        updates.retain(|x| !x.1.is_empty());
         updates.sort_by_key(|x| x.0);
-        let mut i = 0;
-        let mut j = 1;
-        // try merge sibling updates
-        while i + j < updates.len() {
-            if updates[i].0 + j == updates[i + j].0 {
-                let (a, b) = arref::array_mut_ref!(&mut updates, [i, i + j]);
-                for node in b.1.drain(..) {
-                    a.1.push(node);
+        let new_len: usize =
+            updates.iter().map(|x| x.1.len() - 1).sum::<usize>() + self.children.len();
+        if new_len <= A::MAX_CHILDREN_NUM {
+            let mut offset = 0;
+            for (index, replace) in updates {
+                let replace_len = replace.len();
+                if replace_len == 1 {
+                    self.children[index + offset] = replace.into_iter().next().unwrap();
+                } else {
+                    self.children
+                        .splice(index + offset..index + offset + 1, replace);
+                    offset += replace_len - 1;
                 }
-
-                j += 1;
-            } else {
-                i += j;
-                j = 1;
-            }
-        }
-
-        let mut new_children: SmallVec<[_; 64]> = SmallVec::new();
-        let mut self_children = std::mem::replace(
-            &mut self.children,
-            <<A::Arena as Arena>::Vec<'bump, _> as VecTrait<_>>::with_capacity_in(
-                A::MAX_CHILDREN_NUM,
-                self.bump,
-            ),
-        );
-        let mut last_end = 0;
-        // append element to the new_children list
-        for (index, replace) in updates {
-            for child in self_children.drain(0..index + 1 - last_end) {
-                new_children.push(child);
-            }
-
-            new_children.pop();
-
-            for element in replace {
-                let mut merged = false;
-                if let Some(last) = new_children.last_mut() {
-                    if last.is_mergable(&element, &()) {
-                        last.merge(&element, &());
-                        merged = true;
-                    }
-                }
-                if !merged {
-                    new_children.push(element);
-                }
-            }
-
-            last_end = index + 1;
-        }
-
-        for child in self_children.drain(..) {
-            new_children.push(child);
-        }
-
-        if new_children.len() <= A::MAX_CHILDREN_NUM {
-            for child in new_children {
-                self.children.push(child);
             }
 
             Ok(A::update_cache_leaf(self))
         } else {
+            let mut new_children: SmallVec<[_; 64]> = SmallVec::new();
+            let mut last_end = 0;
+            // append element to the new_children list
+            for (index, replace) in updates {
+                for child in self.children.drain(0..index + 1 - last_end) {
+                    new_children.push(child);
+                }
+
+                new_children.pop();
+
+                for element in replace {
+                    let mut merged = false;
+                    if let Some(last) = new_children.last_mut() {
+                        if last.is_mergable(&element, &()) {
+                            last.merge(&element, &());
+                            merged = true;
+                        }
+                    }
+                    if !merged {
+                        new_children.push(element);
+                    }
+                }
+
+                last_end = index + 1;
+            }
+
+            for child in self.children.drain(..) {
+                new_children.push(child);
+            }
+
             let children_nums =
                 distribute(new_children.len(), A::MIN_CHILDREN_NUM, A::MAX_CHILDREN_NUM);
             let mut index = 0;
