@@ -1,9 +1,7 @@
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use serde_columnar::{
-    columnar, compress, decompress, from_bytes, to_vec, ColumnarVec, CompressConfig,
-};
+use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -122,7 +120,7 @@ impl EncodedStateContent {
     }
 }
 
-#[columnar(ser, de)]
+#[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SnapshotOpEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
@@ -132,111 +130,10 @@ struct SnapshotOpEncoding {
     prop: usize,
     // #[columnar(compress(level = 0))]
     // list range or del len or map value index
-    value: u32,
+    value: u64,
     #[columnar(strategy = "Rle")]
     value2: i64,
 }
-
-const _: () = {
-    use serde::ser::SerializeTuple;
-    #[automatically_derived]
-    impl<IT> ::serde_columnar::RowSer<IT> for SnapshotOpEncoding
-    where
-        for<'c> &'c IT: IntoIterator<Item = &'c Self>,
-    {
-        const FIELD_NUM: usize = 4usize;
-        fn serialize_columns<S>(rows: &IT, ser: S) -> std::result::Result<S::Ok, S::Error>
-        where
-            S: serde::ser::Serializer,
-        {
-            let column0 = rows
-                .into_iter()
-                .map(|row| row.container)
-                .collect::<::std::vec::Vec<_>>();
-            let column0 = ::serde_columnar::RleColumn::<u32>::new(
-                column0,
-                ::serde_columnar::ColumnAttr {
-                    index: 0usize,
-                    compress: None,
-                },
-            );
-            let column1 = rows
-                .into_iter()
-                .map(|row| row.prop)
-                .collect::<::std::vec::Vec<_>>();
-            let column1 = ::serde_columnar::DeltaRleColumn::<usize>::new(
-                column1,
-                ::serde_columnar::ColumnAttr {
-                    index: 1usize,
-                    compress: None,
-                },
-            );
-            let column2 = rows
-                .into_iter()
-                .map(|row| row.value)
-                .collect::<::std::vec::Vec<_>>();
-            let column3 = rows
-                .into_iter()
-                .map(|row| row.value2)
-                .collect::<::std::vec::Vec<_>>();
-            let column3 = ::serde_columnar::RleColumn::new(
-                column3,
-                ::serde_columnar::ColumnAttr {
-                    index: 3usize,
-                    compress: None,
-                },
-            );
-            println!(
-                "c {} p {} v {} d {}",
-                to_vec(&column0).unwrap().len(),
-                to_vec(&column1).unwrap().len(),
-                to_vec(&column2).unwrap().len(),
-                to_vec(&column3).unwrap().len()
-            );
-            let mut seq_encoder = ser.serialize_tuple(4usize)?;
-            seq_encoder.serialize_element(&column0)?;
-            seq_encoder.serialize_element(&column1)?;
-            seq_encoder.serialize_element(&column2)?;
-            seq_encoder.serialize_element(&column3)?;
-            seq_encoder.end()
-        }
-    }
-};
-const _: () = {
-    use serde::ser::SerializeTuple;
-    #[automatically_derived]
-    impl<'de, IT> ::serde_columnar::RowDe<'de, IT> for SnapshotOpEncoding
-    where
-        IT: FromIterator<Self> + Clone,
-    {
-        const FIELD_NUM: usize = 4usize;
-        fn deserialize_columns<D>(de: D) -> Result<IT, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            let (column0, column1, column2, column3): (
-                ::serde_columnar::RleColumn<u32>,
-                ::serde_columnar::DeltaRleColumn<usize>,
-                ::std::vec::Vec<u32>,
-                ::serde_columnar::RleColumn<i64>,
-            ) = serde::de::Deserialize::deserialize(de)?;
-            let ans = ::serde_columnar::izip!(
-                column0.data.into_iter(),
-                column1.data.into_iter(),
-                column2.into_iter(),
-                column3.data.into_iter()
-            )
-            .map(|(container, prop, value, is_del)| Self {
-                container: container,
-                prop: prop,
-                value: value,
-                value2: is_del,
-            })
-            .collect();
-            Ok(ans)
-        }
-    }
-};
 
 #[columnar(ser, de)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -257,24 +154,24 @@ fn convert_inner_content(
     op_content: &InnerContent,
     key_to_idx: &mut FxHashMap<InternalString, usize>,
     keys: &mut Vec<InternalString>,
-) -> (usize, u32, i64) {
+) -> (usize, u64, i64) {
     let (prop, value, is_del) = match &op_content {
         InnerContent::List(list_op) => match list_op {
             InnerListOp::Insert { slice, pos } => {
                 if slice.is_unknown() {
-                    (*pos, slice.content_len() as u32, -2)
+                    (*pos, slice.content_len() as u64, -2)
                 } else {
                     if (slice.0.end as i64) < 0 {
                         println!("GG");
                     }
                     (
                         *pos,
-                        slice.0.start,
+                        slice.0.start as u64,
                         slice.0.end as i64, //merge_2_u32_u64(slice.0.start, slice.0.end),
                     )
                 }
             }
-            InnerListOp::Delete(span) => (span.pos as usize, span.len as u32, -1),
+            InnerListOp::Delete(span) => (span.pos as usize, span.len as u64, -1),
         },
         InnerContent::Map(map_set) => {
             let InnerMapSet { key, value } = map_set;
@@ -283,7 +180,7 @@ fn convert_inner_content(
                     keys.push(key.clone());
                     keys.len() - 1
                 }),
-                *value,
+                *value as u64,
                 -1,
             )
         }
@@ -364,16 +261,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> SnapshotEncoded {
         })
         .collect();
 
-    // println!("changes: {:?} bytes\nops: {:?} bytes\ndeps: {:?} bytes\nclients: {:?} bytes\ncontainers: {:?} bytes\ncontainer states: {:?} bytes\nkeys: {:?} bytes\n",
-    //     to_vec(&ColumnarVec::new(&changes)).unwrap().len(),
-    //     to_vec(&ColumnarVec::new(&ops)).unwrap().len(),
-    //     to_vec(&ColumnarVec::new(&deps)).unwrap().len(),
-    //     to_vec(&clients).unwrap().len(),
-    //     to_vec(&containers).unwrap().len(),
-    //     to_vec(&container_states).unwrap().len(),
-    //     to_vec(&keys).unwrap().len(),
-    // );
-
     SnapshotEncoded {
         changes,
         ops,
@@ -449,7 +336,10 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
             let content = match container.lock().unwrap().type_() {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
-                    InnerContent::Map(InnerMapSet { key, value })
+                    InnerContent::Map(InnerMapSet {
+                        key,
+                        value: value as u32,
+                    })
                 }
                 ContainerType::List | ContainerType::Text => {
                     let is_del = value2 == -1;
@@ -462,7 +352,7 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
                         let is_unknown = value2 == -2;
                         if is_unknown {
                             InnerListOp::Insert {
-                                slice: SliceRange::new_unknown(value),
+                                slice: SliceRange::new_unknown(value as u32),
                                 pos: prop,
                             }
                         } else {
