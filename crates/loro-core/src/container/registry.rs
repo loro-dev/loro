@@ -17,7 +17,7 @@ use crate::{
     id::ClientID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
-    version::IdSpanVector,
+    version::PatchedVersionVector,
     LoroError, LoroValue,
 };
 
@@ -64,7 +64,7 @@ impl Container for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn tracker_init(&mut self, vv: &crate::VersionVector) {
+    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_init(vv),
             ContainerInstance::Text(x) => x.tracker_init(vv),
@@ -74,7 +74,7 @@ impl Container for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
             ContainerInstance::Text(x) => x.tracker_checkout(vv),

@@ -18,6 +18,7 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
+    version::PatchedVersionVector,
 };
 
 use super::{
@@ -315,7 +316,7 @@ impl Container for TextContainer {
     }
 
     #[instrument(skip_all)]
-    fn tracker_init(&mut self, vv: &crate::VersionVector) {
+    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
         match &mut self.tracker {
             Some(tracker) => {
                 if (!vv.is_empty() || tracker.start_vv().is_empty())
@@ -332,7 +333,7 @@ impl Container for TextContainer {
         }
     }
 
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
         self.tracker.as_mut().unwrap().checkout(vv)
     }
 
@@ -348,12 +349,10 @@ impl Container for TextContainer {
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = vec![];
-        for effect in self
-            .tracker
-            .as_mut()
-            .unwrap()
-            .iter_effects(&import_context.old_vv, &import_context.spans)
-        {
+        for effect in self.tracker.as_mut().unwrap().iter_effects(
+            import_context.patched_old_vv.as_ref().unwrap(),
+            &import_context.spans,
+        ) {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {

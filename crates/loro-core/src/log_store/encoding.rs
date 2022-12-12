@@ -349,6 +349,7 @@ fn decode_changes(
         spans: vv.to_spans(),
         new_vv: vv,
         diff: Default::default(),
+        patched_old_vv: None,
     };
     store.apply(container_map, &mut context);
 

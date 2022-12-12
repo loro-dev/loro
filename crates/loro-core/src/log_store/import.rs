@@ -1,11 +1,12 @@
 use crate::id::{Counter, ID};
+use crate::version::PatchedVersionVector;
 use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
-use std::thread::current;
+use std::sync::Arc;
 use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
 use tracing::instrument;
 
@@ -29,6 +30,7 @@ pub struct ImportContext {
     pub old_frontiers: Frontiers,
     pub new_frontiers: Frontiers,
     pub old_vv: VersionVector,
+    pub patched_old_vv: Option<PatchedVersionVector>,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
     pub diff: Vec<(ContainerID, Vec<Diff>)>,
@@ -97,6 +99,7 @@ impl LogStore {
             spans: next_vv.diff(&self.vv).left,
             new_vv: next_vv,
             diff: Default::default(),
+            patched_old_vv: None,
         };
         self.with_hierarchy(|_, h| {
             h.take_deleted();
@@ -251,16 +254,20 @@ impl LogStore {
 
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
+        let iter_targets = context.new_vv.sub_vec(&common_ancestors_vv);
+        let common_ancestors_vv = Arc::new(common_ancestors_vv);
+        context.patched_old_vv = Some(PatchedVersionVector::from_version(
+            &common_ancestors_vv,
+            &context.old_vv,
+        ));
+        let common_ancestors_vv = PatchedVersionVector::new(common_ancestors_vv);
         for (_, container) in container_map.iter_mut() {
             container.tracker_init(&common_ancestors_vv);
         }
         self.with_hierarchy(|store, hierarchy| {
             let mut current_vv = common_ancestors_vv.clone();
             let mut already_checkout = FxHashSet::default();
-            for iter in store.iter_causal(
-                &common_ancestors,
-                context.new_vv.sub_vec(&common_ancestors_vv),
-            ) {
+            for iter in store.iter_causal(&common_ancestors, iter_targets) {
                 debug_log::debug_dbg!(&iter);
                 debug_log::debug_dbg!(&current_vv);
                 already_checkout.clear();

@@ -287,9 +287,9 @@ impl Container for MapContainer {
         map.into()
     }
 
-    fn tracker_init(&mut self, _vv: &crate::version::VersionVector) {}
+    fn tracker_init(&mut self, _vv: &crate::version::PatchedVersionVector) {}
 
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {}
+    fn tracker_checkout(&mut self, vv: &crate::version::PatchedVersionVector) {}
 
     fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
         if let Ok(set) = content.into_map() {
