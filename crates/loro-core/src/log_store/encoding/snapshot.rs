@@ -5,6 +5,7 @@ use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, Compres
 
 use crate::{
     change::{Change, ChangeMergeCfg},
+    container::text::text_content::SliceRange,
     container::{
         list::list_op::{DeleteSpan, InnerListOp},
         map::{InnerMapSet, ValueSlot},
@@ -16,23 +17,12 @@ use crate::{
     id::{ClientID, ID},
     op::{InnerContent, Op},
     span::{HasIdSpan, HasLamportSpan},
-    text::text_content::SliceRange,
     version::TotalOrderStamp,
     ContainerType, InternalString, LogStore, LoroValue, VersionVector,
 };
 
 use super::{ChangeEncoding, ClientIdx, Clients, DepsEncoding};
-pub fn split_u64_2_u32(a: u64) -> (u32, u32) {
-    let high_byte = (a >> 32) as u32;
-    let low_byte = a as u32;
-    (high_byte, low_byte)
-}
 
-pub fn merge_2_u32_u64(a: u32, b: u32) -> u64 {
-    let high_byte = (a as u64) << 32;
-    let low_byte = b as u64;
-    high_byte | low_byte
-}
 type Containers = Vec<ContainerID>;
 
 #[derive(Debug, Serialize, Deserialize)]
