@@ -112,7 +112,7 @@ mod run {
                         text.insert(&loro, *pos, ins);
                     });
 
-                    loro_b.import(loro.export(loro_b.vv()));
+                    loro_b.import(loro.export(loro_b.vv_cloned()));
                 }
             })
         });
@@ -154,8 +154,8 @@ mod run {
                         text.delete(&loro_b, pos, del_here).unwrap();
                         text.insert(&loro_b, pos, ins_content).unwrap();
                     }
-                    loro_b.import(loro.export(loro_b.vv()));
-                    loro.import(loro_b.export(loro.vv()));
+                    loro_b.import(loro.export(loro_b.vv_cloned()));
+                    loro.import(loro_b.export(loro.vv_cloned()));
                 }
             })
         });

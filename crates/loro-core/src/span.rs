@@ -185,6 +185,11 @@ impl IdSpan {
         }
     }
 
+    #[inline]
+    pub fn contains(&self, id: ID) -> bool {
+        self.client_id == id.client_id && self.counter.contains(id.counter)
+    }
+
     #[inline(always)]
     pub fn is_reversed(&self) -> bool {
         self.counter.end < self.counter.start

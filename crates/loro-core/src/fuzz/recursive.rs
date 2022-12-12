@@ -352,8 +352,8 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
 
-                a.loro.import(b.loro.export(a.loro.vv()));
-                b.loro.import(a.loro.export(b.loro.vv()));
+                a.loro.import(b.loro.export(a.loro.vv_cloned()));
+                b.loro.import(a.loro.export(b.loro.vv_cloned()));
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
@@ -408,7 +408,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.loro.import(b.loro.export(a.loro.vv()));
+                    a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
                         if !visited.contains(&id) {
@@ -434,7 +434,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.loro.import(a.loro.export(b.loro.vv()));
+                    b.loro.import(a.loro.export(b.loro.vv_cloned()));
                     b.map_containers = a
                         .map_containers
                         .iter()
@@ -617,10 +617,10 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
-                .import_updates(&b_doc.export_updates(&a_doc.vv()).unwrap())
+                .import_updates(&b_doc.export_updates(&a_doc.vv_cloned()).unwrap())
                 .unwrap();
             b_doc
-                .import_updates(&a_doc.export_updates(&b_doc.vv()).unwrap())
+                .import_updates(&a_doc.export_updates(&b_doc.vv_cloned()).unwrap())
                 .unwrap();
             check_eq(a, b);
             debug_log::group_end!();

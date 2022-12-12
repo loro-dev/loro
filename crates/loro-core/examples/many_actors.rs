@@ -1,24 +1,23 @@
+use std::time::Instant;
+
 use loro_core::{LoroCore, LoroValue};
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
+// #[global_allocator]
+// static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
-    let mut actors: Vec<_> = (0..200).map(|_| LoroCore::default()).collect();
+    let start = Instant::now();
+    // let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+    let mut actors: Vec<_> = (0..1540).map(|_| LoroCore::default()).collect();
+    let mut updates: Vec<Vec<u8>> = Vec::new();
     for (i, actor) in actors.iter_mut().enumerate() {
         let mut list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();
         list.insert(actor, 0, value).unwrap();
+        updates.push(actor.export_updates(&Default::default()).unwrap());
     }
 
-    for i in 1..actors.len() {
-        let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-        a.import(b.export(a.vv()));
-    }
+    actors[0].import_updates_batch(&updates).unwrap();
 
-    for i in 1..actors.len() {
-        let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-        b.import(a.export(b.vv()));
-    }
-    drop(profiler);
+    // drop(profiler);
+    println!("{}", start.elapsed().as_millis());
 }

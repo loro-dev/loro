@@ -1,17 +1,21 @@
 #![allow(unused)]
-use std::{ops::Range, ptr::NonNull};
+use std::{collections::HashSet, ops::Range, ptr::NonNull, sync::Arc};
 
 use crdt_list::{
     crdt::{GetOp, ListCrdt, OpSet},
     yata::Yata,
 };
+use fxhash::FxHashSet;
 use rle::{
     range_map::{RangeMap, WithStartEnd},
     rle_tree::{iter::IterMut, node::LeafNode, BumpMode, SafeCursorMut},
     HasLength,
 };
 
-use crate::id::{Counter, ID};
+use crate::{
+    id::{Counter, ID},
+    span::IdSpan,
+};
 
 use super::{
     cursor_map::{make_notify, CursorMap, Marker},
@@ -19,21 +23,19 @@ use super::{
     Tracker,
 };
 
-// TODO: maybe we can opt this
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct OpSpanSet {
-    map: Vec<Range<u128>>,
+    map: Vec<IdSpan>,
 }
 
 impl OpSet<YSpan, ID> for OpSpanSet {
     fn insert(&mut self, value: &YSpan) {
-        let start: u128 = value.id.into();
-        self.map.push(start..start + value.atom_len() as u128);
+        self.map.push(value.id.to_span(value.atom_len()));
     }
 
     fn contain(&self, id: ID) -> bool {
-        for range in &self.map {
-            if range.contains(&(id.into())) {
+        for value in self.map.iter() {
+            if value.contains(id) {
                 return true;
             }
         }

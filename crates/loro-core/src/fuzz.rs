@@ -153,18 +153,18 @@ impl Actionable for Vec<LoroCore> {
                 text.delete(site, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
-                let to_vv = self[*to as usize].vv();
+                let to_vv = self[*to as usize].vv_cloned();
                 let from_exported = self[*from as usize].export(to_vv);
                 self[*to as usize].import(from_exported);
             }
             Action::SyncAll => {
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.import(b.export(a.vv()));
+                    a.import(b.export(a.vv_cloned()));
                 }
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.import(a.export(b.vv()));
+                    b.import(a.export(b.vv_cloned()));
                 }
             }
         }
@@ -221,13 +221,13 @@ fn check_synced(sites: &mut [LoroCore]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             {
                 debug_log::group!("Import {}", i);
-                a.import_updates(&b.export_updates(&a.vv()).unwrap())
+                a.import_updates(&b.export_updates(&a.vv_cloned()).unwrap())
                     .unwrap();
                 debug_log::group_end!();
             }
             {
                 debug_log::group!("Import {}", j);
-                b.import_updates(&a.export_updates(&b.vv()).unwrap())
+                b.import_updates(&a.export_updates(&b.vv_cloned()).unwrap())
                     .unwrap();
                 debug_log::group_end!();
             }

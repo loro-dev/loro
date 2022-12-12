@@ -10,11 +10,11 @@ fn main() {
     let mut actor = LoroCore::default();
     let mut output = Vec::new();
     let mut list = actor.get_list("list");
-    let mut last_vv = actor.vv().encode();
+    let mut last_vv = actor.vv_cloned().encode();
     for i in 0..10000 {
         list.insert(&actor, i, i.to_string()).unwrap();
         output.push(actor.export_updates(&VersionVector::decode(&last_vv).unwrap()));
-        last_vv = actor.vv().encode();
+        last_vv = actor.vv_cloned().encode();
     }
     println!("{} ms", start.elapsed().as_millis());
     // drop(p)

@@ -101,8 +101,8 @@ fn list() {
     map.insert(&loro_b, "map_b", 123).unwrap();
     println!("{}", list_a.get_value().to_json());
     println!("{}", list_b.get_value().to_json());
-    loro_b.import(loro_a.export(loro_b.vv()));
-    loro_a.import(loro_b.export(loro_a.vv()));
+    loro_b.import(loro_a.export(loro_b.vv_cloned()));
+    loro_a.import(loro_b.export(loro_a.vv_cloned()));
     println!("{}", list_b.get_value_deep(&loro_b).to_json());
     println!("{}", list_a.get_value_deep(&loro_b).to_json());
     assert_eq!(list_b.get_value(), list_a.get_value());
@@ -183,7 +183,7 @@ fn two_client_text_sync() {
     assert_eq!(&**value, "63417892");
     drop(text_container);
 
-    store.import(store_b.export(store.vv()));
+    store.import(store_b.export(store.vv_cloned()));
     let mut text_container = store.get_text("haha");
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
