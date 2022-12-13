@@ -73,7 +73,7 @@ async function buildTarget(target: string) {
 
 function genCommands(target: string): string[] {
   return [
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/release/loro_wasm.wasm`,
+    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profile}/loro_wasm.wasm`,
     ...(profile == "dev" ? [] : [
       `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`,
     ]),
