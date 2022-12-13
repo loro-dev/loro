@@ -28,6 +28,12 @@ checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
 
 [[package]]
 name = "arbitrary"
+version = "1.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
+
+[[package]]
+name = "arbitrary"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29d47fbf90d5149a107494b15a7dc8d69b351be2db3bb9691740e88ec17fd880"
