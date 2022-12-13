@@ -230,7 +230,7 @@ fn test_encode_state() {
     println!("decode time: {} ms", start.elapsed().as_millis());
     println!("store: {}", store.to_json().to_json_pretty());
     println!("store2: {}", store2.to_json().to_json_pretty());
-    // assert_eq!(store.to_json(), store2.to_json());
+    assert_eq!(store.to_json(), store2.to_json());
     let buf2 = store2.encode_snapshot();
     assert_eq!(buf, buf2);
 }
@@ -256,6 +256,29 @@ fn test_encode_state_text() {
     let store2 = LoroCore::decode_snapshot(&buf, Some(1), Default::default());
     println!("decode time: {} ms", start.elapsed().as_millis());
     assert_eq!(store.to_json().to_json(), store2.to_json());
+    let buf2 = store2.encode_snapshot();
+    assert_eq!(buf, buf2);
+}
+
+#[test]
+fn test_encode_state_map() {
+    let mut store = LoroCore::new(Default::default(), Some(1));
+    let mut map = store.get_map("map");
+    map.insert(&store, "aa", "some thing").unwrap();
+    map.insert(&store, "bb", 10).unwrap();
+    map.insert(&store, "cc", 12).unwrap();
+    map.delete(&store, "cc").unwrap();
+    let start = Instant::now();
+    let buf = store.encode_snapshot();
+    println!(
+        "size: {:?} bytes time: {} ms",
+        buf.len(),
+        start.elapsed().as_millis()
+    );
+    let store2 = LoroCore::decode_snapshot(&buf, Some(1), Default::default());
+    println!("store2: {}", store.to_json());
+    println!("store2: {}", store2.to_json());
+    assert_eq!(store.to_json(), store2.to_json());
     let buf2 = store2.encode_snapshot();
     assert_eq!(buf, buf2);
 }

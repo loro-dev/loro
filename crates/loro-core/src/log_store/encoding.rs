@@ -12,10 +12,12 @@ use crate::{
     configure::Configure,
     container::{
         encoding::{merge_2_u32_u64, split_u64_2_u32},
-        list::list_op::{DeleteSpan, InnerListOp, ListOp},
+        list::list_op::{DeleteSpan, InnerListOp, ListOp, ListOp},
         map::MapSet,
+        map::{InnerMapSet, MapSet},
         registry::ContainerIdx,
         registry::ContainerInstance,
+        text::text_content::{ListSlice, SliceRange},
         text::text_content::{ListSlice, SliceRange},
         Container, ContainerID,
     },
@@ -117,7 +119,7 @@ fn encode_changes(store: &LogStore) -> Encoded {
     let mut changes = Vec::with_capacity(change_num);
     let mut ops = Vec::with_capacity(change_num);
     let mut keys = Vec::new();
-    // let mut key_to_idx = FxHashMap::default();
+    let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
@@ -305,7 +307,13 @@ fn decode_changes(
             } = op;
             let container = store.reg.get_by_idx(container_idx).unwrap();
             let content = match container.lock().unwrap().type_() {
-                ContainerType::Map => todo!(),
+                ContainerType::Map => {
+                    let key = keys[prop].clone();
+                    InnerContent::Map(InnerMapSet {
+                        key,
+                        value: value as u32,
+                    })
+                }
                 ContainerType::List | ContainerType::Text => {
                     let pos = prop;
                     let list_op = match value {

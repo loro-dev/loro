@@ -41,7 +41,6 @@ impl ContainerIdx {
 pub enum ContainerInstance {
     List(Box<ListContainer>),
     Text(Box<TextContainer>),
-    #[serde(skip)]
     Map(Box<MapContainer>),
     #[serde(skip)]
     Dyn(Box<dyn Container>),
