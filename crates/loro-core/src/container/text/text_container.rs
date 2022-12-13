@@ -33,7 +33,7 @@ pub struct TextContainer {
     id: ContainerID,
     state: Rope,
     raw_str: StringPool,
-    tracker: Tracker,
+    tracker: Option<Tracker>,
 }
 
 impl TextContainer {
@@ -41,7 +41,7 @@ impl TextContainer {
         Self {
             id,
             raw_str: StringPool::default(),
-            tracker: Tracker::new(Default::default(), 0),
+            tracker: None,
             state: Default::default(),
         }
     }
