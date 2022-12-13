@@ -1,11 +1,10 @@
 use std::sync::{Arc, RwLock};
 
-use crate::LoroValue;
+use crate::{event::RawEvent, LoroValue};
 use fxhash::FxHashMap;
 
-
 use crate::{
-    change::{Change},
+    change::Change,
     configure::Configure,
     container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
     event::{Observer, SubscriptionID},
@@ -78,8 +77,13 @@ impl LoroCore {
     }
 
     pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
+        debug_log::group!("Import at {}", self.client_id());
         let mut store = self.log_store.write().unwrap();
-        store.import(changes)
+        let events = store.import(changes);
+        // FIXME: move hierarchy to loro_core
+        drop(store);
+        self.notify(events);
+        debug_log::group_end!();
     }
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
@@ -106,6 +110,8 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
+            .try_lock()
+            .unwrap()
             .subscribe_root(observer)
     }
 
@@ -114,6 +120,16 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
+            .try_lock()
+            .unwrap()
             .unsubscribe_root(subscription)
+    }
+
+    pub fn notify(&self, events: Vec<RawEvent>) {
+        let store = self.log_store.read().unwrap();
+        let hierarchy = store.hierarchy.clone();
+        drop(store);
+        let mut h = hierarchy.lock().unwrap();
+        h.send_notifications(events);
     }
 }

@@ -22,13 +22,13 @@ use crate::{
     delta::Delta,
     event::{Diff, Index, RawEvent},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
     version::IdSpanVector,
-    LogStore, LoroError,
+    LoroError,
 };
 
 use super::list_op::InnerListOp;
@@ -79,24 +79,29 @@ impl ListContainer {
         ctx: &C,
         pos: usize,
         value: P,
-    ) -> Option<ContainerID> {
+    ) -> (Option<RawEvent>, Option<ContainerID>) {
         let (value, maybe_container) = value.convert_value();
         if let Some(prelim) = maybe_container {
-            let container_id = self.insert_obj(ctx, pos, value.into_container().unwrap());
+            let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
             let container = Arc::clone(store.get_container(&container_id).unwrap());
             drop(store);
             prelim.integrate(ctx, &container);
-            Some(container_id)
+            (event, Some(container_id))
         } else {
             let value = value.into_value().unwrap();
-            self.insert_value(ctx, pos, value);
-            None
+            let event = self.insert_value(ctx, pos, value);
+            (event, None)
         }
     }
 
-    fn insert_value<C: Context>(&mut self, ctx: &C, pos: usize, value: LoroValue) -> Option<ID> {
+    fn insert_value<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        value: LoroValue,
+    ) -> Option<RawEvent> {
         let store = ctx.log_store();
         let mut store = store.write().unwrap();
         let id = store.next_id();
@@ -112,38 +117,52 @@ impl ListContainer {
         );
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        if store.hierarchy.should_notify(&self.id) {
+        let hierarchy = store.hierarchy.try_lock().unwrap();
+        if hierarchy.should_notify(&self.id) {
             let value = self.raw_data.slice(&slice)[0].clone();
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(vec![value]);
-            self.notify_local(
-                &mut store,
-                vec![Diff::List(delta)],
-                old_version,
-                new_version,
-            )
+            if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, self.id()) {
+                Some(RawEvent {
+                    container_id: self.id.clone(),
+                    old_version,
+                    new_version,
+                    diff: vec![Diff::List(delta)],
+                    local: true,
+                    abs_path,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
         }
-
-        Some(id)
     }
 
-    fn insert_obj<C: Context>(&mut self, ctx: &C, pos: usize, obj: ContainerType) -> ContainerID {
+    fn insert_obj<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        obj: ContainerType,
+    ) -> (Option<RawEvent>, ContainerID) {
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
         let (container_id, _) = store.create_container(obj);
         // Update hierarchy info
-        store.hierarchy.add_child(&self.id, &container_id);
+        let mut hierarchy = store.hierarchy.try_lock().unwrap();
+        hierarchy.add_child(&self.id, &container_id);
 
-        // TODO: we can avoid this lock
+        drop(hierarchy);
         drop(store);
-        self.insert(
+        // TODO: we can avoid this lock
+        let event = self.insert_value(
             ctx,
             pos,
             LoroValue::Unresolved(Box::new(container_id.clone())),
         );
 
-        container_id
+        (event, container_id)
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
@@ -153,7 +172,7 @@ impl ListContainer {
             .and_then(|slice| slice.first().cloned())
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
         if len == 0 {
             return None;
         }
@@ -173,44 +192,33 @@ impl ListContainer {
 
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
+        let hierarchy = store.hierarchy.clone();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+
         // Update hierarchy info
-        self.update_hierarchy_on_delete(&mut store.hierarchy, pos, len);
+        self.update_hierarchy_on_delete(&mut hierarchy, pos, len);
 
         self.state.delete_range(Some(pos), Some(pos + len));
 
-        if store.hierarchy.should_notify(&self.id) {
+        if hierarchy.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
-            self.notify_local(
-                &mut store,
-                vec![Diff::List(delta)],
-                old_version,
-                new_version,
-            )
+            if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
+                Some(RawEvent {
+                    diff: vec![Diff::List(delta)],
+                    local: true,
+                    old_version,
+                    new_version,
+                    container_id: self.id.clone(),
+                    abs_path,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
         }
-
-        Some(id)
-    }
-
-    fn notify_local(
-        &mut self,
-        store: &mut LogStore,
-        diff: Vec<Diff>,
-        old_version: SmallVec<[ID; 2]>,
-        new_version: SmallVec<[ID; 2]>,
-    ) {
-        store.with_hierarchy(|store, hierarchy| {
-            let event = RawEvent {
-                diff,
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-            };
-
-            hierarchy.notify(event, &store.reg);
-        });
     }
 
     fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
@@ -496,16 +504,11 @@ impl List {
         pos: usize,
         value: P,
     ) -> Result<Option<ContainerID>, LoroError> {
-        self.with_container_checked(ctx, |x| x.insert(ctx, pos, value))
+        self.with_event(ctx, |x| x.insert(ctx, pos, value))
     }
 
-    pub fn delete<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        len: usize,
-    ) -> Result<Option<ID>, LoroError> {
-        self.with_container_checked(ctx, |list| list.delete(ctx, pos, len))
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Result<(), LoroError> {
+        self.with_event(ctx, |list| (list.delete(ctx, pos, len), ()))
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
@@ -531,7 +534,9 @@ impl ContainerWrapper for List {
     {
         let mut container_instance = self.instance.lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
-        f(list)
+        let ans = f(list);
+        drop(container_instance);
+        ans
     }
 
     fn client_id(&self) -> ClientID {

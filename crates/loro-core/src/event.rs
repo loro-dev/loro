@@ -11,6 +11,7 @@ pub struct RawEvent {
     pub new_version: Frontiers,
     pub local: bool,
     pub diff: Vec<Diff>,
+    pub abs_path: Path,
 }
 
 #[derive(Debug)]
@@ -62,4 +63,4 @@ pub struct MapDiff {
 
 pub type Observer = Box<dyn FnMut(&Event)>;
 
-pub type SubscriptionID = u64;
+pub type SubscriptionID = u32;

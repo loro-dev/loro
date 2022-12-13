@@ -5,13 +5,14 @@ use std::{
 
 use fxhash::FxHashMap;
 
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
     change::Lamport,
     id::{Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
-    ClientID,
+    ClientID, LoroError,
 };
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -27,7 +28,7 @@ use crate::{
 ///
 /// see also [im].
 #[repr(transparent)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
 // TODO: use new type
@@ -397,6 +398,16 @@ impl VersionVector {
             }
         }
         ans
+    }
+
+    #[inline(always)]
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap()
+    }
+
+    #[inline(always)]
+    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
+        postcard::from_bytes(bytes).map_err(|_|LoroError::DecodeVersionVectorError)
     }
 }
 

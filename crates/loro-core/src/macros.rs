@@ -12,7 +12,7 @@
 macro_rules! fx_map {
     ($($key:expr => $value:expr),*) => {
         {
-            let mut m = FxHashMap::default();
+            let mut m = fxhash::FxHashMap::default();
             $(
                 m.insert($key, $value);
             )*

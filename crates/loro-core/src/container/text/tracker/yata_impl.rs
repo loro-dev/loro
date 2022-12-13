@@ -1,5 +1,5 @@
 #![allow(unused)]
-use std::ptr::NonNull;
+use std::{ops::Range, ptr::NonNull};
 
 use crdt_list::{
     crdt::{GetOp, ListCrdt, OpSet},
@@ -7,7 +7,7 @@ use crdt_list::{
 };
 use rle::{
     range_map::{RangeMap, WithStartEnd},
-    rle_tree::{iter::IterMut, node::LeafNode, SafeCursorMut},
+    rle_tree::{iter::IterMut, node::LeafNode, BumpMode, SafeCursorMut},
     HasLength,
 };
 
@@ -19,26 +19,26 @@ use super::{
     Tracker,
 };
 
-// TODO: may use a simpler data structure here
+// TODO: maybe we can opt this
 #[derive(Default, Debug)]
 pub struct OpSpanSet {
-    map: RangeMap<u128, WithStartEnd<u128, bool>>,
+    map: Vec<Range<u128>>,
 }
 
 impl OpSet<YSpan, ID> for OpSpanSet {
     fn insert(&mut self, value: &YSpan) {
-        self.map.set_small_range(
-            value.id.into(),
-            WithStartEnd {
-                start: value.id.into(),
-                end: value.id.inc(value.atom_len() as i32).into(),
-                value: true,
-            },
-        )
+        let start: u128 = value.id.into();
+        self.map.push(start..start + value.atom_len() as u128);
     }
 
     fn contain(&self, id: ID) -> bool {
-        self.map.has(id.into())
+        for range in &self.map {
+            if range.contains(&(id.into())) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn clear(&mut self) {

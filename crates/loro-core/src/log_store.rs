@@ -51,6 +51,13 @@ impl Default for GcConfig {
     }
 }
 
+impl GcConfig {
+    #[inline(always)]
+    pub fn with_gc(self, gc: bool) -> Self {
+        Self { gc, ..self }
+    }
+}
+
 type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
 type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
 
@@ -72,7 +79,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pub(crate) hierarchy: Hierarchy,
+    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
     _pin: PhantomPinned,
 }
 
@@ -343,17 +350,14 @@ impl LogStore {
         self.reg.get_or_create_container_idx(container)
     }
 
-    // TODO: this feels like a dumb way to bypass lifetime issue, but I don't have better idea right now :(
     #[inline(always)]
     pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
     where
         for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
     {
-        let mut hierarchy = std::mem::take(&mut self.hierarchy);
-        let result = f(self, &mut hierarchy);
-        assert!(self.hierarchy.is_empty());
-        self.hierarchy = hierarchy;
-        result
+        let h = self.hierarchy.clone();
+        let mut h = h.lock().unwrap();
+        f(self, &mut h)
     }
 
     pub fn to_json(&self) -> LoroValue {

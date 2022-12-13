@@ -1,13 +1,15 @@
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use tracing::{debug, instrument};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
+    event::RawEvent,
     id::{ClientID, Counter, ID},
     op::{RemoteContent, RemoteOp},
-    LogStore, LoroCore, VersionVector,
+    LogStore, LoroCore, LoroError, VersionVector,
 };
 
 use super::RemoteClientChanges;
@@ -47,7 +49,8 @@ struct EncodedChange {
 }
 
 impl LogStore {
-    pub fn encode_updates(&self, from: &VersionVector) -> Result<Vec<u8>, postcard::Error> {
+    #[instrument(skip_all)]
+    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
         let changes = self.export(from);
         let mut updates = Updates {
             changes: Vec::with_capacity(changes.len()),
@@ -58,17 +61,17 @@ impl LogStore {
         }
 
         postcard::to_allocvec(&updates)
+            .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
     }
 
-    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
+    pub fn import_updates(&mut self, input: &[u8]) -> Result<Vec<RawEvent>, postcard::Error> {
         let updates: Updates = postcard::from_bytes(input)?;
         let mut changes: RemoteClientChanges = Default::default();
         for encoded in updates.changes {
             changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
         }
 
-        self.import(changes);
-        Ok(())
+        Ok(self.import(changes))
     }
 }
 
@@ -180,12 +183,22 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 }
 
 impl LoroCore {
-    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, postcard::Error> {
-        self.log_store.read().unwrap().encode_updates(from)
+    #[instrument(skip_all)]
+    pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
+        match self.log_store.try_read() {
+            Ok(x) => x.export_updates(from),
+            Err(_) => Err(LoroError::LockError),
+        }
     }
 
-    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), postcard::Error> {
+    pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
         let ans = self.log_store.write().unwrap().import_updates(input);
-        ans
+        match ans {
+            Ok(events) => {
+                self.notify(events);
+                Ok(())
+            }
+            Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
+        }
     }
 }

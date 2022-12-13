@@ -12,12 +12,13 @@ use tracing::instrument;
 
 use crate::{
     context::Context,
-    event::{Index, Observer, SubscriptionID},
+    event::{Index, Observer, RawEvent, SubscriptionID},
     hierarchy::Hierarchy,
     id::ClientID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
-    version::IdSpanVector, LoroError, LoroValue,
+    version::IdSpanVector,
+    LoroError, LoroValue,
 };
 
 use super::{
@@ -377,6 +378,34 @@ pub trait ContainerWrapper {
         Ok(self.with_container(f))
     }
 
+    fn with_event<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
+    where
+        F: FnOnce(&mut Self::Container) -> (Option<RawEvent>, R),
+    {
+        let log_store = ctx.log_store();
+        let log_store = log_store.write().unwrap();
+        let hierarchy = log_store.hierarchy.clone();
+        let store_client_id = log_store.this_client_id();
+        if store_client_id != self.client_id() {
+            return Err(LoroError::UnmatchedContext {
+                expected: self.client_id(),
+                found: store_client_id,
+            });
+        }
+        drop(log_store);
+        let (event, ans) = self.with_container(f);
+        let ans = match event {
+            Some(event) => {
+                debug_log::debug_log!("get event");
+                hierarchy.try_lock().unwrap().notify(event);
+                Ok(ans)
+            }
+            None => Ok(ans),
+        };
+
+        ans
+    }
+
     fn client_id(&self) -> ClientID;
 
     fn id(&self) -> ContainerID {
@@ -420,7 +449,13 @@ pub trait ContainerWrapper {
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
             x.subscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 observer,
                 false,
             )
@@ -434,7 +469,13 @@ pub trait ContainerWrapper {
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
             x.subscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 observer,
                 true,
             )
@@ -448,7 +489,13 @@ pub trait ContainerWrapper {
     ) -> Result<(), LoroError> {
         self.with_container_checked(ctx, |x| {
             x.unsubscribe(
-                &mut ctx.log_store().write().unwrap().hierarchy,
+                &mut ctx
+                    .log_store()
+                    .write()
+                    .unwrap()
+                    .hierarchy
+                    .try_lock()
+                    .unwrap(),
                 subscription,
             )
         })

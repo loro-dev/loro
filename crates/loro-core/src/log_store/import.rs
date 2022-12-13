@@ -9,7 +9,7 @@ use tracing::instrument;
 
 use fxhash::FxHashMap;
 
-use rle::{slice_vec_by, HasLength, RleVecWithIndex, Sliceable};
+use rle::{slice_vec_by, HasLength, RleVecWithIndex};
 
 use crate::{
     container::{registry::ContainerInstance, Container, ContainerID},
@@ -75,12 +75,11 @@ impl LogStore {
     /// - Update the rest of the log store state.
     ///
     #[instrument(skip_all)]
-    pub fn import(&mut self, mut changes: RemoteClientChanges) {
+    pub fn import(&mut self, mut changes: RemoteClientChanges) -> Vec<RawEvent> {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
-            return;
+            return vec![];
         }
 
-        debug_log::group!("Import at {}", self.this_client_id);
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         self.lock_related_containers(&changes, &mut container_map);
         let (next_vv, next_frontiers) = self.push_changes(changes, &mut container_map);
@@ -97,39 +96,47 @@ impl LogStore {
             new_vv: next_vv,
             diff: Default::default(),
         };
-        self.hierarchy.take_deleted();
+        self.with_hierarchy(|_, h| {
+            h.take_deleted();
+        });
 
         debug_log::group!("apply");
         self.apply(container_map, &mut context);
         debug_log::group_end!();
 
-        self.notify(&mut context);
+        let events = self.get_events(&mut context);
         self.update_version_info(context.new_vv, next_frontiers);
-        debug_log::group_end!();
+        events
     }
 
-    fn notify(&mut self, context: &mut ImportContext) {
-        debug_log::group!("notify");
-        let deleted = self.hierarchy.take_deleted();
+    #[instrument(skip_all)]
+    fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
+        let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
-        debug_log::debug_log!("Deleted {:#?}", &deleted);
+        let mut h = self.hierarchy.try_lock().unwrap();
+        let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
             .filter(|x| !deleted.contains(&x.0))
         {
-            debug_log::debug_dbg!(&id, &diff);
+            let Some(abs_path) = h.get_abs_path(reg, &id) else {
+                continue;
+            };
             let raw_event = RawEvent {
+                abs_path,
                 diff,
                 container_id: id,
                 old_version: context.old_frontiers.clone(),
                 new_version: context.new_frontiers.clone(),
                 local: false,
             };
-            debug_log::debug_dbg!(&raw_event);
             events.push(raw_event);
         }
-        self.hierarchy.notify_batch(events, &self.reg);
-        debug_log::group_end!();
+
+        // notify event in the order of path length
+        // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
+        events.sort_by_cached_key(|x| x.abs_path.len());
+        events
     }
 
     fn update_version_info(&mut self, next_vv: VersionVector, next_frontiers: VersionVector) {
@@ -275,11 +282,12 @@ impl LogStore {
         debug_log::group!("apply effects");
         let mut queue: VecDeque<_> = container_map.into_iter().map(|(_, x)| x).collect();
         let mut retries = 0;
+        let mut h = self.hierarchy.try_lock().unwrap();
         // only apply the effects of a container when it's registered to the hierarchy
         while let Some(mut container) = queue.pop_back() {
-            if container.id().is_root() || self.hierarchy.contains(container.id()) {
+            if container.id().is_root() || h.contains(container.id()) {
                 retries = 0;
-                container.apply_tracked_effects_from(&mut self.hierarchy, context);
+                container.apply_tracked_effects_from(&mut h, context);
             } else {
                 retries += 1;
                 queue.push_front(container);
@@ -293,7 +301,7 @@ impl LogStore {
         }
 
         for mut container in queue {
-            container.apply_tracked_effects_from(&mut self.hierarchy, context);
+            container.apply_tracked_effects_from(&mut h, context);
         }
 
         debug_log::group_end!();

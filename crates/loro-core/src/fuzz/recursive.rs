@@ -71,8 +71,10 @@ impl Actor {
             root_value.apply(&event.relative_path, &event.diff);
         }));
 
+        let log_store = actor.loro.log_store.write().unwrap();
+        let mut hierarchy = log_store.hierarchy.lock().unwrap();
         let text = Rc::clone(&actor.text_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Box::new(move |event| {
                 let mut text = text.borrow_mut();
@@ -103,7 +105,7 @@ impl Actor {
         );
 
         let map = Rc::clone(&actor.map_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
             Box::new(move |event| {
                 let mut map = map.borrow_mut();
@@ -128,7 +130,7 @@ impl Actor {
         );
 
         let list = Rc::clone(&actor.list_tracker);
-        actor.loro.log_store.write().unwrap().hierarchy.subscribe(
+        hierarchy.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Box::new(move |event| {
                 let mut list = list.borrow_mut();
@@ -160,6 +162,8 @@ impl Actor {
             false,
         );
 
+        drop(hierarchy);
+        drop(log_store);
         actor.text_containers.push(actor.loro.get_text("text"));
         actor.map_containers.push(actor.loro.get_map("map"));
         actor.list_containers.push(actor.loro.get_list("list"));
@@ -1061,6 +1065,42 @@ mod failed_tests {
                     container_idx: 1,
                     key: 255,
                     value: Container(C::Map),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn maybe_because_of_hierarchy() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Sync { from: 1, to: 2 },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 1,
+                    container_idx: 2,
+                    pos: 0,
+                    value: 45232,
+                    is_del: false,
                 },
             ],
         )

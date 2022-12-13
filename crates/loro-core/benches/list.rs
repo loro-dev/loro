@@ -5,6 +5,7 @@ mod run {
     use arbitrary::Arbitrary;
     use arbitrary::Unstructured;
     use loro_core::LoroCore;
+    use loro_core::LoroValue;
     use rand::Rng;
     use rand::SeedableRng;
 
@@ -72,11 +73,36 @@ mod run {
             })
         });
     }
+
+    pub fn many_actors(c: &mut Criterion) {
+        let mut b = c.benchmark_group("many_actors");
+        b.sample_size(10);
+        b.bench_function("100 actors", |b| {
+            b.iter(|| {
+                let mut actors: Vec<_> = (0..100).map(|_| LoroCore::default()).collect();
+                for (i, actor) in actors.iter_mut().enumerate() {
+                    let mut list = actor.get_list("list");
+                    let value: LoroValue = i.to_string().into();
+                    list.insert(actor, 0, value).unwrap();
+                }
+
+                for i in 1..actors.len() {
+                    let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
+                    a.import(b.export(a.vv()));
+                }
+
+                for i in 1..actors.len() {
+                    let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
+                    b.import(a.export(b.vv()));
+                }
+            })
+        });
+    }
 }
 pub fn dumb(_c: &mut Criterion) {}
 
 #[cfg(feature = "test_utils")]
-criterion_group!(benches, run::many_list_containers);
+criterion_group!(benches, run::many_list_containers, run::many_actors);
 #[cfg(not(feature = "test_utils"))]
 criterion_group!(benches, dumb);
 criterion_main!(benches);

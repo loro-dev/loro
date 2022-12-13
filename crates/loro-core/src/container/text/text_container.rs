@@ -14,12 +14,11 @@ use crate::{
     delta::Delta,
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
     version::IdSpanVector,
-    LogStore,
 };
 
 use super::{
@@ -48,7 +47,7 @@ impl TextContainer {
     }
 
     #[instrument(skip_all)]
-    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<ID> {
+    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<RawEvent> {
         if text.is_empty() {
             return None;
         }
@@ -75,23 +74,28 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        if store.hierarchy.should_notify(&self.id) {
+        let h = store.hierarchy.clone();
+        let h = h.try_lock().unwrap();
+        if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.insert(text.to_owned());
-            self.notify_local(
-                &mut store,
-                vec![Diff::Text(delta)],
-                old_version,
-                new_version,
-            );
+            h.get_abs_path(&store.reg, self.id())
+                .map(|abs_path| RawEvent {
+                    diff: vec![Diff::Text(delta)],
+                    local: true,
+                    old_version,
+                    new_version,
+                    container_id: self.id.clone(),
+                    abs_path,
+                })
+        } else {
+            None
         }
-
-        Some(id)
     }
 
     #[instrument(skip_all)]
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<ID> {
+    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
         if len == 0 {
             return None;
         }
@@ -113,39 +117,25 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        if store.hierarchy.should_notify(&self.id) {
+        let h = store.hierarchy.clone();
+        let h = h.try_lock().unwrap();
+        self.state.delete_range(Some(pos), Some(pos + len));
+        if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
             delta.delete(len);
-            self.notify_local(
-                &mut store,
-                vec![Diff::Text(delta)],
-                old_version,
-                new_version,
-            );
+            h.get_abs_path(&store.reg, self.id())
+                .map(|abs_path| RawEvent {
+                    diff: vec![Diff::Text(delta)],
+                    local: true,
+                    old_version,
+                    new_version,
+                    container_id: self.id.clone(),
+                    abs_path,
+                })
+        } else {
+            None
         }
-        self.state.delete_range(Some(pos), Some(pos + len));
-        Some(id)
-    }
-
-    fn notify_local(
-        &mut self,
-        store: &mut LogStore,
-        diff: Vec<Diff>,
-        old_version: SmallVec<[ID; 2]>,
-        new_version: SmallVec<[ID; 2]>,
-    ) {
-        store.with_hierarchy(|store, hierarchy| {
-            let event = RawEvent {
-                diff,
-                local: true,
-                old_version,
-                new_version,
-                container_id: self.id.clone(),
-            };
-
-            hierarchy.notify(event, &store.reg);
-        });
     }
 
     pub fn text_len(&self) -> usize {
@@ -435,8 +425,8 @@ impl Text {
         ctx: &C,
         pos: usize,
         text: &str,
-    ) -> Result<Option<ID>, crate::LoroError> {
-        self.with_container_checked(ctx, |x| x.insert(ctx, pos, text))
+    ) -> Result<(), crate::LoroError> {
+        self.with_event(ctx, |x| (x.insert(ctx, pos, text), ()))
     }
 
     pub fn delete<C: Context>(
@@ -444,8 +434,8 @@ impl Text {
         ctx: &C,
         pos: usize,
         len: usize,
-    ) -> Result<Option<ID>, crate::LoroError> {
-        self.with_container_checked(ctx, |text| text.delete(ctx, pos, len))
+    ) -> Result<(), crate::LoroError> {
+        self.with_event(ctx, |text| (text.delete(ctx, pos, len), ()))
     }
 
     pub fn get_value(&self) -> LoroValue {
@@ -471,7 +461,9 @@ impl ContainerWrapper for Text {
     {
         let mut container_instance = self.instance.lock().unwrap();
         let text = container_instance.as_text_mut().unwrap();
-        f(text)
+        let ans = f(text);
+        drop(container_instance);
+        ans
     }
 
     fn client_id(&self) -> crate::id::ClientID {

@@ -1,11 +1,11 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::RwLockWriteGuard};
 
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    configure::rand_u64,
     container::{registry::ContainerRegistry, ContainerID},
     event::{Event, Index, Observer, Path, RawEvent, SubscriptionID},
+    LogStore,
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
@@ -14,6 +14,7 @@ pub struct Hierarchy {
     nodes: FxHashMap<ContainerID, Node>,
     root_observers: FxHashMap<SubscriptionID, Observer>,
     latest_deleted: FxHashSet<ContainerID>,
+    event_counter: SubscriptionID,
 }
 
 #[derive(Default)]
@@ -37,6 +38,8 @@ impl Debug for Node {
         f.debug_struct("Node")
             .field("parent", &self.parent)
             .field("children", &self.children)
+            .field("observers.len", &self.observers.len())
+            .field("deep_observers.len", &self.deep_observers.len())
             .finish()
     }
 }
@@ -122,8 +125,14 @@ impl Hierarchy {
         None
     }
 
+    #[inline(always)]
+    pub fn get_abs_path(&self, reg: &ContainerRegistry, descendant: &ContainerID) -> Option<Path> {
+        let path = self.get_path(reg, descendant, None);
+        path.and_then(|x| if x.is_empty() { None } else { Some(x) })
+    }
+
     pub fn get_path(
-        &mut self,
+        &self,
         reg: &ContainerRegistry,
         descendant: &ContainerID,
         target: Option<&ContainerID>,
@@ -140,8 +149,12 @@ impl Hierarchy {
         let mut iter_node = Some(descendant);
         while let Some(node_id) = iter_node {
             let Some(node) = self.nodes.get(node_id) else {
-                debug_assert!(node_id.is_root());
-                break;
+                if node_id.is_root() {
+                    path.push(Index::Key(node_id.name().into()));
+                    break;
+                }
+                // Deleted node 
+                return None;
             };
             let parent = &node.parent;
             if let Some(parent) = parent {
@@ -170,6 +183,10 @@ impl Hierarchy {
     }
 
     pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+        if !self.root_observers.is_empty() {
+            return true;
+        }
+
         let mut node_id = Some(container_id);
 
         while let Some(inner_node_id) = node_id {
@@ -189,10 +206,6 @@ impl Hierarchy {
             node_id = node.parent.as_ref();
         }
 
-        if !self.root_observers.is_empty() {
-            return true;
-        }
-
         if self
             .nodes
             .get(container_id)
@@ -205,30 +218,29 @@ impl Hierarchy {
         false
     }
 
-    pub fn notify_batch(&mut self, raw_events: Vec<RawEvent>, reg: &ContainerRegistry) {
-        // notify event in the order of path length
-        // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
-        let mut event_and_paths = raw_events
-            .into_iter()
-            .filter_map(|x| self.get_path(reg, &x.container_id, None).map(|y| (y, x)))
-            .collect::<Vec<_>>();
-        event_and_paths.sort_by_cached_key(|x| x.0.len());
-        for (path, event) in event_and_paths {
-            self.notify_with_path(event, path);
-        }
-    }
+    pub(crate) fn notify_without_path<'a, 'b>(
+        &'a mut self,
+        mut raw_event: RawEvent,
+        store: RwLockWriteGuard<'b, LogStore>,
+    ) {
+        let reg = &store.reg;
 
-    pub fn notify(&mut self, raw_event: RawEvent, reg: &ContainerRegistry) {
-        let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
-            return;
+        if raw_event.abs_path.is_empty() {
+            let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
+            return ;
         };
-        self.notify_with_path(raw_event, absolute_path);
+            raw_event.abs_path = absolute_path;
+        }
+        drop(store);
+        self.notify(raw_event);
     }
 
-    fn notify_with_path(&mut self, raw_event: RawEvent, absolute_path: Path) {
+    pub fn notify(&mut self, raw_event: RawEvent) {
+        debug_log::debug_log!("notify {:#?}", &raw_event);
+        debug_log::debug_dbg!(&self);
         let target_id = raw_event.container_id;
         let mut event = Event {
-            absolute_path,
+            absolute_path: raw_event.abs_path,
             relative_path: Default::default(),
             old_version: raw_event.old_version,
             new_version: raw_event.new_version,
@@ -248,7 +260,9 @@ impl Hierarchy {
             }
         }
         while let Some(id) = current_target_id {
-            let node = self.nodes.get_mut(&id).unwrap();
+            let Some(node) = self.nodes.get_mut(&id) else {
+                break;
+            };
             if !node.deep_observers.is_empty() {
                 let mut relative_path = path_to_root[..count].to_vec();
                 relative_path.reverse();
@@ -266,7 +280,9 @@ impl Hierarchy {
 
             current_target_id = node.parent.as_ref().cloned();
         }
+
         if !self.root_observers.is_empty() {
+            debug_log::debug_log!("notify root");
             event.relative_path = event.absolute_path.clone();
             event.current_target = None;
             for (_, observer) in self.root_observers.iter_mut() {
@@ -281,7 +297,7 @@ impl Hierarchy {
         observer: Observer,
         deep: bool,
     ) -> SubscriptionID {
-        let id = rand_u64();
+        let id = self.next_id();
         if deep {
             self.nodes
                 .entry(container.clone())
@@ -295,7 +311,15 @@ impl Hierarchy {
                 .observers
                 .insert(id, observer);
         }
+        debug_log::debug_log!("Subscribe {:?}", container);
+        debug_log::debug_dbg!(&self);
         id
+    }
+
+    fn next_id(&mut self) -> SubscriptionID {
+        let ans = self.event_counter;
+        self.event_counter += 1;
+        ans
     }
 
     pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) -> bool {
@@ -308,12 +332,18 @@ impl Hierarchy {
     }
 
     pub fn subscribe_root(&mut self, observer: Observer) -> SubscriptionID {
-        let id = rand_u64();
+        let id = self.next_id();
         self.root_observers.insert(id, observer);
         id
     }
 
     pub fn unsubscribe_root(&mut self, sub: SubscriptionID) -> bool {
         self.root_observers.remove(&sub).is_some()
+    }
+
+    pub fn send_notifications(&mut self, events: Vec<RawEvent>) {
+        for event in events {
+            self.notify(event);
+        }
     }
 }
