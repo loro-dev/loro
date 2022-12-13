@@ -36,8 +36,8 @@ use super::list_op::InnerListOp;
 #[derive(Debug)]
 pub struct ListContainer {
     id: ContainerID,
-    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
-    raw_data: pool::Pool,
+    pub(crate) state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
+    pub(crate) raw_data: pool::Pool,
     tracker: Tracker,
 }
 

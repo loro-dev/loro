@@ -449,7 +449,7 @@ impl FromIterator<ID> for VersionVector {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct TotalOrderStamp {
     pub(crate) lamport: Lamport,
     pub(crate) client_id: ClientID,

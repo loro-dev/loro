@@ -31,15 +31,15 @@ use super::MapSet;
 #[derive(Debug)]
 pub struct MapContainer {
     id: ContainerID,
-    state: FxHashMap<InternalString, ValueSlot>,
-    pool: Pool,
+    pub(crate) state: FxHashMap<InternalString, ValueSlot>,
+    pub(crate) pool: Pool,
     pending_ops: Vec<OwnedRichOp>,
 }
 
 #[derive(Debug)]
-struct ValueSlot {
-    value: u32,
-    order: TotalOrderStamp,
+pub(crate) struct ValueSlot {
+    pub(crate) value: u32,
+    pub(crate) order: TotalOrderStamp,
 }
 
 // FIXME: make map container support checkout to certain version

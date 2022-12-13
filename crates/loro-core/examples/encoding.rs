@@ -42,8 +42,8 @@ fn main() {
         0,
         start.elapsed().as_millis()
     );
-    let json1 = loro.to_json();
-    let start = Instant::now();
+    // let json1 = loro.to_json();
+    // let start = Instant::now();
     let loro = LoroCore::decode_snapshot(&buf, None, Configure::default());
     println!("decode used {}ms", start.elapsed().as_millis());
     let buf2 = loro.encode_snapshot();

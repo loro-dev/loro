@@ -205,17 +205,56 @@ fn test_recursive_should_panic() {
 
 #[test]
 #[cfg(feature = "json")]
-fn test_to_json() {
-    let mut loro = LoroCore::new(Default::default(), Some(10));
-    let mut map = loro.get_map("A map");
-    map.insert(&loro, "haha", 1.2).unwrap();
-    let a = map
-        .insert(&loro, "text container", ContainerType::Text)
+fn test_encode_state() {
+    let mut store = LoroCore::new(Default::default(), Some(1));
+    let mut list = store.get_list("list");
+    for _ in 0..1000 {
+        list.insert(&store, 0, "some thing").unwrap();
+    }
+    list.insert(&store, 0, "some thing").unwrap();
+    list.insert(&store, 0, "some thing else").unwrap();
+    let id = list
+        .insert(&store, 0, ContainerType::List)
         .unwrap()
         .unwrap();
-    let mut text = loro.get_text(&a);
-    text.insert(&loro, 0, "012").unwrap();
-    println!("{}", loro.to_json().to_json());
+    let mut list2 = store.get_list(id);
+    list2.insert(&store, 0, "some hahaha").unwrap();
+    let start = Instant::now();
+    let buf = store.encode_snapshot();
+    println!(
+        "size: {:?} bytes time: {} ms",
+        buf.len(),
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
+    let store2 = LoroCore::decode_snapshot(&buf, Some(1), Default::default());
+    println!("decode time: {} ms", start.elapsed().as_millis());
+    assert_eq!(store.to_json(), store2.to_json());
+}
+
+#[test]
+fn test_encode_state_text() {
+    let mut store = LoroCore::new(Default::default(), Some(1));
+    let mut text = store.get_text("text");
+    for _ in 0..1000 {
+        text.insert(&store, 0, "some thing").unwrap();
+    }
+    text.insert(&store, 0, "some thing").unwrap();
+    text.delete(&store, 2, 10).unwrap();
+    text.delete(&store, 4, 12).unwrap();
+    let start = Instant::now();
+    let buf = store.encode_snapshot();
+    println!(
+        "size: {:?} bytes time: {} ms",
+        buf.len(),
+        start.elapsed().as_millis()
+    );
+    let start = Instant::now();
+    let store2 = LoroCore::decode_snapshot(&buf, Some(1), Default::default());
+    println!("decode time: {} ms", start.elapsed().as_millis());
+    assert_eq!(store.to_json().to_json(), store2.to_json());
+    let buf2 = store2.encode_snapshot();
+    assert_eq!(buf, buf2);
 }
 
 #[ctor]
