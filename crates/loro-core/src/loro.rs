@@ -110,7 +110,7 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
-            .lock()
+            .try_lock()
             .unwrap()
             .subscribe_root(observer)
     }
@@ -120,7 +120,7 @@ impl LoroCore {
             .write()
             .unwrap()
             .hierarchy
-            .lock()
+            .try_lock()
             .unwrap()
             .unsubscribe_root(subscription)
     }
