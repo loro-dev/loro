@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex, RwLock};
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
+use serde_columnar::{
+    columnar, compress, compress, decompress, decompress, from_bytes, to_vec, CompressConfig,
+    CompressConfig,
+};
 use smallvec::smallvec;
 use tracing::instrument;
 
@@ -32,7 +35,7 @@ use super::ImportContext;
 
 type ClientIdx = u32;
 type Clients = Vec<ClientID>;
-type Containers = Vec<ContainerID>;
+type Containers = Vec<Vec<u8>>;
 
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +96,7 @@ struct Encoded {
     #[columnar(type = "vec")]
     deps: Vec<DepsEncoding>,
     clients: Clients,
-    containers: Vec<Vec<u8>>,
+    containers: Containers,
     keys: Vec<InternalString>,
 }
 
@@ -175,47 +178,6 @@ fn encode_changes(store: &LogStore) -> Encoded {
                     })
                 }
             }
-
-            // let mut op_len = 0;
-            // for (op, container) in remote_ops.into_iter().zip(containers.into_iter()) {
-            //     for content in op.contents.into_iter() {
-            //         let (prop, gc, value) = match content {
-            //             crate::op::RemoteContent::Map(MapSet { key, value }) => (
-            //                 *key_to_idx.entry(key.clone()).or_insert_with(|| {
-            //                     keys.push(key);
-            //                     keys.len() - 1
-            //                 }),
-            //                 0,
-            //                 value,
-            //             ),
-            //             crate::op::RemoteContent::List(list) => match list {
-            //                 ListOp::Insert { slice, pos } => (
-            //                     pos,
-            //                     match &slice {
-            //                         ListSlice::Unknown(v) => *v,
-            //                         _ => 0,
-            //                     },
-            //                     match slice {
-            //                         ListSlice::RawData(v) => v.into(),
-            //                         ListSlice::RawStr(s) => s.as_str().into(),
-            //                         ListSlice::Unknown(_) => LoroValue::Null,
-            //                     },
-            //                 ),
-            //                 ListOp::Delete(span) => {
-            //                     (span.pos as usize, 0, LoroValue::I32(span.len as i32))
-            //                 }
-            //             },
-            //             crate::op::RemoteContent::Dyn(_) => unreachable!(),
-            //         };
-            //         op_len += 1;
-            //         ops.push(OpEncoding {
-            //             container,
-            //             prop,
-            //             value,
-            //             gc,
-            //         })
-            //     }
-            // }
 
             changes.push(ChangeEncoding {
                 client_idx: client_idx as ClientIdx,
@@ -345,8 +307,6 @@ fn decode_changes(
 
             op_counter += op.content_len() as i32;
             ops.push(op);
-
-            // container_map.insert(container_idx, Arc::clone(container));
         }
 
         let change = Change {
@@ -413,8 +373,8 @@ fn decode_changes(
 impl LogStore {
     pub fn encode_snapshot(&self) -> Vec<u8> {
         let encoded = encode_changes(self);
-        to_vec(&encoded).unwrap()
-        // compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
+        // to_vec(&encoded).unwrap()
+        compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
     }
 
     pub fn decode_snapshot(
@@ -422,8 +382,8 @@ impl LogStore {
         client_id: Option<ClientID>,
         cfg: Configure,
     ) -> Arc<RwLock<Self>> {
-        // let decompress_bytes = decompress(input).unwrap();
-        let encoded = from_bytes(input).unwrap();
+        let decompress_bytes = decompress(input).unwrap();
+        let encoded = from_bytes(&decompress_bytes).unwrap();
         decode_changes(encoded, client_id, cfg)
     }
 }
