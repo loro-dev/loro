@@ -281,7 +281,7 @@ fn test_encode_state_map() {
 }
 
 #[test]
-fn fields_sort_immutable() {
+fn fix_fields_order() {
     // ContainerType ContainerID Index ID
     // TotalOrderStamp RemoteContent MapSet ListOp DeleteSpan ListSlice (mod test)
     let id = ID::new(0, 1);
