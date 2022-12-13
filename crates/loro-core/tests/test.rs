@@ -228,8 +228,8 @@ fn test_encode_state() {
     let start = Instant::now();
     let store2 = LoroCore::decode_snapshot(&buf, Some(1), Default::default());
     println!("decode time: {} ms", start.elapsed().as_millis());
-    println!("store2: {}", store.to_json());
-    println!("store2: {}", store2.to_json());
+    println!("store: {}", store.to_json().to_json_pretty());
+    println!("store2: {}", store2.to_json().to_json_pretty());
     // assert_eq!(store.to_json(), store2.to_json());
     let buf2 = store2.encode_snapshot();
     assert_eq!(buf, buf2);
