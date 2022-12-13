@@ -80,8 +80,7 @@ impl Mergable for SliceRange {
     where
         Self: Sized,
     {
-        false
-        //TODO: (self.is_unknown() && other.is_unknown()) || self.0.end == other.0.start
+        (self.is_unknown() && other.is_unknown()) || self.0.end == other.0.start
     }
 }
 
