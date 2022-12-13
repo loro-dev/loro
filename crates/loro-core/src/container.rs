@@ -32,6 +32,7 @@ pub mod map;
 mod pool;
 pub mod text;
 
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum ContainerType {
@@ -151,6 +152,7 @@ pub trait Container: Debug + Any + Unpin {
 ///
 /// This structure is really cheap to clone
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 pub enum ContainerID {
     /// Root container does not need an op to create. It can be created implicitly.
     Root {

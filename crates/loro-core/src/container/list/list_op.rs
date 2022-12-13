@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::container::text::text_content::{ListSlice, SliceRange};
 
-#[derive(EnumAsInner, Debug, Clone, Serialize, Deserialize)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
+#[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ListOp {
     Insert { slice: ListSlice, pos: usize },
     Delete(DeleteSpan),
@@ -25,6 +26,7 @@ pub enum InnerListOp {
 ///
 /// pos: 5, len: -3 eq a range of (2, 5]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 pub struct DeleteSpan {
     pub pos: isize,
     pub len: isize,
@@ -313,7 +315,32 @@ impl Sliceable for InnerListOp {
 mod test {
     use rle::{Mergable, Sliceable};
 
-    use super::DeleteSpan;
+    use crate::text::text_content::ListSlice;
+
+    use super::{DeleteSpan, ListOp};
+
+    #[test]
+    fn fix_fields_order() {
+        let list_op = vec![
+            ListOp::Insert {
+                pos: 0,
+                slice: ListSlice::Unknown(0),
+            },
+            ListOp::Delete(DeleteSpan::new(0, 3)),
+        ];
+        let list_op_buf = vec![2, 0, 2, 0, 0, 1, 0, 6];
+        assert_eq!(
+            postcard::from_bytes::<Vec<ListOp>>(&list_op_buf).unwrap(),
+            list_op
+        );
+
+        let delete_span = DeleteSpan { pos: 0, len: 3 };
+        let delete_span_buf = vec![0, 6];
+        assert_eq!(
+            postcard::from_bytes::<DeleteSpan>(&delete_span_buf).unwrap(),
+            delete_span
+        );
+    }
 
     #[test]
     fn test_del_span_merge_slice() {

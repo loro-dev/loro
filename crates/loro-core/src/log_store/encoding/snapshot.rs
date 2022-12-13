@@ -118,8 +118,7 @@ struct SnapshotOpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // #[columnar(compress(level = 0))]
-    // list range or del len or map value index
+    // list range start or del len or map value index
     value: u64,
     #[columnar(strategy = "Rle")]
     value2: i64,
@@ -140,6 +139,10 @@ pub(super) struct SnapshotEncoded {
     keys: Vec<InternalString>,
 }
 
+const ENCODED_UNKNOWN_SLICE: i64 = -2;
+const ENCODED_DELETED_CONTENT: i64 = -1;
+const ENCODED_PLACEHOLDER: i64 = 0;
+
 fn convert_inner_content(
     op_content: &InnerContent,
     key_to_idx: &mut FxHashMap<InternalString, usize>,
@@ -149,19 +152,18 @@ fn convert_inner_content(
         InnerContent::List(list_op) => match list_op {
             InnerListOp::Insert { slice, pos } => {
                 if slice.is_unknown() {
-                    (*pos, slice.content_len() as u64, -2)
+                    (*pos, slice.content_len() as u64, ENCODED_UNKNOWN_SLICE)
                 } else {
-                    if (slice.0.end as i64) < 0 {
-                        println!("GG");
-                    }
                     (
                         *pos,
                         slice.0.start as u64,
-                        slice.0.end as i64, //merge_2_u32_u64(slice.0.start, slice.0.end),
+                        (slice.0.end - slice.0.start) as i64,
                     )
                 }
             }
-            InnerListOp::Delete(span) => (span.pos as usize, span.len as u64, -1),
+            InnerListOp::Delete(span) => {
+                (span.pos as usize, span.len as u64, ENCODED_DELETED_CONTENT)
+            }
         },
         InnerContent::Map(map_set) => {
             let InnerMapSet { key, value } = map_set;
@@ -171,7 +173,7 @@ fn convert_inner_content(
                     keys.len() - 1
                 }),
                 *value as u64,
-                -1,
+                ENCODED_PLACEHOLDER,
             )
         }
     };
@@ -286,11 +288,15 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
+    let mut container_idx2type = FxHashMap::default();
 
     for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
-        let container = store.get_or_create_container(&container_id);
+        let container_idx = store.reg.get_or_create_container_idx(&container_id);
+        container_idx2type.insert(container_idx, container_id.container_type());
         let state = pool_mapping.into_state(&keys, &clients);
-        container.try_lock().unwrap().to_import_snapshot(state)
+        let container = store.reg.get_by_idx(container_idx).unwrap();
+        let mut container = container.try_lock().unwrap();
+        container.to_import_snapshot(state);
     }
 
     for change_encoding in change_encodings {
@@ -322,8 +328,8 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
             } = op;
 
             let container_idx = ContainerIdx::from_u32(container_idx);
-            let container = store.reg.get_by_idx(container_idx).unwrap();
-            let content = match container.lock().unwrap().type_() {
+            let container_type = container_idx2type[&container_idx];
+            let content = match container_type {
                 ContainerType::Map => {
                     let key = keys[prop].clone();
                     InnerContent::Map(InnerMapSet {
@@ -332,14 +338,14 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
                     })
                 }
                 ContainerType::List | ContainerType::Text => {
-                    let is_del = value2 == -1;
+                    let is_del = value2 == ENCODED_DELETED_CONTENT;
                     let list_op = if is_del {
                         InnerListOp::Delete(DeleteSpan {
                             pos: prop as isize,
                             len: value as isize,
                         })
                     } else {
-                        let is_unknown = value2 == -2;
+                        let is_unknown = value2 == ENCODED_UNKNOWN_SLICE;
                         if is_unknown {
                             InnerListOp::Insert {
                                 slice: SliceRange::new_unknown(value as u32),
@@ -347,7 +353,7 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
                             }
                         } else {
                             InnerListOp::Insert {
-                                slice: (value as u32..value2 as u32).into(),
+                                slice: (value as u32..(value as i64 + value2) as u32).into(),
                                 pos: prop,
                             }
                         }

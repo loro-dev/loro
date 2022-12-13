@@ -94,6 +94,7 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut container_indexes = Vec::new();
+    let mut container_idx2index = FxHashMap::default();
     let mut container_ids = Vec::new();
     let mut change_num = 0;
 
@@ -135,16 +136,12 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
         let mut op_len = 0;
         for op in change.ops.iter() {
             let container = op.container;
-            let container_idx = if !container_indexes.contains(&container) {
+            let container_idx = *container_idx2index.entry(container).or_insert_with(|| {
                 container_indexes.push(container);
                 container_ids.push(store.reg.get_id(container).unwrap().clone());
                 container_indexes.len() - 1
-            } else {
-                container_indexes
-                    .iter()
-                    .position(|&x| x == container)
-                    .unwrap()
-            };
+            });
+
             let op = store.to_remote_op(op);
             for content in op.contents.into_iter() {
                 let (prop, gc, value) = match content {
@@ -193,15 +190,6 @@ fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
             op_len,
         });
     }
-
-    // println!("changes: {:?} bytes\nops: {:?} bytes\ndeps: {:?} bytes\nclients: {:?} bytes\ncontainers: {:?} bytes\nkeys: {:?} bytes\n", 
-    //     to_vec(&changes).unwrap().len(),
-    //     to_vec(&ops).unwrap().len(),
-    //     to_vec(&deps).unwrap().len(),
-    //     to_vec(&clients).unwrap().len(),
-    //     to_vec(&container_ids).unwrap().len(),
-    //     to_vec(&keys).unwrap().len(),
-    // );
 
     Encoded {
         changes,

@@ -25,7 +25,8 @@ pub enum InnerContent {
     Map(InnerMapSet),
 }
 
-#[derive(EnumAsInner, Debug, Serialize, Deserialize)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
+#[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
 pub enum RemoteContent {
     Map(MapSet),
     List(ListOp),
@@ -189,5 +190,31 @@ pub mod utils {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::container::{
+        list::list_op::{DeleteSpan, ListOp},
+        map::MapSet,
+    };
+
+    use super::RemoteContent;
+
+    #[test]
+    fn fix_fields_order() {
+        let remote_content = vec![
+            RemoteContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
+            RemoteContent::Map(MapSet {
+                key: "a".to_string().into(),
+                value: "b".to_string().into(),
+            }),
+        ];
+        let remote_content_buf = vec![2, 1, 1, 0, 2, 0, 1, 97, 4, 1, 98];
+        assert_eq!(
+            postcard::from_bytes::<Vec<RemoteContent>>(&remote_content_buf).unwrap(),
+            remote_content
+        );
     }
 }

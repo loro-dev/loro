@@ -1,5 +1,6 @@
 use fxhash::FxHashMap;
 use rle::range_map::RangeMap;
+use smallvec::{smallvec, SmallVec};
 use std::{fmt::Debug, ops::Range};
 
 use crate::{container::text::text_content::SliceRange, InternalString, LoroValue};
@@ -32,9 +33,8 @@ pub enum StateContent {
 impl<T: Clone + Debug> PoolMapping<T> {
     pub fn push_state_slice(&mut self, old_slice: Range<u32>, old: &[T]) -> Range<u32> {
         let start_index = self.new.len() as u32;
-        for v in old[old_slice.start as usize..old_slice.end as usize].iter() {
-            self.new.push(v.clone());
-        }
+        self.new
+            .extend_from_slice(&old[old_slice.start as usize..old_slice.end as usize]);
         let end_index = self.new.len() as u32;
         self.old2new
             .set_small_range(old_slice.start, start_index..end_index);
@@ -49,12 +49,12 @@ impl<T: Clone + Debug> PoolMapping<T> {
         &mut self,
         old_slice: Range<u32>,
         old_pool: Option<&[T]>,
-    ) -> Vec<SliceRange> {
+    ) -> SmallVec<[SliceRange; 1]> {
         let range_sliced = self
             .old2new
             .get_range_sliced(old_slice.start, old_slice.end)
             .collect::<Vec<_>>();
-        let mut ans = Vec::new();
+        let mut ans = smallvec![];
         let mut cursor = old_slice.start;
         for (old_index, new_range) in range_sliced {
             if old_index != cursor {
@@ -78,7 +78,7 @@ impl<T: Clone + Debug> PoolMapping<T> {
         cursor: u32,
         old_index: u32,
         old_pool: Option<&[T]>,
-        ans: &mut Vec<SliceRange>,
+        ans: &mut SmallVec<[SliceRange; 1]>,
     ) {
         let miss_len = old_index - cursor;
         if let Some(old_pool) = old_pool {
@@ -167,6 +167,7 @@ mod test {
     #[test]
     fn mapping() {
         use crate::container::text::text_content::SliceRange;
+        use smallvec::SmallVec;
 
         use super::PoolMapping;
         let old_pool = vec![7, 8, 9, 6, 5];
@@ -186,7 +187,11 @@ mod test {
         println!("ops {:?}", new_ops2);
         assert_eq!(
             new_ops,
-            vec![(0..1).into(), SliceRange::new_unknown(1), (2..3).into()]
+            SmallVec::<[SliceRange; 1]>::from(vec![
+                (0..1).into(),
+                SliceRange::new_unknown(1),
+                (2..3).into()
+            ])
         );
     }
 }
