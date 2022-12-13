@@ -28,12 +28,6 @@ checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
 
 [[package]]
 name = "arbitrary"
-version = "1.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f65bb255c86dda8d496b2ec8ba501c603030252cd52bee77a8862f2e46c8837a"
-
-[[package]]
-name = "arbitrary"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29d47fbf90d5149a107494b15a7dc8d69b351be2db3bb9691740e88ec17fd880"
@@ -114,15 +108,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b540bd8bc810d3885c6ea91e2018302f68baba2129ab3e88f32389ee9370880d"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crdt-list"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e04e0edda8f0f90bb49bc3305f49b5e0cb716900e1e7e69f08d969e0a1654906"
-dependencies = [
- "arref",
 ]
 
 [[package]]
@@ -359,7 +344,7 @@ dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
- "crdt-list 0.4.0",
+ "crdt-list",
  "debug-log",
  "enum-as-inner",
  "fxhash",
@@ -384,7 +369,7 @@ dependencies = [
 name = "loro-core-fuzz"
 version = "0.0.0"
 dependencies = [
- "crdt-list 0.3.0",
+ "crdt-list",
  "libfuzzer-sys",
  "loro-core",
 ]
@@ -693,7 +678,7 @@ dependencies = [
  "append-only-bytes",
  "arref",
  "bumpalo",
- "crdt-list 0.4.0",
+ "crdt-list",
  "debug-log",
  "enum-as-inner",
  "fxhash",
