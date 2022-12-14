@@ -51,6 +51,7 @@ bench-utils = { path = "../bench-utils" }
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
 doctest = false
+bench = false
 
 [features]
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen"]
