@@ -10,6 +10,7 @@ use crate::{
     container::{registry::ContainerWrapper, ContainerID},
     event::Diff,
     id::ClientID,
+    log_store::{EncodeConfig, EncodeMode},
     ContainerType, List, LoroCore, LoroValue, Map, Text,
 };
 
@@ -617,10 +618,18 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
-                .import_updates(&b_doc.export_updates(&a_doc.vv()).unwrap())
+                .decode(
+                    &b_doc
+                        .encode(EncodeConfig::new(EncodeMode::Updates(a_doc.vv()), None))
+                        .unwrap(),
+                )
                 .unwrap();
             b_doc
-                .import_updates(&a_doc.export_updates(&b_doc.vv()).unwrap())
+                .decode(
+                    &a_doc
+                        .encode(EncodeConfig::new(EncodeMode::Updates(b_doc.vv()), None))
+                        .unwrap(),
+                )
                 .unwrap();
             check_eq(a, b);
             debug_log::group_end!();

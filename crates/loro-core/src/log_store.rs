@@ -1,12 +1,12 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
-mod encode_updates;
 mod encoding;
 mod import;
 mod iter;
 
 use crate::LoroValue;
+pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,

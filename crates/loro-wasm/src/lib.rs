@@ -4,6 +4,7 @@ use loro_core::{
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
     log_store::GcConfig,
+    log_store::{EncodeConfig, EncodeMode},
     ContainerType, List, LoroCore, Map, Text, VersionVector,
 };
 use std::{
@@ -141,13 +142,15 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.encode_snapshot(false))
+        Ok(self
+            .0
+            .encode(EncodeConfig::new(EncodeMode::Snapshot, None))?)
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
-    pub fn import_snapshot(input: Vec<u8>) -> Self {
-        let core = LoroCore::decode_snapshot(&input, Default::default(), None);
-        Self(core)
+    pub fn import_snapshot(&mut self, input: Vec<u8>) -> JsResult<()> {
+        self.decode(&input)?;
+        Ok(())
     }
 
     #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
@@ -164,12 +167,15 @@ impl Loro {
             None => Default::default(),
         };
 
-        Ok(self.0.export_updates(&vv)?)
+        Ok(self
+            .0
+            .encode(EncodeConfig::new(EncodeMode::Updates(vv), None))?)
     }
 
     #[wasm_bindgen(js_name = "importUpdates")]
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
-        Ok(self.0.import_updates(&data)?)
+        self.0.decode(&data)?;
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = "toJson")]
