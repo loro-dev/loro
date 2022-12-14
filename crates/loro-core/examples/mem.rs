@@ -67,7 +67,7 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
                 let mut updates = Vec::new();
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    updates.push(b.export_updates(&a.vv()).unwrap());
+                    updates.push(b.export_updates(&a.vv_cloned()).unwrap());
                 }
                 for update in updates {
                     // TODO: use import batch here
@@ -75,7 +75,7 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
                 }
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import_updates(&a.export_updates(&b.vv()).unwrap())
+                    b.import_updates(&a.export_updates(&b.vv_cloned()).unwrap())
                         .unwrap();
                 }
             }
