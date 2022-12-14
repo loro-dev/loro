@@ -1,331 +1,177 @@
-use fxhash::FxHashMap;
-use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
-use tracing::instrument;
+mod encode_changes;
+mod encode_snapshot;
+mod encode_updates;
 
-use crate::{
-    change::{Change, Lamport, Timestamp},
-    container::{
-        list::list_op::{DeleteSpan, ListOp},
-        map::MapSet,
-        text::text_content::ListSlice,
-        ContainerID,
-    },
-    dag::Dag,
-    id::{ClientID, Counter, ID},
-    op::{RemoteContent, RemoteOp},
-    smstring::SmString,
-    span::HasIdSpan,
-    ContainerType, InternalString, LogStore, LoroValue, VersionVector,
-};
+use std::io::{Read, Write};
 
-// mod container;
-mod snapshot;
+use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
+use num::Zero;
 
-type ClientIdx = u32;
-type Clients = Vec<ClientID>;
-type Containers = Vec<ContainerID>;
+use crate::{dag::Dag, event::RawEvent, LogStore, LoroCore, LoroError, VersionVector};
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ChangeEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
-    client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    counter: Counter,
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
-    lamport: Lamport,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
-    timestamp: Timestamp,
-    op_len: u32,
-    #[columnar(strategy = "Rle")]
-    deps_len: u32,
+const UPDATE_ENCODE_THRESHOLD: usize = 5;
+const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
+pub enum EncodeMode {
+    Auto(Option<VersionVector>),
+    Updates(VersionVector),
+    Changes(VersionVector),
+    Snapshot,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OpEncoding {
-    #[columnar(strategy = "Rle", original_type = "usize")]
-    container: usize,
-    /// key index or insert/delete pos
-    #[columnar(strategy = "DeltaRle")]
-    prop: usize,
-    // TODO: can be compressed
-    gc: usize,
-    // #[columnar(compress(level = 0))]
-    value: LoroValue,
+pub struct EncodeConfig {
+    mode: EncodeMode,
+    compress: Option<u32>,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
-    client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    counter: Counter,
-}
+impl EncodeConfig {
+    pub fn new(mode: EncodeMode, compress: Option<u32>) -> Self {
+        Self { mode, compress }
+    }
 
-impl DepsEncoding {
-    fn new(client_idx: ClientIdx, counter: Counter) -> Self {
+    pub fn from_vv(vv: Option<VersionVector>) -> Self {
+        let mode = if vv.is_none() {
+            EncodeMode::Snapshot
+        } else {
+            EncodeMode::Auto(vv)
+        };
         Self {
-            client_idx,
-            counter,
+            mode,
+            compress: None,
         }
+    }
+
+    pub fn with_default_compress(self) -> Self {
+        self.with_compress(6)
+    }
+
+    pub fn with_compress(mut self, level: u32) -> Self {
+        self.compress = Some(level);
+        self
     }
 }
 
-#[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
-struct Encoded {
-    #[columnar(type = "vec")]
-    changes: Vec<ChangeEncoding>,
-    #[columnar(type = "vec")]
-    ops: Vec<OpEncoding>,
-    #[columnar(type = "vec")]
-    deps: Vec<DepsEncoding>,
-    clients: Clients,
-    containers: Containers,
-    keys: Vec<InternalString>,
-}
+pub struct LoroEncoder;
 
-#[instrument(skip_all)]
-fn encode_changes(store: &LogStore, vv: &VersionVector) -> Encoded {
-    let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
-    let mut clients = Vec::with_capacity(store.changes.len());
-    let mut container_indexes = Vec::new();
-    let mut container_idx2index = FxHashMap::default();
-    let mut container_ids = Vec::new();
-    let mut change_num = 0;
-
-    let mut diff_changes = Vec::new();
-    let self_vv = store.vv();
-    let diff = self_vv.diff(vv);
-    for span in diff.left.iter() {
-        let changes = store.get_changes_slice(span.id_span());
-        for change in changes.into_iter() {
-            diff_changes.push(change);
-        }
-    }
-
-    for change in &diff_changes {
-        let client_id = change.id.client_id;
-        client_id_to_idx.entry(client_id).or_insert_with(|| {
-            let idx = clients.len() as ClientIdx;
-            clients.push(client_id);
-            idx
-        });
-        change_num += 1;
-    }
-
-    let mut changes = Vec::with_capacity(change_num);
-    let mut ops = Vec::with_capacity(change_num);
-    let mut keys = Vec::new();
-    let mut key_to_idx = FxHashMap::default();
-    let mut deps = Vec::with_capacity(change_num);
-
-    for change in diff_changes {
-        let client_idx = client_id_to_idx[&change.id.client_id];
-        for dep in change.deps.iter() {
-            deps.push(DepsEncoding::new(
-                *client_id_to_idx.get(&dep.client_id).unwrap(),
-                dep.counter,
-            ));
-        }
-
-        let mut op_len = 0;
-        for op in change.ops.iter() {
-            let container = op.container;
-            let container_idx = *container_idx2index.entry(container).or_insert_with(|| {
-                container_indexes.push(container);
-                container_ids.push(store.reg.get_id(container).unwrap().clone());
-                container_indexes.len() - 1
-            });
-
-            let op = store.to_remote_op(op);
-            for content in op.contents.into_iter() {
-                let (prop, gc, value) = match content {
-                    crate::op::RemoteContent::Map(MapSet { key, value }) => (
-                        *key_to_idx.entry(key.clone()).or_insert_with(|| {
-                            keys.push(key);
-                            keys.len() - 1
-                        }),
-                        0,
-                        value,
-                    ),
-                    crate::op::RemoteContent::List(list) => match list {
-                        ListOp::Insert { slice, pos } => (
-                            pos,
-                            match &slice {
-                                ListSlice::Unknown(v) => *v,
-                                _ => 0,
-                            },
-                            match slice {
-                                ListSlice::RawData(v) => v.into(),
-                                ListSlice::RawStr(s) => s.as_str().into(),
-                                ListSlice::Unknown(_) => LoroValue::Null,
-                            },
-                        ),
-                        ListOp::Delete(span) => {
-                            (span.pos as usize, 0, LoroValue::I32(span.len as i32))
-                        }
-                    },
-                };
-                op_len += 1;
-                ops.push(OpEncoding {
-                    container: container_idx,
-                    prop,
-                    value,
-                    gc,
-                })
+impl LoroEncoder {
+    pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
+        let version = env!("CARGO_PKG_VERSION");
+        let store = loro
+            .log_store
+            .try_read()
+            .map_err(|_| LoroError::LockError)?;
+        let EncodeConfig { mode, compress } = config;
+        let mut ans = Vec::from(MAGIC_BYTES);
+        let version_bytes = version.as_bytes();
+        // maybe u8 is enough
+        ans.push(version_bytes.len() as u8);
+        ans.extend_from_slice(version.as_bytes());
+        ans.push(compress.is_some() as u8);
+        let mode = match mode {
+            EncodeMode::Auto(option_vv) => {
+                if let Some(vv) = option_vv {
+                    let self_vv = store.vv();
+                    let diff = self_vv.diff(&vv);
+                    if diff.left.len() > UPDATE_ENCODE_THRESHOLD {
+                        EncodeMode::Changes(vv)
+                    } else {
+                        EncodeMode::Updates(vv)
+                    }
+                } else {
+                    EncodeMode::Snapshot
+                }
             }
-        }
-
-        changes.push(ChangeEncoding {
-            client_idx: client_idx as ClientIdx,
-            counter: change.id.counter,
-            lamport: change.lamport,
-            timestamp: change.timestamp,
-            deps_len: change.deps.len() as u32,
-            op_len,
-        });
+            mode => mode,
+        };
+        let encoded = match &mode {
+            EncodeMode::Updates(vv) => Self::encode_updates(&store, vv),
+            EncodeMode::Changes(vv) => Self::encode_changes(&store, vv),
+            EncodeMode::Snapshot => Self::encode_snapshot(&store),
+            _ => unreachable!(),
+        }?;
+        ans.push(mode.to_byte());
+        if let Some(level) = compress {
+            let mut c = DeflateEncoder::new(&mut ans, Compression::new(level));
+            c.write_all(&encoded)
+                .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+            c.try_finish()
+                .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+        } else {
+            ans.extend(encoded);
+        };
+        Ok(ans)
     }
 
-    Encoded {
-        changes,
-        ops,
-        deps,
-        clients,
-        containers: container_ids,
-        keys,
+    pub fn decode(loro: &mut LoroCore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
+        let mut store = loro
+            .log_store
+            .try_write()
+            .map_err(|_| LoroError::LockError)?;
+        let (magic_bytes, input) = input.split_at(4);
+        let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
+        if magic_bytes != MAGIC_BYTES {
+            return Err(LoroError::DecodeError("Invalid header bytes".into()));
+        }
+        let (version_len, input) = input.split_at(1);
+        // check version
+        let (_version, input) = input.split_at(version_len[0] as usize);
+        let compress = input[0];
+        let mode = input[1];
+        let mut decoded = Vec::new();
+        let decoded = if compress.is_zero() {
+            &input[2..]
+        } else {
+            let mut c = DeflateDecoder::new(&input[2..]);
+            c.read_to_end(&mut decoded).unwrap();
+            &decoded
+        };
+        match mode {
+            0 => Self::decode_updates(&mut store, decoded),
+            1 => Self::decode_changes(&mut store, decoded),
+            2 => Self::decode_snapshot(&mut store, decoded),
+            _ => unreachable!(),
+        }
     }
 }
 
-#[instrument(skip_all)]
-fn decode_changes(store: &mut LogStore, encoded: Encoded) {
-    let Encoded {
-        changes: change_encodings,
-        ops,
-        deps,
-        clients,
-        containers,
-        keys,
-    } = encoded;
-
-    if change_encodings.is_empty() && !containers.is_empty() {
-        for container in containers.iter() {
-            store.get_or_create_container(container);
-        }
+impl LoroEncoder {
+    #[inline]
+    fn encode_updates(store: &LogStore, vv: &VersionVector) -> Result<Vec<u8>, LoroError> {
+        encode_updates::encode_updates(store, vv)
     }
 
-    let mut op_iter = ops.into_iter();
-    let mut changes = FxHashMap::default();
-    let mut deps_iter = deps.into_iter();
-
-    for change_encoding in change_encodings {
-        let ChangeEncoding {
-            client_idx,
-            counter,
-            lamport,
-            timestamp,
-            op_len,
-            deps_len,
-        } = change_encoding;
-
-        let client_id = clients[client_idx as usize];
-        let mut ops = RleVec::<[RemoteOp; 2]>::new();
-        let deps = (0..deps_len)
-            .map(|_| {
-                let raw = deps_iter.next().unwrap();
-                ID::new(clients[raw.client_idx as usize], raw.counter)
-            })
-            .collect();
-
-        let mut op_counter = counter;
-        for op in op_iter.by_ref().take(op_len as usize) {
-            let OpEncoding {
-                container: container_idx,
-                prop,
-                value,
-                gc,
-            } = op;
-            let container_id = containers[container_idx].clone();
-
-            let container_type = container_id.container_type();
-            let content = match container_type {
-                ContainerType::Map => {
-                    let key = keys[prop].clone();
-                    RemoteContent::Map(MapSet { key, value })
-                }
-                ContainerType::List | ContainerType::Text => {
-                    let pos = prop;
-                    let list_op = match value {
-                        LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
-                            pos: pos as isize,
-                            len: len as isize,
-                        }),
-                        LoroValue::Null => ListOp::Insert {
-                            pos,
-                            slice: ListSlice::Unknown(gc),
-                        },
-                        _ => {
-                            let slice = match value {
-                                LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
-                                LoroValue::List(v) => ListSlice::RawData(*v),
-                                _ => unreachable!(),
-                            };
-                            ListOp::Insert { slice, pos }
-                        }
-                    };
-                    RemoteContent::List(list_op)
-                }
-            };
-            let remote_op = RemoteOp {
-                container: container_id,
-                counter: op_counter,
-                contents: vec![content].into(),
-            };
-            op_counter += remote_op.content_len() as i32;
-            ops.push(remote_op);
-        }
-
-        let change = Change {
-            id: ID { client_id, counter },
-            lamport,
-            timestamp,
-            ops,
-            deps,
-        };
-
-        changes
-            .entry(client_id)
-            .or_insert_with(Vec::new)
-            .push(change);
+    #[inline]
+    fn decode_updates(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
+        encode_updates::decode_updates(store, input)
     }
-    // TODO: using the one with fewer changes to import
-    store.import(changes);
+
+    #[inline]
+    fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec<u8>, LoroError> {
+        encode_changes::encode_changes(store, vv)
+    }
+
+    #[inline]
+    fn decode_changes(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
+        encode_changes::decode_changes(store, input)
+    }
+
+    #[inline]
+    fn encode_snapshot(store: &LogStore) -> Result<Vec<u8>, LoroError> {
+        encode_snapshot::encode_snapshot(store, store.cfg.gc.gc)
+    }
+
+    #[inline]
+    fn decode_snapshot(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
+        encode_snapshot::decode_snapshot(store, input)
+    }
 }
 
-impl LogStore {
-    pub fn encode_changes(&self, vv: &VersionVector, compress_cfg: bool) -> Vec<u8> {
-        let encoded = encode_changes(self, vv);
-        let mut ans = vec![compress_cfg as u8];
-        let buf = if compress_cfg {
-            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
-        } else {
-            to_vec(&encoded).unwrap()
-        };
-        ans.extend(buf);
-        ans
-    }
-
-    pub fn decode_changes(&mut self, input: &[u8]) {
-        let compress_cfg = *input.first().unwrap() > 0;
-        let encoded = if compress_cfg {
-            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
-        } else {
-            from_bytes(&input[1..]).unwrap()
-        };
-        decode_changes(self, encoded);
+impl EncodeMode {
+    fn to_byte(&self) -> u8 {
+        match self {
+            EncodeMode::Auto(_) => unreachable!(),
+            EncodeMode::Updates(_) => 0,
+            EncodeMode::Changes(_) => 1,
+            EncodeMode::Snapshot => 2,
+        }
     }
 }

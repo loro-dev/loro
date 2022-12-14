@@ -5,7 +5,12 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 
-use crate::{array_mut_ref, id::ClientID, LoroCore, VersionVector};
+use crate::{
+    array_mut_ref,
+    id::ClientID,
+    log_store::{EncodeConfig, EncodeMode},
+    LoroCore, VersionVector,
+};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -221,14 +226,20 @@ fn check_synced(sites: &mut [LoroCore]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             {
                 debug_log::group!("Import {}", i);
-                a.import_updates(&b.export_updates(&a.vv()).unwrap())
-                    .unwrap();
+                a.decode(
+                    &b.encode(EncodeConfig::new(EncodeMode::Updates(a.vv()), None))
+                        .unwrap(),
+                )
+                .unwrap();
                 debug_log::group_end!();
             }
             {
                 debug_log::group!("Import {}", j);
-                b.import_updates(&a.export_updates(&b.vv()).unwrap())
-                    .unwrap();
+                b.decode(
+                    &a.encode(EncodeConfig::new(EncodeMode::Updates(a.vv()), None))
+                        .unwrap(),
+                )
+                .unwrap();
                 debug_log::group_end!();
             }
             check_eq(a, b);
@@ -303,11 +314,21 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
             _ => {}
         }
     }
-    let encode_bytes = store.encode_changes(&VersionVector::new(), false);
+    let encode_bytes = store
+        .encode(EncodeConfig::new(
+            EncodeMode::Changes(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
     let json1 = store.to_json();
     let mut store2 = LoroCore::new(Default::default(), None);
-    store2.decode_changes(&encode_bytes);
-    let _encode_bytes2 = store2.encode_changes(&VersionVector::new(), false);
+    store2.decode(&encode_bytes);
+    let _encode_bytes2 = store2
+        .encode(EncodeConfig::new(
+            EncodeMode::Changes(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
     let json2 = store2.to_json();
     // state encode will change mergable range
     // assert_eq!(encode_bytes, encode_bytes2);
