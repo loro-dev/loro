@@ -45,6 +45,7 @@ ctor = "0.1.23"
 criterion = "0.4.0"
 flate2 = "1.0.24"
 arbtest = "0.2.0"
+bench-utils = { path = "../bench-utils" }
 
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
