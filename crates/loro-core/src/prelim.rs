@@ -55,3 +55,15 @@ impl From<ContainerType> for PrelimValue {
         PrelimValue::Container(container)
     }
 }
+
+impl From<i32> for PrelimValue {
+    fn from(v: i32) -> Self {
+        PrelimValue::Value(v.into())
+    }
+}
+
+impl From<f64> for PrelimValue {
+    fn from(v: f64) -> Self {
+        PrelimValue::Value(v.into())
+    }
+}

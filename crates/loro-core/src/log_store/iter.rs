@@ -93,9 +93,9 @@ impl<'a> Iterator for OpSpanIter<'a> {
                 self.op_index += 1;
                 let op = RichOp::new_by_slice_on_change(
                     change,
-                    op,
                     self.span.counter.min() - change.id.counter,
                     self.span.counter.end() - change.id.counter,
+                    op,
                 );
                 if op.atom_len() == 0 {
                     return None;

@@ -1,13 +1,16 @@
+use crate::id::{Counter, ID};
+use crate::version::PatchedVersionVector;
 use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
+use std::sync::Arc;
 use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
 use tracing::instrument;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 
 use rle::{slice_vec_by, HasLength, RleVecWithIndex};
 
@@ -27,6 +30,7 @@ pub struct ImportContext {
     pub old_frontiers: Frontiers,
     pub new_frontiers: Frontiers,
     pub old_vv: VersionVector,
+    pub patched_old_vv: Option<PatchedVersionVector>,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
     pub diff: Vec<(ContainerID, Vec<Diff>)>,
@@ -95,6 +99,7 @@ impl LogStore {
             spans: next_vv.diff(&self.vv).left,
             new_vv: next_vv,
             diff: Default::default(),
+            patched_old_vv: None,
         };
         self.with_hierarchy(|_, h| {
             h.take_deleted();
@@ -113,7 +118,7 @@ impl LogStore {
     fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
         let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
-        let mut h = self.hierarchy.try_lock().unwrap();
+        let h = self.hierarchy.try_lock().unwrap();
         let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
@@ -227,7 +232,7 @@ impl LogStore {
                         let change = iter.data;
 
                         for op in change.ops.iter() {
-                            let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
+                            let rich_op = RichOp::new_by_slice_on_change(change, start, end, op);
                             if rich_op.atom_len() == 0 {
                                 continue;
                             }
@@ -249,34 +254,51 @@ impl LogStore {
 
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
+        let iter_targets = context.new_vv.sub_vec(&common_ancestors_vv);
+        let common_ancestors_vv = Arc::new(common_ancestors_vv);
+        context.patched_old_vv = Some(PatchedVersionVector::from_version(
+            &common_ancestors_vv,
+            &context.old_vv,
+        ));
+        let common_ancestors_vv = PatchedVersionVector::new(common_ancestors_vv);
         for (_, container) in container_map.iter_mut() {
-            container.tracker_checkout(&common_ancestors_vv);
+            container.tracker_init(&common_ancestors_vv);
         }
         self.with_hierarchy(|store, hierarchy| {
-            for iter in store.iter_causal(
-                &common_ancestors,
-                context.new_vv.diff(&common_ancestors_vv).left,
-            ) {
+            let mut current_vv = common_ancestors_vv.clone();
+            let mut already_checkout = FxHashSet::default();
+            for iter in store.iter_causal(&common_ancestors, iter_targets) {
+                debug_log::debug_dbg!(&iter);
+                debug_log::debug_dbg!(&current_vv);
+                already_checkout.clear();
                 let start = iter.slice.start;
                 let end = iter.slice.end;
                 let change = iter.data;
-                // TODO: perf: we can make iter_causal returns target vv and only
-                // checkout the related container to the target vv
-                for (_, container) in container_map.iter_mut() {
-                    container.track_retreat(&iter.retreat);
-                    container.track_forward(&iter.forward);
-                }
+                current_vv.retreat(&iter.retreat);
+                current_vv.forward(&iter.forward);
 
+                debug_log::debug_dbg!(&current_vv);
                 for op in change.ops.iter() {
-                    let rich_op = RichOp::new_by_slice_on_change(change, op, start, end);
+                    let rich_op = RichOp::new_by_slice_on_change(change, start, end, op);
                     if rich_op.atom_len() == 0 {
                         continue;
                     }
 
+                    debug_log::debug_dbg!(&rich_op);
                     if let Some(container) = container_map.get_mut(&op.container) {
+                        if !already_checkout.contains(&op.container) {
+                            already_checkout.insert(op.container);
+                            container.tracker_checkout(&current_vv);
+                        }
+
                         container.track_apply(hierarchy, &rich_op, context);
                     }
                 }
+
+                current_vv.set_end(ID::new(
+                    change.id.client_id,
+                    end as Counter + change.id.counter,
+                ));
             }
         });
         debug_log::group!("apply effects");

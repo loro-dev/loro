@@ -27,7 +27,7 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     value::LoroValue,
-    version::IdSpanVector,
+    version::PatchedVersionVector,
     LoroError,
 };
 
@@ -38,7 +38,7 @@ pub struct ListContainer {
     id: ContainerID,
     state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
     raw_data: pool::Pool,
-    tracker: Tracker,
+    tracker: Option<Tracker>,
 }
 
 impl ListContainer {
@@ -46,7 +46,7 @@ impl ListContainer {
         Self {
             id,
             raw_data: pool::Pool::default(),
-            tracker: Tracker::new(Default::default(), 0),
+            tracker: None,
             state: Default::default(),
         }
     }
@@ -242,7 +242,9 @@ impl ListContainer {
     }
 
     pub fn check(&mut self) {
-        self.tracker.check();
+        if let Some(x) = self.tracker.as_mut() {
+            x.check()
+        }
     }
 
     #[cfg(feature = "test_utils")]
@@ -384,27 +386,29 @@ impl Container for ListContainer {
         }
     }
 
-    fn track_retreat(&mut self, spans: &IdSpanVector) {
-        self.tracker.retreat(spans);
-    }
-
-    fn track_forward(&mut self, spans: &IdSpanVector) {
-        self.tracker.forward(spans);
-    }
-
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
-        if (!vv.is_empty() || self.tracker.start_vv().is_empty())
-            && self.tracker.all_vv() >= vv
-            && vv >= self.tracker.start_vv()
-        {
-            self.tracker.checkout(vv);
-        } else {
-            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
+    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
+        match &mut self.tracker {
+            Some(tracker) => {
+                if (!vv.is_empty() || tracker.start_vv().is_empty())
+                    && tracker.all_vv() >= vv
+                    && vv >= tracker.start_vv()
+                {
+                } else {
+                    self.tracker = Some(Tracker::new(vv.clone(), Counter::MAX / 2));
+                }
+            }
+            None => {
+                self.tracker = Some(Tracker::new(vv.clone(), Counter::MAX / 2));
+            }
         }
     }
 
+    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
+        self.tracker.as_mut().unwrap().checkout(vv)
+    }
+
     fn track_apply(&mut self, _: &mut Hierarchy, rich_op: &RichOp, _: &mut ImportContext) {
-        self.tracker.track_apply(rich_op);
+        self.tracker.as_mut().unwrap().track_apply(rich_op);
     }
 
     fn apply_tracked_effects_from(
@@ -414,10 +418,10 @@ impl Container for ListContainer {
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = vec![];
-        for effect in self
-            .tracker
-            .iter_effects(&import_context.old_vv, &import_context.spans)
-        {
+        for effect in self.tracker.as_mut().unwrap().iter_effects(
+            import_context.patched_old_vv.as_ref().unwrap(),
+            &import_context.spans,
+        ) {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
@@ -464,6 +468,8 @@ impl Container for ListContainer {
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
         }
+
+        self.tracker = None;
     }
 }
 

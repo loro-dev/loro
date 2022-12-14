@@ -9,6 +9,7 @@ use crate::{
 
 use super::{cursor_map::FirstCursorResult, y_span::StatusChange, Tracker};
 
+#[derive(Debug)]
 pub struct EffectIter<'a> {
     tracker: &'a mut Tracker,
     left_spans: Vec<IdSpan>,
@@ -78,7 +79,6 @@ impl<'a> Iterator for EffectIter<'a> {
                     let len = cursor.len;
                     *delete_op_id = delete_op_id.inc(cursor.len as Counter);
                     self.tracker.current_vv.set_end(*delete_op_id);
-                    self.tracker.cached_fake_current_vv.set_end(*delete_op_id);
                     let length = -self.tracker.update_cursors(cursor, StatusChange::Delete);
                     assert!(length >= 0);
                     if length > 0 {
@@ -110,9 +110,6 @@ impl<'a> Iterator for EffectIter<'a> {
                             let len = cursor.len;
                             self.tracker
                                 .current_vv
-                                .set_end(id.inc(cursor.len as Counter));
-                            self.tracker
-                                .cached_fake_current_vv
                                 .set_end(id.inc(cursor.len as Counter));
                             let length_diff = self
                                 .tracker

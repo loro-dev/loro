@@ -4,9 +4,12 @@
   "description": "",
   "main": "nodejs/loro_wasm.js",
   "module": "bundler/loro_wasm.js",
-  "scripts": {
-  },
+  "scripts": {},
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "vite-plugin-top-level-await": "^1.2.2",
+    "vite-plugin-wasm": "^3.1.0"
+  }
 }

@@ -112,15 +112,6 @@ dependencies = [
 
 [[package]]
 name = "crdt-list"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e04e0edda8f0f90bb49bc3305f49b5e0cb716900e1e7e69f08d969e0a1654906"
-dependencies = [
- "arref",
-]
-
-[[package]]
-name = "crdt-list"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e257356d86ea7330c1105eaf6041c6df627c5b1968f2338021df88b19de1875a"
@@ -353,7 +344,7 @@ dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
- "crdt-list 0.4.0",
+ "crdt-list",
  "debug-log",
  "enum-as-inner",
  "fxhash",
@@ -378,7 +369,7 @@ dependencies = [
 name = "loro-core-fuzz"
 version = "0.0.0"
 dependencies = [
- "crdt-list 0.3.0",
+ "crdt-list",
  "libfuzzer-sys",
  "loro-core",
 ]
@@ -687,7 +678,7 @@ dependencies = [
  "append-only-bytes",
  "arref",
  "bumpalo",
- "crdt-list 0.4.0",
+ "crdt-list",
  "debug-log",
  "enum-as-inner",
  "fxhash",

@@ -352,8 +352,8 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
 
-                a.loro.import(b.loro.export(a.loro.vv()));
-                b.loro.import(a.loro.export(b.loro.vv()));
+                a.loro.import(b.loro.export(a.loro.vv_cloned()));
+                b.loro.import(a.loro.export(b.loro.vv_cloned()));
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
@@ -408,7 +408,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.loro.import(b.loro.export(a.loro.vv()));
+                    a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
                         if !visited.contains(&id) {
@@ -434,7 +434,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.loro.import(a.loro.export(b.loro.vv()));
+                    b.loro.import(a.loro.export(b.loro.vv_cloned()));
                     b.map_containers = a
                         .map_containers
                         .iter()
@@ -617,10 +617,10 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
-                .import_updates(&b_doc.export_updates(&a_doc.vv()).unwrap())
+                .import_updates(&b_doc.export_updates(&a_doc.vv_cloned()).unwrap())
                 .unwrap();
             b_doc
-                .import_updates(&a_doc.export_updates(&b_doc.vv()).unwrap())
+                .import_updates(&a_doc.export_updates(&b_doc.vv_cloned()).unwrap())
                 .unwrap();
             check_eq(a, b);
             debug_log::group_end!();
@@ -1107,6 +1107,121 @@ mod failed_tests {
     }
 
     #[test]
+    fn checkout_error() {
+        test_multi_sites(
+            2,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn unknown() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 152,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 2,
+                    is_del: true,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 28,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 41,
+                    value: 45232,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 39064,
+                    is_del: false,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1734829928),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn list_slice_err() {
         test_multi_sites(
             5,
@@ -1149,7 +1264,92 @@ mod failed_tests {
     use super::ContainerType as C;
     #[test]
     fn to_minify() {
-        minify_error(5, vec![], test_multi_sites, normalize)
+        minify_error(
+            5,
+            vec![
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 152,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 2,
+                    is_del: true,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 28,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 41,
+                    value: 45232,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 39064,
+                    is_del: false,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1734829928),
+                },
+            ],
+            test_multi_sites,
+            normalize,
+        )
     }
 
     #[ctor::ctor]

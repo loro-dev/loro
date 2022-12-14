@@ -17,7 +17,7 @@ use crate::{
     id::ClientID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
-    version::IdSpanVector,
+    version::PatchedVersionVector,
     LoroError, LoroValue,
 };
 
@@ -64,7 +64,17 @@ impl Container for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn tracker_checkout(&mut self, vv: &crate::VersionVector) {
+    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
+        match self {
+            ContainerInstance::Map(x) => x.tracker_init(vv),
+            ContainerInstance::Text(x) => x.tracker_init(vv),
+            ContainerInstance::Dyn(x) => x.tracker_init(vv),
+            ContainerInstance::List(x) => x.tracker_init(vv),
+        }
+    }
+
+    #[instrument(skip_all)]
+    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
             ContainerInstance::Text(x) => x.tracker_checkout(vv),
@@ -95,26 +105,6 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op, context),
             ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op, context),
             ContainerInstance::List(x) => x.update_state_directly(hierarchy, op, context),
-        }
-    }
-
-    #[instrument(skip_all)]
-    fn track_retreat(&mut self, op: &IdSpanVector) {
-        match self {
-            ContainerInstance::Map(x) => x.track_retreat(op),
-            ContainerInstance::Text(x) => x.track_retreat(op),
-            ContainerInstance::Dyn(x) => x.track_retreat(op),
-            ContainerInstance::List(x) => x.track_retreat(op),
-        }
-    }
-
-    #[instrument(skip_all)]
-    fn track_forward(&mut self, op: &IdSpanVector) {
-        match self {
-            ContainerInstance::Map(x) => x.track_forward(op),
-            ContainerInstance::Text(x) => x.track_forward(op),
-            ContainerInstance::Dyn(x) => x.track_forward(op),
-            ContainerInstance::List(x) => x.track_forward(op),
         }
     }
 

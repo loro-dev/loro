@@ -19,7 +19,7 @@ use crate::{
     prelim::Prelim,
     span::HasLamport,
     value::LoroValue,
-    version::{Frontiers, IdSpanVector, TotalOrderStamp},
+    version::{Frontiers, TotalOrderStamp},
     InternalString,
 };
 
@@ -287,7 +287,9 @@ impl Container for MapContainer {
         map.into()
     }
 
-    fn tracker_checkout(&mut self, _vv: &crate::version::VersionVector) {}
+    fn tracker_init(&mut self, _vv: &crate::version::PatchedVersionVector) {}
+
+    fn tracker_checkout(&mut self, vv: &crate::version::PatchedVersionVector) {}
 
     fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
         if let Ok(set) = content.into_map() {
@@ -373,10 +375,6 @@ impl Container for MapContainer {
             );
         }
     }
-
-    fn track_retreat(&mut self, _: &IdSpanVector) {}
-
-    fn track_forward(&mut self, _: &IdSpanVector) {}
 
     fn track_apply(&mut self, _: &mut Hierarchy, op: &RichOp, _: &mut ImportContext) {
         self.pending_ops.push(op.as_owned());

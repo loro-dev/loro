@@ -1,49 +1,86 @@
-import { useState, useEffect } from "preact/hooks";
-import preactLogo from "./assets/preact.svg";
-import init, { Loro } from "loro-wasm";
+import { useCallback, useState } from "preact/hooks";
+import { Loro, setPanicHook, enableDebug } from "loro-wasm/bundler/loro_wasm";
 import "./app.css";
 
-init();
-export function App() {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    (async () => {
-      await init();
-      const loro = new Loro();
-      const a = loro.getText("ha");
-      a.insert(loro, 0, "hello world");
-      a.delete(loro, 6, 5);
-      a.insert(loro, 6, "everyone");
-      console.log(a.value);
-      const b = loro.getMap("ha");
-      b.set(loro, "ab", 123);
-      console.log(b.value);
-      console.log(a.value);
-    })();
-  }, []);
+// enableDebug();
+async function testListInsert() {
+  const loro = new Loro();
+  const loroB = new Loro();
+  const a = loro.getList("list");
+  loro.subscribe((local: boolean) => {
+    if (local) {
+      loroB.importUpdates(loro.exportUpdates(loroB.version()));
+    }
+  })
 
+  for (let i = 0; i < 1000; i++) {
+    a.insert(loro, i, i);
+  }
+}
+
+function testManyActors() {
+  const actors = new Array(200).fill(0).map(() => new Loro());
+  console.log(actors);
+  for (let i = 0; i < actors.length; i++) {
+    const list = actors[i].getList("list");
+    list.insert(actors[i], 0, i);
+  }
+
+  for (let i = 1; i < actors.length; i++) {
+    actors[0].importUpdates(actors[i].exportUpdates(undefined));
+  }
+
+  for (let i = 1; i < actors.length; i++) {
+    actors[i].importUpdates(actors[0].exportUpdates(undefined));
+  }
+
+  console.log(actors[0].getList("list").value);
+  for (let i = 0; i < actors.length - 1; i++) {
+    const listA = actors[i].getList("list").value;
+    const listB = actors[i + 1].getList("list").value;
+
+    if (listA.length != listB.length) {
+      console.log(listA.value);
+      console.log(listB.value);
+      throw new Error("not eq");
+    }
+
+    for (let j = 0; j < listA.length; j++) {
+      if (listA[j] != listB[j]) {
+        console.log(listA.value);
+        console.log(listB.value);
+        throw new Error("not eq");
+      }
+    }
+  }
+}
+
+export function App() {
   return (
     <>
-      <div>
-        <a href="https://vitejs.dev" target="_blank">
-          <img src="/vite.svg" class="logo" alt="Vite logo" />
-        </a>
-        <a href="https://preactjs.com" target="_blank">
-          <img src={preactLogo} class="logo preact" alt="Preact logo" />
-        </a>
-      </div>
-      <h1>Vite + Preact</h1>
-      <div class="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/app.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p class="read-the-docs">
-        Click on the Vite and Preact logos to learn more
-      </p>
+      <Bench fn={testListInsert} name="test list insert"/>
+      <Bench fn={testManyActors} name="test many actors"/>
     </>
   );
+}
+
+function Bench({ fn, name }: { fn: () => void, name: string }) {
+  const [duration, setDuration] = useState(0)
+  const onClick = useCallback(() => {
+    setDuration(0);
+    const start = performance.now()
+    fn()
+    const end = performance.now()
+    setDuration(end - start)
+  }, [fn])
+  return (
+    <p>
+      <button onClick={onClick}>{name}</button>
+      {
+        duration != 0 ? (
+          <span style={{marginLeft: 8}}>{duration.toFixed(0)} ms</span>
+        ) : undefined
+      }
+    </p>
+  )
 }
