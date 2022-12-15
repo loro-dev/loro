@@ -14,7 +14,7 @@ const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
 pub enum EncodeMode {
     Auto(Option<VersionVector>),
     Updates(VersionVector),
-    Changes(VersionVector),
+    RleUpdates(VersionVector),
     Snapshot,
 }
 
@@ -72,7 +72,7 @@ impl LoroEncoder {
                     let self_vv = store.vv();
                     let diff = self_vv.diff(&vv);
                     if diff.left.len() > UPDATE_ENCODE_THRESHOLD {
-                        EncodeMode::Changes(vv)
+                        EncodeMode::RleUpdates(vv)
                     } else {
                         EncodeMode::Updates(vv)
                     }
@@ -84,7 +84,7 @@ impl LoroEncoder {
         };
         let encoded = match &mode {
             EncodeMode::Updates(vv) => Self::encode_updates(&store, vv),
-            EncodeMode::Changes(vv) => Self::encode_changes(&store, vv),
+            EncodeMode::RleUpdates(vv) => Self::encode_changes(&store, vv),
             EncodeMode::Snapshot => Self::encode_snapshot(&store),
             _ => unreachable!(),
         }?;
@@ -170,7 +170,7 @@ impl EncodeMode {
         match self {
             EncodeMode::Auto(_) => unreachable!(),
             EncodeMode::Updates(_) => 0,
-            EncodeMode::Changes(_) => 1,
+            EncodeMode::RleUpdates(_) => 1,
             EncodeMode::Snapshot => 2,
         }
     }
