@@ -316,16 +316,16 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
     }
     let encode_bytes = store
         .encode(EncodeConfig::new(
-            EncodeMode::Changes(VersionVector::new()),
+            EncodeMode::RleUpdates(VersionVector::new()),
             None,
         ))
         .unwrap();
     let json1 = store.to_json();
     let mut store2 = LoroCore::new(Default::default(), None);
-    store2.decode(&encode_bytes);
+    store2.decode(&encode_bytes).unwrap();
     let _encode_bytes2 = store2
         .encode(EncodeConfig::new(
-            EncodeMode::Changes(VersionVector::new()),
+            EncodeMode::RleUpdates(VersionVector::new()),
             None,
         ))
         .unwrap();

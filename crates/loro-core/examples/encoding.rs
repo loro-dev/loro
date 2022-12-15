@@ -41,7 +41,7 @@ fn main() {
     let start = Instant::now();
     let buf = loro
         .encode(EncodeConfig::new(
-            EncodeMode::Changes(VersionVector::new()),
+            EncodeMode::RleUpdates(VersionVector::new()),
             None,
         ))
         .unwrap();
@@ -67,7 +67,7 @@ fn main() {
     println!("decode changes used {}ms", start.elapsed().as_millis());
     let buf2 = loro
         .encode(EncodeConfig::new(
-            EncodeMode::Changes(VersionVector::new()),
+            EncodeMode::RleUpdates(VersionVector::new()),
             None,
         ))
         .unwrap();
