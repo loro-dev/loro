@@ -8,6 +8,7 @@ use crate::{smstring::SmString, LoroValue};
 
 use super::string_pool::PoolString;
 
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(PartialEq, Debug, EnumAsInner, Clone, Serialize, Deserialize)]
 pub enum ListSlice {
     // TODO: use Box<[LoroValue]> ?
@@ -135,5 +136,26 @@ impl Mergable for ListSlice {
             (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.merge(b, &()),
             _ => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::LoroValue;
+
+    use super::ListSlice;
+
+    #[test]
+    fn fix_fields_order() {
+        let list_slice = vec![
+            ListSlice::RawData(vec![LoroValue::Bool(true)]),
+            ListSlice::RawStr("".into()),
+            ListSlice::Unknown(0),
+        ];
+        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 2, 0];
+        assert_eq!(
+            postcard::from_bytes::<Vec<ListSlice>>(&list_slice_buf).unwrap(),
+            list_slice
+        );
     }
 }

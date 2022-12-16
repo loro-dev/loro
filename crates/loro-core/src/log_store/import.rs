@@ -87,7 +87,6 @@ impl LogStore {
             .into_iter()
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
-
         let mut context = ImportContext {
             old_frontiers: self.frontiers.iter().copied().collect(),
             new_frontiers: next_frontiers.get_frontiers(),
@@ -113,7 +112,7 @@ impl LogStore {
     fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
         let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
-        let mut h = self.hierarchy.try_lock().unwrap();
+        let h = self.hierarchy.try_lock().unwrap();
         let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()

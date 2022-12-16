@@ -141,12 +141,12 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.encode_snapshot())
+        Ok(self.0.encode_snapshot(false))
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
     pub fn import_snapshot(input: Vec<u8>) -> Self {
-        let core = LoroCore::decode_snapshot(&input, None, Default::default());
+        let core = LoroCore::decode_snapshot(&input, Default::default(), None);
         Self(core)
     }
 
