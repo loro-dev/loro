@@ -33,14 +33,18 @@ impl ContainerIdx {
     pub(crate) fn to_u32(self) -> u32 {
         self.0
     }
+
+    pub(crate) fn from_u32(idx: u32) -> Self {
+        Self(idx)
+    }
 }
 
 // TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]
 pub enum ContainerInstance {
-    Map(Box<MapContainer>),
-    Text(Box<TextContainer>),
     List(Box<ListContainer>),
+    Text(Box<TextContainer>),
+    Map(Box<MapContainer>),
     Dyn(Box<dyn Container>),
 }
 
@@ -155,6 +159,46 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.to_import(content),
         }
     }
+
+    fn to_export_snapshot(
+        &mut self,
+        content: &crate::op::InnerContent,
+        gc: bool,
+    ) -> SmallVec<[crate::op::InnerContent; 1]> {
+        match self {
+            ContainerInstance::Map(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::Text(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::Dyn(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::List(x) => x.to_export_snapshot(content, gc),
+        }
+    }
+
+    fn initialize_pool_mapping(&mut self) {
+        match self {
+            ContainerInstance::Map(x) => x.initialize_pool_mapping(),
+            ContainerInstance::Text(x) => x.initialize_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.initialize_pool_mapping(),
+            ContainerInstance::List(x) => x.initialize_pool_mapping(),
+        }
+    }
+
+    fn encode_and_release_pool_mapping(&mut self) -> super::pool_mapping::StateContent {
+        match self {
+            ContainerInstance::Map(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::Text(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::List(x) => x.encode_and_release_pool_mapping(),
+        }
+    }
+
+    fn to_import_snapshot(&mut self, state_content: super::pool_mapping::StateContent) {
+        match self {
+            ContainerInstance::Map(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::Text(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::List(x) => x.to_import_snapshot(state_content),
+        }
+    }
 }
 
 impl ContainerInstance {
@@ -220,7 +264,7 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
+    pub(crate) fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
         let idx = self.next_idx();
         self.container_to_idx.insert(id.clone(), idx);
         self.containers.push(ContainerAndId {

@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 
-use crate::{array_mut_ref, id::ClientID, LoroCore};
+use crate::{array_mut_ref, id::ClientID, LoroCore, VersionVector};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -303,13 +303,14 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
             _ => {}
         }
     }
-    let encode_bytes = store.encode_snapshot();
+    let encode_bytes = store.encode_changes(&VersionVector::new(), false);
     let json1 = store.to_json();
-    let store2 =
-        LoroCore::decode_snapshot(&encode_bytes, None, crate::configure::Configure::default());
-    let encode_bytes2 = store2.encode_snapshot();
+    let mut store2 = LoroCore::new(Default::default(), None);
+    store2.decode_changes(&encode_bytes);
+    let _encode_bytes2 = store2.encode_changes(&VersionVector::new(), false);
     let json2 = store2.to_json();
-    assert_eq!(encode_bytes, encode_bytes2);
+    // state encode will change mergable range
+    // assert_eq!(encode_bytes, encode_bytes2);
     assert_eq!(json1, json2);
 }
 

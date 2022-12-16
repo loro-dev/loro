@@ -540,7 +540,8 @@ impl FromIterator<ID> for VersionVector {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct TotalOrderStamp {
     pub(crate) lamport: Lamport,
     pub(crate) client_id: ClientID,
@@ -597,5 +598,15 @@ mod tests {
         assert_eq!(a.get(&2), Some(&2));
         assert_eq!(b.get(&1), Some(&3));
         assert_eq!(b.get(&2), Some(&3));
+    }
+
+    #[test]
+    fn field_order() {
+        let tos = TotalOrderStamp {
+            lamport: 0,
+            client_id: 1,
+        };
+        let buf = vec![0, 1];
+        assert_eq!(postcard::from_bytes::<TotalOrderStamp>(&buf).unwrap(), tos);
     }
 }

@@ -29,6 +29,7 @@ pub struct Event {
 
 pub type Path = Vec<Index>;
 
+// Note: It will be encoded into binary format, so its order should not be changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Index {
     Key(InternalString),
