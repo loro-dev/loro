@@ -1,7 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use super::{super::pool::Pool, InnerMapSet};
-use crate::{container::registry::ContainerRegistry, op::OwnedRichOp};
+use crate::{
+    container::{
+        pool_mapping::{MapPoolMapping, StateContent},
+        registry::ContainerRegistry,
+    },
+    op::OwnedRichOp,
+};
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
@@ -31,15 +37,16 @@ use super::MapSet;
 #[derive(Debug)]
 pub struct MapContainer {
     id: ContainerID,
-    state: FxHashMap<InternalString, ValueSlot>,
-    pool: Pool,
+    pub(crate) state: FxHashMap<InternalString, ValueSlot>,
+    pub(crate) pool: Pool,
     pending_ops: Vec<OwnedRichOp>,
+    pool_mapping: Option<MapPoolMapping>,
 }
 
-#[derive(Debug)]
-struct ValueSlot {
-    value: u32,
-    order: TotalOrderStamp,
+#[derive(Debug, Clone, Copy)]
+pub struct ValueSlot {
+    pub(crate) value: u32,
+    pub(crate) order: TotalOrderStamp,
 }
 
 // FIXME: make map container support checkout to certain version
@@ -51,6 +58,7 @@ impl MapContainer {
             state: FxHashMap::default(),
             pool: Pool::default(),
             pending_ops: Vec::new(),
+            pool_mapping: None,
         }
     }
 
@@ -387,6 +395,52 @@ impl Container for MapContainer {
     ) {
         for op in std::mem::take(&mut self.pending_ops) {
             self.update_state_directly(hierarchy, &op.rich_op(), import_context)
+        }
+    }
+
+    fn initialize_pool_mapping(&mut self) {
+        let mut pool_mapping = MapPoolMapping::default();
+        for value in self.state.values() {
+            let index = value.value;
+            pool_mapping.push_state_slice(index, &self.pool.slice(&(index..index + 1))[0]);
+        }
+        self.pool_mapping = Some(pool_mapping);
+    }
+
+    fn encode_and_release_pool_mapping(&mut self) -> StateContent {
+        let pool_mapping = self.pool_mapping.take().unwrap();
+        let (keys, values) = self.state.iter().map(|(k, v)| (k.clone(), *v)).unzip();
+        StateContent::Map {
+            pool: pool_mapping.inner(),
+            keys,
+            values,
+        }
+    }
+
+    fn to_export_snapshot(
+        &mut self,
+        content: &InnerContent,
+        _gc: bool,
+    ) -> SmallVec<[InnerContent; 1]> {
+        match content {
+            InnerContent::Map(set) => {
+                let index = set.value;
+                let value = self.pool_mapping.as_mut().unwrap().get_new_index(index);
+                smallvec![InnerContent::Map(InnerMapSet {
+                    key: set.key.clone(),
+                    value,
+                })]
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn to_import_snapshot(&mut self, state_content: StateContent) {
+        if let StateContent::Map { pool, keys, values } = state_content {
+            self.pool = pool.into();
+            self.state = keys.into_iter().zip(values).collect();
+        } else {
+            unreachable!()
         }
     }
 }

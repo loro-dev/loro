@@ -71,7 +71,7 @@ mod run {
                 });
             }
         }
-        println!("{}", txns.unwrap().as_array().unwrap().len());
+        // println!("{}", txns.unwrap().as_array().unwrap().len());
         let mut b = c.benchmark_group("direct_apply");
         b.bench_function("B4", |b| {
             b.iter(|| {

@@ -11,6 +11,7 @@ pub type ClientID = u64;
 pub type Counter = i32;
 const UNKNOWN: ClientID = 404;
 
+// Note: It will be encoded into binary format, so its order should not be changed.
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ID {
     pub client_id: ClientID,

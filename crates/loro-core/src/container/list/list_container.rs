@@ -11,6 +11,7 @@ use crate::{
     container::{
         list::list_op::ListOp,
         pool,
+        pool_mapping::{PoolMapping, StateContent},
         registry::{ContainerInstance, ContainerRegistry, ContainerWrapper},
         text::{
             text_content::{ListSlice, SliceRange},
@@ -36,9 +37,10 @@ use super::list_op::InnerListOp;
 #[derive(Debug)]
 pub struct ListContainer {
     id: ContainerID,
-    state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
-    raw_data: pool::Pool,
+    pub(crate) state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
+    pub(crate) raw_data: pool::Pool,
     tracker: Option<Tracker>,
+    pool_mapping: Option<PoolMapping<LoroValue>>,
 }
 
 impl ListContainer {
@@ -48,6 +50,7 @@ impl ListContainer {
             raw_data: pool::Pool::default(),
             tracker: None,
             state: Default::default(),
+            pool_mapping: None,
         }
     }
 
@@ -470,6 +473,64 @@ impl Container for ListContainer {
         }
 
         self.tracker = None;
+    }
+
+    fn to_export_snapshot(
+        &mut self,
+        content: &InnerContent,
+        gc: bool,
+    ) -> SmallVec<[InnerContent; 1]> {
+        let old_pool = if gc {
+            None
+        } else {
+            Some(self.raw_data.as_slice())
+        };
+        match content {
+            InnerContent::List(op) => match op {
+                InnerListOp::Insert { slice, pos } => {
+                    let new_slice = self
+                        .pool_mapping
+                        .as_mut()
+                        .unwrap()
+                        .convert_ops_slice(slice.0.clone(), old_pool);
+                    new_slice
+                        .into_iter()
+                        .map(|slice| InnerContent::List(InnerListOp::Insert { slice, pos: *pos }))
+                        .collect()
+                }
+                InnerListOp::Delete(span) => {
+                    SmallVec::from([InnerContent::List(InnerListOp::Delete(*span))])
+                }
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn initialize_pool_mapping(&mut self) {
+        let mut pool_mapping = PoolMapping::default();
+        for value in self.state.iter() {
+            pool_mapping.push_state_slice(value.get_sliced().0, self.raw_data.as_slice());
+        }
+        pool_mapping.push_state_slice_finish();
+        self.pool_mapping = Some(pool_mapping);
+    }
+
+    fn to_import_snapshot(&mut self, state_content: StateContent) {
+        if let StateContent::List { pool, state_len } = state_content {
+            self.raw_data = pool.into();
+            self.state.insert(0, (0..state_len as u32).into());
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn encode_and_release_pool_mapping(&mut self) -> StateContent {
+        let pool_mapping = self.pool_mapping.take().unwrap();
+        let state_len = pool_mapping.new_state_len;
+        StateContent::List {
+            pool: pool_mapping.inner(),
+            state_len,
+        }
     }
 }
 
