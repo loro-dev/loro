@@ -235,7 +235,10 @@ impl<'a> RichOp<'a> {
         }
     }
 
-    pub fn new_by_slice_on_change(change: &Change<Op>, op: &'a Op, start: i32, end: i32) -> Self {
+    /// we want the overlap part of the op and change[start..end]
+    ///
+    /// op is contained in the change, but it's not necessary overlap with change[start..end]
+    pub fn new_by_slice_on_change(change: &Change<Op>, start: i32, end: i32, op: &'a Op) -> Self {
         debug_assert!(end > start);
         let op_index_in_change = op.counter - change.id.counter;
         let op_slice_start = (start - op_index_in_change)

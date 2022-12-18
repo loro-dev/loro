@@ -54,7 +54,6 @@ pub struct Tracker {
     ///
     /// Because sometimes we don't actually need to checkout to the version.
     /// So we may cache the changes then applying them when we really need to.
-    cached_fake_current_vv: VersionVector,
     content: ContentMap,
     id_to_cursor: CursorMap,
 }
@@ -88,7 +87,6 @@ impl Tracker {
             #[cfg(feature = "test_utils")]
             client_id: 0,
             current_vv: start_vv.clone(),
-            cached_fake_current_vv: start_vv.clone(),
             all_vv: start_vv.clone(),
             start_vv,
         }
@@ -104,7 +102,7 @@ impl Tracker {
     }
 
     pub fn contains(&self, id: ID) -> bool {
-        !self.cached_fake_current_vv.includes_id(id) && self.all_vv.includes_id(id)
+        self.all_vv.includes_id(id)
     }
 
     /// check whether id_to_cursor correctly reflect the status of the content
@@ -134,23 +132,17 @@ impl Tracker {
     }
 
     pub fn checkout(&mut self, vv: &VersionVector) {
-        self.cached_fake_current_vv = vv.clone();
-    }
-
-    fn real_checkout(&mut self) {
-        if self.current_vv == self.cached_fake_current_vv {
+        if &self.current_vv == vv {
             return;
         }
 
-        let diff = self.current_vv.diff(&self.cached_fake_current_vv);
-        self.real_retreat(&diff.left);
-        self.real_forward(&diff.right);
-        debug_assert_eq!(&self.current_vv, &self.cached_fake_current_vv);
-    }
-
-    pub fn forward(&mut self, spans: &IdSpanVector) {
-        self.cached_fake_current_vv.forward(spans);
-        self.all_vv.forward(spans);
+        let self_vv = std::mem::take(&mut self.current_vv);
+        {
+            let diff = self_vv.diff_iter(vv);
+            self.retreat(diff.0);
+            self.forward(diff.1);
+        }
+        self.current_vv = vv.clone();
     }
 
     pub fn track_apply(&mut self, rich_op: &RichOp) {
@@ -160,14 +152,17 @@ impl Tracker {
             .all_vv()
             .includes_id(id.inc(content.atom_len() as Counter - 1))
         {
-            self.forward(&id.to_span(content.atom_len()).to_id_span_vec());
+            self.forward(std::iter::once(id.to_span(content.atom_len())));
             return;
         }
 
         if self.all_vv().includes_id(id) {
             let this_ctr = self.all_vv().get(&id.client_id).unwrap();
             let shift = this_ctr - id.counter;
-            self.forward(&id.to_span(shift as usize).to_id_span_vec());
+            self.forward(std::iter::once(id.to_span(shift as usize)));
+            if shift as usize >= content.atom_len() {
+                unreachable!();
+            }
             self.apply(
                 id.inc(shift),
                 &content.slice(shift as usize, content.atom_len()),
@@ -177,23 +172,19 @@ impl Tracker {
         }
     }
 
-    fn real_forward(&mut self, spans: &IdSpanVector) {
-        if spans.is_empty() {
-            return;
-        }
-
-        let mut cursors = Vec::with_capacity(spans.len());
-        let mut args = Vec::with_capacity(spans.len());
-        for span in spans.iter() {
-            let end_id = ID::new(*span.0, span.1.end);
+    fn forward(&mut self, spans: impl Iterator<Item = IdSpan>) {
+        let mut cursors = Vec::new();
+        let mut args = Vec::new();
+        for span in spans {
+            let end_id = ID::new(span.client_id, span.counter.end);
             self.current_vv.set_end(end_id);
-            if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
+            if let Some(all_end_ctr) = self.all_vv.get_mut(&span.client_id) {
                 let all_end = *all_end_ctr;
-                if all_end < span.1.end {
+                if all_end < span.counter.end {
                     // there may be holes when there are multiple containers
-                    *all_end_ctr = span.1.end;
+                    *all_end_ctr = span.counter.end;
                 }
-                if all_end <= span.1.start {
+                if all_end <= span.counter.start {
                     continue;
                 }
             } else {
@@ -201,9 +192,9 @@ impl Tracker {
                 continue;
             }
 
-            let IdSpanQueryResult { inserts, deletes } = self
-                .id_to_cursor
-                .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
+            let IdSpanQueryResult { inserts, deletes } = self.id_to_cursor.get_cursors_at_id_span(
+                IdSpan::new(span.client_id, span.counter.start, span.counter.end),
+            );
             for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
                     for span in self
@@ -235,25 +226,16 @@ impl Tracker {
         )
     }
 
-    pub fn retreat(&mut self, spans: &IdSpanVector) {
-        self.cached_fake_current_vv.retreat(spans);
-        self.all_vv.forward(spans);
-    }
-
-    fn real_retreat(&mut self, spans: &IdSpanVector) {
-        if spans.is_empty() {
-            return;
-        }
-
-        let mut cursors = Vec::with_capacity(spans.len());
-        let mut args = Vec::with_capacity(spans.len());
-        for span in spans.iter() {
-            let span_start = ID::new(*span.0, span.1.start);
+    fn retreat(&mut self, spans: impl Iterator<Item = IdSpan>) {
+        let mut cursors = Vec::new();
+        let mut args = Vec::new();
+        for span in spans {
+            let span_start = ID::new(span.client_id, span.counter.start);
             self.current_vv.set_end(span_start);
-            if let Some(all_end_ctr) = self.all_vv.get_mut(span.0) {
+            if let Some(all_end_ctr) = self.all_vv.get_mut(&span.client_id) {
                 let all_end = *all_end_ctr;
-                if all_end < span.1.start {
-                    *all_end_ctr = span.1.end;
+                if all_end < span.counter.start {
+                    *all_end_ctr = span.counter.end;
                     continue;
                 }
             } else {
@@ -261,9 +243,9 @@ impl Tracker {
                 continue;
             }
 
-            let IdSpanQueryResult { inserts, deletes } = self
-                .id_to_cursor
-                .get_cursors_at_id_span(IdSpan::new(*span.0, span.1.start, span.1.end));
+            let IdSpanQueryResult { inserts, deletes } = self.id_to_cursor.get_cursors_at_id_span(
+                IdSpan::new(span.client_id, span.counter.start, span.counter.end),
+            );
 
             for (id, delete) in deletes {
                 assert!(span.contains_id(id));
@@ -304,12 +286,9 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, id: ID, content: &InnerContent) {
-        self.real_checkout();
         assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
         self.current_vv
-            .set_end(id.inc(content.content_len() as i32));
-        self.cached_fake_current_vv
             .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));
         let text_content = content.as_list().expect("Content is not for list");
@@ -389,7 +368,6 @@ impl Tracker {
 
     pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
         self.checkout(from);
-        self.real_checkout();
         EffectIter::new(self, target)
     }
 

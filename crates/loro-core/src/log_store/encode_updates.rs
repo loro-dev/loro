@@ -192,13 +192,16 @@ impl LoroCore {
     }
 
     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        debug_log::group!("Import updates at {}", self.client_id());
         let ans = self.log_store.write().unwrap().import_updates(input);
-        match ans {
+        let ans = match ans {
             Ok(events) => {
                 self.notify(events);
                 Ok(())
             }
             Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
-        }
+        };
+        debug_log::group_end!();
+        ans
     }
 }

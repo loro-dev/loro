@@ -236,8 +236,6 @@ impl Hierarchy {
     }
 
     pub fn notify(&mut self, raw_event: RawEvent) {
-        debug_log::debug_log!("notify {:#?}", &raw_event);
-        debug_log::debug_dbg!(&self);
         let target_id = raw_event.container_id;
         let mut event = Event {
             absolute_path: raw_event.abs_path,
@@ -311,8 +309,6 @@ impl Hierarchy {
                 .observers
                 .insert(id, observer);
         }
-        debug_log::debug_log!("Subscribe {:?}", container);
-        debug_log::debug_dbg!(&self);
         id
     }
 
