@@ -61,8 +61,8 @@ impl<O> HasLamport for Change<O> {
         self.lamport
     }
 }
-
-impl<O: Mergable + HasLength + HasIndex> HasLength for Change<O> {
+use std::fmt::Debug;
+impl<O: Mergable + HasLength + HasIndex + Debug> HasLength for Change<O> {
     fn content_len(&self) -> usize {
         self.ops.span().as_()
     }

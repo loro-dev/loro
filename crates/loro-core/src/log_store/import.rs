@@ -91,7 +91,6 @@ impl LogStore {
             .into_iter()
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
-
         let mut context = ImportContext {
             old_frontiers: self.frontiers.iter().copied().collect(),
             new_frontiers: next_frontiers.get_frontiers(),

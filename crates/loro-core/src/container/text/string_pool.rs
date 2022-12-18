@@ -151,6 +151,19 @@ impl StringPool {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+
+    #[inline]
+    pub(crate) fn from_data(bytes: AppendOnlyBytes) -> Self {
+        Self {
+            data: bytes,
+            ..Default::default()
+        }
+    }
 }
 
 impl HasLength for PoolString {

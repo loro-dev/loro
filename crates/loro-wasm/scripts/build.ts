@@ -7,8 +7,10 @@ const { __dirname } = __(import.meta);
 // deno run -A build.ts release web
 // deno run -A build.ts release nodejs
 let profile = "dev";
+let profileDir = "debug";
 if (Deno.args[0] == "release") {
   profile = "release";
+  profileDir = "release";
 }
 const TARGETS = ["bundler", "web", "nodejs"];
 const startTime = performance.now();
@@ -39,7 +41,8 @@ async function build() {
 }
 
 async function cargoBuild() {
-  const cmd  = `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+  const cmd =
+    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
   console.log(cmd);
   const status = await Deno.run({
     cmd: cmd.split(" "),
@@ -73,7 +76,7 @@ async function buildTarget(target: string) {
 
 function genCommands(target: string): string[] {
   return [
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profile}/loro_wasm.wasm`,
+    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`,
     ...(profile == "dev" ? [] : [
       `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`,
     ]),

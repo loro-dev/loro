@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use crate::{event::RawEvent, LoroValue};
+use crate::{context::Context, event::RawEvent, LoroValue};
 use fxhash::FxHashMap;
 use tracing::instrument;
 
@@ -89,14 +89,24 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
-    pub fn encode_snapshot(&self) -> Vec<u8> {
+    pub fn encode_changes(&self, vv: &VersionVector, compress: bool) -> Vec<u8> {
         let store = self.log_store.read().unwrap();
-        store.encode_snapshot()
+        store.encode_changes(vv, compress)
     }
 
-    pub fn decode_snapshot(input: &[u8], client_id: Option<ClientID>, cfg: Configure) -> Self {
-        let log_store = LogStore::decode_snapshot(input, client_id, cfg);
-        Self { log_store }
+    pub fn decode_changes(&mut self, input: &[u8]) {
+        self.log_store().try_write().unwrap().decode_changes(input);
+    }
+
+    pub fn encode_snapshot(&self, compress: bool) -> Vec<u8> {
+        let store = self.log_store.read().unwrap();
+        store.encode_snapshot(compress)
+    }
+
+    pub fn decode_snapshot(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
+        let store = LogStore::new(cfg, client_id);
+        store.write().unwrap().decode_snapshot(input);
+        Self { log_store: store }
     }
 
     #[cfg(feature = "test_utils")]
