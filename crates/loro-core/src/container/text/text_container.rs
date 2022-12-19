@@ -444,13 +444,27 @@ impl Container for TextContainer {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent, _hierarchy: &mut Hierarchy) {
+    fn to_import_snapshot(
+        &mut self,
+        state_content: StateContent,
+        hierarchy: &mut Hierarchy,
+        ctx: &mut ImportContext,
+    ) {
         if let StateContent::Text { pool, state_len } = state_content {
             let mut append_only_bytes = AppendOnlyBytes::with_capacity(pool.len());
             append_only_bytes.push_slice(&pool);
             let pool_string = append_only_bytes.slice(0..state_len as usize).into();
             self.raw_str = StringPool::from_data(append_only_bytes);
             self.state.insert(0, pool_string);
+            // notify
+            let should_notify = hierarchy.should_notify(&self.id);
+            if should_notify {
+                let s = self.raw_str.slice(&(0..state_len)).to_owned();
+                let mut delta = Delta::new();
+                delta.retain(0);
+                delta.insert(s);
+                ctx.push_diff(&self.id, Diff::Text(delta));
+            }
         } else {
             unreachable!()
         }

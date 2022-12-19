@@ -409,7 +409,19 @@ impl Container for MapContainer {
 
     fn encode_and_release_pool_mapping(&mut self) -> StateContent {
         let pool_mapping = self.pool_mapping.take().unwrap();
-        let (keys, values) = self.state.iter().map(|(k, v)| (k.clone(), *v)).unzip();
+        let (keys, values) = self
+            .state
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    ValueSlot {
+                        value: pool_mapping.get_new_index(v.value),
+                        order: v.order,
+                    },
+                )
+            })
+            .unzip();
         StateContent::Map {
             pool: pool_mapping.inner(),
             keys,
@@ -425,7 +437,11 @@ impl Container for MapContainer {
         match content {
             InnerContent::Map(set) => {
                 let index = set.value;
-                let value = self.pool_mapping.as_mut().unwrap().get_new_index(index);
+                let value = self
+                    .pool_mapping
+                    .as_mut()
+                    .unwrap()
+                    .convert_ops_value(index, &self.pool[index]);
                 smallvec![InnerContent::Map(InnerMapSet {
                     key: set.key.clone(),
                     value,
@@ -435,7 +451,12 @@ impl Container for MapContainer {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
+    fn to_import_snapshot(
+        &mut self,
+        state_content: StateContent,
+        hierarchy: &mut Hierarchy,
+        ctx: &mut ImportContext,
+    ) {
         if let StateContent::Map { pool, keys, values } = state_content {
             for v in pool.iter() {
                 if let LoroValue::Unresolved(child_container_id) = v {
@@ -443,8 +464,16 @@ impl Container for MapContainer {
                 }
             }
             self.pool = pool.into();
-
             self.state = keys.into_iter().zip(values).collect();
+            // notify
+            let should_notify = hierarchy.should_notify(&self.id);
+            if should_notify {
+                let mut map_diff = MapDiff::default();
+                for (k, v) in self.state.iter() {
+                    map_diff.added.insert(k.clone(), self.pool[v.value].clone());
+                }
+                ctx.push_diff(&self.id, Diff::Map(map_diff));
+            }
         } else {
             unreachable!()
         }

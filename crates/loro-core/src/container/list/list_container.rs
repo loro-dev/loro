@@ -504,7 +504,12 @@ impl Container for ListContainer {
         self.pool_mapping = Some(pool_mapping);
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
+    fn to_import_snapshot(
+        &mut self,
+        state_content: StateContent,
+        hierarchy: &mut Hierarchy,
+        ctx: &mut ImportContext,
+    ) {
         if let StateContent::List { pool, state_len } = state_content {
             for v in pool.iter() {
                 if let LoroValue::Unresolved(child_container_id) = v {
@@ -513,6 +518,15 @@ impl Container for ListContainer {
             }
             self.raw_data = pool.into();
             self.state.insert(0, (0..state_len).into());
+            // notify
+            let should_notify = hierarchy.should_notify(&self.id);
+            if should_notify {
+                let mut delta = Delta::new();
+                let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
+                delta.retain(0);
+                delta.insert(delta_vec);
+                ctx.push_diff(&self.id, Diff::List(delta));
+            }
         } else {
             unreachable!()
         }
