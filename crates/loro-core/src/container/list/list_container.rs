@@ -504,10 +504,15 @@ impl Container for ListContainer {
         self.pool_mapping = Some(pool_mapping);
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent) {
+    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
         if let StateContent::List { pool, state_len } = state_content {
+            for v in pool.iter() {
+                if let LoroValue::Unresolved(child_container_id) = v {
+                    hierarchy.add_child(self.id(), child_container_id.as_ref());
+                }
+            }
             self.raw_data = pool.into();
-            self.state.insert(0, (0..state_len as u32).into());
+            self.state.insert(0, (0..state_len).into());
         } else {
             unreachable!()
         }
@@ -588,7 +593,7 @@ impl ContainerWrapper for List {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.lock().unwrap();
+        let mut container_instance = self.instance.try_lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
         let ans = f(list);
         drop(container_instance);

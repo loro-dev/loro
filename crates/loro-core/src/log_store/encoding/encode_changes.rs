@@ -113,6 +113,13 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             idx
         });
         change_num += 1;
+        for deps in change.deps.iter() {
+            client_id_to_idx.entry(deps.client_id).or_insert_with(|| {
+                let idx = clients.len() as ClientIdx;
+                clients.push(deps.client_id);
+                idx
+            });
+        }
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -198,6 +205,7 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
     };
 
     to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
+    // postcard::to_allocvec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
 }
 
 #[instrument(skip_all)]
@@ -207,6 +215,7 @@ pub(super) fn decode_changes(
 ) -> Result<Vec<RawEvent>, LoroError> {
     let encoded: Encoded =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+
     let Encoded {
         changes: change_encodings,
         ops,

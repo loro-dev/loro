@@ -131,7 +131,7 @@ impl LoroCore {
         let store = self.log_store.read().unwrap();
         let hierarchy = store.hierarchy.clone();
         drop(store);
-        let mut h = hierarchy.lock().unwrap();
+        let mut h = hierarchy.try_lock().unwrap();
         h.send_notifications(events);
     }
 }

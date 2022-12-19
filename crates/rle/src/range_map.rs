@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt::Debug, ptr::NonNull, rc::Rc};
+use std::{fmt::Debug, ptr::NonNull};
 
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -7,7 +7,7 @@ use crate::{
     rle_tree::{
         node::{InternalNode, LeafNode},
         tree_trait::GlobalTreeTrait,
-        Arena, HeapMode, SafeCursor, UnsafeCursor, VecTrait,
+        Arena, HeapMode, UnsafeCursor, VecTrait,
     },
     HasLength, Mergable, Rle, RleTree, Sliceable,
 };

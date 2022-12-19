@@ -73,7 +73,7 @@ impl Actor {
         }));
 
         let log_store = actor.loro.log_store.write().unwrap();
-        let mut hierarchy = log_store.hierarchy.lock().unwrap();
+        let mut hierarchy = log_store.hierarchy.try_lock().unwrap();
         let text = Rc::clone(&actor.text_tracker);
         hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),

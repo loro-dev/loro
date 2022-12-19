@@ -293,6 +293,7 @@ pub(super) fn decode_snapshot(
         }
         return Ok(vec![]);
     }
+    let mut hierarchy = store.hierarchy.try_lock().unwrap();
 
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
@@ -305,8 +306,9 @@ pub(super) fn decode_snapshot(
         let state = pool_mapping.into_state(&keys, &clients);
         let container = store.reg.get_by_idx(container_idx).unwrap();
         let mut container = container.try_lock().unwrap();
-        container.to_import_snapshot(state);
+        container.to_import_snapshot(state, &mut hierarchy);
     }
+    drop(hierarchy);
 
     for change_encoding in change_encodings {
         let ChangeEncoding {

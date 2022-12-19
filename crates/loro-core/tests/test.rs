@@ -5,10 +5,11 @@ use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
 use loro_core::container::ContainerID;
-use loro_core::event::Index;
+use loro_core::context::Context;
 use loro_core::id::ID;
 
-use loro_core::{ContainerType, LoroCore, LoroValue};
+use loro_core::log_store::{EncodeConfig, EncodeMode};
+use loro_core::{ContainerType, LoroCore, LoroValue, VersionVector};
 
 #[test]
 #[cfg(feature = "json")]
@@ -231,13 +232,69 @@ fn fix_fields_order() {
         postcard::from_bytes::<Vec<ContainerID>>(&container_id_buf).unwrap(),
         container_id
     );
+}
 
-    let index = vec![Index::Key("".into()), Index::Seq(0)];
-    let index_buf = vec![2, 0, 0, 1, 0];
-    assert_eq!(
-        postcard::from_bytes::<Vec<Index>>(&index_buf).unwrap(),
-        index
-    );
+#[test]
+fn encode_hierarchy() {
+    fn assert_eq(c1: &LoroCore, c2: &LoroCore) {
+        let s1 = c1.log_store();
+        let s1 = s1.try_read().unwrap();
+        let h1 = s1.hierarchy().try_lock().unwrap();
+
+        let s2 = c2.log_store();
+        let s2 = s2.try_read().unwrap();
+        let h2 = s2.hierarchy().try_lock().unwrap();
+        assert_eq!(format!("{:?}", h1), format!("{:?}", h2));
+    }
+
+    let mut c1 = LoroCore::default();
+    let mut map = c1.get_map("map");
+    let (_, text_id) = {
+        let list_id = map.insert(&c1, "a", ContainerType::List).unwrap();
+        let list = c1.get_container(&list_id.unwrap()).unwrap();
+        let mut list = list.try_lock().unwrap();
+        let list = list.as_list_mut().unwrap();
+        list.insert(&c1, 0, ContainerType::Text)
+    };
+    {
+        let text = c1.get_container(&text_id.unwrap()).unwrap();
+        let mut text = text.try_lock().unwrap();
+        let text = text.as_text_mut().unwrap();
+        text.insert(&c1, 0, "text_text");
+    };
+
+    // updates
+    println!("updates");
+    let input = c1
+        .encode(EncodeConfig::new(
+            EncodeMode::Updates(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
+
+    // rle updates
+    println!("rle updates");
+    let input = c1
+        .encode(EncodeConfig::new(
+            EncodeMode::RleUpdates(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
+
+    // snapshot
+    println!("snapshot");
+    let input = c1
+        .encode(EncodeConfig::new(EncodeMode::Snapshot, None))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
 }
 
 #[ctor]
