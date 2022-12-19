@@ -94,8 +94,10 @@ impl LoroCore {
         LoroEncoder::encode(self, config)
     }
 
-    pub fn decode(&mut self, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
-        LoroEncoder::decode(self, input)
+    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        let events = LoroEncoder::decode(self, input)?;
+        self.notify(events);
+        Ok(())
     }
 
     #[cfg(feature = "test_utils")]
