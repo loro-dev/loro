@@ -236,7 +236,7 @@ fn check_synced(sites: &mut [LoroCore]) {
             {
                 debug_log::group!("Import {}", j);
                 b.decode(
-                    &a.encode(EncodeConfig::new(EncodeMode::Updates(a.vv()), None))
+                    &a.encode(EncodeConfig::new(EncodeMode::Updates(b.vv()), None))
                         .unwrap(),
                 )
                 .unwrap();
