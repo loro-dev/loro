@@ -182,24 +182,3 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 
     result
 }
-
-// impl LoroCore {
-//     #[instrument(skip_all)]
-//     pub fn export_updates(&self, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
-//         match self.log_store.try_read() {
-//             Ok(x) => x.export_updates(from),
-//             Err(_) => Err(LoroError::LockError),
-//         }
-//     }
-
-//     pub fn import_updates(&mut self, input: &[u8]) -> Result<(), LoroError> {
-//         let ans = self.log_store.write().unwrap().import_updates(input);
-//         match ans {
-//             Ok(events) => {
-//                 self.notify(events);
-//                 Ok(())
-//             }
-//             Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
-//         }
-//     }
-// }

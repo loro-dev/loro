@@ -87,7 +87,7 @@ pub trait Container: Debug + Any + Unpin {
     ) -> SmallVec<[InnerContent; 1]>;
 
     /// Decode the pool mapping from the bytes and apply it to the container.
-    fn to_import_snapshot(&mut self, state_content: StateContent);
+    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy);
 
     /// convert an op content to exported format that includes the raw data
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]>;

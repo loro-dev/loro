@@ -11,6 +11,7 @@ use crate::{dag::Dag, event::RawEvent, LogStore, LoroCore, LoroError, VersionVec
 
 const UPDATE_ENCODE_THRESHOLD: usize = 5;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
+const ENCODE_SCHEMA_VERSION: &str = "1.0";
 pub enum EncodeMode {
     Auto(Option<VersionVector>),
     Updates(VersionVector),
@@ -54,7 +55,7 @@ pub struct LoroEncoder;
 
 impl LoroEncoder {
     pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
-        let version = env!("CARGO_PKG_VERSION");
+        let version = ENCODE_SCHEMA_VERSION;
         let store = loro
             .log_store
             .try_read()

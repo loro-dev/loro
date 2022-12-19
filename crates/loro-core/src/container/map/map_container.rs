@@ -435,9 +435,15 @@ impl Container for MapContainer {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent) {
+    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
         if let StateContent::Map { pool, keys, values } = state_content {
+            for v in pool.iter() {
+                if let LoroValue::Unresolved(child_container_id) = v {
+                    hierarchy.add_child(self.id(), child_container_id.as_ref());
+                }
+            }
             self.pool = pool.into();
+
             self.state = keys.into_iter().zip(values).collect();
         } else {
             unreachable!()
@@ -485,11 +491,22 @@ impl Map {
     }
 
     pub fn id(&self) -> ContainerID {
-        self.instance.lock().unwrap().as_map().unwrap().id.clone()
+        self.instance
+            .try_lock()
+            .unwrap()
+            .as_map()
+            .unwrap()
+            .id
+            .clone()
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.instance.lock().unwrap().as_map().unwrap().get_value()
+        self.instance
+            .try_lock()
+            .unwrap()
+            .as_map()
+            .unwrap()
+            .get_value()
     }
 
     pub fn len(&self) -> usize {
@@ -510,7 +527,7 @@ impl ContainerWrapper for Map {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.lock().unwrap();
+        let mut container_instance = self.instance.try_lock().unwrap();
         let map = container_instance.as_map_mut().unwrap();
         let ans = f(map);
         drop(container_instance);

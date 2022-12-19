@@ -22,8 +22,8 @@ use crate::{
 };
 
 use super::{
-    list::ListContainer, map::MapContainer, text::TextContainer, Container, ContainerID,
-    ContainerType,
+    list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
+    Container, ContainerID, ContainerType,
 };
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
@@ -182,7 +182,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn encode_and_release_pool_mapping(&mut self) -> super::pool_mapping::StateContent {
+    fn encode_and_release_pool_mapping(&mut self) -> StateContent {
         match self {
             ContainerInstance::Map(x) => x.encode_and_release_pool_mapping(),
             ContainerInstance::Text(x) => x.encode_and_release_pool_mapping(),
@@ -191,12 +191,12 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: super::pool_mapping::StateContent) {
+    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
         match self {
-            ContainerInstance::Map(x) => x.to_import_snapshot(state_content),
-            ContainerInstance::Text(x) => x.to_import_snapshot(state_content),
-            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content),
-            ContainerInstance::List(x) => x.to_import_snapshot(state_content),
+            ContainerInstance::Map(x) => x.to_import_snapshot(state_content, hierarchy),
+            ContainerInstance::Text(x) => x.to_import_snapshot(state_content, hierarchy),
+            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content, hierarchy),
+            ContainerInstance::List(x) => x.to_import_snapshot(state_content, hierarchy),
         }
     }
 }
@@ -307,7 +307,7 @@ impl ContainerRegistry {
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
         for ContainerAndId { container, id: _ } in self.containers.iter_mut() {
-            if let ContainerInstance::Text(x) = container.lock().unwrap().deref_mut() {
+            if let ContainerInstance::Text(x) = container.try_lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }
         }
@@ -321,7 +321,7 @@ impl ContainerRegistry {
                 container_type,
             } = id
             {
-                let container = container.lock().unwrap();
+                let container = container.try_lock().unwrap();
                 let json = match container.deref() {
                     ContainerInstance::Map(x) => x.to_json(self),
                     ContainerInstance::Text(x) => x.to_json(),
