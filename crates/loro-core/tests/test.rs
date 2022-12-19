@@ -245,6 +245,7 @@ fn encode_hierarchy() {
         let s2 = s2.try_read().unwrap();
         let h2 = s2.hierarchy().try_lock().unwrap();
         assert_eq!(format!("{:?}", h1), format!("{:?}", h2));
+        assert_eq!(c1.to_json(), c2.to_json());
     }
 
     let mut c1 = LoroCore::default();
@@ -272,6 +273,9 @@ fn encode_hierarchy() {
         ))
         .unwrap();
     let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
     c2.decode(&input).unwrap();
     assert_eq(&c1, &c2);
 
@@ -284,6 +288,9 @@ fn encode_hierarchy() {
         ))
         .unwrap();
     let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
     c2.decode(&input).unwrap();
     assert_eq(&c1, &c2);
 
@@ -293,6 +300,9 @@ fn encode_hierarchy() {
         .encode(EncodeConfig::new(EncodeMode::Snapshot, None))
         .unwrap();
     let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
     c2.decode(&input).unwrap();
     assert_eq(&c1, &c2);
 }

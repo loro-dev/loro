@@ -110,7 +110,7 @@ impl LogStore {
     }
 
     #[instrument(skip_all)]
-    fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
+    pub(crate) fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
         let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
         let h = self.hierarchy.try_lock().unwrap();

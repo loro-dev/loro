@@ -190,12 +190,17 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent, hierarchy: &mut Hierarchy) {
+    fn to_import_snapshot(
+        &mut self,
+        state_content: StateContent,
+        hierarchy: &mut Hierarchy,
+        ctx: &mut ImportContext,
+    ) {
         match self {
-            ContainerInstance::Map(x) => x.to_import_snapshot(state_content, hierarchy),
-            ContainerInstance::Text(x) => x.to_import_snapshot(state_content, hierarchy),
-            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content, hierarchy),
-            ContainerInstance::List(x) => x.to_import_snapshot(state_content, hierarchy),
+            ContainerInstance::Map(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
+            ContainerInstance::Text(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
+            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
+            ContainerInstance::List(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
         }
     }
 }
