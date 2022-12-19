@@ -5,7 +5,6 @@ use crate::{
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
-use std::thread::current;
 use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
 use tracing::instrument;
 

@@ -20,7 +20,6 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     value::LoroValue,
-    version::IdSpanVector,
 };
 
 use super::{
