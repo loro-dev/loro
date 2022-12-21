@@ -96,6 +96,7 @@ impl MapContainer {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
+        let hierarchy = ctx.hierarchy();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
             client_id,
@@ -114,8 +115,7 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        let h = store.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
+        let mut h = hierarchy.try_lock().unwrap();
         self.update_hierarchy_if_container_is_overwritten(&key, &mut h);
 
         let ans = if h.should_notify(self.id()) {
@@ -153,6 +153,7 @@ impl MapContainer {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
+        let hierarchy = ctx.hierarchy();
         let client_id = store.this_client_id;
         let (container_id, _) = store.create_container(obj);
         let value = self.pool.alloc(container_id.clone()).start;
@@ -173,7 +174,6 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        let hierarchy = store.hierarchy.clone();
         let mut hierarchy = hierarchy.try_lock().unwrap();
         hierarchy.add_child(&self.id, &container_id);
         self.update_hierarchy_if_container_is_overwritten(&key, &mut hierarchy);

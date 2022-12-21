@@ -106,6 +106,7 @@ impl ListContainer {
         value: LoroValue,
     ) -> Option<RawEvent> {
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_data.alloc(value);
@@ -120,7 +121,7 @@ impl ListContainer {
         );
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        let hierarchy = store.hierarchy.try_lock().unwrap();
+        let hierarchy = hierarchy.try_lock().unwrap();
         if hierarchy.should_notify(&self.id) {
             let value = self.raw_data.slice(&slice)[0].clone();
             let mut delta = Delta::new();
@@ -150,10 +151,11 @@ impl ListContainer {
         obj: ContainerType,
     ) -> (Option<RawEvent>, ContainerID) {
         let m = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = m.write().unwrap();
         let (container_id, _) = store.create_container(obj);
         // Update hierarchy info
-        let mut hierarchy = store.hierarchy.try_lock().unwrap();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
         hierarchy.add_child(&self.id, &container_id);
 
         drop(hierarchy);
@@ -185,6 +187,7 @@ impl ListContainer {
         }
 
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
@@ -195,7 +198,6 @@ impl ListContainer {
 
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        let hierarchy = store.hierarchy.clone();
         let mut hierarchy = hierarchy.try_lock().unwrap();
 
         // Update hierarchy info

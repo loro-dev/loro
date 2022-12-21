@@ -59,6 +59,7 @@ impl TextContainer {
             panic!("insert index out of range");
         }
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_str.alloc(text);
@@ -77,8 +78,7 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        let h = store.hierarchy.clone();
-        let h = h.try_lock().unwrap();
+        let h = hierarchy.try_lock().unwrap();
         if h.should_notify(&self.id) {
             let mut delta = Delta::new();
             delta.retain(pos);
@@ -108,6 +108,7 @@ impl TextContainer {
         }
 
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
@@ -120,8 +121,7 @@ impl TextContainer {
         let new_version = new_version.into();
 
         // notify
-        let h = store.hierarchy.clone();
-        let h = h.try_lock().unwrap();
+        let h = hierarchy.try_lock().unwrap();
         self.state.delete_range(Some(pos), Some(pos + len));
         if h.should_notify(&self.id) {
             let mut delta = Delta::new();

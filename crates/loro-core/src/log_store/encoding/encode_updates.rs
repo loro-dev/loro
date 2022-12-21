@@ -6,7 +6,6 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
-    event::RawEvent,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
@@ -62,10 +61,7 @@ pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<V
         .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
 }
 
-pub(super) fn decode_updates(
-    store: &mut LogStore,
-    input: &[u8],
-) -> Result<Vec<RawEvent>, LoroError> {
+pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let mut changes: RemoteClientChanges = Default::default();
@@ -73,7 +69,7 @@ pub(super) fn decode_updates(
         changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
     }
 
-    Ok(store.import(changes))
+    Ok(changes)
 }
 
 fn convert_changes_to_encoded<I>(mut changes: I) -> EncodedClientChanges
