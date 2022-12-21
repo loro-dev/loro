@@ -8,6 +8,7 @@ use tabled::{TableIteratorExt, Tabled};
 use crate::{
     array_mut_ref,
     container::{registry::ContainerWrapper, ContainerID},
+    context::Context,
     event::Diff,
     id::ClientID,
     log_store::{EncodeConfig, EncodeMode},
@@ -73,7 +74,7 @@ impl Actor {
         }));
 
         let log_store = actor.loro.log_store.write().unwrap();
-        let mut hierarchy = log_store.hierarchy.try_lock().unwrap();
+        let mut hierarchy = actor.loro.hierarchy.try_lock().unwrap();
         let text = Rc::clone(&actor.text_tracker);
         hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),

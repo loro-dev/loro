@@ -16,6 +16,7 @@ use crate::{
     },
     dag::remove_included_frontiers,
     event::RawEvent,
+    hierarchy::Hierarchy,
     id::{ClientID, ID},
     log_store::ImportContext,
     op::{InnerContent, Op},
@@ -281,6 +282,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
 
 pub(super) fn decode_snapshot(
     store: &mut LogStore,
+    hierarchy: &mut Hierarchy,
     input: &[u8],
 ) -> Result<Vec<RawEvent>, LoroError> {
     let encoded: SnapshotEncoded =
@@ -413,7 +415,6 @@ pub(super) fn decode_snapshot(
     }
 
     // rebuild states by snapshot
-    let mut hierarchy = store.hierarchy.try_lock().unwrap();
     let mut import_context = ImportContext {
         old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
@@ -429,9 +430,8 @@ pub(super) fn decode_snapshot(
         let state = pool_mapping.into_state(&keys, &clients);
         let container = store.reg.get_by_idx(container_idx).unwrap();
         let mut container = container.try_lock().unwrap();
-        container.to_import_snapshot(state, &mut hierarchy, &mut import_context);
+        container.to_import_snapshot(state, hierarchy, &mut import_context);
     }
-    drop(hierarchy);
 
     store.latest_lamport = changes
         .values()
@@ -448,5 +448,5 @@ pub(super) fn decode_snapshot(
 
     store.vv = vv;
     store.frontiers = frontiers.get_frontiers();
-    Ok(store.get_events(&mut import_context))
+    Ok(store.get_events(hierarchy, &mut import_context))
 }

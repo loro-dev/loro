@@ -247,13 +247,11 @@ fn fix_fields_order() {
 #[test]
 fn encode_hierarchy() {
     fn assert_eq(c1: &LoroCore, c2: &LoroCore) {
-        let s1 = c1.log_store();
-        let s1 = s1.try_read().unwrap();
-        let h1 = s1.hierarchy().try_lock().unwrap();
+        let h1 = c1.hierarchy();
+        let h1 = h1.try_lock().unwrap();
 
-        let s2 = c2.log_store();
-        let s2 = s2.try_read().unwrap();
-        let h2 = s2.hierarchy().try_lock().unwrap();
+        let h2 = c2.hierarchy();
+        let h2 = h2.try_lock().unwrap();
         assert_eq!(format!("{:?}", h1), format!("{:?}", h2));
         assert_eq!(c1.to_json(), c2.to_json());
     }

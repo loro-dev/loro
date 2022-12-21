@@ -421,8 +421,8 @@ pub trait ContainerWrapper {
         F: FnOnce(&mut Self::Container) -> (Option<RawEvent>, R),
     {
         let log_store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let log_store = log_store.write().unwrap();
-        let hierarchy = log_store.hierarchy.clone();
         let store_client_id = log_store.this_client_id();
         if store_client_id != self.client_id() {
             return Err(LoroError::UnmatchedContext {
@@ -486,17 +486,7 @@ pub trait ContainerWrapper {
         observer: Observer,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx
-                    .log_store()
-                    .write()
-                    .unwrap()
-                    .hierarchy
-                    .try_lock()
-                    .unwrap(),
-                observer,
-                false,
-            )
+            x.subscribe(&mut ctx.hierarchy().try_lock().unwrap(), observer, false)
         })
     }
 
@@ -506,17 +496,7 @@ pub trait ContainerWrapper {
         observer: Observer,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx
-                    .log_store()
-                    .write()
-                    .unwrap()
-                    .hierarchy
-                    .try_lock()
-                    .unwrap(),
-                observer,
-                true,
-            )
+            x.subscribe(&mut ctx.hierarchy().try_lock().unwrap(), observer, true)
         })
     }
 
@@ -526,16 +506,7 @@ pub trait ContainerWrapper {
         subscription: SubscriptionID,
     ) -> Result<(), LoroError> {
         self.with_container_checked(ctx, |x| {
-            x.unsubscribe(
-                &mut ctx
-                    .log_store()
-                    .write()
-                    .unwrap()
-                    .hierarchy
-                    .try_lock()
-                    .unwrap(),
-                subscription,
-            )
+            x.unsubscribe(&mut ctx.hierarchy().try_lock().unwrap(), subscription)
         })
     }
 }

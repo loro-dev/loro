@@ -79,7 +79,6 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
     _pin: PhantomPinned,
 }
 
@@ -97,7 +96,6 @@ impl LogStore {
             frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
-            hierarchy: Default::default(),
             _pin: PhantomPinned,
         }))
     }
@@ -327,11 +325,6 @@ impl LogStore {
         self.reg.debug_inspect();
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn hierarchy(&self) -> &Arc<Mutex<Hierarchy>> {
-        &self.hierarchy
-    }
-
     // TODO: remove
     #[inline(always)]
     pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<ContainerIdx> {
@@ -354,15 +347,15 @@ impl LogStore {
         self.reg.get_or_create_container_idx(container)
     }
 
-    #[inline(always)]
-    pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
-    where
-        for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
-    {
-        let h = self.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
-        f(self, &mut h)
-    }
+    // #[inline(always)]
+    // pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
+    // where
+    //     for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
+    // {
+    //     let h = self.hierarchy.clone();
+    //     let mut h = h.try_lock().unwrap();
+    //     f(self, &mut h)
+    // }
 
     pub fn to_json(&self) -> LoroValue {
         self.reg.to_json()

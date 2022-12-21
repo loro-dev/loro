@@ -13,8 +13,8 @@ use crate::{
         ContainerID, ContainerType,
     },
     dag::Dag,
-    event::RawEvent,
     id::{ClientID, Counter, ID},
+    log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
     smstring::SmString,
     span::HasIdSpan,
@@ -212,7 +212,7 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 pub(super) fn decode_changes(
     store: &mut LogStore,
     input: &[u8],
-) -> Result<Vec<RawEvent>, LoroError> {
+) -> Result<RemoteClientChanges, LoroError> {
     let encoded: Encoded =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
@@ -316,5 +316,5 @@ pub(super) fn decode_changes(
             .push(change);
     }
     // TODO: using the one with fewer changes to import
-    Ok(store.import(changes))
+    Ok(changes)
 }
