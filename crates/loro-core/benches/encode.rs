@@ -203,7 +203,7 @@ mod import {
             }
             b.iter(|| {
                 c1.decode(
-                    &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv()), None))
+                    &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv_cloned()), None))
                         .unwrap(),
                 )
                 .unwrap();
