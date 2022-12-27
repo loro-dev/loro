@@ -161,7 +161,7 @@ impl LogStore {
         }
     }
 
-    fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
+    pub(crate) fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
             ops.push(self.to_remote_op(op));

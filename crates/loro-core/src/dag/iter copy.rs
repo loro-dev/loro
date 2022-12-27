@@ -1,5 +1,5 @@
 use super::DagUtils;
-use std::{cmp::Ordering, ops::Range};
+use std::ops::Range;
 
 use crate::version::IdSpanVector;
 
@@ -180,7 +180,7 @@ pub(crate) struct DagCausalIter<'a, Dag> {
     dag: &'a Dag,
     frontier: SmallVec<[ID; 2]>,
     target: IdSpanVector,
-    heap: Vec<IdHeapItem>,
+    heap: BinaryHeap<IdHeapItem>,
 }
 
 #[derive(Debug)]
@@ -195,7 +195,7 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
-        let mut heap = Vec::new();
+        let mut heap = BinaryHeap::new();
         for id in target.iter() {
             if id.1.content_len() > 0 {
                 let id = id.id_start();
@@ -232,39 +232,8 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             return None;
         }
 
-        let node_id = {
-            self.heap.sort_by(|a, b| {
-                let mut ac = false;
-                let mut bc = false;
-                for f in self.frontier.iter() {
-                    if f.client_id == a.id.client_id
-                        && f.counter + 1 == a.id.counter
-                        && self.dag.get(a.id).unwrap().deps().len() == 1
-                    {
-                        ac = true;
-                    }
-                    if f.client_id == b.id.client_id
-                        && f.counter + 1 == b.id.counter
-                        && self.dag.get(b.id).unwrap().deps().len() == 1
-                    {
-                        bc = true;
-                    }
-                }
-                match (ac, bc, b.lamport.partial_cmp(&a.lamport)) {
-                    (true, false, _) => Ordering::Greater,
-                    (false, true, _) => Ordering::Less,
-                    (_, _, cmp) => cmp.unwrap(),
-                }
-            });
-            // println!("heap {:?}", self.heap);
-            self.heap.pop().unwrap().id
-        };
-
+        let node_id = self.heap.pop().unwrap().id;
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
-        // println!(
-        //     "target span client {:?}: {:?}",
-        //     &node_id.client_id, target_span
-        // );
         debug_assert_eq!(
             node_id.counter,
             target_span.min(),
@@ -307,10 +276,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         };
 
         let path = self.dag.find_path(&self.frontier, &deps);
-        // println!(
-        //     "########\nfrontier: {:?} deps: {:?} path: {:?}\n#####",
-        //     &self.frontier, &deps, &path
-        // );
+        println!(
+            "########\nfrontier: {:?} deps: {:?} path: {:?}\n#####",
+            &self.frontier, &deps, &path
+        );
         debug_log::group!("Dag Causal");
         debug_log::debug_dbg!(&deps);
         debug_log::debug_dbg!(&path);
@@ -403,11 +372,12 @@ mod test {
         let store_c = loro_c.log_store.try_read().unwrap();
 
         for n in store_c.iter_causal(&from, loro_c.vv().diff(&from_vv).left) {
-            println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
-            // println!("data: {:?}", store_c.change_to_export_format(n.data));
+            println!("{:?}", &n);
+            println!("data: {:?}", store_c.change_to_export_format(n.data));
             vv.retreat(&n.retreat);
             vv.forward(&n.forward);
-            println!("{:?}\n", vv);
+
+            let start = n.slice.start;
             let end = n.slice.end;
             let change = n.data;
 
@@ -415,6 +385,7 @@ mod test {
                 change.id.client_id,
                 end as Counter + change.id.counter,
             ));
+            println!("{:?}\n", vv);
         }
     }
 }
