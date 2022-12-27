@@ -1,5 +1,5 @@
 use super::DagUtils;
-use std::{cmp::Ordering, ops::Range};
+use std::ops::Range;
 
 use crate::version::IdSpanVector;
 
@@ -233,38 +233,24 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         }
 
         let node_id = {
-            self.heap.sort_by(|a, b| {
-                let mut ac = false;
-                let mut bc = false;
+            self.heap.sort_by_cached_key(|h| {
+                let deps = self.dag.get(h.id).unwrap().deps();
+                let mut same_client = false;
                 for f in self.frontier.iter() {
-                    if f.client_id == a.id.client_id
-                        && f.counter + 1 == a.id.counter
-                        && self.dag.get(a.id).unwrap().deps().len() == 1
+                    if f.client_id == h.id.client_id
+                        && f.counter + 1 == h.id.counter
+                        && deps.len() == 1
                     {
-                        ac = true;
-                    }
-                    if f.client_id == b.id.client_id
-                        && f.counter + 1 == b.id.counter
-                        && self.dag.get(b.id).unwrap().deps().len() == 1
-                    {
-                        bc = true;
+                        same_client = true;
+                        break;
                     }
                 }
-                match (ac, bc, b.lamport.partial_cmp(&a.lamport)) {
-                    (true, false, _) => Ordering::Greater,
-                    (false, true, _) => Ordering::Less,
-                    (_, _, cmp) => cmp.unwrap(),
-                }
+                (same_client, h.lamport)
             });
-            // println!("heap {:?}", self.heap);
             self.heap.pop().unwrap().id
         };
 
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
-        // println!(
-        //     "target span client {:?}: {:?}",
-        //     &node_id.client_id, target_span
-        // );
         debug_assert_eq!(
             node_id.counter,
             target_span.min(),
@@ -307,10 +293,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         };
 
         let path = self.dag.find_path(&self.frontier, &deps);
-        // println!(
-        //     "########\nfrontier: {:?} deps: {:?} path: {:?}\n#####",
-        //     &self.frontier, &deps, &path
-        // );
         debug_log::group!("Dag Causal");
         debug_log::debug_dbg!(&deps);
         debug_log::debug_dbg!(&path);
@@ -328,11 +310,13 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use crate::{
         dag::DagUtils,
         id::{Counter, ID},
         log_store::{EncodeConfig, EncodeMode},
-        LoroCore,
+        LoroCore, VersionVector,
     };
 
     #[test]
@@ -404,10 +388,13 @@ mod test {
 
         for n in store_c.iter_causal(&from, loro_c.vv().diff(&from_vv).left) {
             println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
-            // println!("data: {:?}", store_c.change_to_export_format(n.data));
+            println!(
+                "data: {:?} slice {:?}",
+                store_c.change_to_export_format(n.data),
+                n.slice
+            );
             vv.retreat(&n.retreat);
             vv.forward(&n.forward);
-            println!("{:?}\n", vv);
             let end = n.slice.end;
             let change = n.data;
 
@@ -415,6 +402,45 @@ mod test {
                 change.id.client_id,
                 end as Counter + change.id.counter,
             ));
+            println!("{:?}\n", vv);
         }
+    }
+
+    #[test]
+    fn client_change_case() {
+        let mut c1 = LoroCore::new(Default::default(), Some(1));
+        let mut c2 = LoroCore::new(Default::default(), Some(2));
+        let mut text1 = c1.get_text("text");
+        let mut text2 = c2.get_text("text");
+        for _ in 0..3 {
+            text1.insert(&c1, 0, "1").unwrap();
+            text2.insert(&c2, 0, "2").unwrap();
+        }
+        let start = Instant::now();
+        c1.decode(
+            &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv()), None))
+                .unwrap(),
+        )
+        .unwrap();
+
+        let store = c1.log_store.try_read().unwrap();
+        let mut vv = VersionVector::new();
+        for n in store.iter_causal(&[], c1.vv().diff(&vv).left) {
+            println!("{:?}", &n);
+            println!("data: {:?}", store.change_to_export_format(n.data));
+            vv.retreat(&n.retreat);
+            vv.forward(&n.forward);
+
+            let end = n.slice.end;
+            let change = n.data;
+
+            vv.set_end(ID::new(
+                change.id.client_id,
+                end as Counter + change.id.counter,
+            ));
+            println!("{:?}\n", vv);
+        }
+
+        println!("{:?}", start.elapsed());
     }
 }
