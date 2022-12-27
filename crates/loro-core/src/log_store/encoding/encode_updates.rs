@@ -6,6 +6,8 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
+    event::RawEvent,
+    hierarchy::{self, Hierarchy},
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
@@ -184,7 +186,12 @@ impl LoroCore {
     #[instrument(skip_all)]
     pub fn import_updates_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
         debug_log::group!("Import updates at {}", self.client_id());
-        let ans = self.log_store.write().unwrap().import_updates_batch(input);
+        let mut hierarchy = self.hierarchy.try_lock().unwrap();
+        let ans = self
+            .log_store
+            .write()
+            .unwrap()
+            .import_updates_batch(input, &mut hierarchy);
         let ans = match ans {
             Ok(events) => {
                 self.notify(events);
@@ -202,6 +209,7 @@ impl LogStore {
     pub fn import_updates_batch(
         &mut self,
         batch: &[Vec<u8>],
+        hierarchy: &mut Hierarchy,
     ) -> Result<Vec<RawEvent>, postcard::Error> {
         // FIXME: changes may not be continuous
         let mut changes: RemoteClientChanges = Default::default();
@@ -215,6 +223,6 @@ impl LogStore {
             }
         }
 
-        Ok(self.import(changes))
+        Ok(self.import(hierarchy, changes))
     }
 }

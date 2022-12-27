@@ -270,10 +270,7 @@ impl LogStore {
 
         let mut current_vv = common_ancestors_vv.clone();
         let mut already_checkout = FxHashSet::default();
-        for iter in self.iter_causal(
-            &common_ancestors,
-            context.new_vv.sub_vec(&common_ancestors_vv),
-        ) {
+        for iter in self.iter_causal(&common_ancestors, iter_targets) {
             debug_log::debug_dbg!(&iter);
             debug_log::debug_dbg!(&current_vv);
             already_checkout.clear();
