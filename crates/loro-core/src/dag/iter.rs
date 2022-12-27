@@ -9,17 +9,24 @@ use super::*;
 struct IdHeapItem {
     id: ID,
     lamport: Lamport,
+    same_client: bool,
 }
 
 impl PartialOrd for IdHeapItem {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.lamport.cmp(&other.lamport).reverse())
+        Some(
+            (!self.same_client, self.lamport)
+                .cmp(&(!other.same_client, other.lamport))
+                .reverse(),
+        )
     }
 }
 
 impl Ord for IdHeapItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.lamport.cmp(&other.lamport).reverse()
+        (!self.same_client, self.lamport)
+            .cmp(&(!other.same_client, other.lamport))
+            .reverse()
     }
 }
 
@@ -64,6 +71,7 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
                         lamport: node.lamport(),
+                        same_client: node.deps().len() == 1,
                     });
                 }
 
@@ -82,6 +90,7 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                 self.heap.push(IdHeapItem {
                     id: next_id,
                     lamport: next_node.lamport(),
+                    same_client: next_node.deps().len() == 1,
                 });
             }
 
@@ -123,6 +132,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
                         lamport: node.lamport(),
+                        same_client: node.deps().len() == 1,
                     });
                 }
             }
@@ -163,6 +173,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                 self.heap.push(IdHeapItem {
                     id: next_id,
                     lamport: next_node.lamport(),
+                    same_client: next_node.deps().len() == 1,
                 });
             }
 
@@ -180,7 +191,7 @@ pub(crate) struct DagCausalIter<'a, Dag> {
     dag: &'a Dag,
     frontier: SmallVec<[ID; 2]>,
     target: IdSpanVector,
-    heap: Vec<IdHeapItem>,
+    heap: BinaryHeap<IdHeapItem>,
 }
 
 #[derive(Debug)]
@@ -195,15 +206,20 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
-        let mut heap = Vec::new();
+        let mut heap = BinaryHeap::new();
         for id in target.iter() {
             if id.1.content_len() > 0 {
                 let id = id.id_start();
                 let node = dag.get(id).unwrap();
                 let diff = id.counter - node.id_start().counter;
+                let deps = dag.get(id).unwrap().deps();
+                let same_client = from.iter().any(|f| {
+                    f.client_id == id.client_id && f.counter + 1 == id.counter && deps.len() == 1
+                });
                 heap.push(IdHeapItem {
                     id,
                     lamport: node.lamport() + diff as Lamport,
+                    same_client,
                 });
             }
         }
@@ -232,23 +248,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             return None;
         }
 
-        let node_id = {
-            self.heap.sort_by_cached_key(|h| {
-                let deps = self.dag.get(h.id).unwrap().deps();
-                let mut same_client = false;
-                for f in self.frontier.iter() {
-                    if f.client_id == h.id.client_id
-                        && f.counter + 1 == h.id.counter
-                        && deps.len() == 1
-                    {
-                        same_client = true;
-                        break;
-                    }
-                }
-                (same_client, -(h.lamport as i32))
-            });
-            self.heap.pop().unwrap().id
-        };
+        let node_id = { self.heap.pop().unwrap().id };
 
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
         debug_assert_eq!(
@@ -283,6 +283,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
                 id: next_id,
                 lamport: next_node.lamport()
                     + (next_id.counter - next_node.id_start().counter) as Lamport,
+                same_client: next_node.deps().len() == 1,
             });
         }
 
