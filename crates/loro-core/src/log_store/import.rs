@@ -338,7 +338,8 @@ impl LogStore {
             for change in changes.iter() {
                 for op in change.ops.iter() {
                     if !container_map.contains_key(&op.container) {
-                        let guard = self.reg.get_or_create(&op.container).try_lock().unwrap();
+                        let guard = self.reg.get_or_create(&op.container).upgrade().unwrap();
+                        let guard = guard.try_lock().unwrap();
                         container_map
                             // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
                             .insert(op.container.clone(), unsafe { std::mem::transmute(guard) });

@@ -10,7 +10,7 @@ pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -341,12 +341,12 @@ impl LogStore {
     pub fn get_or_create_container(
         &mut self,
         container: &ContainerID,
-    ) -> &Arc<Mutex<ContainerInstance>> {
+    ) -> Weak<Mutex<ContainerInstance>> {
         self.reg.get_or_create(container)
     }
 
     #[inline(always)]
-    pub fn get_container(&self, container: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+    pub fn get_container(&self, container: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.reg.get(container)
     }
 

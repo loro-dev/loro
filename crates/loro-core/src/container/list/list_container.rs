@@ -1,5 +1,5 @@
 // TODO: refactor, extract common code with text
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -88,9 +88,9 @@ impl ListContainer {
             let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
-            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            let container = store.get_container(&container_id).unwrap();
             drop(store);
-            prelim.integrate(ctx, &container);
+            prelim.integrate(ctx, container);
             (event, Some(container_id))
         } else {
             let value = value.into_value().unwrap();
@@ -554,21 +554,21 @@ impl Container for ListContainer {
 }
 
 pub struct List {
-    instance: Arc<Mutex<ContainerInstance>>,
+    instance: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
 }
 
 impl Clone for List {
     fn clone(&self) -> Self {
         Self {
-            instance: Arc::clone(&self.instance),
+            instance: Weak::clone(&self.instance),
             client_id: self.client_id,
         }
     }
 }
 
 impl List {
-    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         Self {
             instance,
             client_id,
@@ -618,7 +618,8 @@ impl ContainerWrapper for List {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.try_lock().unwrap();
+        let w = self.instance.upgrade().unwrap();
+        let mut container_instance = w.try_lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
         let ans = f(list);
         drop(container_instance);
