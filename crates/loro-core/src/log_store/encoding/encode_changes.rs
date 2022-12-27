@@ -15,6 +15,7 @@ use crate::{
     dag::Dag,
     event::RawEvent,
     id::{ClientID, Counter, ID},
+    log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
     smstring::SmString,
     span::HasIdSpan,
@@ -213,6 +214,13 @@ pub(super) fn decode_changes(
     store: &mut LogStore,
     input: &[u8],
 ) -> Result<Vec<RawEvent>, LoroError> {
+    // TODO: using the one with fewer changes to import
+    decode_changes_to_inner_format(input).map(|changes| store.import(changes))
+}
+
+pub(super) fn decode_changes_to_inner_format(
+    input: &[u8],
+) -> Result<RemoteClientChanges, LoroError> {
     let encoded: Encoded =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
@@ -224,12 +232,6 @@ pub(super) fn decode_changes(
         containers,
         keys,
     } = encoded;
-
-    if change_encodings.is_empty() && !containers.is_empty() {
-        for container in containers.iter() {
-            store.get_or_create_container(container);
-        }
-    }
 
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
@@ -315,6 +317,6 @@ pub(super) fn decode_changes(
             .or_insert_with(Vec::new)
             .push(change);
     }
-    // TODO: using the one with fewer changes to import
-    Ok(store.import(changes))
+
+    Ok(changes)
 }

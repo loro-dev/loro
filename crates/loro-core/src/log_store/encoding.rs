@@ -5,9 +5,12 @@ mod encode_updates;
 use std::io::{Read, Write};
 
 use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
+use fxhash::FxHashMap;
 use num::Zero;
 
 use crate::{dag::Dag, event::RawEvent, LogStore, LoroCore, LoroError, VersionVector};
+
+use super::RemoteClientChanges;
 
 const UPDATE_ENCODE_THRESHOLD: usize = 5;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
@@ -17,6 +20,23 @@ pub enum EncodeMode {
     Updates(VersionVector),
     RleUpdates(VersionVector),
     Snapshot,
+}
+
+enum ConcreteEncodeMode {
+    Updates = 0,
+    RleUpdates = 1,
+    Snapshot = 2,
+}
+
+impl From<u8> for ConcreteEncodeMode {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => ConcreteEncodeMode::Updates,
+            1 => ConcreteEncodeMode::RleUpdates,
+            2 => ConcreteEncodeMode::Snapshot,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct EncodeConfig {
@@ -116,7 +136,7 @@ impl LoroEncoder {
         // check version
         let (_version, input) = input.split_at(version_len[0] as usize);
         let compress = input[0];
-        let mode = input[1];
+        let mode: ConcreteEncodeMode = input[1].into();
         let mut decoded = Vec::new();
         let decoded = if compress.is_zero() {
             &input[2..]
@@ -126,11 +146,57 @@ impl LoroEncoder {
             &decoded
         };
         match mode {
-            0 => Self::decode_updates(&mut store, decoded),
-            1 => Self::decode_changes(&mut store, decoded),
-            2 => Self::decode_snapshot(&mut store, decoded),
-            _ => unreachable!(),
+            ConcreteEncodeMode::Updates => Self::decode_updates(&mut store, decoded),
+            ConcreteEncodeMode::RleUpdates => Self::decode_changes(&mut store, decoded),
+            ConcreteEncodeMode::Snapshot => Self::decode_snapshot(&mut store, decoded),
         }
+    }
+
+    pub fn decode_batch(
+        loro: &mut LoroCore,
+        batch: &[Vec<u8>],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        let mut store = loro
+            .log_store
+            .try_write()
+            .map_err(|_| LoroError::LockError)?;
+        let mut changes: RemoteClientChanges = FxHashMap::default();
+        for input in batch {
+            let (magic_bytes, input) = input.split_at(4);
+            let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
+            if magic_bytes != MAGIC_BYTES {
+                return Err(LoroError::DecodeError("Invalid header bytes".into()));
+            }
+            let (version_len, input) = input.split_at(1);
+            // check version
+            let (_version, input) = input.split_at(version_len[0] as usize);
+            let compress = input[0];
+            let mode: ConcreteEncodeMode = input[1].into();
+            let mut decoded = Vec::new();
+            let decoded = if compress.is_zero() {
+                &input[2..]
+            } else {
+                let mut c = DeflateDecoder::new(&input[2..]);
+                c.read_to_end(&mut decoded).unwrap();
+                &decoded
+            };
+            let decoded = match mode {
+                ConcreteEncodeMode::Updates => {
+                    encode_updates::decode_updates_to_inner_format(decoded)?
+                }
+                ConcreteEncodeMode::RleUpdates => {
+                    encode_changes::decode_changes_to_inner_format(decoded)?
+                }
+                _ => unreachable!("snapshot should not be batched"),
+            };
+
+            for (client, mut new_changes) in decoded {
+                // FIXME: changes may not be consecutive
+                changes.entry(client).or_default().append(&mut new_changes);
+            }
+        }
+
+        Ok(store.import(changes))
     }
 }
 

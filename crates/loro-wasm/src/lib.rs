@@ -144,7 +144,7 @@ impl Loro {
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self
             .0
-            .encode(EncodeConfig::new(EncodeMode::Snapshot, None))?)
+            .encode(EncodeConfig::new(EncodeMode::Snapshot, None).with_default_compress())?)
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
@@ -187,7 +187,7 @@ impl Loro {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
-        Ok(self.0.import_updates_batch(&data)?)
+        Ok(self.0.decode_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]
