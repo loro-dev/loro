@@ -198,7 +198,12 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let (_, containers) = store.reg.export();
     for container_id in containers.iter() {
         let container = store.reg.get(container_id).unwrap();
-        container.try_lock().unwrap().initialize_pool_mapping();
+        container
+            .upgrade()
+            .unwrap()
+            .try_lock()
+            .unwrap()
+            .initialize_pool_mapping();
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -220,6 +225,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                 let container_id = store.reg.get_id(container_idx).unwrap();
                 let container = store.reg.get(container_id).unwrap();
                 let new_ops = container
+                    .upgrade()
+                    .unwrap()
                     .try_lock()
                     .unwrap()
                     .to_export_snapshot(&op.content, gc);
@@ -251,6 +258,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
         .map(|container_id| {
             let container = store.reg.get(container_id).unwrap();
             container
+                .upgrade()
+                .unwrap()
                 .try_lock()
                 .unwrap()
                 .encode_and_release_pool_mapping()

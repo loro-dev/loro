@@ -160,6 +160,8 @@ impl Hierarchy {
             if let Some(parent) = parent {
                 let parent_node = reg.get(parent).unwrap();
                 let index = parent_node
+                    .upgrade()
+                    .unwrap()
                     .try_lock()
                     .unwrap()
                     .index_of_child(node_id)

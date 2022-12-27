@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLockWriteGuard},
+    sync::{Arc, Mutex, RwLockWriteGuard, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -248,10 +248,10 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub fn get(&self, id: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+    pub fn get(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.container_to_idx
             .get(id)
-            .map(|x| &self.containers[x.0 as usize].container)
+            .map(|x| Arc::downgrade(&self.containers[x.0 as usize].container))
     }
 
     #[inline(always)]
@@ -290,7 +290,7 @@ impl ContainerRegistry {
         self.insert(id.clone(), container)
     }
 
-    pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> &Arc<Mutex<ContainerInstance>> {
+    pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> Weak<Mutex<ContainerInstance>> {
         if !self.container_to_idx.contains_key(id) {
             let container = self.create(id.clone());
             self.insert(id.clone(), container);

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
@@ -476,21 +476,21 @@ impl Container for TextContainer {
 }
 
 pub struct Text {
-    instance: Arc<Mutex<ContainerInstance>>,
+    instance: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
 }
 
 impl Clone for Text {
     fn clone(&self) -> Self {
         Self {
-            instance: Arc::clone(&self.instance),
+            instance: Weak::clone(&self.instance),
             client_id: self.client_id,
         }
     }
 }
 
 impl Text {
-    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         Self {
             instance,
             client_id,
@@ -499,6 +499,8 @@ impl Text {
 
     pub fn id(&self) -> ContainerID {
         self.instance
+            .upgrade()
+            .unwrap()
             .try_lock()
             .unwrap()
             .as_text()
@@ -527,6 +529,8 @@ impl Text {
 
     pub fn get_value(&self) -> LoroValue {
         self.instance
+            .upgrade()
+            .unwrap()
             .try_lock()
             .unwrap()
             .as_text()
@@ -551,7 +555,8 @@ impl ContainerWrapper for Text {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.try_lock().unwrap();
+        let w = self.instance.upgrade().unwrap();
+        let mut container_instance = w.try_lock().unwrap();
         let text = container_instance.as_text_mut().unwrap();
         let ans = f(text);
         drop(container_instance);

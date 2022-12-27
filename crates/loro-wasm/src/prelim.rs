@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use loro_core::{
@@ -35,7 +35,7 @@ impl Prelim for PrelimType {
         }
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
+    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
         match self {
             PrelimType::Text(t) => t.integrate(ctx, container),
             PrelimType::Map(m) => m.integrate(ctx, container),
@@ -148,8 +148,9 @@ impl Prelim for PrelimText {
         (PrelimValue::Container(ContainerType::Text), Some(self))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut text = container.try_lock().unwrap();
+    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+        let text = container.upgrade().unwrap();
+        let mut text = text.try_lock().unwrap();
         let text = text.as_text_mut().unwrap();
         text.insert(ctx, 0, &self.0);
     }
@@ -160,8 +161,9 @@ impl Prelim for PrelimList {
         (PrelimValue::Container(ContainerType::List), Some(self))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut list = container.try_lock().unwrap();
+    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+        let list = container.upgrade().unwrap();
+        let mut list = list.try_lock().unwrap();
         let list = list.as_list_mut().unwrap();
         let values: Vec<LoroValue> = self.0.into_iter().map(|v| v.into()).collect();
         list.insert_batch(ctx, 0, values);
@@ -173,8 +175,9 @@ impl Prelim for PrelimMap {
         (PrelimValue::Container(ContainerType::Map), Some(self))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut map = container.try_lock().unwrap();
+    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+        let map = container.upgrade().unwrap();
+        let mut map = map.try_lock().unwrap();
         let map = map.as_map_mut().unwrap();
         for (key, value) in self.0.into_iter() {
             let value: LoroValue = value.into();
