@@ -4,7 +4,7 @@
     "deny": "cargo deny check",
     "fuzz": "cargo fuzz run",
     "quick-fuzz": "deno run -A ./scripts/fuzz.ts text recursive encoding",
-    "mem": "cargo run --example mem -r --features=test_utils",
+    "mem": "deno run -A ./scripts/run_mem.ts",
     "flame": "cargo flamegraph --example many_actors --root",
     "bench": "cargo bench --features test_utils"
   }

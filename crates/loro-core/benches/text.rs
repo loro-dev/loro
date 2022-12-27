@@ -1,20 +1,17 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-const RAW_DATA: &[u8; 901823] = include_bytes!("automerge-paper.json.gz");
 
 #[cfg(feature = "test_utils")]
 mod run {
-    use std::io::Read;
 
     use super::*;
     use arbitrary::Unstructured;
-    use flate2::read::GzDecoder;
+    use bench_utils::TextAction;
     use loro_core::container::registry::ContainerWrapper;
     use loro_core::fuzz::test_multi_sites;
     use loro_core::fuzz::Action;
     use loro_core::LoroCore;
     use rand::Rng;
     use rand::SeedableRng;
-    use serde_json::Value;
 
     pub fn two_client_edits(c: &mut Criterion) {
         let mut rgn = rand::rngs::StdRng::seed_from_u64(0);
@@ -41,44 +38,14 @@ mod run {
     }
 
     pub fn b4(c: &mut Criterion) {
-        struct Action {
-            pos: usize,
-            ins: String,
-            del: usize,
-        }
-        let mut actions = Vec::new();
-        let mut d = GzDecoder::new(&RAW_DATA[..]);
-        let mut s = String::new();
-        d.read_to_string(&mut s).unwrap();
-        let json: Value = serde_json::from_str(&s).unwrap();
-        let txns = json.as_object().unwrap().get("txns");
-        for txn in txns.unwrap().as_array().unwrap() {
-            let patches = txn
-                .as_object()
-                .unwrap()
-                .get("patches")
-                .unwrap()
-                .as_array()
-                .unwrap();
-            for patch in patches {
-                let pos = patch[0].as_u64().unwrap() as usize;
-                let del_here = patch[1].as_u64().unwrap() as usize;
-                let ins_content = patch[2].as_str().unwrap();
-                actions.push(Action {
-                    pos,
-                    ins: ins_content.to_string(),
-                    del: del_here,
-                });
-            }
-        }
-        // println!("{}", txns.unwrap().as_array().unwrap().len());
+        let actions = bench_utils::get_automerge_actions();
         let mut b = c.benchmark_group("direct_apply");
         b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let text = loro.get_text("text");
                 text.with_container(|text| {
-                    for Action { pos, ins, del } in actions.iter() {
+                    for TextAction { pos, ins, del } in actions.iter() {
                         text.delete(&loro, *pos, *del);
                         text.insert(&loro, *pos, ins);
                     }
@@ -92,7 +59,7 @@ mod run {
                 loro.subscribe_deep(Box::new(|_| {}));
                 let text = loro.get_text("text");
                 text.with_container(|text| {
-                    for Action { pos, ins, del } in actions.iter() {
+                    for TextAction { pos, ins, del } in actions.iter() {
                         text.delete(&loro, *pos, *del);
                         text.insert(&loro, *pos, ins);
                     }
@@ -105,7 +72,7 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
-                for Action { pos, ins, del } in actions.iter() {
+                for TextAction { pos, ins, del } in actions.iter() {
                     let text = loro.get_text("text");
                     text.with_container(|text| {
                         text.delete(&loro, *pos, *del);
@@ -124,36 +91,20 @@ mod run {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
                 let mut i = 0;
-                for txn in txns.unwrap().as_array().unwrap() {
+                for TextAction { pos, ins, del } in actions.iter() {
+                    let pos = *pos;
+                    let del = *del;
                     i += 1;
                     if i > 1000 {
                         break;
                     }
 
                     let mut text = loro.get_text("text");
-                    let patches = txn
-                        .as_object()
-                        .unwrap()
-                        .get("patches")
-                        .unwrap()
-                        .as_array()
-                        .unwrap();
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(&loro, pos, del_here).unwrap();
-                        text.insert(&loro, pos, ins_content).unwrap();
-                    }
-
+                    text.delete(&loro, pos, del).unwrap();
+                    text.insert(&loro, pos, ins).unwrap();
                     let mut text = loro_b.get_text("text");
-                    for patch in patches {
-                        let pos = patch[0].as_u64().unwrap() as usize;
-                        let del_here = patch[1].as_u64().unwrap() as usize;
-                        let ins_content = patch[2].as_str().unwrap();
-                        text.delete(&loro_b, pos, del_here).unwrap();
-                        text.insert(&loro_b, pos, ins_content).unwrap();
-                    }
+                    text.delete(&loro_b, pos, del).unwrap();
+                    text.insert(&loro_b, pos, ins).unwrap();
                     loro_b.import(loro.export(loro_b.vv_cloned()));
                     loro.import(loro_b.export(loro.vv_cloned()));
                 }

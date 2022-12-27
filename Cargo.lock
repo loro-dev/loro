@@ -107,6 +107,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-utils"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner",
+ "flate2",
+ "rand",
+ "serde_json",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -676,6 +687,7 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "arref",
+ "bench-utils",
  "color-backtrace",
  "crdt-list",
  "criterion",

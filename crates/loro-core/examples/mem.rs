@@ -1,60 +1,117 @@
-// use tikv_jemallocator::Jemalloc;
-// #[global_allocator]
-// static GLOBAL: Jemalloc = Jemalloc;
-
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-const RAW_DATA: &[u8; 901823] = include_bytes!("../benches/automerge-paper.json.gz");
+use std::time::Instant;
 
-use std::{io::Read, time::Instant};
+use bench_utils::TextAction;
+use loro_core::{log_store::EncodeConfig, LoroCore};
 
-use flate2::read::GzDecoder;
-use loro_core::LoroCore;
-use serde_json::Value;
-
-pub fn main() {
-    // let alloc_stats = stats::allocated::mib().unwrap();
-    let mut d = GzDecoder::new(&RAW_DATA[..]);
-    let mut s = String::new();
-    d.read_to_string(&mut s).unwrap();
-    let json: Value = serde_json::from_str(&s).unwrap();
-    drop(s);
-    let txns = json.as_object().unwrap().get("txns");
+fn apply_automerge(times: usize) {
+    let actions = bench_utils::get_automerge_actions();
     let start = Instant::now();
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     let mut loro = LoroCore::default();
     let mut text = loro.get_text("text");
-    for _i in 0..1 {
-        for txn in txns.unwrap().as_array().unwrap() {
-            let patches = txn
-                .as_object()
-                .unwrap()
-                .get("patches")
-                .unwrap()
-                .as_array()
-                .unwrap();
-            for patch in patches {
-                let pos = patch[0].as_u64().unwrap() as usize;
-                let del_here = patch[1].as_u64().unwrap() as usize;
-                let ins_content = patch[2].as_str().unwrap();
-                text.delete(&loro, pos, del_here).unwrap();
-                text.insert(&loro, pos, ins_content).unwrap();
-            }
+    println!("Apply Automerge Dataset 1X");
+    for _i in 0..times {
+        for TextAction { pos, ins, del } in actions.iter() {
+            text.delete(&loro, *pos, *del).unwrap();
+            text.insert(&loro, *pos, ins).unwrap();
+        }
+    }
+    drop(profiler);
+    println!("Used: {} ms", start.elapsed().as_millis());
+}
 
-            if start.elapsed().as_secs() > 10 {
-                break;
+fn concurrent_actors(actor_num: usize) {
+    let mut actors: Vec<LoroCore> = Vec::new();
+    for _ in 0..actor_num {
+        actors.push(LoroCore::default());
+    }
+
+    let mut updates = Vec::new();
+    for actor in actors.iter_mut() {
+        let mut list = actor.get_list("list");
+        list.insert(actor, 0, 1).unwrap();
+        updates.push(actor.encode(EncodeConfig::from_vv(None)).unwrap());
+    }
+
+    let mut a = actors.drain(0..1).next().unwrap();
+    drop(actors);
+    let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+    for update in updates {
+        a.decode(&update).unwrap();
+    }
+    drop(profiler);
+}
+
+fn realtime_sync(actor_num: usize, action_num: usize) {
+    let actions = bench_utils::gen_realtime_actions(action_num, actor_num, 100);
+    let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+    let mut actors = Vec::new();
+    for _ in 0..actor_num {
+        actors.push(LoroCore::default());
+    }
+
+    for action in actions {
+        match action {
+            bench_utils::Action::Text { client, action } => {
+                let mut text = actors[client].get_text("text");
+                let bench_utils::TextAction { pos, ins, del } = action;
+                let pos = pos % (text.len() + 1);
+                let del = del.min(text.len() - pos);
+                text.delete(&actors[client], pos, del).unwrap();
+                text.insert(&actors[client], pos, &ins).unwrap();
+            }
+            bench_utils::Action::SyncAll => {
+                let mut updates = Vec::new();
+                for i in 1..actor_num {
+                    let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
+                    updates.push(
+                        b.encode(EncodeConfig::from_vv(Some(a.vv_cloned())))
+                            .unwrap(),
+                    );
+                }
+                for update in updates {
+                    // TODO: use import batch here
+                    actors[0].decode(&update).unwrap();
+                }
+                for i in 1..actor_num {
+                    let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
+                    b.decode(
+                        &a.encode(EncodeConfig::from_vv(Some(b.vv_cloned())))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                }
             }
         }
     }
-    drop(json);
-    drop(d);
-    #[cfg(feature = "test_utils")]
-    loro.debug_inspect();
     drop(profiler);
-    // e.advance().unwrap();
-    // let new_new_heap = alloc_stats.read().unwrap();
-    println!("Apply Automerge Dataset 1X");
-    // println!("Mem: {} MB", new_new_heap as f64 / 1024. / 1024.);
-    println!("Used: {} ms", start.elapsed().as_millis());
+}
+
+pub fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() < 2 {
+        apply_automerge(1);
+        return;
+    }
+
+    match args[1].as_str() {
+        "automerge" => {
+            apply_automerge(1);
+        }
+        "100_concurrent" => {
+            concurrent_actors(100);
+        }
+        "200_concurrent" => {
+            concurrent_actors(200);
+        }
+        "10_actor_sync_1000_actions" => realtime_sync(10, 1000),
+        "20_actor_sync_1000_actions" => realtime_sync(20, 1000),
+        "10_actor_sync_2000_actions" => realtime_sync(10, 2000),
+        _ => {
+            panic!("Unknown command `{}`", args.join(" "));
+        }
+    }
 }
