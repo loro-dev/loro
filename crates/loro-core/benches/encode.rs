@@ -156,7 +156,7 @@ mod run {
             let buf = loro.encode(EncodeConfig::from_vv(None)).unwrap();
             let mut store2 = LoroCore::default();
             b.iter(|| {
-                let _ = store2.decode(&buf).unwrap();
+                store2.decode(&buf).unwrap();
             })
         });
     }

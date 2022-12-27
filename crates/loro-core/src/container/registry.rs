@@ -296,8 +296,7 @@ impl ContainerRegistry {
             self.insert(id.clone(), container);
         }
 
-        let container = self.get(id).unwrap();
-        container
+        self.get(id).unwrap()
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
