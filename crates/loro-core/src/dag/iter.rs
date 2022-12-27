@@ -245,7 +245,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
                         break;
                     }
                 }
-                (same_client, h.lamport)
+                (same_client, -(h.lamport as i32))
             });
             self.heap.pop().unwrap().id
         };
