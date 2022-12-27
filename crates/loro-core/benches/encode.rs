@@ -161,10 +161,61 @@ mod run {
         });
     }
 }
+
+mod import {
+    use criterion::Criterion;
+    use loro_core::{
+        change::ChangeMergeCfg,
+        configure::Configure,
+        log_store::{EncodeConfig, EncodeMode},
+        LoroCore,
+    };
+
+    pub fn causal_iter(c: &mut Criterion) {
+        let mut b = c.benchmark_group("causal_iter");
+        b.sample_size(10);
+        b.bench_function("parallel_500", |b| {
+            let mut c1 = LoroCore::new(
+                Configure {
+                    change: ChangeMergeCfg {
+                        max_change_length: 0,
+                        max_change_interval: 0,
+                    },
+                    ..Default::default()
+                },
+                Some(1),
+            );
+            let mut c2 = LoroCore::new(
+                Configure {
+                    change: ChangeMergeCfg {
+                        max_change_length: 0,
+                        max_change_interval: 0,
+                    },
+                    ..Default::default()
+                },
+                Some(2),
+            );
+            let mut text1 = c1.get_text("text");
+            let mut text2 = c2.get_text("text");
+            for _ in 0..500 {
+                text1.insert(&c1, 0, "1").unwrap();
+                text2.insert(&c2, 0, "2").unwrap();
+            }
+            b.iter(|| {
+                c1.decode(
+                    &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv()), None))
+                        .unwrap(),
+                )
+                .unwrap();
+            })
+        });
+    }
+}
+
 pub fn dumb(_c: &mut Criterion) {}
 
 #[cfg(feature = "test_utils")]
-criterion_group!(benches, run::b4, sync::b4);
+criterion_group!(benches, run::b4, sync::b4, import::causal_iter);
 #[cfg(not(feature = "test_utils"))]
 criterion_group!(benches, dumb);
 criterion_main!(benches);
