@@ -9,7 +9,7 @@ use crate::{
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
-    version::VersionVector,
+    version::{PatchedVersionVector, VersionVector},
     InternalString, LoroError, LoroValue, ID,
 };
 
@@ -101,10 +101,10 @@ pub trait Container: Debug + Any + Unpin {
     fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
     /// Initialize tracker at the target version
-    fn tracker_init(&mut self, vv: &VersionVector);
+    fn tracker_init(&mut self, vv: &PatchedVersionVector);
 
     /// Tracker need to checkout to target version in order to apply the op.
-    fn tracker_checkout(&mut self, vv: &VersionVector);
+    fn tracker_checkout(&mut self, vv: &PatchedVersionVector);
 
     /// Apply the op to the tracker.
     ///

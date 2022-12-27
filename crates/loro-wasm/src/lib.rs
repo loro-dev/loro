@@ -1,4 +1,4 @@
-use js_sys::Uint8Array;
+use js_sys::{Array, Uint8Array};
 use loro_core::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
@@ -137,7 +137,7 @@ impl Loro {
 
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.vv().encode()
+        self.0.vv_cloned().encode()
     }
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
@@ -176,6 +176,18 @@ impl Loro {
     pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
         self.0.decode(&data)?;
         Ok(())
+    }
+
+    #[wasm_bindgen(js_name = "importUpdateBatch")]
+    pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
+        let data = data
+            .iter()
+            .map(|x| {
+                let arr: Uint8Array = Uint8Array::new(&x);
+                arr.to_vec()
+            })
+            .collect::<Vec<_>>();
+        Ok(self.0.import_updates_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]

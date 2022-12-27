@@ -58,17 +58,17 @@ mod run {
                     let b = (action.sync as usize) % len;
                     if a != b {
                         let (a, b) = arref::array_mut_ref!(&mut actors, [a, b]);
-                        a.import(b.export(a.vv()));
+                        a.import(b.export(a.vv_cloned()));
                     }
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(b.export(a.vv()));
+                    a.import(b.export(a.vv_cloned()));
                 }
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [i, 0]);
-                    a.import(b.export(a.vv()));
+                    a.import(b.export(a.vv_cloned()));
                 }
             })
         });
@@ -88,12 +88,12 @@ mod run {
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(b.export(a.vv()));
+                    a.import(b.export(a.vv_cloned()));
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import(a.export(b.vv()));
+                    b.import(a.export(b.vv_cloned()));
                 }
             })
         });

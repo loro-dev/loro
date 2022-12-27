@@ -1,12 +1,14 @@
 use std::{
     cmp::Ordering,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
 use fxhash::FxHashMap;
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use tracing::instrument;
 
 use crate::{
     change::Lamport,
@@ -30,14 +32,6 @@ use crate::{
 #[repr(transparent)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
-
-/// This is a subset of VersionVector, it only includes the counters of a subset of the clients.
-/// If the counter is zero, then it means the client is not in the target version
-///
-/// It's used to represent the changed part of the version vector.
-#[repr(transparent)]
-#[derive(Debug, Clone)]
-pub struct VersionVectorSubset(pub VersionVector);
 
 // TODO: use new type
 pub type Frontiers = SmallVec<[ID; 2]>;
@@ -492,11 +486,13 @@ impl VersionVector {
     }
 
     #[inline(always)]
+    #[instrument(skip_all)]
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap()
     }
 
     #[inline(always)]
+    #[instrument(skip_all)]
     pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
@@ -559,6 +555,235 @@ pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
     b.sort();
 
     a == b
+}
+
+#[derive(Debug)]
+pub struct PatchedVersionVector {
+    pub base: Arc<VersionVector>,
+    pub patch: VersionVector,
+}
+
+impl Clone for PatchedVersionVector {
+    fn clone(&self) -> Self {
+        Self {
+            base: Arc::clone(&self.base),
+            patch: self.patch.clone(),
+        }
+    }
+}
+
+impl From<PatchedVersionVector> for VersionVector {
+    fn from(mut v: PatchedVersionVector) -> Self {
+        for (client_id, counter) in v.base.iter() {
+            if v.patch.contains_key(client_id) {
+                continue;
+            }
+
+            v.patch.set_last(ID::new(*client_id, *counter));
+        }
+
+        v.patch
+    }
+}
+
+impl PatchedVersionVector {
+    #[inline]
+    pub fn new(base: Arc<VersionVector>) -> Self {
+        Self {
+            base,
+            patch: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.patch.is_empty() && self.base.is_empty()
+    }
+
+    pub fn from_version(base: &Arc<VersionVector>, version: &VersionVector) -> Self {
+        let mut patch = VersionVector::new();
+        for (client_id, counter) in version.iter() {
+            if let Some(base_counter) = base.get(client_id) {
+                if *base_counter != *counter {
+                    patch.set_end(ID::new(*client_id, *counter));
+                }
+            } else {
+                patch.set_end(ID::new(*client_id, *counter));
+            }
+        }
+
+        if cfg!(debug_assertions) {
+            for (client_id, counter) in base.iter() {
+                if let Some(patch_counter) = version.get(client_id) {
+                    assert!(*patch_counter >= *counter);
+                } else {
+                    unreachable!("base should be a subset of version");
+                }
+            }
+        }
+
+        Self {
+            base: Arc::clone(base),
+            patch,
+        }
+    }
+
+    #[inline]
+    pub fn extend_to_include_last_id(&mut self, id: ID) {
+        self.patch.extend_to_include_last_id(id);
+        self.omit_if_needless(id.client_id);
+    }
+
+    #[inline]
+    pub fn set_end(&mut self, id: ID) {
+        self.patch.set_end(id);
+        self.omit_if_needless(id.client_id);
+    }
+
+    #[inline]
+    pub fn set_last(&mut self, id: ID) {
+        self.patch.set_last(id);
+        self.omit_if_needless(id.client_id);
+    }
+
+    #[inline]
+    pub fn extend_to_include(&mut self, span: IdSpan) {
+        self.patch.extend_to_include(span);
+        self.omit_if_needless(span.client_id);
+    }
+
+    #[inline]
+    pub fn shrink_to_exclude(&mut self, span: IdSpan) {
+        self.patch.shrink_to_exclude(span);
+        self.omit_if_needless(span.client_id);
+    }
+
+    #[inline]
+    pub fn forward(&mut self, spans: &IdSpanVector) {
+        for span in spans.iter() {
+            let span = IdSpan {
+                client_id: *span.0,
+                counter: *span.1,
+            };
+
+            if let Some(counter) = self.patch.get_mut(&span.client_id) {
+                if *counter < span.counter.end() {
+                    *counter = span.counter.end();
+                    self.omit_if_needless(span.client_id);
+                }
+            } else {
+                let target = span.counter.end();
+                if self.base.get(&span.client_id) == Some(&target) {
+                    continue;
+                }
+
+                self.patch.insert(span.client_id, target);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn retreat(&mut self, spans: &IdSpanVector) {
+        for span in spans.iter() {
+            let span = IdSpan {
+                client_id: *span.0,
+                counter: *span.1,
+            };
+
+            if let Some(counter) = self.patch.get_mut(&span.client_id) {
+                if *counter > span.counter.min() {
+                    *counter = span.counter.min();
+                    self.omit_if_needless(span.client_id);
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn omit_if_needless(&mut self, client_id: ClientID) {
+        if let Some(patch_value) = self.patch.get(&client_id) {
+            if *patch_value == *self.base.get(&client_id).unwrap_or(&0) {
+                self.patch.remove(&client_id);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, client_id: &ClientID) -> Option<&Counter> {
+        self.patch
+            .get(client_id)
+            .or_else(|| self.base.get(client_id))
+    }
+
+    #[inline]
+    pub fn insert(&mut self, client_id: ClientID, counter: Counter) {
+        self.patch.insert(client_id, counter);
+        self.omit_if_needless(client_id);
+    }
+
+    #[inline]
+    pub fn includes_id(&self, id: ID) -> bool {
+        self.patch.includes_id(id) || self.base.includes_id(id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&ClientID, &Counter)> {
+        self.patch.iter().chain(
+            self.base
+                .iter()
+                .filter(|(client_id, _)| !self.patch.contains_key(client_id)),
+        )
+    }
+
+    pub fn sub_iter<'a>(&'a self, rhs: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
+        if !Arc::ptr_eq(&self.base, &rhs.base) {
+            unimplemented!();
+        }
+
+        self.patch.sub_iter(&rhs.patch)
+    }
+
+    pub fn diff_iter<'a>(
+        &'a self,
+        rhs: &'a Self,
+    ) -> (
+        impl Iterator<Item = IdSpan> + 'a,
+        impl Iterator<Item = IdSpan> + 'a,
+    ) {
+        if !Arc::ptr_eq(&self.base, &rhs.base) {
+            unimplemented!();
+        }
+
+        self.patch.diff_iter(&rhs.patch)
+    }
+}
+
+impl PartialEq for PatchedVersionVector {
+    fn eq(&self, other: &Self) -> bool {
+        if Arc::ptr_eq(&self.base, &other.base) {
+            self.patch.eq(&other.patch)
+        } else {
+            unimplemented!()
+        }
+    }
+}
+
+impl PartialOrd for PatchedVersionVector {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if Arc::ptr_eq(&self.base, &other.base) {
+            self.patch.partial_cmp(&other.patch)
+        } else {
+            unimplemented!()
+        }
+    }
+}
+
+impl Default for PatchedVersionVector {
+    fn default() -> Self {
+        Self {
+            base: Default::default(),
+            patch: Default::default(),
+        }
+    }
 }
 
 #[cfg(test)]

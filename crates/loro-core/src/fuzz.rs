@@ -158,18 +158,18 @@ impl Actionable for Vec<LoroCore> {
                 text.delete(site, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
-                let to_vv = self[*to as usize].vv();
+                let to_vv = self[*to as usize].vv_cloned();
                 let from_exported = self[*from as usize].export(to_vv);
                 self[*to as usize].import(from_exported);
             }
             Action::SyncAll => {
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.import(b.export(a.vv()));
+                    a.import(b.export(a.vv_cloned()));
                 }
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.import(a.export(b.vv()));
+                    b.import(a.export(b.vv_cloned()));
                 }
             }
         }
@@ -227,7 +227,7 @@ fn check_synced(sites: &mut [LoroCore]) {
             {
                 debug_log::group!("Import {}", i);
                 a.decode(
-                    &b.encode(EncodeConfig::new(EncodeMode::Updates(a.vv()), None))
+                    &b.encode(EncodeConfig::new(EncodeMode::Updates(a.vv_cloned()), None))
                         .unwrap(),
                 )
                 .unwrap();
@@ -236,7 +236,7 @@ fn check_synced(sites: &mut [LoroCore]) {
             {
                 debug_log::group!("Import {}", j);
                 b.decode(
-                    &a.encode(EncodeConfig::new(EncodeMode::Updates(b.vv()), None))
+                    &a.encode(EncodeConfig::new(EncodeMode::Updates(b.vv_cloned()), None))
                         .unwrap(),
                 )
                 .unwrap();

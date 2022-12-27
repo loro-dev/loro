@@ -412,6 +412,7 @@ pub(super) fn decode_snapshot(
         spans: vv.diff(&store.vv).left,
         new_vv: vv.clone(),
         diff: Default::default(),
+        patched_old_vv: None,
     };
     for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
         let container_idx = store.reg.get_or_create_container_idx(&container_id);

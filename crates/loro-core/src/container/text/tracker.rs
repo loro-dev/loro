@@ -7,8 +7,7 @@ use crate::{
     id::{Counter, ID},
     op::{InnerContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},
-    version::IdSpanVector,
-    VersionVector,
+    version::{IdSpanVector, PatchedVersionVector},
 };
 
 #[allow(unused)]
@@ -45,11 +44,11 @@ pub struct Tracker {
     #[cfg(feature = "test_utils")]
     client_id: ClientID,
     /// from start_vv to latest vv are applied
-    start_vv: VersionVector,
+    start_vv: PatchedVersionVector,
     /// latest applied ops version vector
-    all_vv: VersionVector,
+    all_vv: PatchedVersionVector,
     /// current content version vector
-    current_vv: VersionVector,
+    current_vv: PatchedVersionVector,
     /// The pretend current content version vector.
     ///
     /// Because sometimes we don't actually need to checkout to the version.
@@ -65,7 +64,7 @@ impl From<ID> for u128 {
 }
 
 impl Tracker {
-    pub fn new(start_vv: VersionVector, init_len: Counter) -> Self {
+    pub fn new(start_vv: PatchedVersionVector, init_len: Counter) -> Self {
         let mut content: ContentMap = Default::default();
         let mut id_to_cursor: CursorMap = Default::default();
         if init_len > 0 {
@@ -93,11 +92,11 @@ impl Tracker {
     }
 
     #[inline]
-    pub fn start_vv(&self) -> &VersionVector {
+    pub fn start_vv(&self) -> &PatchedVersionVector {
         &self.start_vv
     }
 
-    pub fn all_vv(&self) -> &VersionVector {
+    pub fn all_vv(&self) -> &PatchedVersionVector {
         &self.all_vv
     }
 
@@ -131,7 +130,7 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    pub fn checkout(&mut self, vv: &VersionVector) {
+    pub fn checkout(&mut self, vv: &PatchedVersionVector) {
         if &self.current_vv == vv {
             return;
         }
@@ -178,11 +177,11 @@ impl Tracker {
         for span in spans {
             let end_id = ID::new(span.client_id, span.counter.end);
             self.current_vv.set_end(end_id);
-            if let Some(all_end_ctr) = self.all_vv.get_mut(&span.client_id) {
+            if let Some(all_end_ctr) = self.all_vv.get(&span.client_id) {
                 let all_end = *all_end_ctr;
                 if all_end < span.counter.end {
                     // there may be holes when there are multiple containers
-                    *all_end_ctr = span.counter.end;
+                    self.all_vv.insert(span.client_id, span.counter.end);
                 }
                 if all_end <= span.counter.start {
                     continue;
@@ -232,10 +231,10 @@ impl Tracker {
         for span in spans {
             let span_start = ID::new(span.client_id, span.counter.start);
             self.current_vv.set_end(span_start);
-            if let Some(all_end_ctr) = self.all_vv.get_mut(&span.client_id) {
+            if let Some(all_end_ctr) = self.all_vv.get(&span.client_id) {
                 let all_end = *all_end_ctr;
                 if all_end < span.counter.start {
-                    *all_end_ctr = span.counter.end;
+                    self.all_vv.insert(span.client_id, span.counter.end);
                     continue;
                 }
             } else {
@@ -366,7 +365,11 @@ impl Tracker {
         )
     }
 
-    pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
+    pub fn iter_effects(
+        &mut self,
+        from: &PatchedVersionVector,
+        target: &IdSpanVector,
+    ) -> EffectIter<'_> {
         self.checkout(from);
         EffectIter::new(self, target)
     }

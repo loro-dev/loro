@@ -353,8 +353,8 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
 
-                a.loro.import(b.loro.export(a.loro.vv()));
-                b.loro.import(a.loro.export(b.loro.vv()));
+                a.loro.import(b.loro.export(a.loro.vv_cloned()));
+                b.loro.import(a.loro.export(b.loro.vv_cloned()));
 
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
@@ -409,7 +409,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.loro.import(b.loro.export(a.loro.vv()));
+                    a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
                         if !visited.contains(&id) {
@@ -435,7 +435,7 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.loro.import(a.loro.export(b.loro.vv()));
+                    b.loro.import(a.loro.export(b.loro.vv_cloned()));
                     b.map_containers = a
                         .map_containers
                         .iter()
@@ -620,14 +620,20 @@ fn check_synced(sites: &mut [Actor]) {
             a_doc
                 .decode(
                     &b_doc
-                        .encode(EncodeConfig::new(EncodeMode::Updates(a_doc.vv()), None))
+                        .encode(EncodeConfig::new(
+                            EncodeMode::Updates(a_doc.vv_cloned()),
+                            None,
+                        ))
                         .unwrap(),
                 )
                 .unwrap();
             b_doc
                 .decode(
                     &a_doc
-                        .encode(EncodeConfig::new(EncodeMode::Updates(b_doc.vv()), None))
+                        .encode(EncodeConfig::new(
+                            EncodeMode::Updates(b_doc.vv_cloned()),
+                            None,
+                        ))
                         .unwrap(),
                 )
                 .unwrap();

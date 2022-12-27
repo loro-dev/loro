@@ -6,6 +6,7 @@ use crate::{
     LoroError, LoroValue,
 };
 use fxhash::FxHashMap;
+use tracing::instrument;
 
 use crate::{
     change::Change,
@@ -38,7 +39,7 @@ impl LoroCore {
         self.log_store.read().unwrap().this_client_id()
     }
 
-    pub fn vv(&self) -> VersionVector {
+    pub fn vv_cloned(&self) -> VersionVector {
         self.log_store.read().unwrap().get_vv().clone()
     }
 
@@ -75,11 +76,13 @@ impl LoroCore {
         Text::from_instance(instance, cid)
     }
 
+    // TODO: make it private
     pub fn export(&self, remote_vv: VersionVector) -> FxHashMap<u64, Vec<Change<RemoteOp>>> {
         let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
+    // TODO: make it private
     pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
         debug_log::group!("Import at {}", self.client_id());
         let mut store = self.log_store.write().unwrap();
@@ -129,6 +132,7 @@ impl LoroCore {
             .unsubscribe_root(subscription)
     }
 
+    #[instrument(skip_all)]
     pub fn notify(&self, events: Vec<RawEvent>) {
         let store = self.log_store.read().unwrap();
         let hierarchy = store.hierarchy.clone();

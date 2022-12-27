@@ -10,7 +10,7 @@ use crate::{
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
-    LogStore, LoroError, VersionVector,
+    LogStore, LoroCore, LoroError, VersionVector,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -135,6 +135,7 @@ where
     }
 }
 
+#[instrument(skip_all)]
 fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp>> {
     let mut result = Vec::with_capacity(changes.data.len());
     let mut last_lamport = changes.meta.lamport;
@@ -181,4 +182,43 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     }
 
     result
+}
+
+impl LoroCore {
+    #[instrument(skip_all)]
+    pub fn import_updates_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
+        debug_log::group!("Import updates at {}", self.client_id());
+        let ans = self.log_store.write().unwrap().import_updates_batch(input);
+        let ans = match ans {
+            Ok(events) => {
+                self.notify(events);
+                Ok(())
+            }
+            Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
+        };
+        debug_log::group_end!();
+        ans
+    }
+}
+
+impl LogStore {
+    #[instrument(skip_all)]
+    pub fn import_updates_batch(
+        &mut self,
+        batch: &[Vec<u8>],
+    ) -> Result<Vec<RawEvent>, postcard::Error> {
+        // FIXME: changes may not be continuous
+        let mut changes: RemoteClientChanges = Default::default();
+        for input in batch {
+            let updates: Updates = postcard::from_bytes(input)?;
+            for encoded in updates.changes {
+                changes
+                    .entry(encoded.meta.client)
+                    .or_default()
+                    .append(&mut convert_encoded_to_changes(encoded));
+            }
+        }
+
+        Ok(self.import(changes))
+    }
 }
