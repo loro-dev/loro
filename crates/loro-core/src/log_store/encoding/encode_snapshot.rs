@@ -311,7 +311,7 @@ pub(super) fn decode_snapshot(
     let mut container_idx2type = FxHashMap::default();
 
     for container_id in containers.iter() {
-        let container_idx = store.reg.get_or_create_container_idx(&container_id);
+        let container_idx = store.reg.get_or_create_container_idx(container_id);
         container_idx2type.insert(container_idx, container_id.container_type());
     }
 

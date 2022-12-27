@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, Weak},
+    sync::{Mutex, Weak},
 };
 
 use loro_core::{
