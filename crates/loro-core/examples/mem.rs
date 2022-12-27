@@ -4,7 +4,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 use std::time::Instant;
 
 use bench_utils::TextAction;
-use loro_core::LoroCore;
+use loro_core::{log_store::EncodeConfig, LoroCore};
 
 fn apply_automerge(times: usize) {
     let actions = bench_utils::get_automerge_actions();
@@ -33,14 +33,14 @@ fn concurrent_actors(actor_num: usize) {
     for actor in actors.iter_mut() {
         let mut list = actor.get_list("list");
         list.insert(actor, 0, 1).unwrap();
-        updates.push(actor.export_updates(&Default::default()).unwrap());
+        updates.push(actor.encode(EncodeConfig::from_vv(None)).unwrap());
     }
 
     let mut a = actors.drain(0..1).next().unwrap();
     drop(actors);
     let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
     for update in updates {
-        a.import_updates(&update).unwrap();
+        a.decode(&update).unwrap();
     }
     drop(profiler);
 }
@@ -67,16 +67,22 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
                 let mut updates = Vec::new();
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    updates.push(b.export_updates(&a.vv_cloned()).unwrap());
+                    updates.push(
+                        b.encode(EncodeConfig::from_vv(Some(a.vv_cloned())))
+                            .unwrap(),
+                    );
                 }
                 for update in updates {
                     // TODO: use import batch here
-                    actors[0].import_updates(&update).unwrap();
+                    actors[0].decode(&update).unwrap();
                 }
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import_updates(&a.export_updates(&b.vv_cloned()).unwrap())
-                        .unwrap();
+                    b.decode(
+                        &a.encode(EncodeConfig::from_vv(Some(b.vv_cloned())))
+                            .unwrap(),
+                    )
+                    .unwrap();
                 }
             }
         }

@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fxhash::FxHashMap;
 use proptest::prelude::*;
 use proptest::proptest;
 

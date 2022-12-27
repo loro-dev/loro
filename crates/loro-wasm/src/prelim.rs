@@ -149,7 +149,7 @@ impl Prelim for PrelimText {
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut text = container.lock().unwrap();
+        let mut text = container.try_lock().unwrap();
         let text = text.as_text_mut().unwrap();
         text.insert(ctx, 0, &self.0);
     }
@@ -161,7 +161,7 @@ impl Prelim for PrelimList {
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut list = container.lock().unwrap();
+        let mut list = container.try_lock().unwrap();
         let list = list.as_list_mut().unwrap();
         let values: Vec<LoroValue> = self.0.into_iter().map(|v| v.into()).collect();
         list.insert_batch(ctx, 0, values);
@@ -174,7 +174,7 @@ impl Prelim for PrelimMap {
     }
 
     fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>) {
-        let mut map = container.lock().unwrap();
+        let mut map = container.try_lock().unwrap();
         let map = map.as_map_mut().unwrap();
         for (key, value) in self.0.into_iter() {
             let value: LoroValue = value.into();

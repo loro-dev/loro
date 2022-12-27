@@ -38,7 +38,7 @@ pub mod wasm {
         fn from(v: JsValue) -> Self {
             Self::JsError(
                 v.as_string()
-                    .unwrap_or("unknown error".to_owned())
+                    .unwrap_or_else(|| "unknown error".to_owned())
                     .into_boxed_str(),
             )
         }

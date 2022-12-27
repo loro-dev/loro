@@ -1,7 +1,8 @@
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, compress, decompress, from_bytes, to_vec, CompressConfig};
+use serde_columnar::{columnar, from_bytes, to_vec};
+use smallvec::smallvec;
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -14,16 +15,20 @@ use crate::{
         Container, ContainerID,
     },
     dag::remove_included_frontiers,
+    event::RawEvent,
     id::{ClientID, ID},
+    log_store::ImportContext,
     op::{InnerContent, Op},
     span::{HasIdSpan, HasLamportSpan},
     version::TotalOrderStamp,
-    ContainerType, InternalString, LogStore, LoroValue, VersionVector,
+    ContainerType, InternalString, LogStore, LoroError, LoroValue, VersionVector,
 };
 
-use super::{ChangeEncoding, ClientIdx, Clients, DepsEncoding};
+use super::encode_changes::{ChangeEncoding, DepsEncoding};
 
 type Containers = Vec<ContainerID>;
+type ClientIdx = u32;
+type Clients = Vec<ClientID>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EncodedStateContent {
@@ -180,7 +185,7 @@ fn convert_inner_content(
     (prop, value, is_del)
 }
 
-pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> SnapshotEncoded {
+pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, LoroError> {
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
@@ -253,7 +258,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> SnapshotEncoded {
         })
         .collect();
 
-    SnapshotEncoded {
+    let encoded = SnapshotEncoded {
         changes,
         ops,
         deps,
@@ -261,10 +266,16 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> SnapshotEncoded {
         containers,
         container_states,
         keys,
-    }
+    };
+    to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
 }
 
-pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
+pub(super) fn decode_snapshot(
+    store: &mut LogStore,
+    input: &[u8],
+) -> Result<Vec<RawEvent>, LoroError> {
+    let encoded: SnapshotEncoded =
+        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let SnapshotEncoded {
         changes: change_encodings,
         ops,
@@ -282,7 +293,7 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
                 store.get_or_create_container(&container_id);
             }
         }
-        return;
+        return Ok(vec![]);
     }
 
     let mut op_iter = ops.into_iter();
@@ -290,13 +301,9 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
     let mut deps_iter = deps.into_iter();
     let mut container_idx2type = FxHashMap::default();
 
-    for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
+    for container_id in containers.iter() {
         let container_idx = store.reg.get_or_create_container_idx(&container_id);
         container_idx2type.insert(container_idx, container_id.container_type());
-        let state = pool_mapping.into_state(&keys, &clients);
-        let container = store.reg.get_by_idx(container_idx).unwrap();
-        let mut container = container.try_lock().unwrap();
-        container.to_import_snapshot(state);
     }
 
     for change_encoding in change_encodings {
@@ -396,6 +403,27 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
         }
     }
 
+    // rebuild states by snapshot
+    let mut hierarchy = store.hierarchy.try_lock().unwrap();
+    let mut import_context = ImportContext {
+        old_frontiers: smallvec![],
+        new_frontiers: frontiers.get_frontiers(),
+        old_vv: VersionVector::new(),
+        spans: vv.diff(&store.vv).left,
+        new_vv: vv.clone(),
+        diff: Default::default(),
+        patched_old_vv: None,
+    };
+    for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
+        let container_idx = store.reg.get_or_create_container_idx(&container_id);
+        container_idx2type.insert(container_idx, container_id.container_type());
+        let state = pool_mapping.into_state(&keys, &clients);
+        let container = store.reg.get_by_idx(container_idx).unwrap();
+        let mut container = container.try_lock().unwrap();
+        container.to_import_snapshot(state, &mut hierarchy, &mut import_context);
+    }
+    drop(hierarchy);
+
     store.latest_lamport = changes
         .values()
         .map(|changes| changes.last().unwrap().lamport_last())
@@ -411,29 +439,5 @@ pub(super) fn decode_snapshot(store: &mut LogStore, encoded: SnapshotEncoded) {
 
     store.vv = vv;
     store.frontiers = frontiers.get_frontiers();
-}
-
-impl LogStore {
-    pub fn encode_snapshot(&self, compress_cfg: bool) -> Vec<u8> {
-        let encoded = encode_snapshot(self, self.cfg.gc.gc);
-        let mut ans = vec![compress_cfg as u8];
-        let buf = if compress_cfg {
-            // TODO: columnar compress use read/write mode
-            compress(&to_vec(&encoded).unwrap(), &CompressConfig::default()).unwrap()
-        } else {
-            to_vec(&encoded).unwrap()
-        };
-        ans.extend(buf);
-        ans
-    }
-
-    pub fn decode_snapshot(&mut self, input: &[u8]) {
-        let compress_cfg = *input.first().unwrap() > 0;
-        let encoded = if compress_cfg {
-            from_bytes(&decompress(&input[1..]).unwrap()).unwrap()
-        } else {
-            from_bytes(&input[1..]).unwrap()
-        };
-        decode_snapshot(self, encoded);
-    }
+    Ok(store.get_events(&mut import_context))
 }
