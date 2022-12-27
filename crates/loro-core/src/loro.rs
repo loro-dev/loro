@@ -1,6 +1,10 @@
 use std::sync::{Arc, RwLock};
 
-use crate::{context::Context, event::RawEvent, LoroValue};
+use crate::{
+    event::RawEvent,
+    log_store::{EncodeConfig, LoroEncoder},
+    LoroError, LoroValue,
+};
 use fxhash::FxHashMap;
 use tracing::instrument;
 
@@ -89,24 +93,14 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
-    pub fn encode_changes(&self, vv: &VersionVector, compress: bool) -> Vec<u8> {
-        let store = self.log_store.read().unwrap();
-        store.encode_changes(vv, compress)
+    pub fn encode(&self, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
+        LoroEncoder::encode(self, config)
     }
 
-    pub fn decode_changes(&mut self, input: &[u8]) {
-        self.log_store().try_write().unwrap().decode_changes(input);
-    }
-
-    pub fn encode_snapshot(&self, compress: bool) -> Vec<u8> {
-        let store = self.log_store.read().unwrap();
-        store.encode_snapshot(compress)
-    }
-
-    pub fn decode_snapshot(input: &[u8], cfg: Configure, client_id: Option<ClientID>) -> Self {
-        let store = LogStore::new(cfg, client_id);
-        store.write().unwrap().decode_snapshot(input);
-        Self { log_store: store }
+    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        let events = LoroEncoder::decode(self, input)?;
+        self.notify(events);
+        Ok(())
     }
 
     #[cfg(feature = "test_utils")]
@@ -143,7 +137,7 @@ impl LoroCore {
         let store = self.log_store.read().unwrap();
         let hierarchy = store.hierarchy.clone();
         drop(store);
-        let mut h = hierarchy.lock().unwrap();
+        let mut h = hierarchy.try_lock().unwrap();
         h.send_notifications(events);
     }
 }

@@ -448,13 +448,27 @@ impl Container for TextContainer {
         }
     }
 
-    fn to_import_snapshot(&mut self, state_content: StateContent) {
+    fn to_import_snapshot(
+        &mut self,
+        state_content: StateContent,
+        hierarchy: &mut Hierarchy,
+        ctx: &mut ImportContext,
+    ) {
         if let StateContent::Text { pool, state_len } = state_content {
             let mut append_only_bytes = AppendOnlyBytes::with_capacity(pool.len());
             append_only_bytes.push_slice(&pool);
             let pool_string = append_only_bytes.slice(0..state_len as usize).into();
             self.raw_str = StringPool::from_data(append_only_bytes);
             self.state.insert(0, pool_string);
+            // notify
+            let should_notify = hierarchy.should_notify(&self.id);
+            if should_notify {
+                let s = self.raw_str.slice(&(0..state_len)).to_owned();
+                let mut delta = Delta::new();
+                delta.retain(0);
+                delta.insert(s);
+                ctx.push_diff(&self.id, Diff::Text(delta));
+            }
         } else {
             unreachable!()
         }
@@ -484,7 +498,13 @@ impl Text {
     }
 
     pub fn id(&self) -> ContainerID {
-        self.instance.lock().unwrap().as_text().unwrap().id.clone()
+        self.instance
+            .try_lock()
+            .unwrap()
+            .as_text()
+            .unwrap()
+            .id
+            .clone()
     }
 
     pub fn insert<C: Context>(
@@ -506,7 +526,12 @@ impl Text {
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.instance.lock().unwrap().as_text().unwrap().get_value()
+        self.instance
+            .try_lock()
+            .unwrap()
+            .as_text()
+            .unwrap()
+            .get_value()
     }
 
     pub fn len(&self) -> usize {
@@ -526,7 +551,7 @@ impl ContainerWrapper for Text {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.lock().unwrap();
+        let mut container_instance = self.instance.try_lock().unwrap();
         let text = container_instance.as_text_mut().unwrap();
         let ans = f(text);
         drop(container_instance);

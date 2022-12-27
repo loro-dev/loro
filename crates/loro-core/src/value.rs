@@ -52,7 +52,7 @@ impl LoroValue {
                 self = reg
                     .get(id)
                     .map(|container| {
-                        let mut value = container.lock().unwrap().get_value();
+                        let mut value = container.try_lock().unwrap().get_value();
 
                         match &mut value {
                             LoroValue::List(list) => {

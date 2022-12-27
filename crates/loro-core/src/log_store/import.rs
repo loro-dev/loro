@@ -114,7 +114,7 @@ impl LogStore {
     }
 
     #[instrument(skip_all)]
-    fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
+    pub(crate) fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
         let deleted = self.with_hierarchy(|_, h| h.take_deleted());
         let mut events = Vec::with_capacity(context.diff.len());
         let h = self.hierarchy.try_lock().unwrap();
@@ -148,14 +148,14 @@ impl LogStore {
         self.frontiers = next_frontiers.get_frontiers();
         self.latest_lamport = self
             .changes
-            .iter()
-            .map(|(_, v)| v.last().unwrap().lamport_last())
+            .values()
+            .map(|v| v.last().unwrap().lamport_last())
             .max()
             .unwrap();
         self.latest_timestamp = self
             .changes
-            .iter()
-            .map(|(_, v)| v.last().unwrap().timestamp)
+            .values()
+            .map(|v| v.last().unwrap().timestamp)
             .max()
             .unwrap();
     }
@@ -301,7 +301,7 @@ impl LogStore {
             }
         });
         debug_log::group!("apply effects");
-        let mut queue: VecDeque<_> = container_map.into_iter().map(|(_, x)| x).collect();
+        let mut queue: VecDeque<_> = container_map.into_values().collect();
         let mut retries = 0;
         let mut h = self.hierarchy.try_lock().unwrap();
         // only apply the effects of a container when it's registered to the hierarchy
@@ -338,7 +338,7 @@ impl LogStore {
             for change in changes.iter() {
                 for op in change.ops.iter() {
                     if !container_map.contains_key(&op.container) {
-                        let guard = self.reg.get_or_create(&op.container).lock().unwrap();
+                        let guard = self.reg.get_or_create(&op.container).try_lock().unwrap();
                         container_map
                             // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
                             .insert(op.container.clone(), unsafe { std::mem::transmute(guard) });

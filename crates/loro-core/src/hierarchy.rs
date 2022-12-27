@@ -159,7 +159,11 @@ impl Hierarchy {
             let parent = &node.parent;
             if let Some(parent) = parent {
                 let parent_node = reg.get(parent).unwrap();
-                let index = parent_node.lock().unwrap().index_of_child(node_id).unwrap();
+                let index = parent_node
+                    .try_lock()
+                    .unwrap()
+                    .index_of_child(node_id)
+                    .unwrap();
                 path.push(index);
             } else {
                 match node_id {

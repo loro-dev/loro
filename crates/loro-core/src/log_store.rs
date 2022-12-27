@@ -1,12 +1,12 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
-mod encode_updates;
 mod encoding;
 mod import;
 mod iter;
 
 use crate::LoroValue;
+pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
@@ -86,7 +86,7 @@ pub struct LogStore {
 type ContainerGuard<'a> = MutexGuard<'a, ContainerInstance>;
 
 impl LogStore {
-    pub(crate) fn new(mut cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
+    pub(crate) fn new(cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Arc::new(RwLock::new(Self {
             cfg,
@@ -180,7 +180,7 @@ impl LogStore {
 
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
         let container = self.reg.get_by_idx(op.container).unwrap();
-        let mut container = container.lock().unwrap();
+        let mut container = container.try_lock().unwrap();
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
 
@@ -327,6 +327,11 @@ impl LogStore {
         self.reg.debug_inspect();
     }
 
+    #[cfg(feature = "test_utils")]
+    pub fn hierarchy(&self) -> &Arc<Mutex<Hierarchy>> {
+        &self.hierarchy
+    }
+
     // TODO: remove
     #[inline(always)]
     pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<ContainerIdx> {
@@ -355,7 +360,7 @@ impl LogStore {
         for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
     {
         let h = self.hierarchy.clone();
-        let mut h = h.lock().unwrap();
+        let mut h = h.try_lock().unwrap();
         f(self, &mut h)
     }
 

@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 use ctor::ctor;
 
@@ -9,6 +8,8 @@ use loro_core::container::ContainerID;
 use loro_core::context::Context;
 use loro_core::event::Index;
 use loro_core::id::ID;
+
+use loro_core::log_store::{EncodeConfig, EncodeMode};
 use loro_core::{ContainerType, LoroCore, LoroValue, VersionVector};
 
 #[test]
@@ -218,77 +219,6 @@ fn test_recursive_should_panic() {
 }
 
 #[test]
-fn test_encode_snapshot_list() {
-    let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut list = store.get_list("list");
-    for i in 0..10 {
-        list.insert(&store, 0, i).unwrap();
-    }
-    list.insert(&store, 0, "some thing").unwrap();
-    list.delete(&store, 2, 3).unwrap();
-    list.delete(&store, 4, 2).unwrap();
-    let buf = store.encode_snapshot(false);
-    let mut store2 = LoroCore::decode_snapshot(&buf, Default::default(), Some(1));
-    assert_eq!(store.to_json(), store2.to_json());
-    let mut list1 = store.get_list("list");
-    list1.insert(&store, 4, 123).unwrap();
-    let mut list2 = store2.get_list("list");
-    list2.insert(&store, 4, 123).unwrap();
-    assert_eq!(store.to_json(), store2.to_json());
-    // assert_eq!(buf, buf2);
-}
-
-#[test]
-fn test_encode_state_text() {
-    let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut text = store.get_text("text");
-    for _ in 0..1000 {
-        text.insert(&store, 0, "some thing").unwrap();
-    }
-    text.insert(&store, 0, "some thing").unwrap();
-    text.delete(&store, 2, 10).unwrap();
-    text.delete(&store, 4, 12).unwrap();
-    let start = Instant::now();
-    let buf = store.encode_changes(&VersionVector::new(), false);
-    println!(
-        "size: {:?} bytes time: {} ms",
-        buf.len(),
-        start.elapsed().as_millis()
-    );
-    let start = Instant::now();
-    let mut store2 = LoroCore::new(Default::default(), Some(1));
-    store2.decode_changes(&buf);
-    println!("decode time: {} ms", start.elapsed().as_millis());
-    assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_changes(&VersionVector::new(), false);
-    assert_eq!(buf, buf2);
-}
-
-#[test]
-fn test_encode_state_map() {
-    let mut store = LoroCore::new(Default::default(), Some(1));
-    let mut map = store.get_map("map");
-    map.insert(&store, "aa", "some thing").unwrap();
-    map.insert(&store, "bb", 10).unwrap();
-    map.insert(&store, "cc", 12).unwrap();
-    map.delete(&store, "cc").unwrap();
-    let start = Instant::now();
-    let buf = store.encode_changes(&VersionVector::new(), false);
-    println!(
-        "size: {:?} bytes time: {} ms",
-        buf.len(),
-        start.elapsed().as_millis()
-    );
-    let mut store2 = LoroCore::new(Default::default(), Some(1));
-    store2.decode_changes(&buf);
-    println!("store2: {}", store.to_json().to_json_pretty());
-    println!("store2: {}", store2.to_json().to_json_pretty());
-    assert_eq!(store.to_json(), store2.to_json());
-    let buf2 = store2.encode_changes(&VersionVector::new(), false);
-    assert_eq!(buf, buf2);
-}
-
-#[test]
 fn fix_fields_order() {
     // ContainerType ContainerID Index ID
     // TotalOrderStamp RemoteContent MapSet ListOp DeleteSpan ListSlice (mod test)
@@ -312,13 +242,79 @@ fn fix_fields_order() {
         postcard::from_bytes::<Vec<ContainerID>>(&container_id_buf).unwrap(),
         container_id
     );
+}
 
-    let index = vec![Index::Key("".into()), Index::Seq(0)];
-    let index_buf = vec![2, 0, 0, 1, 0];
-    assert_eq!(
-        postcard::from_bytes::<Vec<Index>>(&index_buf).unwrap(),
-        index
-    );
+#[test]
+fn encode_hierarchy() {
+    fn assert_eq(c1: &LoroCore, c2: &LoroCore) {
+        let s1 = c1.log_store();
+        let s1 = s1.try_read().unwrap();
+        let h1 = s1.hierarchy().try_lock().unwrap();
+
+        let s2 = c2.log_store();
+        let s2 = s2.try_read().unwrap();
+        let h2 = s2.hierarchy().try_lock().unwrap();
+        assert_eq!(format!("{:?}", h1), format!("{:?}", h2));
+        assert_eq!(c1.to_json(), c2.to_json());
+    }
+
+    let mut c1 = LoroCore::default();
+    let mut map = c1.get_map("map");
+    let (_, text_id) = {
+        let list_id = map.insert(&c1, "a", ContainerType::List).unwrap();
+        let list = c1.get_container(&list_id.unwrap()).unwrap();
+        let mut list = list.try_lock().unwrap();
+        let list = list.as_list_mut().unwrap();
+        list.insert(&c1, 0, ContainerType::Text)
+    };
+    {
+        let text = c1.get_container(&text_id.unwrap()).unwrap();
+        let mut text = text.try_lock().unwrap();
+        let text = text.as_text_mut().unwrap();
+        text.insert(&c1, 0, "text_text");
+    };
+
+    // updates
+    println!("updates");
+    let input = c1
+        .encode(EncodeConfig::new(
+            EncodeMode::Updates(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
+
+    // rle updates
+    println!("rle updates");
+    let input = c1
+        .encode(EncodeConfig::new(
+            EncodeMode::RleUpdates(VersionVector::new()),
+            None,
+        ))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
+
+    // snapshot
+    println!("snapshot");
+    let input = c1
+        .encode(EncodeConfig::new(EncodeMode::Snapshot, None))
+        .unwrap();
+    let mut c2 = LoroCore::default();
+    c2.subscribe_deep(Box::new(move |_event| {
+        // println!("event: {:?}", _event);
+    }));
+    c2.decode(&input).unwrap();
+    assert_eq(&c1, &c2);
 }
 
 #[ctor]

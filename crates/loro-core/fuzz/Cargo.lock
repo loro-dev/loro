@@ -347,6 +347,7 @@ dependencies = [
  "crdt-list",
  "debug-log",
  "enum-as-inner",
+ "flate2",
  "fxhash",
  "num",
  "owning_ref",
