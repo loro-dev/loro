@@ -1,7 +1,10 @@
 use num::Zero;
 
 use super::DagUtils;
-use std::ops::Range;
+use std::{
+    collections::BTreeMap,
+    ops::{Range, RangeBounds},
+};
 
 use crate::version::IdSpanVector;
 
@@ -186,6 +189,16 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
     }
 }
 
+impl RangeBounds<ID> for (ID, ID) {
+    fn start_bound(&self) -> std::ops::Bound<&ID> {
+        std::ops::Bound::Included(&self.0)
+    }
+
+    fn end_bound(&self) -> std::ops::Bound<&ID> {
+        std::ops::Bound::Excluded(&self.1)
+    }
+}
+
 /// Visit every span in the target IdSpanVector.
 /// It's guaranteed that the spans are visited in causal order, and each span is visited only once.
 /// When visiting a span, we will checkout to the version where the span was created
@@ -194,7 +207,7 @@ pub(crate) struct DagCausalIter<'a, Dag> {
     frontier: SmallVec<[ID; 2]>,
     target: IdSpanVector,
     in_degrees: FxHashMap<ID, usize>,
-    succ: FxHashMap<ID, SmallVec<[ID; 2]>>,
+    succ: BTreeMap<ID, SmallVec<[ID; 2]>>,
     heap: BinaryHeap<IdHeapItem>,
 }
 
@@ -212,7 +225,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
         // make dag
         let mut in_degrees = FxHashMap::default();
-        let mut succ = FxHashMap::default();
+        let mut succ = BTreeMap::default();
         let mut heap = BinaryHeap::default();
         let mut q = vec![];
         for id in target.iter() {
@@ -335,21 +348,18 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
 
-        // TODO: how to get correct ID which the key of `succ` directly?
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
-        for possible_node_id in 0..node.content_len() {
-            if let Some(succ) = self.succ.get(&node_id.inc(possible_node_id as i32)) {
-                for succ_id in succ {
-                    self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
-                    if let Some(in_degree) = self.in_degrees.get(succ_id) {
-                        if in_degree.is_zero() {
-                            self.heap.push(Self::get_item_by_id(
-                                self.dag,
-                                *succ_id,
-                                &self.frontier,
-                            ));
-                            self.in_degrees.remove(succ_id);
-                        }
+        for (_, succ) in self
+            .succ
+            .range((node_id, node_id.inc(node.content_len() as i32)))
+        {
+            for succ_id in succ {
+                self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
+                if let Some(in_degree) = self.in_degrees.get(succ_id) {
+                    if in_degree.is_zero() {
+                        self.heap
+                            .push(Self::get_item_by_id(self.dag, *succ_id, &self.frontier));
+                        self.in_degrees.remove(succ_id);
                     }
                 }
             }
