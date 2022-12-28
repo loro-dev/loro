@@ -14,24 +14,17 @@ use super::*;
 struct IdHeapItem {
     id: ID,
     lamport: Lamport,
-    same_client: bool,
 }
 
 impl PartialOrd for IdHeapItem {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            (!self.same_client, self.lamport)
-                .cmp(&(!other.same_client, other.lamport))
-                .reverse(),
-        )
+        Some(self.lamport.cmp(&other.lamport).reverse())
     }
 }
 
 impl Ord for IdHeapItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (!self.same_client, self.lamport)
-            .cmp(&(!other.same_client, other.lamport))
-            .reverse()
+        self.lamport.cmp(&other.lamport).reverse()
     }
 }
 
@@ -76,7 +69,6 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
                         lamport: node.lamport(),
-                        same_client: false,
                     });
                 }
 
@@ -95,7 +87,6 @@ impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
                 self.heap.push(IdHeapItem {
                     id: next_id,
                     lamport: next_node.lamport(),
-                    same_client: false,
                 });
             }
 
@@ -137,7 +128,6 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                     self.heap.push(IdHeapItem {
                         id: ID::new(client_id, 0),
                         lamport: node.lamport(),
-                        same_client: false,
                     });
                 }
             }
@@ -178,7 +168,6 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
                 self.heap.push(IdHeapItem {
                     id: next_id,
                     lamport: next_node.lamport(),
-                    same_client: false,
                 });
             }
 
@@ -208,7 +197,8 @@ pub(crate) struct DagCausalIter<'a, Dag> {
     target: IdSpanVector,
     in_degrees: FxHashMap<ID, usize>,
     succ: BTreeMap<ID, SmallVec<[ID; 2]>>,
-    heap: BinaryHeap<IdHeapItem>,
+    stack: Vec<ID>,
+    heap: BinaryHeap<(bool, ID)>,
 }
 
 #[derive(Debug)]
@@ -226,13 +216,24 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
         // make dag
         let mut in_degrees = FxHashMap::default();
         let mut succ = BTreeMap::default();
+        let mut stack = Vec::new();
         let mut heap = BinaryHeap::default();
         let mut q = vec![];
         for id in target.iter() {
             if id.1.content_len() > 0 {
                 let id = id.id_start();
-                q.push(id);
+                // Nodes that can be directly applied are preferred to be stacked
+                let node = dag.get(id).unwrap();
+                let diff = id.counter - node.id_start().counter;
+                heap.push(IdHeapItem {
+                    id,
+                    lamport: node.lamport() + diff as Lamport,
+                });
             }
+        }
+
+        while let Some(id) = heap.pop() {
+            q.push(id.id)
         }
 
         // traverse all nodes
@@ -241,8 +242,9 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             let node = dag.get(id).unwrap();
             let deps = node.deps();
             if id.counter == target.get(&client).unwrap().min() {
-                // right after the `from` node can be appended directly
-                heap.push(Self::get_item_by_id(dag, id, &from));
+                // right after the `from` node can be appended directly ❌
+                // TODO maybe target start nodes has deps relation
+                stack.push(id);
             } else {
                 in_degrees.insert(id, deps.len());
             }
@@ -258,14 +260,13 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             }
         }
 
-        // Nodes with zero in-degree are added to the heap
-        let keys: Vec<_> = in_degrees.keys().copied().collect();
-        for id in keys.into_iter() {
-            if in_degrees.get(&id).unwrap().is_zero() {
-                in_degrees.remove(&id);
-                heap.push(Self::get_item_by_id(dag, id, &from));
-            }
-        }
+        // in_degrees.retain(|id, i| {
+        //     if i.is_zero() {
+        //         stack.push(*id);
+        //         return false;
+        //     }
+        //     true
+        // });
 
         Self {
             dag,
@@ -273,18 +274,8 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             target,
             in_degrees,
             succ,
-            heap,
-        }
-    }
-
-    fn get_item_by_id(dag: &'a D, id: ID, frontier: &SmallVec<[ID; 2]>) -> IdHeapItem {
-        let node = dag.get(id).unwrap();
-        let diff = id.counter - node.id_start().counter;
-        let same_client = frontier.iter().any(|f| f.client_id == id.client_id); // && f.counter + 1 == id.counter);
-        IdHeapItem {
-            id,
-            lamport: node.lamport() + diff as Lamport,
-            same_client,
+            stack,
+            heap: Default::default(),
         }
     }
 }
@@ -293,7 +284,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
     type Item = IterReturn<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.heap.is_empty() {
+        if self.stack.is_empty() {
             debug_assert_eq!(
                 0,
                 self.target
@@ -303,8 +294,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             );
             return None;
         }
-
-        let node_id = self.heap.pop().unwrap().id;
+        let node_id = self.stack.pop().unwrap();
 
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
         debug_assert_eq!(
@@ -348,21 +338,27 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
 
+        let current_client = node_id.client_id;
+        let mut keys = Vec::new();
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
-        for (_, succ) in self
-            .succ
-            .range((node_id, node_id.inc(node.content_len() as i32)))
-        {
+        for (key, succ) in self.succ.range((node.id_start(), node.id_end())) {
+            keys.push(*key);
             for succ_id in succ {
                 self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
                 if let Some(in_degree) = self.in_degrees.get(succ_id) {
                     if in_degree.is_zero() {
                         self.heap
-                            .push(Self::get_item_by_id(self.dag, *succ_id, &self.frontier));
+                            .push((succ_id.client_id == current_client, *succ_id));
                         self.in_degrees.remove(succ_id);
                     }
                 }
             }
+        }
+        keys.into_iter().for_each(|k| {
+            self.succ.remove(&k);
+        });
+        while let Some(id) = self.heap.pop() {
+            self.stack.push(id.1)
         }
 
         Some(IterReturn {
@@ -376,11 +372,14 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 
 #[cfg(test)]
 mod test {
+
     use crate::{
+        change::ChangeMergeCfg,
+        configure::Configure,
         dag::DagUtils,
         id::{Counter, ID},
         log_store::{EncodeConfig, EncodeMode},
-        LoroCore,
+        LoroCore, VersionVector,
     };
 
     #[test]
@@ -457,6 +456,79 @@ mod test {
         let store_c = loro_c.log_store.try_read().unwrap();
 
         for n in store_c.iter_causal(&from, loro_c.vv_cloned().diff(&from_vv).left) {
+            println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
+            // println!("data: {:?}", store_c.change_to_export_format(n.data));
+            vv.retreat(&n.retreat);
+            vv.forward(&n.forward);
+            let end = n.slice.end;
+            let change = n.data;
+
+            vv.set_end(ID::new(
+                change.id.client_id,
+                end as Counter + change.id.counter,
+            ));
+            println!("{:?}\n", vv);
+        }
+    }
+
+    #[test]
+    fn parallel_case() {
+        let mut c1 = LoroCore::new(
+            Configure {
+                change: ChangeMergeCfg {
+                    max_change_length: 0,
+                    max_change_interval: 0,
+                },
+                ..Default::default()
+            },
+            Some(1),
+        );
+        let mut c2 = LoroCore::new(
+            Configure {
+                change: ChangeMergeCfg {
+                    max_change_length: 0,
+                    max_change_interval: 0,
+                },
+                ..Default::default()
+            },
+            Some(2),
+        );
+        let mut text1 = c1.get_text("text");
+        let mut text2 = c2.get_text("text");
+        for _ in 0..5 {
+            text1.insert(&c1, 0, "1").unwrap();
+            text2.insert(&c2, 0, "2").unwrap();
+        }
+        c1.decode(
+            &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv_cloned()), None))
+                .unwrap(),
+        )
+        .unwrap();
+
+        let mut from_vv = VersionVector::new();
+        from_vv.set_end(ID {
+            client_id: 1,
+            counter: 1,
+        });
+        from_vv.set_end(ID {
+            client_id: 2,
+            counter: 1,
+        });
+        let mut vv = from_vv.clone();
+        let c1_store = c1.log_store.try_read().unwrap();
+        for n in c1_store.iter_causal(
+            &[
+                ID {
+                    client_id: 1,
+                    counter: 1,
+                },
+                ID {
+                    client_id: 2,
+                    counter: 1,
+                },
+            ],
+            c1.vv_cloned().diff(&from_vv).left,
+        ) {
             println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
             // println!("data: {:?}", store_c.change_to_export_format(n.data));
             vv.retreat(&n.retreat);
