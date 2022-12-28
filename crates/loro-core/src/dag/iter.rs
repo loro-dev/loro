@@ -218,7 +218,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
         for id in target.iter() {
             if id.1.content_len() > 0 {
                 let id = id.id_start();
-                // println!("first push {:?}", id);
                 q.push(id);
             }
         }
@@ -255,10 +254,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             }
         }
 
-        // println!("in_degree: {:?}", &in_degrees);
-        // println!("succ: {:?}", &succ);
-        // println!("init heap {:?}", &heap);
-
         Self {
             dag,
             frontier: from,
@@ -286,9 +281,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.heap.is_empty() {
-            // println!("self in_degree: {:?}", &self.in_degrees);
-            // println!("self succ: {:?}", &self.succ);
-            // println!("target {:?}", self.target);
             debug_assert_eq!(
                 0,
                 self.target
@@ -299,18 +291,16 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             return None;
         }
 
-        let item = self.heap.pop().unwrap();
-        // println!("item {:?}", item);
-        let node_id = item.id;
+        let node_id = self.heap.pop().unwrap().id;
 
         let target_span = self.target.get_mut(&node_id.client_id).unwrap();
-        // debug_assert_eq!(
-        //     node_id.counter,
-        //     target_span.min(),
-        //     "{} {:?}",
-        //     node_id,
-        //     target_span
-        // );
+        debug_assert_eq!(
+            node_id.counter,
+            target_span.min(),
+            "{} {:?}",
+            node_id,
+            target_span
+        );
 
         // // node_id may points into the middle of the node, we need to slice
         let node = self.dag.get(node_id).unwrap();
@@ -330,15 +320,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 
         let last_counter = node.id_last().counter;
         target_span.set_start(last_counter + 1);
-        // if target_span.content_len() > 0 {
-        //     let next_id = ID::new(node_id.client_id, last_counter + 1);
-        //     let next_node = self.dag.get(next_id).unwrap();
-        //     self.heap.push(IdHeapItem {
-        //         id: next_id,
-        //         lamport: next_node.lamport()
-        //             + (next_id.counter - next_node.id_start().counter) as Lamport,
-        //     });
-        // }
 
         let deps: SmallVec<[_; 2]> = if slice_from == 0 {
             node.deps().iter().copied().collect()
@@ -347,7 +328,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         };
 
         let path = self.dag.find_path(&self.frontier, &deps);
-        // println!("retreat {:?} forward: {:?}", &path.left, &path.right);
         debug_log::group!("Dag Causal");
         debug_log::debug_dbg!(&deps);
         debug_log::debug_dbg!(&path);
@@ -355,9 +335,10 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
 
+        // TODO: how to get correct ID which the key of `succ` directly?
+        // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
         for possible_node_id in 0..node.content_len() {
             if let Some(succ) = self.succ.get(&node_id.inc(possible_node_id as i32)) {
-                // println!("get succ {:?}", &node_id.inc(node.content_len() as i32 - 1));
                 for succ_id in succ {
                     self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
                     if let Some(in_degree) = self.in_degrees.get(succ_id) {
