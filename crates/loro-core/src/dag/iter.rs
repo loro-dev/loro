@@ -222,7 +222,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
         for id in target.iter() {
             if id.1.content_len() > 0 {
                 let id = id.id_start();
-                // Nodes that can be directly applied are preferred to be stacked
                 let node = dag.get(id).unwrap();
                 let diff = id.counter - node.id_start().counter;
                 heap.push(IdHeapItem {
@@ -242,8 +241,8 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             let node = dag.get(id).unwrap();
             let deps = node.deps();
             if id.counter == target.get(&client).unwrap().min() {
-                // right after the `from` node can be appended directly ❌
-                // TODO maybe target start nodes has deps relation
+                // right after the `from` node can be appended causally
+                // target start nodes maybe have deps relation so we use Lamport.
                 stack.push(id);
             } else {
                 in_degrees.insert(id, deps.len());
@@ -259,14 +258,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 q.push(ID::new(client, last_counter + 1))
             }
         }
-
-        // in_degrees.retain(|id, i| {
-        //     if i.is_zero() {
-        //         stack.push(*id);
-        //         return false;
-        //     }
-        //     true
-        // });
 
         Self {
             dag,
@@ -354,6 +345,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
                 }
             }
         }
+        // Nodes that have been traversed are removed from the graph to avoid being covered by other node ranges again
         keys.into_iter().for_each(|k| {
             self.succ.remove(&k);
         });
