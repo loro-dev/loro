@@ -49,7 +49,7 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_list<I: Into<ContainerIdRaw>>(&mut self, id: I) -> List {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
+        let mut store = self.log_store.try_write().unwrap();
         let instance = store.get_or_create_container(&id.with_type(ContainerType::List));
         let cid = store.this_client_id();
         List::from_instance(instance, cid)
@@ -58,7 +58,7 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_map<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Map {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
+        let mut store = self.log_store.try_write().unwrap();
         let instance = store.get_or_create_container(&id.with_type(ContainerType::Map));
         let cid = store.this_client_id();
         Map::from_instance(instance, cid)
@@ -67,7 +67,7 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Text {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
+        let mut store = self.log_store.try_write().unwrap();
         let instance = store.get_or_create_container(&id.with_type(ContainerType::Text));
         let cid = store.this_client_id();
         Text::from_instance(instance, cid)
@@ -125,5 +125,10 @@ impl LoroCore {
     pub fn notify(&self, events: Vec<RawEvent>) {
         let mut h = self.hierarchy.try_lock().unwrap();
         h.send_notifications(events);
+    }
+
+    #[instrument(skip_all)]
+    pub fn notify_without_lock(&self, events: Vec<RawEvent>) {
+        Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
     }
 }
