@@ -123,12 +123,6 @@ impl LoroCore {
 
     #[instrument(skip_all)]
     pub fn notify(&self, events: Vec<RawEvent>) {
-        let mut h = self.hierarchy.try_lock().unwrap();
-        h.send_notifications(events);
-    }
-
-    #[instrument(skip_all)]
-    pub fn notify_without_lock(&self, events: Vec<RawEvent>) {
         Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
     }
 }

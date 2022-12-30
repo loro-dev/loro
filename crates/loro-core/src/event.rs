@@ -27,6 +27,18 @@ pub struct Event {
     pub local: bool,
 }
 
+#[derive(Debug)]
+pub(crate) struct PathAndTarget {
+    pub relative_path: Path,
+    pub target: Option<ContainerID>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct EventDispatch {
+    pub sub_ids: Vec<SubscriptionID>,
+    pub rewrite: Option<PathAndTarget>,
+}
+
 pub type Path = Vec<Index>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
