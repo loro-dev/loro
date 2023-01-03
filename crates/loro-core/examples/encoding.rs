@@ -27,7 +27,7 @@ fn main() {
             None,
         ))
         .unwrap();
-    let json1 = loro.to_json();
+    let json_ori = loro.to_json();
 
     println!(
         "encode changes {} bytes, used {}ms",
@@ -46,7 +46,7 @@ fn main() {
     let mut loro = LoroCore::default();
     let start = Instant::now();
     loro.decode(&buf).unwrap();
-    println!("decode changes used {}ms", start.elapsed().as_millis());
+    println!("decode rle_updates used {}ms", start.elapsed().as_millis());
     let buf2 = loro
         .encode(EncodeConfig::new(
             EncodeMode::RleUpdates(VersionVector::new()),
@@ -55,7 +55,7 @@ fn main() {
         .unwrap();
     assert_eq!(buf, buf2);
     let json2 = loro.to_json();
-    assert_eq!(json1, json2);
+    assert_eq!(json_ori, json2);
 
     let start = Instant::now();
     let mut loro2 = LoroCore::default();
@@ -64,15 +64,22 @@ fn main() {
     let json3 = loro2.to_json();
     assert_eq!(json_snapshot, json3);
 
+    let start = Instant::now();
     let update_buf = loro
         .encode(EncodeConfig::new(
             EncodeMode::Updates(VersionVector::new()),
             None,
         ))
         .unwrap();
-    println!("Updates have {} bytes", update_buf.len());
+    println!("encode updates {} bytes, used {}ms", update_buf.len(), start.elapsed().as_millis());
     let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(&update_buf).unwrap();
     let data = encoder.finish().unwrap();
     println!("After compress updates have {} bytes", data.len());
+    let mut loro3 = LoroCore::default();
+    let start = Instant::now();
+    loro3.decode(&update_buf).unwrap();
+    println!("decode updates used {}ms", start.elapsed().as_millis());
+    let json_update = loro3.to_json();
+    assert_eq!(json_ori, json_update);
 }

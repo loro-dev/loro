@@ -43,7 +43,7 @@ struct EncodedOp {
 #[derive(Serialize, Deserialize, Debug)]
 struct EncodedChange {
     pub(crate) ops: Vec<EncodedOp>,
-    pub(crate) deps_except_self: Vec<ID>,
+    pub(crate) deps: Vec<ID>,
     pub(crate) lamport_delta: u32,
     pub(crate) timestamp_delta: i64,
 }
@@ -91,12 +91,7 @@ where
                 contents: op.contents.iter().cloned().collect(),
             })
             .collect(),
-        deps_except_self: first_change
-            .deps
-            .iter()
-            .filter(|x| x.client_id != this_client_id)
-            .copied()
-            .collect(),
+        deps: first_change.deps.iter().copied().collect(),
         lamport_delta: 0,
         timestamp_delta: 0,
     });
@@ -110,12 +105,7 @@ where
                     contents: op.contents.iter().cloned().collect(),
                 })
                 .collect(),
-            deps_except_self: change
-                .deps
-                .iter()
-                .filter(|x| x.client_id != this_client_id)
-                .copied()
-                .collect(),
+            deps: change.deps.iter().copied().collect(),
             lamport_delta: change.lamport - last_change.lamport,
             timestamp_delta: change.timestamp - last_change.timestamp,
         });
@@ -141,15 +131,9 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     let mut counter: Counter = changes.meta.counter;
     for encoded in changes.data {
         let start_counter = counter;
-        let mut deps = SmallVec::with_capacity(encoded.deps_except_self.len() + 1);
-        if start_counter > 0 {
-            deps.push(ID {
-                client_id: changes.meta.client,
-                counter: start_counter - 1,
-            });
-        }
+        let mut deps = SmallVec::with_capacity(encoded.deps.len());
 
-        for dep in encoded.deps_except_self {
+        for dep in encoded.deps {
             deps.push(dep);
         }
 
