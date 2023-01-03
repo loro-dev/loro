@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex, RwLock, Weak},
+};
 
 use crate::{
     container::{registry::ContainerInstance, ContainerID},
@@ -23,5 +26,22 @@ impl Context for LoroCore {
 
     fn get_container(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.log_store.try_read().unwrap().get_container(id)
+    }
+}
+
+impl<T> Context for RefCell<T>
+where
+    T: Context,
+{
+    fn log_store(&self) -> Arc<RwLock<LogStore>> {
+        self.borrow().log_store()
+    }
+
+    fn hierarchy(&self) -> Arc<Mutex<Hierarchy>> {
+        self.borrow().hierarchy()
+    }
+
+    fn get_container(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.borrow().get_container(id)
     }
 }
