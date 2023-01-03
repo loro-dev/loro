@@ -435,7 +435,6 @@ pub trait ContainerWrapper {
         let ans = match event {
             Some(event) => {
                 debug_log::debug_log!("get event");
-                // let mut hierarchy = hierarchy.try_lock().unwrap();
                 Hierarchy::notify_without_lock(hierarchy, event);
                 Ok(ans)
             }

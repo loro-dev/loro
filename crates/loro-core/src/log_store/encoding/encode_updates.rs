@@ -7,7 +7,7 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
     event::RawEvent,
-    hierarchy::{self, Hierarchy},
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
