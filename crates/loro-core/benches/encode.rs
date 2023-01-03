@@ -1,15 +1,12 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(feature = "test_utils")]
 mod sync {
-    use std::io::Read;
 
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
-    use flate2::read::GzDecoder;
     use loro_core::container::registry::ContainerWrapper;
     use loro_core::log_store::{EncodeConfig, EncodeMode};
     use loro_core::LoroCore;
-    use serde_json::Value;
 
     pub fn b4(c: &mut Criterion) {
         let actions = get_automerge_actions();

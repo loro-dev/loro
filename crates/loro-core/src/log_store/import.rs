@@ -268,7 +268,7 @@ impl LogStore {
             container.tracker_init(&common_ancestors_vv);
         }
 
-        let mut current_vv = common_ancestors_vv.clone();
+        let mut current_vv = common_ancestors_vv;
         let mut already_checkout = FxHashSet::default();
         for iter in self.iter_causal(&common_ancestors, iter_targets) {
             debug_log::debug_dbg!(&iter);

@@ -26,7 +26,6 @@ use crate::{
         ContainerID,
     },
     dag::Dag,
-    hierarchy::Hierarchy,
     id::{ClientID, Counter},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
@@ -346,16 +345,6 @@ impl LogStore {
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         self.reg.get_or_create_container_idx(container)
     }
-
-    // #[inline(always)]
-    // pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
-    // where
-    //     for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
-    // {
-    //     let h = self.hierarchy.clone();
-    //     let mut h = h.try_lock().unwrap();
-    //     f(self, &mut h)
-    // }
 
     pub fn to_json(&self) -> LoroValue {
         self.reg.to_json()

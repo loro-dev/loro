@@ -230,23 +230,6 @@ impl Hierarchy {
         false
     }
 
-    // pub(crate) fn notify_without_path<'a, 'b>(
-    //     &'a mut self,
-    //     mut raw_event: RawEvent,
-    //     store: RwLockWriteGuard<'b, LogStore>,
-    // ) {
-    //     let reg = &store.reg;
-
-    //     if raw_event.abs_path.is_empty() {
-    //         let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
-    //         return ;
-    //     };
-    //         raw_event.abs_path = absolute_path;
-    //     }
-    //     drop(store);
-    //     self.notify(raw_event);
-    // }
-
     pub(crate) fn notify_without_lock(hierarchy: Arc<Mutex<Hierarchy>>, raw_event: RawEvent) {
         let target_id = raw_event.container_id;
 
@@ -271,7 +254,6 @@ impl Hierarchy {
             if !node.observers.is_empty() {
                 let mut dispatch = EventDispatch::default();
                 for &sub_id in node.observers.iter() {
-                    // observer(&event);
                     dispatch.sub_ids.push(sub_id);
                 }
                 dispatches.push(dispatch);
@@ -288,11 +270,7 @@ impl Hierarchy {
                         relative_path,
                         target: Some(id.clone()),
                     });
-                    // event.relative_path = relative_path;
-                    // event.current_target = Some(id.clone());
-
                     for &sub_id in node.deep_observers.iter() {
-                        // observer(&event);
                         dispatch.sub_ids.push(sub_id);
                     }
                     dispatches.push(dispatch);
@@ -315,11 +293,7 @@ impl Hierarchy {
                         target: None,
                     }),
                 };
-
-                // event.relative_path = event.absolute_path.clone();
-                // event.current_target = None;
                 for &sub_id in hierarchy.root_observers.iter() {
-                    // observer(&event);
                     dispatch.sub_ids.push(sub_id);
                 }
                 dispatches.push(dispatch);

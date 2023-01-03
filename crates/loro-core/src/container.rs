@@ -9,7 +9,7 @@ use crate::{
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
-    version::{PatchedVersionVector, VersionVector},
+    version::PatchedVersionVector,
     InternalString, LoroError, LoroValue, ID,
 };
 
