@@ -22,7 +22,7 @@ use super::y_span::{YSpan, YSpanTreeTrait};
 // marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
 #[derive(Debug, Clone, EnumAsInner, PartialEq, Eq)]
-pub enum Marker {
+pub(super) enum Marker {
     Insert {
         ptr: NonNull<LeafNode<'static, YSpan, YSpanTreeTrait>>,
         len: usize,
@@ -195,7 +195,7 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub struct CursorMap(RangeMap<u128, Marker, BumpMode>);
+pub(super) struct CursorMap(RangeMap<u128, Marker, BumpMode>);
 
 impl Deref for CursorMap {
     type Target = RangeMap<u128, Marker, BumpMode>;

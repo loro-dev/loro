@@ -311,7 +311,7 @@ impl Sliceable for InnerListOp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test_utils"))]
 mod test {
     use rle::{Mergable, Sliceable};
 

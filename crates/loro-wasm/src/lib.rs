@@ -65,6 +65,38 @@ impl SecureRandomGenerator for MathRandom {
     }
 }
 
+mod observer {
+    use std::thread::ThreadId;
+
+    use wasm_bindgen::JsValue;
+
+    /// We need to wrap the observer function in a struct so that we can implement Send for it.
+    /// But it's not Send essentially, so we need to check it manually in runtime.
+    pub(crate) struct Observer {
+        f: js_sys::Function,
+        thread: ThreadId,
+    }
+
+    impl Observer {
+        pub fn new(f: js_sys::Function) -> Self {
+            Self {
+                f,
+                thread: std::thread::current().id(),
+            }
+        }
+
+        pub fn call1(&self, arg: &JsValue) {
+            if std::thread::current().id() == self.thread {
+                self.f.call1(&JsValue::NULL, arg).unwrap();
+            } else {
+                panic!("Observer called from different thread")
+            }
+        }
+    }
+
+    unsafe impl Send for Observer {}
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
@@ -192,9 +224,9 @@ impl Loro {
 
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
+        let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            f.call1(&JsValue::NULL, &JsValue::from_bool(e.local))
-                .unwrap();
+            observer.call1(&JsValue::from_bool(e.local));
         }))
     }
 

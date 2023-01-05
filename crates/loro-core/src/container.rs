@@ -68,7 +68,7 @@ impl TryFrom<&str> for ContainerType {
     }
 }
 
-pub trait Container: Debug + Any + Unpin {
+pub trait Container: Debug + Any + Unpin + Send + Sync {
     fn id(&self) -> &ContainerID;
     fn type_(&self) -> ContainerType;
     fn get_value(&self) -> LoroValue;
