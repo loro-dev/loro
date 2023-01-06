@@ -20,7 +20,7 @@ impl Debug for Configure {
     }
 }
 
-pub trait SecureRandomGenerator {
+pub trait SecureRandomGenerator: Send + Sync {
     fn fill_byte(&self, dest: &mut [u8]);
     fn next_u64(&self) -> u64 {
         let mut buf = [0u8; 8];

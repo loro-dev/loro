@@ -650,6 +650,4 @@ mod test {
             vec![&V::new(0, 3, "a"), &V::new(3, 6, "c")]
         );
     }
-
-    static_assertions::assert_not_impl_any!(RangeMap<usize, Range<usize>>: Sync, Send);
 }

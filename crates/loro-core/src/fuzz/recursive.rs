@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashSet, fmt::Debug, rc::Rc};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -45,10 +50,10 @@ pub enum Action {
 
 struct Actor {
     loro: LoroCore,
-    value_tracker: Rc<RefCell<LoroValue>>,
-    map_tracker: Rc<RefCell<FxHashMap<String, LoroValue>>>,
-    list_tracker: Rc<RefCell<Vec<LoroValue>>>,
-    text_tracker: Rc<RefCell<String>>,
+    value_tracker: Arc<Mutex<LoroValue>>,
+    map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
+    list_tracker: Arc<Mutex<Vec<LoroValue>>>,
+    text_tracker: Arc<Mutex<String>>,
     map_containers: Vec<Map>,
     list_containers: Vec<List>,
     text_containers: Vec<Text>,
@@ -58,7 +63,7 @@ impl Actor {
     fn new(id: ClientID) -> Self {
         let mut actor = Actor {
             loro: LoroCore::new(Default::default(), Some(id)),
-            value_tracker: Rc::new(RefCell::new(LoroValue::Map(Default::default()))),
+            value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
             map_tracker: Default::default(),
             list_tracker: Default::default(),
             text_tracker: Default::default(),
@@ -67,19 +72,19 @@ impl Actor {
             text_containers: Default::default(),
         };
 
-        let root_value = Rc::clone(&actor.value_tracker);
+        let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Box::new(move |event| {
-            let mut root_value = root_value.borrow_mut();
+            let mut root_value = root_value.lock().unwrap();
             root_value.apply(&event.relative_path, &event.diff);
         }));
 
         let log_store = actor.loro.log_store.write().unwrap();
         let mut hierarchy = actor.loro.hierarchy.try_lock().unwrap();
-        let text = Rc::clone(&actor.text_tracker);
+        let text = Arc::clone(&actor.text_tracker);
         hierarchy.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Box::new(move |event| {
-                let mut text = text.borrow_mut();
+                let mut text = text.lock().unwrap();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::Text(delta) => {
@@ -106,11 +111,11 @@ impl Actor {
             false,
         );
 
-        let map = Rc::clone(&actor.map_tracker);
+        let map = Arc::clone(&actor.map_tracker);
         hierarchy.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
             Box::new(move |event| {
-                let mut map = map.borrow_mut();
+                let mut map = map.lock().unwrap();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::Map(map_diff) => {
@@ -131,11 +136,11 @@ impl Actor {
             false,
         );
 
-        let list = Rc::clone(&actor.list_tracker);
+        let list = Arc::clone(&actor.list_tracker);
         hierarchy.subscribe(
             &ContainerID::new_root("list", ContainerType::List),
             Box::new(move |event| {
-                let mut list = list.borrow_mut();
+                let mut list = list.lock().unwrap();
                 for diff in event.diff.iter() {
                     match diff {
                         Diff::List(delta) => {
@@ -590,24 +595,27 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_result = a_doc.to_json();
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_doc.to_json());
-    assert_value_eq(&a_result, &a_actor.value_tracker.borrow());
+    assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
 
     let a = a_doc.get_text("text");
     let value_a = a.get_value();
     assert_eq!(
         &**value_a.as_string().unwrap(),
-        &*a_actor.text_tracker.borrow(),
+        &*a_actor.text_tracker.lock().unwrap(),
     );
 
     let a = a_doc.get_map("map");
     let value_a = a.get_value();
-    assert_eq!(&**value_a.as_map().unwrap(), &*a_actor.map_tracker.borrow());
+    assert_eq!(
+        &**value_a.as_map().unwrap(),
+        &*a_actor.map_tracker.lock().unwrap()
+    );
 
     let a = a_doc.get_list("list");
     let value_a = a.get_value();
     assert_eq!(
         &**value_a.as_list().unwrap(),
-        &*a_actor.list_tracker.borrow(),
+        &*a_actor.list_tracker.lock().unwrap(),
     );
 }
 

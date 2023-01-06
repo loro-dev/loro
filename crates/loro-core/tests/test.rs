@@ -1,16 +1,19 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use ctor::ctor;
 
 use loro_core::container::registry::ContainerWrapper;
 use loro_core::container::ContainerID;
 use loro_core::context::Context;
-use loro_core::event::Index;
 use loro_core::id::ID;
 
 use loro_core::log_store::{EncodeConfig, EncodeMode};
 use loro_core::{ContainerType, LoroCore, LoroValue, VersionVector};
+
+#[test]
+fn send_sync() {
+    fn example<T: Send + Sync + 'static>(l: T) {}
+    let loro = LoroCore::default();
+    example(loro);
+}
 
 #[test]
 fn example_list() {
@@ -57,11 +60,13 @@ fn subscribe_deep() {
 #[test]
 #[cfg(feature = "json")]
 fn text_observe() {
+    use std::sync::{Arc, Mutex};
+
     let mut doc = LoroCore::default();
-    let track_value = Rc::new(RefCell::new(LoroValue::Map(Default::default())));
-    let moved_value = Rc::clone(&track_value);
+    let track_value = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
+    let moved_value = Arc::clone(&track_value);
     doc.subscribe_deep(Box::new(move |event| {
-        let mut v = RefCell::borrow_mut(&*moved_value);
+        let mut v = moved_value.lock().unwrap();
         v.apply(&event.relative_path, &event.diff);
     }));
     let mut map = doc.get_map("meta");
@@ -74,14 +79,14 @@ fn text_observe() {
     let todo_item = list.insert(&doc, 0, ContainerType::Map).unwrap().unwrap();
     let mut todo_item = doc.get_map(todo_item);
     todo_item.insert(&doc, "todo", "coding").unwrap();
-    assert_eq!(&doc.to_json(), &*RefCell::borrow(&track_value));
+    assert_eq!(&doc.to_json(), &*track_value.lock().unwrap());
     let mut text = doc.get_text("text");
     text.insert(&doc, 0, "hello ").unwrap();
     let mut doc_b = LoroCore::default();
     let mut text_b = doc_b.get_text("text");
     text_b.insert(&doc_b, 0, "world").unwrap();
     doc.import(doc_b.export(Default::default()));
-    assert_eq!(&doc.to_json(), &*RefCell::borrow(&track_value));
+    assert_eq!(&doc.to_json(), &*track_value.lock().unwrap());
     println!("{}", doc.to_json().to_json());
 }
 
