@@ -57,6 +57,11 @@ pub struct Tracker {
     id_to_cursor: CursorMap,
 }
 
+// SAFETY: Tracker is safe to be sent to another thread
+unsafe impl Send for Tracker {}
+// SAFETY: &Tracker is safe to be shared by threads
+unsafe impl Sync for Tracker {}
+
 impl From<ID> for u128 {
     fn from(id: ID) -> Self {
         ((id.client_id as u128) << 64) | id.counter as u128

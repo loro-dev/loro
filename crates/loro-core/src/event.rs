@@ -73,6 +73,6 @@ pub struct MapDiff {
     pub deleted: FxHashSet<InternalString>,
 }
 
-pub type Observer = Box<dyn FnMut(&Event)>;
+pub type Observer = Box<dyn FnMut(&Event) + Send>;
 
 pub type SubscriptionID = u32;

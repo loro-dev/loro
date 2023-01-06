@@ -7,10 +7,7 @@ use loro_core::{
     log_store::{EncodeConfig, EncodeMode},
     ContainerType, List, LoroCore, Map, Text, VersionVector,
 };
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::{cell::RefCell, ops::Deref, sync::Arc};
 use wasm_bindgen::prelude::*;
 mod log;
 mod prelim;
@@ -34,10 +31,10 @@ pub fn set_panic_hook() {
 type JsResult<T> = Result<T, JsValue>;
 
 #[wasm_bindgen]
-pub struct Loro(LoroCore);
+pub struct Loro(RefCell<LoroCore>);
 
 impl Deref for Loro {
-    type Target = LoroCore;
+    type Target = RefCell<LoroCore>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -48,12 +45,6 @@ impl Deref for Loro {
 extern "C" {
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
-}
-
-impl DerefMut for Loro {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
 }
 
 struct MathRandom;
@@ -74,6 +65,38 @@ impl SecureRandomGenerator for MathRandom {
     }
 }
 
+mod observer {
+    use std::thread::ThreadId;
+
+    use wasm_bindgen::JsValue;
+
+    /// We need to wrap the observer function in a struct so that we can implement Send for it.
+    /// But it's not Send essentially, so we need to check it manually in runtime.
+    pub(crate) struct Observer {
+        f: js_sys::Function,
+        thread: ThreadId,
+    }
+
+    impl Observer {
+        pub fn new(f: js_sys::Function) -> Self {
+            Self {
+                f,
+                thread: std::thread::current().id(),
+            }
+        }
+
+        pub fn call1(&self, arg: &JsValue) {
+            if std::thread::current().id() == self.thread {
+                self.f.call1(&JsValue::NULL, arg).unwrap();
+            } else {
+                panic!("Observer called from different thread")
+            }
+        }
+    }
+
+    unsafe impl Send for Observer {}
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
@@ -84,49 +107,50 @@ impl Loro {
             get_time: || js_sys::Date::now() as i64,
             rand: Arc::new(MathRandom),
         };
-        Self(LoroCore::new(cfg, None))
+        Self(RefCell::new(LoroCore::new(cfg, None)))
     }
 
     #[wasm_bindgen(js_name = "clientId", method, getter)]
     pub fn client_id(&self) -> u64 {
-        self.0.client_id()
+        self.0.borrow().client_id()
     }
 
     #[wasm_bindgen(js_name = "getText")]
-    pub fn get_text(&mut self, name: &str) -> JsResult<LoroText> {
-        let text = self.0.get_text(name);
+    pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
+        let text = self.0.borrow_mut().get_text(name);
         Ok(LoroText(text))
     }
 
     #[wasm_bindgen(js_name = "getMap")]
-    pub fn get_map(&mut self, name: &str) -> JsResult<LoroMap> {
-        let map = self.0.get_map(name);
+    pub fn get_map(&self, name: &str) -> JsResult<LoroMap> {
+        let map = self.0.borrow_mut().get_map(name);
         Ok(LoroMap(map))
     }
 
     #[wasm_bindgen(js_name = "getList")]
-    pub fn get_list(&mut self, name: &str) -> JsResult<LoroList> {
-        let list = self.0.get_list(name);
+    pub fn get_list(&self, name: &str) -> JsResult<LoroList> {
+        let list = self.0.borrow_mut().get_list(name);
         Ok(LoroList(list))
     }
 
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
-    pub fn get_container_by_id(&mut self, container_id: JsContainerID) -> JsResult<JsValue> {
+    pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
         let ty = container_id.container_type();
-        let container = self.0.get_container(&container_id);
+        let container = self.0.borrow_mut().get_container(&container_id);
         if let Some(container) = container {
+            let client_id = self.0.borrow().client_id();
             Ok(match ty {
                 ContainerType::Text => {
-                    let text: Text = Text::from_instance(container, self.0.client_id());
+                    let text: Text = Text::from_instance(container, client_id);
                     LoroText(text).into()
                 }
                 ContainerType::Map => {
-                    let map: Map = Map::from_instance(container, self.0.client_id());
+                    let map: Map = Map::from_instance(container, client_id);
                     LoroMap(map).into()
                 }
                 ContainerType::List => {
-                    let list: List = List::from_instance(container, self.0.client_id());
+                    let list: List = List::from_instance(container, client_id);
                     LoroList(list).into()
                 }
             })
@@ -137,19 +161,20 @@ impl Loro {
 
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.vv_cloned().encode()
+        self.0.borrow().vv_cloned().encode()
     }
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self
             .0
+            .borrow()
             .encode(EncodeConfig::new(EncodeMode::Snapshot, None).with_default_compress())?)
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
-    pub fn import_snapshot(&mut self, input: Vec<u8>) -> JsResult<()> {
-        self.decode(&input)?;
+    pub fn import_snapshot(&self, input: Vec<u8>) -> JsResult<()> {
+        self.0.borrow_mut().decode(&input)?;
         Ok(())
     }
 
@@ -169,17 +194,18 @@ impl Loro {
 
         Ok(self
             .0
+            .borrow()
             .encode(EncodeConfig::new(EncodeMode::Updates(vv), None))?)
     }
 
     #[wasm_bindgen(js_name = "importUpdates")]
-    pub fn import_updates(&mut self, data: Vec<u8>) -> JsResult<()> {
-        self.0.decode(&data)?;
+    pub fn import_updates(&self, data: Vec<u8>) -> JsResult<()> {
+        self.0.borrow_mut().decode(&data)?;
         Ok(())
     }
 
     #[wasm_bindgen(js_name = "importUpdateBatch")]
-    pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
+    pub fn import_update_batch(&self, data: Array) -> JsResult<()> {
         let data = data
             .iter()
             .map(|x| {
@@ -187,25 +213,25 @@ impl Loro {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
-        Ok(self.0.decode_batch(&data)?)
+        Ok(self.0.borrow_mut().decode_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
-        let json = self.0.to_json();
+        let json = self.0.borrow().to_json();
         Ok(json.into())
     }
 
     // TODO: convert event and event sub config
-    pub fn subscribe(&mut self, f: js_sys::Function) -> u32 {
-        self.0.subscribe_deep(Box::new(move |e| {
-            f.call1(&JsValue::NULL, &JsValue::from_bool(e.local))
-                .unwrap();
+    pub fn subscribe(&self, f: js_sys::Function) -> u32 {
+        let observer = observer::Observer::new(f);
+        self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
+            observer.call1(&JsValue::from_bool(e.local));
         }))
     }
 
-    pub fn unsubscribe(&mut self, subscription: u32) -> bool {
-        self.0.unsubscribe_deep(subscription)
+    pub fn unsubscribe(&self, subscription: u32) -> bool {
+        self.0.borrow_mut().unsubscribe_deep(subscription)
     }
 }
 

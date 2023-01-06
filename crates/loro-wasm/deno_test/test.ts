@@ -63,14 +63,14 @@ Deno.test({ name: "sync" }, async (t) => {
     let b_version: undefined | Uint8Array = undefined;
     a.subscribe((local: boolean) => {
       if (local) {
-        let exported = a.exportUpdates(a_version);
+        const exported = a.exportUpdates(a_version);
         b.importUpdates(exported);
         a_version = a.version();
       }
     });
     b.subscribe((local: boolean) => {
       if (local) {
-        let exported = b.exportUpdates(b_version);
+        const exported = b.exportUpdates(b_version);
         a.importUpdates(exported);
         b_version = b.version();
       }
@@ -190,4 +190,19 @@ Deno.test("subscribe_lock", () => {
   loro.unsubscribe(sub);
   text.insert(loro, 0, "hello world");
   assertEquals(count, 3);
+});
+
+Deno.test("subscribe_lock2", () => {
+  const loro = new Loro();
+  const text = loro.getText("text");
+  let count = 0;
+  const sub = loro.subscribe(() => {
+    count += 1;
+    loro.unsubscribe(sub);
+  });
+  assertEquals(count, 0);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 1);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 1);
 });

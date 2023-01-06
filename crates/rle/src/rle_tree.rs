@@ -30,6 +30,11 @@ pub struct RleTree<T: Rle + 'static, A: RleTreeTrait<T> + 'static> {
     pub node: <A::Arena as arena::Arena>::Boxed<'this, Node<'this, T, A>>,
 }
 
+// SAFETY: tree is safe to send to another thread
+unsafe impl<T: Rle + 'static + Send, A: RleTreeTrait<T> + 'static> Send for RleTree<T, A> {}
+// SAFETY: &tree is safe to be shared between threads
+unsafe impl<T: Rle + 'static + Send + Sync, A: RleTreeTrait<T> + 'static> Sync for RleTree<T, A> {}
+
 impl<T: Rle + 'static, A: RleTreeTrait<T> + 'static> Default for RleTree<T, A> {
     fn default() -> Self {
         assert!(
