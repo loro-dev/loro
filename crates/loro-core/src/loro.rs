@@ -1,7 +1,8 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     event::RawEvent,
+    hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
     LoroError, LoroValue,
 };
@@ -20,6 +21,7 @@ use crate::{
 
 pub struct LoroCore {
     pub(crate) log_store: Arc<RwLock<LogStore>>,
+    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
 }
 
 impl Default for LoroCore {
@@ -32,6 +34,7 @@ impl LoroCore {
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
         Self {
             log_store: LogStore::new(cfg, client_id),
+            hierarchy: Default::default(),
         }
     }
 
@@ -46,10 +49,8 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_list<I: Into<ContainerIdRaw>>(&mut self, id: I) -> List {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
-        let instance = store
-            .get_or_create_container(&id.with_type(ContainerType::List))
-            .clone();
+        let mut store = self.log_store.try_write().unwrap();
+        let instance = store.get_or_create_container(&id.with_type(ContainerType::List));
         let cid = store.this_client_id();
         List::from_instance(instance, cid)
     }
@@ -57,10 +58,8 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_map<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Map {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
-        let instance = store
-            .get_or_create_container(&id.with_type(ContainerType::Map))
-            .clone();
+        let mut store = self.log_store.try_write().unwrap();
+        let instance = store.get_or_create_container(&id.with_type(ContainerType::Map));
         let cid = store.this_client_id();
         Map::from_instance(instance, cid)
     }
@@ -68,10 +67,8 @@ impl LoroCore {
     #[inline(always)]
     pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Text {
         let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.write().unwrap();
-        let instance = store
-            .get_or_create_container(&id.with_type(ContainerType::Text))
-            .clone();
+        let mut store = self.log_store.try_write().unwrap();
+        let instance = store.get_or_create_container(&id.with_type(ContainerType::Text));
         let cid = store.this_client_id();
         Text::from_instance(instance, cid)
     }
@@ -85,10 +82,11 @@ impl LoroCore {
     // TODO: make it private
     pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
         debug_log::group!("Import at {}", self.client_id());
-        let mut store = self.log_store.write().unwrap();
-        let events = store.import(changes);
-        // FIXME: move hierarchy to loro_core
-        drop(store);
+        let events = {
+            let mut store = self.log_store.write().unwrap();
+            let mut hierarchy = self.hierarchy.try_lock().unwrap();
+            store.import(&mut hierarchy, changes)
+        };
         self.notify(events);
         debug_log::group_end!();
     }
@@ -119,20 +117,11 @@ impl LoroCore {
     }
 
     pub fn subscribe_deep(&mut self, observer: Observer) -> SubscriptionID {
-        self.log_store
-            .write()
-            .unwrap()
-            .hierarchy
-            .try_lock()
-            .unwrap()
-            .subscribe_root(observer)
+        self.hierarchy.try_lock().unwrap().subscribe_root(observer)
     }
 
     pub fn unsubscribe_deep(&mut self, subscription: SubscriptionID) -> bool {
-        self.log_store
-            .write()
-            .unwrap()
-            .hierarchy
+        self.hierarchy
             .try_lock()
             .unwrap()
             .unsubscribe_root(subscription)
@@ -140,10 +129,6 @@ impl LoroCore {
 
     #[instrument(skip_all)]
     pub fn notify(&self, events: Vec<RawEvent>) {
-        let store = self.log_store.read().unwrap();
-        let hierarchy = store.hierarchy.clone();
-        drop(store);
-        let mut h = hierarchy.try_lock().unwrap();
-        h.send_notifications(events);
+        Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
     }
 }

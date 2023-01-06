@@ -10,7 +10,7 @@ pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -26,7 +26,6 @@ use crate::{
         ContainerID,
     },
     dag::Dag,
-    hierarchy::Hierarchy,
     id::{ClientID, Counter},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
@@ -79,7 +78,6 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
     _pin: PhantomPinned,
 }
 
@@ -97,7 +95,6 @@ impl LogStore {
             frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
-            hierarchy: Default::default(),
             _pin: PhantomPinned,
         }))
     }
@@ -163,7 +160,7 @@ impl LogStore {
         }
     }
 
-    fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
+    pub(crate) fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
             ops.push(self.to_remote_op(op));
@@ -327,11 +324,6 @@ impl LogStore {
         self.reg.debug_inspect();
     }
 
-    #[cfg(feature = "test_utils")]
-    pub fn hierarchy(&self) -> &Arc<Mutex<Hierarchy>> {
-        &self.hierarchy
-    }
-
     // TODO: remove
     #[inline(always)]
     pub(crate) fn get_container_idx(&self, container: &ContainerID) -> Option<ContainerIdx> {
@@ -341,27 +333,17 @@ impl LogStore {
     pub fn get_or_create_container(
         &mut self,
         container: &ContainerID,
-    ) -> &Arc<Mutex<ContainerInstance>> {
+    ) -> Weak<Mutex<ContainerInstance>> {
         self.reg.get_or_create(container)
     }
 
     #[inline(always)]
-    pub fn get_container(&self, container: &ContainerID) -> Option<&Arc<Mutex<ContainerInstance>>> {
+    pub fn get_container(&self, container: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.reg.get(container)
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
         self.reg.get_or_create_container_idx(container)
-    }
-
-    #[inline(always)]
-    pub(crate) fn with_hierarchy<F, R>(&mut self, f: F) -> R
-    where
-        for<'any> F: FnOnce(&'any mut LogStore, &'any mut Hierarchy) -> R,
-    {
-        let h = self.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
-        f(self, &mut h)
     }
 
     pub fn to_json(&self) -> LoroValue {

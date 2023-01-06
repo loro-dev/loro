@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use super::{super::pool::Pool, InnerMapSet};
 use crate::{
@@ -73,9 +73,9 @@ impl MapContainer {
             let (event, container_id) = self.insert_obj(ctx, key, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
-            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            let container = store.get_container(&container_id).unwrap();
             drop(store);
-            prelim.integrate(ctx, &container);
+            prelim.integrate(ctx, container);
             (event, Some(container_id))
         } else {
             let value = value.into_value().unwrap();
@@ -96,6 +96,7 @@ impl MapContainer {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
+        let hierarchy = ctx.hierarchy();
         let client_id = store.this_client_id;
         let order = TotalOrderStamp {
             client_id,
@@ -114,8 +115,7 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        let h = store.hierarchy.clone();
-        let mut h = h.try_lock().unwrap();
+        let mut h = hierarchy.try_lock().unwrap();
         self.update_hierarchy_if_container_is_overwritten(&key, &mut h);
 
         let ans = if h.should_notify(self.id()) {
@@ -153,6 +153,7 @@ impl MapContainer {
         let self_id = &self.id;
         let m = ctx.log_store();
         let mut store = m.write().unwrap();
+        let hierarchy = ctx.hierarchy();
         let client_id = store.this_client_id;
         let (container_id, _) = store.create_container(obj);
         let value = self.pool.alloc(container_id.clone()).start;
@@ -173,7 +174,6 @@ impl MapContainer {
             }),
         }]);
         let new_version: Frontiers = store.frontiers().iter().copied().collect();
-        let hierarchy = store.hierarchy.clone();
         let mut hierarchy = hierarchy.try_lock().unwrap();
         hierarchy.add_child(&self.id, &container_id);
         self.update_hierarchy_if_container_is_overwritten(&key, &mut hierarchy);
@@ -481,21 +481,21 @@ impl Container for MapContainer {
 }
 
 pub struct Map {
-    instance: Arc<Mutex<ContainerInstance>>,
+    instance: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
 }
 
 impl Clone for Map {
     fn clone(&self) -> Self {
         Self {
-            instance: Arc::clone(&self.instance),
+            instance: Weak::clone(&self.instance),
             client_id: self.client_id,
         }
     }
 }
 
 impl Map {
-    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         Self {
             instance,
             client_id,
@@ -521,6 +521,8 @@ impl Map {
 
     pub fn id(&self) -> ContainerID {
         self.instance
+            .upgrade()
+            .unwrap()
             .try_lock()
             .unwrap()
             .as_map()
@@ -531,6 +533,8 @@ impl Map {
 
     pub fn get_value(&self) -> LoroValue {
         self.instance
+            .upgrade()
+            .unwrap()
             .try_lock()
             .unwrap()
             .as_map()
@@ -556,7 +560,8 @@ impl ContainerWrapper for Map {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.try_lock().unwrap();
+        let w = self.instance.upgrade().unwrap();
+        let mut container_instance = w.try_lock().unwrap();
         let map = container_instance.as_map_mut().unwrap();
         let ans = f(map);
         drop(container_instance);

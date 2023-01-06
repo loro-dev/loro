@@ -16,6 +16,7 @@ use crate::{
     },
     dag::remove_included_frontiers,
     event::RawEvent,
+    hierarchy::Hierarchy,
     id::{ClientID, ID},
     log_store::ImportContext,
     op::{InnerContent, Op},
@@ -198,7 +199,12 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let (_, containers) = store.reg.export();
     for container_id in containers.iter() {
         let container = store.reg.get(container_id).unwrap();
-        container.try_lock().unwrap().initialize_pool_mapping();
+        container
+            .upgrade()
+            .unwrap()
+            .try_lock()
+            .unwrap()
+            .initialize_pool_mapping();
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -220,6 +226,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                 let container_id = store.reg.get_id(container_idx).unwrap();
                 let container = store.reg.get(container_id).unwrap();
                 let new_ops = container
+                    .upgrade()
+                    .unwrap()
                     .try_lock()
                     .unwrap()
                     .to_export_snapshot(&op.content, gc);
@@ -251,6 +259,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
         .map(|container_id| {
             let container = store.reg.get(container_id).unwrap();
             container
+                .upgrade()
+                .unwrap()
                 .try_lock()
                 .unwrap()
                 .encode_and_release_pool_mapping()
@@ -272,6 +282,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
 
 pub(super) fn decode_snapshot(
     store: &mut LogStore,
+    hierarchy: &mut Hierarchy,
     input: &[u8],
 ) -> Result<Vec<RawEvent>, LoroError> {
     let encoded: SnapshotEncoded =
@@ -302,7 +313,7 @@ pub(super) fn decode_snapshot(
     let mut container_idx2type = FxHashMap::default();
 
     for container_id in containers.iter() {
-        let container_idx = store.reg.get_or_create_container_idx(&container_id);
+        let container_idx = store.reg.get_or_create_container_idx(container_id);
         container_idx2type.insert(container_idx, container_id.container_type());
     }
 
@@ -404,7 +415,6 @@ pub(super) fn decode_snapshot(
     }
 
     // rebuild states by snapshot
-    let mut hierarchy = store.hierarchy.try_lock().unwrap();
     let mut import_context = ImportContext {
         old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
@@ -420,9 +430,8 @@ pub(super) fn decode_snapshot(
         let state = pool_mapping.into_state(&keys, &clients);
         let container = store.reg.get_by_idx(container_idx).unwrap();
         let mut container = container.try_lock().unwrap();
-        container.to_import_snapshot(state, &mut hierarchy, &mut import_context);
+        container.to_import_snapshot(state, hierarchy, &mut import_context);
     }
-    drop(hierarchy);
 
     store.latest_lamport = changes
         .values()
@@ -439,5 +448,5 @@ pub(super) fn decode_snapshot(
 
     store.vv = vv;
     store.frontiers = frontiers.get_frontiers();
-    Ok(store.get_events(&mut import_context))
+    Ok(store.get_events(hierarchy, &mut import_context))
 }

@@ -169,3 +169,25 @@ Deno.test({ name: "test prelim" }, async (t) => {
     }]]);
   });
 });
+
+Deno.test("subscribe_lock", () => {
+  const loro = new Loro();
+  const text = loro.getText("text");
+  const list = loro.getList("list");
+  let count = 0;
+  let i = 1;
+  const sub = loro.subscribe(() => {
+    if (i >0){
+      list.insert(loro, 0, i);
+      i--;
+    }
+    count += 1;
+  });
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 2);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 3);
+  loro.unsubscribe(sub);
+  text.insert(loro, 0, "hello world");
+  assertEquals(count, 3);
+});

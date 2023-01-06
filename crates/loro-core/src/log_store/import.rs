@@ -1,3 +1,4 @@
+use crate::hierarchy::Hierarchy;
 use crate::id::{Counter, ID};
 use crate::version::PatchedVersionVector;
 use crate::LogStore;
@@ -79,7 +80,11 @@ impl LogStore {
     /// - Update the rest of the log store state.
     ///
     #[instrument(skip_all)]
-    pub fn import(&mut self, mut changes: RemoteClientChanges) -> Vec<RawEvent> {
+    pub fn import(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        mut changes: RemoteClientChanges,
+    ) -> Vec<RawEvent> {
         if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
             return vec![];
         }
@@ -100,24 +105,26 @@ impl LogStore {
             diff: Default::default(),
             patched_old_vv: None,
         };
-        self.with_hierarchy(|_, h| {
-            h.take_deleted();
-        });
+        hierarchy.take_deleted();
 
         debug_log::group!("apply");
-        self.apply(container_map, &mut context);
+        self.apply(hierarchy, container_map, &mut context);
         debug_log::group_end!();
 
-        let events = self.get_events(&mut context);
+        let events = self.get_events(hierarchy, &mut context);
         self.update_version_info(context.new_vv, next_frontiers);
         events
     }
 
     #[instrument(skip_all)]
-    pub(crate) fn get_events(&mut self, context: &mut ImportContext) -> Vec<RawEvent> {
-        let deleted = self.with_hierarchy(|_, h| h.take_deleted());
+    pub(crate) fn get_events(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        context: &mut ImportContext,
+    ) -> Vec<RawEvent> {
+        let deleted = hierarchy.take_deleted();
         let mut events = Vec::with_capacity(context.diff.len());
-        let h = self.hierarchy.try_lock().unwrap();
+        let h = hierarchy;
         let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
@@ -195,6 +202,7 @@ impl LogStore {
     #[instrument(skip_all)]
     pub(crate) fn apply(
         &mut self,
+        hierarchy: &mut Hierarchy,
         mut container_map: FxHashMap<ContainerIdx, MutexGuard<ContainerInstance>>,
         context: &mut ImportContext,
     ) {
@@ -205,21 +213,17 @@ impl LogStore {
             let target_spans = context.new_vv.diff(&self.vv).left;
             if target_spans.len() == 1 {
                 let (client_id, span) = target_spans.iter().next().unwrap();
-                self.with_hierarchy(|store, hierarchy| {
-                    for op in
-                        store.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end))
-                    {
-                        let container = container_map.get_mut(&op.op().container).unwrap();
-                        container.update_state_directly(hierarchy, &op, context);
-                    }
-                });
+                for op in self.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end)) {
+                    let container = container_map.get_mut(&op.op().container).unwrap();
+                    container.update_state_directly(hierarchy, &op, context);
+                }
                 return;
             }
 
-            let can_skip = self.with_hierarchy(|store, hierarchy| {
+            let can_skip = {
                 // TODO: can reuse this path
                 let causal_visit_path: Vec<_> =
-                    store.iter_causal(&common_ancestors, target_spans).collect();
+                    self.iter_causal(&common_ancestors, target_spans).collect();
                 if causal_visit_path
                     .iter()
                     .all(|x| x.retreat.is_empty() && x.forward.is_empty())
@@ -240,11 +244,11 @@ impl LogStore {
                             container.update_state_directly(hierarchy, &rich_op, context);
                         }
                     }
-                    return true;
+                    true
+                } else {
+                    false
                 }
-
-                false
-            });
+            };
 
             if can_skip {
                 return;
@@ -263,52 +267,50 @@ impl LogStore {
         for (_, container) in container_map.iter_mut() {
             container.tracker_init(&common_ancestors_vv);
         }
-        self.with_hierarchy(|store, hierarchy| {
-            let mut current_vv = common_ancestors_vv.clone();
-            let mut already_checkout = FxHashSet::default();
-            for iter in store.iter_causal(&common_ancestors, iter_targets) {
-                debug_log::debug_dbg!(&iter);
-                debug_log::debug_dbg!(&current_vv);
-                already_checkout.clear();
-                let start = iter.slice.start;
-                let end = iter.slice.end;
-                let change = iter.data;
-                current_vv.retreat(&iter.retreat);
-                current_vv.forward(&iter.forward);
 
-                debug_log::debug_dbg!(&current_vv);
-                for op in change.ops.iter() {
-                    let rich_op = RichOp::new_by_slice_on_change(change, start, end, op);
-                    if rich_op.atom_len() == 0 {
-                        continue;
-                    }
+        let mut current_vv = common_ancestors_vv;
+        let mut already_checkout = FxHashSet::default();
+        for iter in self.iter_causal(&common_ancestors, iter_targets) {
+            debug_log::debug_dbg!(&iter);
+            debug_log::debug_dbg!(&current_vv);
+            already_checkout.clear();
+            let start = iter.slice.start;
+            let end = iter.slice.end;
+            let change = iter.data;
+            current_vv.retreat(&iter.retreat);
+            current_vv.forward(&iter.forward);
 
-                    debug_log::debug_dbg!(&rich_op);
-                    if let Some(container) = container_map.get_mut(&op.container) {
-                        if !already_checkout.contains(&op.container) {
-                            already_checkout.insert(op.container);
-                            container.tracker_checkout(&current_vv);
-                        }
-
-                        container.track_apply(hierarchy, &rich_op, context);
-                    }
+            debug_log::debug_dbg!(&current_vv);
+            for op in change.ops.iter() {
+                let rich_op = RichOp::new_by_slice_on_change(change, start, end, op);
+                if rich_op.atom_len() == 0 {
+                    continue;
                 }
 
-                current_vv.set_end(ID::new(
-                    change.id.client_id,
-                    end as Counter + change.id.counter,
-                ));
+                debug_log::debug_dbg!(&rich_op);
+                if let Some(container) = container_map.get_mut(&op.container) {
+                    if !already_checkout.contains(&op.container) {
+                        already_checkout.insert(op.container);
+                        container.tracker_checkout(&current_vv);
+                    }
+
+                    container.track_apply(hierarchy, &rich_op, context);
+                }
             }
-        });
+
+            current_vv.set_end(ID::new(
+                change.id.client_id,
+                end as Counter + change.id.counter,
+            ));
+        }
         debug_log::group!("apply effects");
         let mut queue: VecDeque<_> = container_map.into_values().collect();
         let mut retries = 0;
-        let mut h = self.hierarchy.try_lock().unwrap();
         // only apply the effects of a container when it's registered to the hierarchy
         while let Some(mut container) = queue.pop_back() {
-            if container.id().is_root() || h.contains(container.id()) {
+            if container.id().is_root() || hierarchy.contains(container.id()) {
                 retries = 0;
-                container.apply_tracked_effects_from(&mut h, context);
+                container.apply_tracked_effects_from(hierarchy, context);
             } else {
                 retries += 1;
                 queue.push_front(container);
@@ -322,7 +324,7 @@ impl LogStore {
         }
 
         for mut container in queue {
-            container.apply_tracked_effects_from(&mut h, context);
+            container.apply_tracked_effects_from(hierarchy, context);
         }
 
         debug_log::group_end!();
@@ -338,7 +340,8 @@ impl LogStore {
             for change in changes.iter() {
                 for op in change.ops.iter() {
                     if !container_map.contains_key(&op.container) {
-                        let guard = self.reg.get_or_create(&op.container).try_lock().unwrap();
+                        let guard = self.reg.get_or_create(&op.container).upgrade().unwrap();
+                        let guard = guard.try_lock().unwrap();
                         container_map
                             // SAFETY: ignore lifetime issues here, because it's safe for us to store the mutex guard here
                             .insert(op.container.clone(), unsafe { std::mem::transmute(guard) });

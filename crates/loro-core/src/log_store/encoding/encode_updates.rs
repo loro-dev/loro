@@ -7,6 +7,7 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
     event::RawEvent,
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
@@ -42,7 +43,7 @@ struct EncodedOp {
 #[derive(Serialize, Deserialize, Debug)]
 struct EncodedChange {
     pub(crate) ops: Vec<EncodedOp>,
-    pub(crate) deps_except_self: Vec<ID>,
+    pub(crate) deps: Vec<ID>,
     pub(crate) lamport_delta: u32,
     pub(crate) timestamp_delta: i64,
 }
@@ -62,10 +63,7 @@ pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<V
         .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
 }
 
-pub(super) fn decode_updates(
-    store: &mut LogStore,
-    input: &[u8],
-) -> Result<Vec<RawEvent>, LoroError> {
+pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let mut changes: RemoteClientChanges = Default::default();
@@ -73,7 +71,7 @@ pub(super) fn decode_updates(
         changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
     }
 
-    Ok(store.import(changes))
+    Ok(changes)
 }
 
 pub(super) fn decode_updates_to_inner_format(
@@ -106,12 +104,7 @@ where
                 contents: op.contents.iter().cloned().collect(),
             })
             .collect(),
-        deps_except_self: first_change
-            .deps
-            .iter()
-            .filter(|x| x.client_id != this_client_id)
-            .copied()
-            .collect(),
+        deps: first_change.deps.iter().copied().collect(),
         lamport_delta: 0,
         timestamp_delta: 0,
     });
@@ -125,12 +118,7 @@ where
                     contents: op.contents.iter().cloned().collect(),
                 })
                 .collect(),
-            deps_except_self: change
-                .deps
-                .iter()
-                .filter(|x| x.client_id != this_client_id)
-                .copied()
-                .collect(),
+            deps: change.deps.iter().copied().collect(),
             lamport_delta: change.lamport - last_change.lamport,
             timestamp_delta: change.timestamp - last_change.timestamp,
         });
@@ -156,15 +144,9 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     let mut counter: Counter = changes.meta.counter;
     for encoded in changes.data {
         let start_counter = counter;
-        let mut deps = SmallVec::with_capacity(encoded.deps_except_self.len() + 1);
-        if start_counter > 0 {
-            deps.push(ID {
-                client_id: changes.meta.client,
-                counter: start_counter - 1,
-            });
-        }
+        let mut deps = SmallVec::with_capacity(encoded.deps.len());
 
-        for dep in encoded.deps_except_self {
+        for dep in encoded.deps {
             deps.push(dep);
         }
 

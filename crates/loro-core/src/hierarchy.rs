@@ -1,28 +1,34 @@
-use std::{fmt::Debug, sync::RwLockWriteGuard};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
-    event::{Event, Index, Observer, Path, RawEvent, SubscriptionID},
-    LogStore,
+    event::{Event, EventDispatch, Index, Observer, Path, PathAndTarget, RawEvent, SubscriptionID},
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
 #[derive(Default)]
 pub struct Hierarchy {
+    observers: FxHashMap<SubscriptionID, Observer>,
     nodes: FxHashMap<ContainerID, Node>,
-    root_observers: FxHashMap<SubscriptionID, Observer>,
+    root_observers: FxHashSet<SubscriptionID>,
     latest_deleted: FxHashSet<ContainerID>,
     event_counter: SubscriptionID,
+    deleted_observers: Vec<SubscriptionID>,
+    pending_dispatches: Option<(Event, Vec<EventDispatch>)>,
+    calling: bool,
 }
 
 #[derive(Default)]
 struct Node {
     parent: Option<ContainerID>,
     children: FxHashSet<ContainerID>,
-    observers: FxHashMap<SubscriptionID, Observer>,
-    deep_observers: FxHashMap<SubscriptionID, Observer>,
+    observers: FxHashSet<SubscriptionID>,
+    deep_observers: FxHashSet<SubscriptionID>,
 }
 
 impl Debug for Hierarchy {
@@ -160,6 +166,8 @@ impl Hierarchy {
             if let Some(parent) = parent {
                 let parent_node = reg.get(parent).unwrap();
                 let index = parent_node
+                    .upgrade()
+                    .unwrap()
                     .try_lock()
                     .unwrap()
                     .index_of_child(node_id)
@@ -222,74 +230,128 @@ impl Hierarchy {
         false
     }
 
-    pub(crate) fn notify_without_path<'a, 'b>(
-        &'a mut self,
-        mut raw_event: RawEvent,
-        store: RwLockWriteGuard<'b, LogStore>,
-    ) {
-        let reg = &store.reg;
+    pub(crate) fn notify_without_lock(hierarchy: Arc<Mutex<Hierarchy>>, raw_event: RawEvent) {
+        let target_id = raw_event.container_id;
 
-        if raw_event.abs_path.is_empty() {
-            let Some(absolute_path) = self.get_path(reg, &raw_event.container_id, None) else {
-            return ;
+        let (observers, dispatches, event) = {
+            let event = Event {
+                absolute_path: raw_event.abs_path,
+                relative_path: Default::default(),
+                old_version: raw_event.old_version,
+                new_version: raw_event.new_version,
+                current_target: Some(target_id.clone()),
+                target: target_id.clone(),
+                diff: raw_event.diff,
+                local: raw_event.local,
+            };
+            let mut dispatches = Vec::new();
+            let mut hierarchy = hierarchy.try_lock().unwrap();
+            let mut current_target_id = Some(target_id.clone());
+            let mut count = 0;
+            let mut path_to_root = event.absolute_path.clone();
+            path_to_root.reverse();
+            let node = hierarchy.nodes.entry(target_id).or_default();
+            if !node.observers.is_empty() {
+                let mut dispatch = EventDispatch::default();
+                for &sub_id in node.observers.iter() {
+                    dispatch.sub_ids.push(sub_id);
+                }
+                dispatches.push(dispatch);
+            }
+            while let Some(id) = current_target_id {
+                let Some(node) = hierarchy.nodes.get_mut(&id) else {
+                    break;
+                };
+                if !node.deep_observers.is_empty() {
+                    let mut dispatch = EventDispatch::default();
+                    let mut relative_path = path_to_root[..count].to_vec();
+                    relative_path.reverse();
+                    dispatch.rewrite = Some(PathAndTarget {
+                        relative_path,
+                        target: Some(id.clone()),
+                    });
+                    for &sub_id in node.deep_observers.iter() {
+                        dispatch.sub_ids.push(sub_id);
+                    }
+                    dispatches.push(dispatch);
+                }
+
+                count += 1;
+                if node.parent.is_none() {
+                    debug_assert!(id.is_root());
+                }
+
+                current_target_id = node.parent.as_ref().cloned();
+            }
+
+            if !hierarchy.root_observers.is_empty() {
+                debug_log::debug_log!("notify root");
+                let mut dispatch = EventDispatch {
+                    sub_ids: Default::default(),
+                    rewrite: Some(PathAndTarget {
+                        relative_path: event.absolute_path.clone(),
+                        target: None,
+                    }),
+                };
+                for &sub_id in hierarchy.root_observers.iter() {
+                    dispatch.sub_ids.push(sub_id);
+                }
+                dispatches.push(dispatch);
+            }
+            if hierarchy.calling {
+                hierarchy.pending_dispatches = Some((event, std::mem::take(&mut dispatches)));
+                (None, None, None)
+            } else {
+                hierarchy.calling = true;
+                let observers = std::mem::take(&mut hierarchy.observers);
+                (Some(observers), Some(dispatches), Some(event))
+            }
         };
-            raw_event.abs_path = absolute_path;
+        if let (Some(mut observers), Some(dispatches), Some(event)) = (observers, dispatches, event)
+        {
+            Self::call_observers(&mut observers, dispatches, event);
+            Self::reset(hierarchy, observers);
         }
-        drop(store);
-        self.notify(raw_event);
     }
 
-    pub fn notify(&mut self, raw_event: RawEvent) {
-        let target_id = raw_event.container_id;
-        let mut event = Event {
-            absolute_path: raw_event.abs_path,
-            relative_path: Default::default(),
-            old_version: raw_event.old_version,
-            new_version: raw_event.new_version,
-            current_target: Some(target_id.clone()),
-            target: target_id.clone(),
-            diff: raw_event.diff,
-            local: raw_event.local,
-        };
-        let mut current_target_id = Some(target_id.clone());
-        let mut count = 0;
-        let mut path_to_root = event.absolute_path.clone();
-        path_to_root.reverse();
-        let node = self.nodes.entry(target_id).or_default();
-        if !node.observers.is_empty() {
-            for (_, observer) in node.observers.iter_mut() {
-                observer(&event);
-            }
-        }
-        while let Some(id) = current_target_id {
-            let Some(node) = self.nodes.get_mut(&id) else {
-                break;
-            };
-            if !node.deep_observers.is_empty() {
-                let mut relative_path = path_to_root[..count].to_vec();
-                relative_path.reverse();
+    #[inline]
+    fn call_observers(
+        observers: &mut FxHashMap<SubscriptionID, Observer>,
+        dispatches: Vec<EventDispatch>,
+        mut event: Event,
+    ) {
+        for dispatch in dispatches {
+            if let Some(PathAndTarget {
+                relative_path,
+                target,
+            }) = dispatch.rewrite
+            {
                 event.relative_path = relative_path;
-                event.current_target = Some(id.clone());
-                for (_, observer) in node.deep_observers.iter_mut() {
-                    observer(&event);
-                }
-            }
-
-            count += 1;
-            if node.parent.is_none() {
-                debug_assert!(id.is_root());
-            }
-
-            current_target_id = node.parent.as_ref().cloned();
-        }
-
-        if !self.root_observers.is_empty() {
-            debug_log::debug_log!("notify root");
-            event.relative_path = event.absolute_path.clone();
-            event.current_target = None;
-            for (_, observer) in self.root_observers.iter_mut() {
+                event.current_target = target;
+            };
+            for sub_id in dispatch.sub_ids.iter() {
+                let observer = observers.get_mut(sub_id).unwrap();
                 observer(&event);
             }
+        }
+    }
+
+    #[inline]
+    fn reset(hierarchy: Arc<Mutex<Hierarchy>>, mut observers: FxHashMap<SubscriptionID, Observer>) {
+        let mut hierarchy_guard = hierarchy.try_lock().unwrap();
+        let deleted_ids = std::mem::take(&mut hierarchy_guard.deleted_observers);
+        for sub_id in deleted_ids.iter() {
+            observers.remove(sub_id);
+        }
+        hierarchy_guard.observers.extend(observers);
+        let pending_dispatches = hierarchy_guard.pending_dispatches.take();
+        if let Some((event, dispatches)) = pending_dispatches {
+            let mut observers = std::mem::take(&mut hierarchy_guard.observers);
+            drop(hierarchy_guard);
+            Self::call_observers(&mut observers, dispatches, event);
+            Self::reset(hierarchy, observers);
+        } else {
+            hierarchy_guard.calling = false;
         }
     }
 
@@ -305,13 +367,15 @@ impl Hierarchy {
                 .entry(container.clone())
                 .or_default()
                 .deep_observers
-                .insert(id, observer);
+                .insert(id);
+            self.observers.insert(id, observer);
         } else {
             self.nodes
                 .entry(container.clone())
                 .or_default()
                 .observers
-                .insert(id, observer);
+                .insert(id);
+            self.observers.insert(id, observer);
         }
         id
     }
@@ -324,7 +388,14 @@ impl Hierarchy {
 
     pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) -> bool {
         if let Some(x) = self.nodes.get_mut(container) {
-            x.observers.remove(&id).is_some()
+            x.observers
+                .remove(&id)
+                .then(|| {
+                    if self.calling {
+                        self.deleted_observers.push(id);
+                    }
+                })
+                .is_some()
         } else {
             // TODO: warning
             false
@@ -333,17 +404,28 @@ impl Hierarchy {
 
     pub fn subscribe_root(&mut self, observer: Observer) -> SubscriptionID {
         let id = self.next_id();
-        self.root_observers.insert(id, observer);
+        self.root_observers.insert(id);
+        self.observers.insert(id, observer);
         id
     }
 
     pub fn unsubscribe_root(&mut self, sub: SubscriptionID) -> bool {
-        self.root_observers.remove(&sub).is_some()
+        self.root_observers
+            .remove(&sub)
+            .then(|| {
+                if self.calling {
+                    self.deleted_observers.push(sub);
+                }
+            })
+            .is_some()
     }
 
-    pub fn send_notifications(&mut self, events: Vec<RawEvent>) {
+    pub fn send_notifications_without_lock(
+        hierarchy: Arc<Mutex<Hierarchy>>,
+        events: Vec<RawEvent>,
+    ) {
         for event in events {
-            self.notify(event);
+            Hierarchy::notify_without_lock(hierarchy.clone(), event);
         }
     }
 }

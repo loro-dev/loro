@@ -14,6 +14,7 @@ use crate::{
     },
     dag::Dag,
     event::RawEvent,
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
@@ -212,10 +213,11 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 #[instrument(skip_all)]
 pub(super) fn decode_changes(
     store: &mut LogStore,
+    hierarchy: &mut Hierarchy,
     input: &[u8],
 ) -> Result<Vec<RawEvent>, LoroError> {
     // TODO: using the one with fewer changes to import
-    decode_changes_to_inner_format(input).map(|changes| store.import(changes))
+    decode_changes_to_inner_format(input).map(|changes| store.import(hierarchy, changes))
 }
 
 pub(super) fn decode_changes_to_inner_format(
@@ -317,6 +319,6 @@ pub(super) fn decode_changes_to_inner_format(
             .or_insert_with(Vec::new)
             .push(change);
     }
-
+    // TODO: using the one with fewer changes to import
     Ok(changes)
 }

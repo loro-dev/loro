@@ -557,7 +557,7 @@ pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
     a == b
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PatchedVersionVector {
     pub base: Arc<VersionVector>,
     pub patch: VersionVector,
@@ -773,15 +773,6 @@ impl PartialOrd for PatchedVersionVector {
             self.patch.partial_cmp(&other.patch)
         } else {
             unimplemented!()
-        }
-    }
-}
-
-impl Default for PatchedVersionVector {
-    fn default() -> Self {
-        Self {
-            base: Default::default(),
-            patch: Default::default(),
         }
     }
 }

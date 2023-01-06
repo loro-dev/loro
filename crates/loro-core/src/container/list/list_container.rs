@@ -1,5 +1,5 @@
 // TODO: refactor, extract common code with text
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -88,9 +88,9 @@ impl ListContainer {
             let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
             let m = ctx.log_store();
             let store = m.read().unwrap();
-            let container = Arc::clone(store.get_container(&container_id).unwrap());
+            let container = store.get_container(&container_id).unwrap();
             drop(store);
-            prelim.integrate(ctx, &container);
+            prelim.integrate(ctx, container);
             (event, Some(container_id))
         } else {
             let value = value.into_value().unwrap();
@@ -106,6 +106,7 @@ impl ListContainer {
         value: LoroValue,
     ) -> Option<RawEvent> {
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let slice = self.raw_data.alloc(value);
@@ -120,7 +121,7 @@ impl ListContainer {
         );
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        let hierarchy = store.hierarchy.try_lock().unwrap();
+        let hierarchy = hierarchy.try_lock().unwrap();
         if hierarchy.should_notify(&self.id) {
             let value = self.raw_data.slice(&slice)[0].clone();
             let mut delta = Delta::new();
@@ -150,10 +151,11 @@ impl ListContainer {
         obj: ContainerType,
     ) -> (Option<RawEvent>, ContainerID) {
         let m = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = m.write().unwrap();
         let (container_id, _) = store.create_container(obj);
         // Update hierarchy info
-        let mut hierarchy = store.hierarchy.try_lock().unwrap();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
         hierarchy.add_child(&self.id, &container_id);
 
         drop(hierarchy);
@@ -185,6 +187,7 @@ impl ListContainer {
         }
 
         let store = ctx.log_store();
+        let hierarchy = ctx.hierarchy();
         let mut store = store.write().unwrap();
         let id = store.next_id();
         let op = Op::new(
@@ -195,7 +198,6 @@ impl ListContainer {
 
         let (old_version, new_version) = store.append_local_ops(&[op]);
         let new_version = new_version.into();
-        let hierarchy = store.hierarchy.clone();
         let mut hierarchy = hierarchy.try_lock().unwrap();
 
         // Update hierarchy info
@@ -554,21 +556,21 @@ impl Container for ListContainer {
 }
 
 pub struct List {
-    instance: Arc<Mutex<ContainerInstance>>,
+    instance: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
 }
 
 impl Clone for List {
     fn clone(&self) -> Self {
         Self {
-            instance: Arc::clone(&self.instance),
+            instance: Weak::clone(&self.instance),
             client_id: self.client_id,
         }
     }
 }
 
 impl List {
-    pub fn from_instance(instance: Arc<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         Self {
             instance,
             client_id,
@@ -618,7 +620,8 @@ impl ContainerWrapper for List {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let mut container_instance = self.instance.try_lock().unwrap();
+        let w = self.instance.upgrade().unwrap();
+        let mut container_instance = w.try_lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
         let ans = f(list);
         drop(container_instance);

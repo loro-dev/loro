@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use enum_as_inner::EnumAsInner;
 
@@ -14,7 +14,7 @@ pub trait Prelim: Sized {
     fn convert_value(self) -> (PrelimValue, Option<Self>);
 
     /// How to integrate the value into the Loro.
-    fn integrate<C: Context>(self, ctx: &C, container: &Arc<Mutex<ContainerInstance>>);
+    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>);
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -33,7 +33,7 @@ where
         (PrelimValue::Value(value), None)
     }
 
-    fn integrate<C: Context>(self, _ctx: &C, _container: &Arc<Mutex<ContainerInstance>>) {}
+    fn integrate<C: Context>(self, _ctx: &C, _container: Weak<Mutex<ContainerInstance>>) {}
 }
 
 impl Prelim for ContainerType {
@@ -41,7 +41,7 @@ impl Prelim for ContainerType {
         (PrelimValue::Container(self), Some(self))
     }
 
-    fn integrate<C: Context>(self, _ctx: &C, _container: &Arc<Mutex<ContainerInstance>>) {}
+    fn integrate<C: Context>(self, _ctx: &C, _container: Weak<Mutex<ContainerInstance>>) {}
 }
 
 impl From<LoroValue> for PrelimValue {

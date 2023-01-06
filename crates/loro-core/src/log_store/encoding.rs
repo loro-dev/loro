@@ -8,7 +8,9 @@ use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
 use fxhash::FxHashMap;
 use num::Zero;
 
-use crate::{dag::Dag, event::RawEvent, LogStore, LoroCore, LoroError, VersionVector};
+use crate::{
+    dag::Dag, event::RawEvent, hierarchy::Hierarchy, LogStore, LoroCore, LoroError, VersionVector,
+};
 
 use super::RemoteClientChanges;
 
@@ -75,11 +77,11 @@ pub struct LoroEncoder;
 
 impl LoroEncoder {
     pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
-        let version = ENCODE_SCHEMA_VERSION;
         let store = loro
             .log_store
             .try_read()
             .map_err(|_| LoroError::LockError)?;
+        let version = ENCODE_SCHEMA_VERSION;
         let EncodeConfig { mode, compress } = config;
         let mut ans = Vec::from(MAGIC_BYTES);
         let version_bytes = version.as_bytes();
@@ -123,10 +125,6 @@ impl LoroEncoder {
     }
 
     pub fn decode(loro: &mut LoroCore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
-        let mut store = loro
-            .log_store
-            .try_write()
-            .map_err(|_| LoroError::LockError)?;
         let (magic_bytes, input) = input.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -145,10 +143,24 @@ impl LoroEncoder {
             c.read_to_end(&mut decoded).unwrap();
             &decoded
         };
+        let mut store = loro
+            .log_store
+            .try_write()
+            .map_err(|_| LoroError::LockError)?;
+        let mut hierarchy = loro
+            .hierarchy
+            .try_lock()
+            .map_err(|_| LoroError::LockError)?;
         match mode {
-            ConcreteEncodeMode::Updates => Self::decode_updates(&mut store, decoded),
-            ConcreteEncodeMode::RleUpdates => Self::decode_changes(&mut store, decoded),
-            ConcreteEncodeMode::Snapshot => Self::decode_snapshot(&mut store, decoded),
+            ConcreteEncodeMode::Updates => {
+                Self::decode_updates(&mut store, &mut hierarchy, decoded)
+            }
+            ConcreteEncodeMode::RleUpdates => {
+                Self::decode_changes(&mut store, &mut hierarchy, decoded)
+            }
+            ConcreteEncodeMode::Snapshot => {
+                Self::decode_snapshot(&mut store, &mut hierarchy, decoded)
+            }
         }
     }
 
@@ -196,7 +208,7 @@ impl LoroEncoder {
             }
         }
 
-        Ok(store.import(changes))
+        Ok(store.import(&mut loro.hierarchy.lock().unwrap(), changes))
     }
 }
 
@@ -207,8 +219,13 @@ impl LoroEncoder {
     }
 
     #[inline]
-    fn decode_updates(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
-        encode_updates::decode_updates(store, input)
+    fn decode_updates(
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
+        input: &[u8],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        let changes = encode_updates::decode_updates(input)?;
+        Ok(store.import(hierarchy, changes))
     }
 
     #[inline]
@@ -217,8 +234,13 @@ impl LoroEncoder {
     }
 
     #[inline]
-    fn decode_changes(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
-        encode_changes::decode_changes(store, input)
+    fn decode_changes(
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
+        input: &[u8],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        let changes = encode_changes::decode_changes_to_inner_format(input)?;
+        Ok(store.import(hierarchy, changes))
     }
 
     #[inline]
@@ -227,8 +249,12 @@ impl LoroEncoder {
     }
 
     #[inline]
-    fn decode_snapshot(store: &mut LogStore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
-        encode_snapshot::decode_snapshot(store, input)
+    fn decode_snapshot(
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
+        input: &[u8],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        encode_snapshot::decode_snapshot(store, hierarchy, input)
     }
 }
 
