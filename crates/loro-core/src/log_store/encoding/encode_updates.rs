@@ -74,6 +74,19 @@ pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges, LoroEr
     Ok(changes)
 }
 
+pub(super) fn decode_updates_to_inner_format(
+    input: &[u8],
+) -> Result<RemoteClientChanges, LoroError> {
+    let updates: Updates =
+        postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let mut changes: RemoteClientChanges = Default::default();
+    for encoded in updates.changes {
+        changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
+    }
+
+    Ok(changes)
+}
+
 fn convert_changes_to_encoded<I>(mut changes: I) -> EncodedClientChanges
 where
     I: Iterator<Item = Change<RemoteOp>>,
@@ -164,49 +177,4 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     }
 
     result
-}
-
-impl LoroCore {
-    #[instrument(skip_all)]
-    pub fn import_updates_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
-        debug_log::group!("Import updates at {}", self.client_id());
-        let mut hierarchy = self.hierarchy.try_lock().unwrap();
-        let ans = self
-            .log_store
-            .write()
-            .unwrap()
-            .import_updates_batch(input, &mut hierarchy);
-        let ans = match ans {
-            Ok(events) => {
-                self.notify(events);
-                Ok(())
-            }
-            Err(err) => Err(LoroError::DecodeError(err.to_string().into_boxed_str())),
-        };
-        debug_log::group_end!();
-        ans
-    }
-}
-
-impl LogStore {
-    #[instrument(skip_all)]
-    pub fn import_updates_batch(
-        &mut self,
-        batch: &[Vec<u8>],
-        hierarchy: &mut Hierarchy,
-    ) -> Result<Vec<RawEvent>, postcard::Error> {
-        // FIXME: changes may not be continuous
-        let mut changes: RemoteClientChanges = Default::default();
-        for input in batch {
-            let updates: Updates = postcard::from_bytes(input)?;
-            for encoded in updates.changes {
-                changes
-                    .entry(encoded.meta.client)
-                    .or_default()
-                    .append(&mut convert_encoded_to_changes(encoded));
-            }
-        }
-
-        Ok(self.import(hierarchy, changes))
-    }
 }

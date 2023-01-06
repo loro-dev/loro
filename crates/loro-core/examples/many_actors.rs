@@ -13,10 +13,14 @@ fn main() {
         let mut list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();
         list.insert(actor, 0, value).unwrap();
-        updates.push(actor.encode(EncodeConfig::from_vv(None)).unwrap());
+        updates.push(
+            actor
+                .encode(EncodeConfig::from_vv(Some(Default::default())))
+                .unwrap(),
+        );
     }
 
-    actors[0].import_updates_batch(&updates).unwrap();
+    actors[0].decode_batch(&updates).unwrap();
 
     // drop(profiler);
     println!("{}", start.elapsed().as_millis());

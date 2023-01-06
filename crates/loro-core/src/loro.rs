@@ -101,6 +101,12 @@ impl LoroCore {
         Ok(())
     }
 
+    pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
+        let events = LoroEncoder::decode_batch(self, input)?;
+        self.notify(events);
+        Ok(())
+    }
+
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&self) {
         self.log_store.try_write().unwrap().debug_inspect();

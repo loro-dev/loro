@@ -169,7 +169,7 @@ impl Loro {
         Ok(self
             .0
             .borrow()
-            .encode(EncodeConfig::new(EncodeMode::Snapshot, None))?)
+            .encode(EncodeConfig::new(EncodeMode::Snapshot, None).with_default_compress())?)
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
@@ -213,7 +213,7 @@ impl Loro {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
-        Ok(self.0.borrow_mut().import_updates_batch(&data)?)
+        Ok(self.0.borrow_mut().decode_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]

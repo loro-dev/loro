@@ -13,6 +13,8 @@ use crate::{
         ContainerID, ContainerType,
     },
     dag::Dag,
+    event::RawEvent,
+    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
@@ -211,6 +213,14 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 #[instrument(skip_all)]
 pub(super) fn decode_changes(
     store: &mut LogStore,
+    hierarchy: &mut Hierarchy,
+    input: &[u8],
+) -> Result<Vec<RawEvent>, LoroError> {
+    // TODO: using the one with fewer changes to import
+    decode_changes_to_inner_format(input).map(|changes| store.import(hierarchy, changes))
+}
+
+pub(super) fn decode_changes_to_inner_format(
     input: &[u8],
 ) -> Result<RemoteClientChanges, LoroError> {
     let encoded: Encoded =
@@ -224,12 +234,6 @@ pub(super) fn decode_changes(
         containers,
         keys,
     } = encoded;
-
-    if change_encodings.is_empty() && !containers.is_empty() {
-        for container in containers.iter() {
-            store.get_or_create_container(container);
-        }
-    }
 
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
