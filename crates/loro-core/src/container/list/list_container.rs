@@ -611,6 +611,18 @@ impl List {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn id(&self) -> ContainerID {
+        self.instance
+            .upgrade()
+            .unwrap()
+            .try_lock()
+            .unwrap()
+            .as_list()
+            .unwrap()
+            .id
+            .clone()
+    }
 }
 
 impl ContainerWrapper for List {

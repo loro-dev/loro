@@ -169,9 +169,9 @@ pub enum ContainerIdRaw {
     Normal { id: ID },
 }
 
-impl From<&str> for ContainerIdRaw {
-    fn from(s: &str) -> Self {
-        ContainerIdRaw::Root { name: s.into() }
+impl<T: Into<InternalString>> From<T> for ContainerIdRaw {
+    fn from(value: T) -> Self {
+        ContainerIdRaw::Root { name: value.into() }
     }
 }
 

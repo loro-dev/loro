@@ -14,7 +14,7 @@ pub struct RawEvent {
     pub abs_path: Path,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Event {
     pub old_version: Frontiers,
     pub new_version: Frontiers,
@@ -47,14 +47,14 @@ pub enum Index {
     Seq(usize),
 }
 
-#[derive(Clone, Debug, EnumAsInner)]
+#[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String>),
     Map(MapDiff),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ValuePair {
     pub old: LoroValue,
     pub new: LoroValue,
@@ -66,7 +66,7 @@ impl From<(LoroValue, LoroValue)> for ValuePair {
     }
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, Serialize)]
 pub struct MapDiff {
     pub added: FxHashMap<InternalString, LoroValue>,
     pub updated: FxHashMap<InternalString, ValuePair>,

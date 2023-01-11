@@ -1,12 +1,22 @@
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, RleVec};
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Delta<Value, Meta = ()> {
     vec: RleVec<[DeltaItem<Value, Meta>; 1]>,
 }
 
-#[derive(Debug, EnumAsInner, PartialEq, Eq, Clone)]
+impl<V: Serialize, M: Serialize> Serialize for Delta<V, M> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.vec.iter())
+    }
+}
+
+#[derive(Debug, EnumAsInner, PartialEq, Eq, Clone, Serialize)]
 pub enum DeltaItem<Value, Meta> {
     Retain { len: usize, meta: Meta },
     Insert { value: Value, meta: Meta },

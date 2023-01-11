@@ -35,7 +35,7 @@ use crate::{
 const _YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GcConfig {
     pub gc: bool,
     pub snapshot_interval: u64,
