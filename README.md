@@ -33,4 +33,4 @@ Loro supports a variety of data structures and CRDT algorithms.
 - Yjs for the efficient algorithm of merging blocks
 - Diamond-types for its idea of low-overhead merging algorithm
 - Ink & Switch for Local-first Software and Peritext
-
+ 

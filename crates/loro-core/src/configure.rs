@@ -3,6 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use crate::{change::ChangeMergeCfg, log_store::GcConfig, Timestamp};
 use ring::rand::{SecureRandom, SystemRandom};
 
+#[derive(Clone)]
 pub struct Configure {
     pub change: ChangeMergeCfg,
     pub gc: GcConfig,
