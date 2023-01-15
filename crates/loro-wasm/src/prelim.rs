@@ -4,8 +4,8 @@ use std::{
 };
 
 use loro_core::{
-    container::registry::ContainerInstance, context::Context, ContainerType, LoroValue, Prelim,
-    PrelimValue,
+    container::registry::ContainerInstance, context::Context, ContainerType, LoroError, LoroValue,
+    Prelim, PrelimValue,
 };
 use wasm_bindgen::prelude::*;
 
@@ -18,24 +18,28 @@ pub(crate) enum PrelimType {
 }
 
 impl Prelim for PrelimType {
-    fn convert_value(self) -> (PrelimValue, Option<Self>) {
+    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
         match self {
             PrelimType::Text(text) => {
-                let (value, prelim) = text.convert_value();
-                (value, prelim.map(PrelimType::Text))
+                let (value, prelim) = text.convert_value()?;
+                Ok((value, prelim.map(PrelimType::Text)))
             }
             PrelimType::Map(map) => {
-                let (value, prelim) = map.convert_value();
-                (value, prelim.map(PrelimType::Map))
+                let (value, prelim) = map.convert_value()?;
+                Ok((value, prelim.map(PrelimType::Map)))
             }
             PrelimType::List(list) => {
-                let (value, prelim) = list.convert_value();
-                (value, prelim.map(PrelimType::List))
+                let (value, prelim) = list.convert_value()?;
+                Ok((value, prelim.map(PrelimType::List)))
             }
         }
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+    fn integrate<C: Context>(
+        self,
+        ctx: &C,
+        container: Weak<Mutex<ContainerInstance>>,
+    ) -> Result<(), LoroError> {
         match self {
             PrelimType::Text(t) => t.integrate(ctx, container),
             PrelimType::Map(m) => m.integrate(ctx, container),
@@ -144,45 +148,60 @@ impl PrelimMap {
 }
 
 impl Prelim for PrelimText {
-    fn convert_value(self) -> (PrelimValue, Option<Self>) {
-        (PrelimValue::Container(ContainerType::Text), Some(self))
+    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
+        Ok((PrelimValue::Container(ContainerType::Text), Some(self)))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+    fn integrate<C: Context>(
+        self,
+        ctx: &C,
+        container: Weak<Mutex<ContainerInstance>>,
+    ) -> Result<(), LoroError> {
         let text = container.upgrade().unwrap();
         let mut text = text.try_lock().unwrap();
         let text = text.as_text_mut().unwrap();
         text.insert(ctx, 0, &self.0);
+        Ok(())
     }
 }
 
 impl Prelim for PrelimList {
-    fn convert_value(self) -> (PrelimValue, Option<Self>) {
-        (PrelimValue::Container(ContainerType::List), Some(self))
+    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
+        Ok((PrelimValue::Container(ContainerType::List), Some(self)))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+    fn integrate<C: Context>(
+        self,
+        ctx: &C,
+        container: Weak<Mutex<ContainerInstance>>,
+    ) -> Result<(), LoroError> {
         let list = container.upgrade().unwrap();
         let mut list = list.try_lock().unwrap();
         let list = list.as_list_mut().unwrap();
         let values: Vec<LoroValue> = self.0.into_iter().map(|v| v.into()).collect();
         list.insert_batch(ctx, 0, values);
+        Ok(())
     }
 }
 
 impl Prelim for PrelimMap {
-    fn convert_value(self) -> (PrelimValue, Option<Self>) {
-        (PrelimValue::Container(ContainerType::Map), Some(self))
+    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
+        Ok((PrelimValue::Container(ContainerType::Map), Some(self)))
     }
 
-    fn integrate<C: Context>(self, ctx: &C, container: Weak<Mutex<ContainerInstance>>) {
+    fn integrate<C: Context>(
+        self,
+        ctx: &C,
+        container: Weak<Mutex<ContainerInstance>>,
+    ) -> Result<(), LoroError> {
         let map = container.upgrade().unwrap();
         let mut map = map.try_lock().unwrap();
         let map = map.as_map_mut().unwrap();
         for (key, value) in self.0.into_iter() {
             let value: LoroValue = value.into();
-            map.insert(ctx, key.into(), value);
+            map.insert(ctx, key.into(), value)?;
         }
+        Ok(())
     }
 }
 
