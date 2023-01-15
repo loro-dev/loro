@@ -515,7 +515,7 @@ impl Text {
         pos: usize,
         text: &str,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |x| (x.insert(ctx, pos, text), ()))
+        self.with_event(ctx, |x| Ok((x.insert(ctx, pos, text), ())))
     }
 
     pub fn delete<C: Context>(
@@ -524,7 +524,7 @@ impl Text {
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |text| (text.delete(ctx, pos, len), ()))
+        self.with_event(ctx, |text| Ok((text.delete(ctx, pos, len), ())))
     }
 
     pub fn get_value(&self) -> LoroValue {

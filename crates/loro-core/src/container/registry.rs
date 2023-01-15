@@ -418,7 +418,7 @@ pub trait ContainerWrapper {
 
     fn with_event<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
     where
-        F: FnOnce(&mut Self::Container) -> (Option<RawEvent>, R),
+        F: FnOnce(&mut Self::Container) -> Result<(Option<RawEvent>, R), LoroError>,
     {
         let log_store = ctx.log_store();
         let hierarchy = ctx.hierarchy();
@@ -431,7 +431,7 @@ pub trait ContainerWrapper {
             });
         }
         drop(log_store);
-        let (event, ans) = self.with_container(f);
+        let (event, ans) = self.with_container(f)?;
         let ans = match event {
             Some(event) => {
                 debug_log::debug_log!("get event");

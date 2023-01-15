@@ -7,6 +7,7 @@ use crate::{
         registry::ContainerRegistry,
     },
     op::OwnedRichOp,
+    LoroError,
 };
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
@@ -67,8 +68,8 @@ impl MapContainer {
         ctx: &C,
         key: InternalString,
         value: P,
-    ) -> (Option<RawEvent>, Option<ContainerID>) {
-        let (value, maybe_container) = value.convert_value();
+    ) -> Result<(Option<RawEvent>, Option<ContainerID>), LoroError> {
+        let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
             let (event, container_id) = self.insert_obj(ctx, key, value.into_container().unwrap());
             let m = ctx.log_store();
@@ -76,11 +77,11 @@ impl MapContainer {
             let container = store.get_container(&container_id).unwrap();
             drop(store);
             prelim.integrate(ctx, container);
-            (event, Some(container_id))
+            Ok((event, Some(container_id)))
         } else {
             let value = value.into_value().unwrap();
-            let event = self.insert_value(ctx, key, value);
-            (event, None)
+            let event = self.insert_value(ctx, key, value)?;
+            Ok((event, None))
         }
     }
 
@@ -89,7 +90,7 @@ impl MapContainer {
         ctx: &C,
         key: InternalString,
         value: LoroValue,
-    ) -> Option<RawEvent> {
+    ) -> Result<Option<RawEvent>, LoroError> {
         assert!(value.as_unresolved().is_none(), "To insert a container to map, you should use insert_obj method or insert with a Prelim container value");
         let value_index = self.pool.alloc(value).start;
         let new_value_idx = value_index;
@@ -140,7 +141,7 @@ impl MapContainer {
             },
         );
 
-        ans
+        Ok(ans)
     }
 
     fn insert_obj<C: Context>(
@@ -216,7 +217,11 @@ impl MapContainer {
     }
 
     #[inline]
-    pub fn delete<C: Context>(&mut self, ctx: &C, key: InternalString) -> Option<RawEvent> {
+    pub fn delete<C: Context>(
+        &mut self,
+        ctx: &C,
+        key: InternalString,
+    ) -> Result<Option<RawEvent>, LoroError> {
         self.insert_value(ctx, key, LoroValue::Null)
     }
 
@@ -507,12 +512,12 @@ impl Map {
         ctx: &C,
         key: &str,
         value: V,
-    ) -> Result<Option<ContainerID>, crate::LoroError> {
+    ) -> Result<Option<ContainerID>, LoroError> {
         self.with_event(ctx, |map| map.insert(ctx, key.into(), value))
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |map| (map.delete(ctx, key.into()), ()))
+    pub fn delete<C: Context>(&mut self, ctx: &C, key: &str) -> Result<(), LoroError> {
+        self.with_event(ctx, |map| Ok((map.delete(ctx, key.into())?, ())))
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {

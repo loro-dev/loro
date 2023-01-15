@@ -82,8 +82,8 @@ impl ListContainer {
         ctx: &C,
         pos: usize,
         value: P,
-    ) -> (Option<RawEvent>, Option<ContainerID>) {
-        let (value, maybe_container) = value.convert_value();
+    ) -> Result<(Option<RawEvent>, Option<ContainerID>), LoroError> {
+        let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
             let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
             let m = ctx.log_store();
@@ -91,11 +91,11 @@ impl ListContainer {
             let container = store.get_container(&container_id).unwrap();
             drop(store);
             prelim.integrate(ctx, container);
-            (event, Some(container_id))
+            Ok((event, Some(container_id)))
         } else {
             let value = value.into_value().unwrap();
             let event = self.insert_value(ctx, pos, value);
-            (event, None)
+            Ok((event, None))
         }
     }
 
@@ -596,7 +596,7 @@ impl List {
     }
 
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Result<(), LoroError> {
-        self.with_event(ctx, |list| (list.delete(ctx, pos, len), ()))
+        self.with_event(ctx, |list| Ok((list.delete(ctx, pos, len), ())))
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {

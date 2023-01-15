@@ -6,11 +6,11 @@ use loro_core::context::Context;
 use loro_core::id::ID;
 
 use loro_core::log_store::{EncodeConfig, EncodeMode};
-use loro_core::{ContainerType, LoroCore, LoroValue, VersionVector};
+use loro_core::{ContainerType, LoroCore, VersionVector};
 
 #[test]
 fn send_sync() {
-    fn example<T: Send + Sync + 'static>(l: T) {}
+    fn example<T: Send + Sync + 'static>(_: T) {}
     let loro = LoroCore::default();
     example(loro);
 }
@@ -269,7 +269,7 @@ fn encode_hierarchy() {
         let list = list.upgrade().unwrap();
         let mut list = list.try_lock().unwrap();
         let list = list.as_list_mut().unwrap();
-        list.insert(&c1, 0, ContainerType::Text)
+        list.insert(&c1, 0, ContainerType::Text).unwrap()
     };
     {
         let text = c1.get_container(&text_id.unwrap()).unwrap();
