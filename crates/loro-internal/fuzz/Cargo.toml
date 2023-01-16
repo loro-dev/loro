@@ -1,5 +1,5 @@
 [package]
-name = "loro-core-fuzz"
+name = "loro-internal-fuzz"
 version = "0.0.0"
 authors = ["Automatically generated"]
 publish = false
@@ -12,7 +12,7 @@ cargo-fuzz = true
 crdt-list = { version = "0.4.0" }
 libfuzzer-sys = "0.4"
 
-[dependencies.loro-core]
+[dependencies.loro-internal]
 path = ".."
 features = ["test_utils"]
 
