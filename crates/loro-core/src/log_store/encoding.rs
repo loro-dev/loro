@@ -16,9 +16,10 @@ use crate::{
 
 use super::RemoteClientChanges;
 
+// TODO: Test this threshold
 const UPDATE_ENCODE_THRESHOLD: usize = 512;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
-const ENCODE_SCHEMA_VERSION: &str = "1.0";
+const ENCODE_SCHEMA_VERSION: &str = "0";
 pub enum EncodeMode {
     Auto(VersionVector),
     Updates(VersionVector),
@@ -49,6 +50,7 @@ pub struct EncodeConfig {
 }
 
 impl EncodeConfig {
+    #[inline(always)]
     pub fn new(mode: EncodeMode) -> Self {
         Self {
             mode,
@@ -56,6 +58,7 @@ impl EncodeConfig {
         }
     }
 
+    #[inline(always)]
     pub fn snapshot() -> Self {
         Self {
             mode: EncodeMode::Snapshot,
@@ -63,6 +66,7 @@ impl EncodeConfig {
         }
     }
 
+    #[inline(always)]
     pub fn auto(vv: VersionVector) -> Self {
         Self {
             mode: EncodeMode::Auto(vv),
@@ -70,6 +74,7 @@ impl EncodeConfig {
         }
     }
 
+    #[inline(always)]
     pub fn update(vv: VersionVector) -> Self {
         Self {
             mode: EncodeMode::Updates(vv),
@@ -77,6 +82,7 @@ impl EncodeConfig {
         }
     }
 
+    #[inline(always)]
     pub fn rle_update(vv: VersionVector) -> Self {
         Self {
             mode: EncodeMode::RleUpdates(vv),
@@ -84,27 +90,24 @@ impl EncodeConfig {
         }
     }
 
+    #[inline(always)]
     pub fn from_vv(vv: VersionVector) -> Self {
-        let mode = if vv.is_empty() {
-            EncodeMode::Snapshot
-        } else {
-            EncodeMode::Auto(vv)
-        };
-        Self {
-            mode,
-            compress: Compression::default(),
-        }
+        // TODO: we can replace it with snapshot when vv is empty in the future version (when snapshot encoding is stable)
+        Self::auto(vv)
     }
 
+    #[inline(always)]
     pub fn with_default_compress(self) -> Self {
         self.with_compress(6)
     }
 
+    #[inline(always)]
     pub fn with_compress(mut self, level: u32) -> Self {
         self.compress = Compression::new(level);
         self
     }
 
+    #[inline(always)]
     pub fn without_compress(mut self) -> Self {
         self.compress = Compression::none();
         self

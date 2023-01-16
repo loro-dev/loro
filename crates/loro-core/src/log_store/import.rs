@@ -117,6 +117,7 @@ impl LogStore {
         events
     }
 
+    // TODO: add doc
     #[instrument(skip_all)]
     pub(crate) fn get_events(
         &mut self,
