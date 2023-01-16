@@ -187,6 +187,8 @@ fn convert_inner_content(
 }
 
 pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, LoroError> {
+    debug_log::debug_dbg!(&store.vv);
+    debug_log::debug_dbg!(&store.changes);
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
@@ -214,13 +216,13 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
+            let mut op_len = 0;
             for dep in change.deps.iter() {
                 deps.push(DepsEncoding::new(
                     *client_id_to_idx.get(&dep.client_id).unwrap(),
                     dep.counter,
                 ));
             }
-            let op_len = change.ops.len() as u32;
             for op in change.ops.iter() {
                 let container_idx = op.container;
                 let container_id = store.reg.get_id(container_idx).unwrap();
@@ -231,6 +233,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                     .try_lock()
                     .unwrap()
                     .to_export_snapshot(&op.content, gc);
+                op_len += new_ops.len();
                 for op_content in new_ops {
                     let (prop, value, value2) =
                         convert_inner_content(&op_content, &mut key_to_idx, &mut keys);
@@ -249,7 +252,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                 lamport: change.lamport,
                 timestamp: change.timestamp,
                 deps_len: change.deps.len() as u32,
-                op_len,
+                op_len: op_len as u32,
             });
         }
     }
@@ -406,6 +409,8 @@ pub(super) fn decode_snapshot(
         .values()
         .map(|changes| changes.last().unwrap().id_last())
         .collect();
+
+    debug_log::debug_dbg!(&vv, &changes);
 
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {

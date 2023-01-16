@@ -517,9 +517,17 @@ impl Container for ListContainer {
                         .as_mut()
                         .unwrap()
                         .convert_ops_slice(slice.0.clone(), old_pool);
+                    let mut offset = 0;
                     new_slice
                         .into_iter()
-                        .map(|slice| InnerContent::List(InnerListOp::Insert { slice, pos: *pos }))
+                        .map(|slice| {
+                            let ans = InnerContent::List(InnerListOp::Insert {
+                                slice,
+                                pos: *pos + offset,
+                            });
+                            offset += ans.atom_len();
+                            ans
+                        })
                         .collect()
                 }
                 InnerListOp::Delete(span) => {
