@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use loro_core::{log_store::EncodeConfig, LoroCore, LoroValue};
+use loro_core::{LoroCore, LoroValue};
 // #[global_allocator]
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -13,11 +13,7 @@ fn main() {
         let mut list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();
         list.insert(actor, 0, value).unwrap();
-        updates.push(
-            actor
-                .encode(EncodeConfig::from_vv(Some(Default::default())))
-                .unwrap(),
-        );
+        updates.push(actor.encode_from(Default::default()));
     }
 
     actors[0].decode_batch(&updates).unwrap();

@@ -4,9 +4,11 @@ mod encode_updates;
 
 use std::io::{Read, Write};
 
-use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
+pub use flate2::Compression;
+use flate2::{read::DeflateDecoder, write::DeflateEncoder};
 use fxhash::FxHashMap;
 use num::Zero;
+use rle::HasLength;
 
 use crate::{
     dag::Dag, event::RawEvent, hierarchy::Hierarchy, LogStore, LoroCore, LoroError, VersionVector,
@@ -14,11 +16,11 @@ use crate::{
 
 use super::RemoteClientChanges;
 
-const UPDATE_ENCODE_THRESHOLD: usize = 5;
+const UPDATE_ENCODE_THRESHOLD: usize = 512;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
 const ENCODE_SCHEMA_VERSION: &str = "1.0";
 pub enum EncodeMode {
-    Auto(Option<VersionVector>),
+    Auto(VersionVector),
     Updates(VersionVector),
     RleUpdates(VersionVector),
     Snapshot,
@@ -42,24 +44,55 @@ impl From<u8> for ConcreteEncodeMode {
 }
 
 pub struct EncodeConfig {
-    mode: EncodeMode,
-    compress: Option<u32>,
+    pub mode: EncodeMode,
+    pub compress: Compression,
 }
 
 impl EncodeConfig {
-    pub fn new(mode: EncodeMode, compress: Option<u32>) -> Self {
-        Self { mode, compress }
+    pub fn new(mode: EncodeMode) -> Self {
+        Self {
+            mode,
+            compress: Compression::default(),
+        }
     }
 
-    pub fn from_vv(vv: Option<VersionVector>) -> Self {
-        let mode = if vv.is_none() {
+    pub fn snapshot() -> Self {
+        Self {
+            mode: EncodeMode::Snapshot,
+            compress: Compression::default(),
+        }
+    }
+
+    pub fn auto(vv: VersionVector) -> Self {
+        Self {
+            mode: EncodeMode::Auto(vv),
+            compress: Compression::default(),
+        }
+    }
+
+    pub fn update(vv: VersionVector) -> Self {
+        Self {
+            mode: EncodeMode::Updates(vv),
+            compress: Compression::default(),
+        }
+    }
+
+    pub fn rle_update(vv: VersionVector) -> Self {
+        Self {
+            mode: EncodeMode::RleUpdates(vv),
+            compress: Compression::default(),
+        }
+    }
+
+    pub fn from_vv(vv: VersionVector) -> Self {
+        let mode = if vv.is_empty() {
             EncodeMode::Snapshot
         } else {
             EncodeMode::Auto(vv)
         };
         Self {
             mode,
-            compress: None,
+            compress: Compression::default(),
         }
     }
 
@@ -68,7 +101,12 @@ impl EncodeConfig {
     }
 
     pub fn with_compress(mut self, level: u32) -> Self {
-        self.compress = Some(level);
+        self.compress = Compression::new(level);
+        self
+    }
+
+    pub fn without_compress(mut self) -> Self {
+        self.compress = Compression::none();
         self
     }
 }
@@ -76,11 +114,12 @@ impl EncodeConfig {
 pub struct LoroEncoder;
 
 impl LoroEncoder {
-    pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
+    pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Vec<u8> {
         let store = loro
             .log_store
             .try_read()
-            .map_err(|_| LoroError::LockError)?;
+            .map_err(|_| LoroError::LockError)
+            .unwrap();
         let version = ENCODE_SCHEMA_VERSION;
         let EncodeConfig { mode, compress } = config;
         let mut ans = Vec::from(MAGIC_BYTES);
@@ -88,19 +127,22 @@ impl LoroEncoder {
         // maybe u8 is enough
         ans.push(version_bytes.len() as u8);
         ans.extend_from_slice(version.as_bytes());
-        ans.push(compress.is_some() as u8);
+        ans.push((compress.level() != 0) as u8);
         let mode = match mode {
-            EncodeMode::Auto(option_vv) => {
-                if let Some(vv) = option_vv {
-                    let self_vv = store.vv();
-                    let diff = self_vv.diff(&vv);
-                    if diff.left.len() > UPDATE_ENCODE_THRESHOLD {
-                        EncodeMode::RleUpdates(vv)
-                    } else {
-                        EncodeMode::Updates(vv)
-                    }
+            EncodeMode::Auto(vv) => {
+                let self_vv = store.vv();
+                let diff = self_vv.diff(&vv);
+                let update_total_len = diff
+                    .left
+                    .iter()
+                    .map(|(_, value)| value.atom_len())
+                    .sum::<usize>();
+                if update_total_len > UPDATE_ENCODE_THRESHOLD {
+                    debug_log::debug_log!("Encode RleUpdates");
+                    EncodeMode::RleUpdates(vv)
                 } else {
-                    EncodeMode::Snapshot
+                    debug_log::debug_log!("Encode Updates");
+                    EncodeMode::Updates(vv)
                 }
             }
             mode => mode,
@@ -110,18 +152,17 @@ impl LoroEncoder {
             EncodeMode::RleUpdates(vv) => Self::encode_changes(&store, vv),
             EncodeMode::Snapshot => Self::encode_snapshot(&store),
             _ => unreachable!(),
-        }?;
+        }
+        .unwrap();
         ans.push(mode.to_byte());
-        if let Some(level) = compress {
-            let mut c = DeflateEncoder::new(&mut ans, Compression::new(level));
-            c.write_all(&encoded)
-                .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
-            c.try_finish()
-                .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+        if compress.level() != 0 {
+            let mut c = DeflateEncoder::new(&mut ans, compress);
+            c.write_all(&encoded).unwrap();
+            c.try_finish().unwrap();
         } else {
             ans.extend(encoded);
         };
-        Ok(ans)
+        ans
     }
 
     pub fn decode(loro: &mut LoroCore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
@@ -254,7 +295,10 @@ impl LoroEncoder {
         hierarchy: &mut Hierarchy,
         input: &[u8],
     ) -> Result<Vec<RawEvent>, LoroError> {
-        encode_snapshot::decode_snapshot(store, hierarchy, input)
+        debug_log::group!("decode snapshot");
+        let ans = encode_snapshot::decode_snapshot(store, hierarchy, input);
+        debug_log::group_end!();
+        ans
     }
 }
 

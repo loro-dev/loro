@@ -33,7 +33,7 @@ fn concurrent_actors(actor_num: usize) {
     for actor in actors.iter_mut() {
         let mut list = actor.get_list("list");
         list.insert(actor, 0, 1).unwrap();
-        updates.push(actor.encode(EncodeConfig::from_vv(None)).unwrap());
+        updates.push(actor.encode_all());
     }
 
     let mut a = actors.drain(0..1).next().unwrap();
@@ -67,10 +67,7 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
                 let mut updates = Vec::new();
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    updates.push(
-                        b.encode(EncodeConfig::from_vv(Some(a.vv_cloned())))
-                            .unwrap(),
-                    );
+                    updates.push(b.encode_from(a.vv_cloned()));
                 }
                 for update in updates {
                     // TODO: use import batch here
@@ -78,11 +75,7 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
                 }
                 for i in 1..actor_num {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.decode(
-                        &a.encode(EncodeConfig::from_vv(Some(b.vv_cloned())))
-                            .unwrap(),
-                    )
-                    .unwrap();
+                    b.decode(&a.encode_from(b.vv_cloned())).unwrap();
                 }
             }
         }

@@ -318,11 +318,19 @@ impl Container for ListContainer {
         match content {
             InnerContent::List(list) => match list {
                 InnerListOp::Insert { slice, pos } => {
-                    let data = self.raw_data.slice(&slice.0);
-                    smallvec::smallvec![RemoteContent::List(ListOp::Insert {
-                        pos,
-                        slice: ListSlice::RawData(data.to_vec()),
-                    })]
+                    if slice.is_unknown() {
+                        let v = RemoteContent::List(ListOp::Insert {
+                            slice: ListSlice::Unknown(slice.atom_len()),
+                            pos,
+                        });
+                        smallvec::smallvec![v]
+                    } else {
+                        let data = self.raw_data.slice(&slice.0);
+                        smallvec::smallvec![RemoteContent::List(ListOp::Insert {
+                            pos,
+                            slice: ListSlice::RawData(data.to_vec()),
+                        })]
+                    }
                 }
                 InnerListOp::Delete(del) => {
                     smallvec::smallvec![RemoteContent::List(ListOp::Delete(del))]
@@ -341,6 +349,10 @@ impl Container for ListContainer {
                         let slice: SliceRange = slice_range.into();
                         InnerContent::List(InnerListOp::Insert { slice, pos })
                     }
+                    ListSlice::Unknown(u) => InnerContent::List(InnerListOp::Insert {
+                        slice: SliceRange::new_unknown(u as u32),
+                        pos,
+                    }),
                     _ => unreachable!(),
                 },
                 ListOp::Delete(del) => InnerContent::List(InnerListOp::Delete(del)),
@@ -440,10 +452,12 @@ impl Container for ListContainer {
                         // update hierarchy
                         for state in self.state.iter_range(pos, Some(pos + len)) {
                             let range = state.get_sliced();
-                            for value in self.raw_data.slice(&range.0).iter() {
-                                if let LoroValue::Unresolved(container_id) = value {
-                                    debug_log::debug_log!("Deleted {:?}", container_id);
-                                    hierarchy.remove_child(&self.id, container_id);
+                            if !range.is_unknown() {
+                                for value in self.raw_data.slice(&range.0).iter() {
+                                    if let LoroValue::Unresolved(container_id) = value {
+                                        debug_log::debug_log!("Deleted {:?}", container_id);
+                                        hierarchy.remove_child(&self.id, container_id);
+                                    }
                                 }
                             }
                         }
@@ -455,13 +469,21 @@ impl Container for ListContainer {
                     if should_notify {
                         let mut delta = Delta::new();
                         delta.retain(pos);
-                        delta.insert(self.raw_data.slice(&content.0).to_vec());
+                        let s = if content.is_unknown() {
+                            (0..content.atom_len()).map(|_| LoroValue::Null).collect()
+                        } else {
+                            self.raw_data.slice(&content.0).to_vec()
+                        };
+
+                        delta.insert(s);
                         diff.push(Diff::List(delta));
                     }
-                    for value in self.raw_data.slice(&content.0).iter() {
-                        // update hierarchy
-                        if let LoroValue::Unresolved(container_id) = value {
-                            hierarchy.add_child(&self.id, container_id);
+                    if !content.is_unknown() {
+                        for value in self.raw_data.slice(&content.0).iter() {
+                            // update hierarchy
+                            if let LoroValue::Unresolved(container_id) = value {
+                                hierarchy.add_child(&self.id, container_id);
+                            }
                         }
                     }
 

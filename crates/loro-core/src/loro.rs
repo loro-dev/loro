@@ -91,7 +91,18 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
-    pub fn encode(&self, config: EncodeConfig) -> Result<Vec<u8>, LoroError> {
+    pub fn encode_all(&self) -> Vec<u8> {
+        LoroEncoder::encode(self, EncodeConfig::snapshot())
+    }
+
+    pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
+        debug_log::group!("Encode from {:?}", self.client_id());
+        let ans = LoroEncoder::encode(self, EncodeConfig::from_vv(from).with_default_compress());
+        debug_log::group_end!();
+        ans
+    }
+
+    pub fn encode_with_cfg(&self, config: EncodeConfig) -> Vec<u8> {
         LoroEncoder::encode(self, config)
     }
 

@@ -3,11 +3,7 @@ use std::{io::Write, time::Instant};
 use bench_utils::TextAction;
 use flate2::write::GzEncoder;
 use loro_core::VersionVector;
-use loro_core::{
-    container::registry::ContainerWrapper,
-    log_store::{EncodeConfig, EncodeMode},
-    LoroCore,
-};
+use loro_core::{container::registry::ContainerWrapper, log_store::EncodeConfig, LoroCore};
 
 fn main() {
     let actions = bench_utils::get_automerge_actions();
@@ -21,12 +17,8 @@ fn main() {
     });
 
     let start = Instant::now();
-    let buf = loro
-        .encode(EncodeConfig::new(
-            EncodeMode::RleUpdates(VersionVector::new()),
-            None,
-        ))
-        .unwrap();
+    let buf =
+        loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
     let json_ori = loro.to_json();
 
     println!(
@@ -35,7 +27,7 @@ fn main() {
         start.elapsed().as_millis()
     );
     let start = Instant::now();
-    let buf_snapshot = loro.encode(EncodeConfig::from_vv(None)).unwrap();
+    let buf_snapshot = loro.encode_all();
     let json_snapshot = loro.to_json();
 
     println!(
@@ -47,12 +39,8 @@ fn main() {
     let start = Instant::now();
     loro.decode(&buf).unwrap();
     println!("decode rle_updates used {}ms", start.elapsed().as_millis());
-    let buf2 = loro
-        .encode(EncodeConfig::new(
-            EncodeMode::RleUpdates(VersionVector::new()),
-            None,
-        ))
-        .unwrap();
+    let buf2 =
+        loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
     assert_eq!(buf, buf2);
     let json2 = loro.to_json();
     assert_eq!(json_ori, json2);
@@ -65,13 +53,13 @@ fn main() {
     assert_eq!(json_snapshot, json3);
 
     let start = Instant::now();
-    let update_buf = loro
-        .encode(EncodeConfig::new(
-            EncodeMode::Updates(VersionVector::new()),
-            None,
-        ))
-        .unwrap();
-    println!("encode updates {} bytes, used {}ms", update_buf.len(), start.elapsed().as_millis());
+    let update_buf =
+        loro.encode_with_cfg(EncodeConfig::update(VersionVector::new()).without_compress());
+    println!(
+        "encode updates {} bytes, used {}ms",
+        update_buf.len(),
+        start.elapsed().as_millis()
+    );
     let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(&update_buf).unwrap();
     let data = encoder.finish().unwrap();

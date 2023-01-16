@@ -155,15 +155,17 @@ impl PartialOrd for VersionVector {
                     eq = false;
                 }
             } else {
-                self_greater = false;
-                eq = false;
+                if *other_end > 0 {
+                    self_greater = false;
+                    eq = false;
+                }
             }
         }
 
-        for (client_id, _) in self.iter() {
+        for (client_id, self_end) in self.iter() {
             if other.contains_key(client_id) {
                 continue;
-            } else {
+            } else if *self_end > 0 {
                 other_greater = false;
                 eq = false;
             }
@@ -787,18 +789,26 @@ mod tests {
             let a: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
+            assert!(a == b);
 
             let a: VersionVector = vec![ID::new(1, 2), ID::new(2, 1)].into();
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), None);
+            assert!(!(a > b));
+            assert!(!(b > a));
+            assert!(!(b == a));
 
             let a: VersionVector = vec![ID::new(1, 2), ID::new(2, 3)].into();
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), Some(Ordering::Greater));
+            assert!(a > b);
+            assert!(a >= b);
 
             let a: VersionVector = vec![ID::new(1, 0), ID::new(2, 2)].into();
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+            assert!(a < b);
+            assert!(a <= b);
         }
     }
 

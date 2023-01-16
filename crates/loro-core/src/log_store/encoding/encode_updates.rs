@@ -6,12 +6,10 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
-    event::RawEvent,
-    hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
-    LogStore, LoroCore, LoroError, VersionVector,
+    LogStore, LoroError, VersionVector,
 };
 
 #[derive(Serialize, Deserialize, Debug)]

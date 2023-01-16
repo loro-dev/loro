@@ -626,26 +626,8 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc
-                .decode(
-                    &b_doc
-                        .encode(EncodeConfig::new(
-                            EncodeMode::Updates(a_doc.vv_cloned()),
-                            None,
-                        ))
-                        .unwrap(),
-                )
-                .unwrap();
-            b_doc
-                .decode(
-                    &a_doc
-                        .encode(EncodeConfig::new(
-                            EncodeMode::Updates(b_doc.vv_cloned()),
-                            None,
-                        ))
-                        .unwrap(),
-                )
-                .unwrap();
+            a_doc.decode(&b_doc.encode_from(a_doc.vv_cloned())).unwrap();
+            b_doc.decode(&a_doc.encode_from(b_doc.vv_cloned())).unwrap();
             check_eq(a, b);
             debug_log::group_end!();
         }
@@ -974,6 +956,40 @@ mod failed_tests {
                     container_idx: 1,
                     key: 9,
                     value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn list_unknown() {
+        test_multi_sites(
+            3,
+            &mut [
+                List {
+                    site: 139,
+                    container_idx: 133,
+                    key: 32,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 166,
+                    container_idx: 127,
+                    key: 207,
+                    value: Null,
+                },
+                Text {
+                    site: 203,
+                    container_idx: 105,
+                    pos: 87,
+                    value: 52649,
+                    is_del: false,
+                },
+                List {
+                    site: 122,
+                    container_idx: 137,
+                    key: 41,
+                    value: Container(C::List),
                 },
             ],
         )
