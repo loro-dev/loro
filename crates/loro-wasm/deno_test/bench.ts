@@ -75,6 +75,6 @@ Deno.bench(
 Deno.bench(
   "[Decode.Snapshot] Loro WASM decode snapshot Automerge dataset",
   () => {
-    Loro.importSnapshot(snapshot);
+    loro.importSnapshot(snapshot);
   },
 );
