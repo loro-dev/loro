@@ -463,6 +463,7 @@ pub(super) fn decode_snapshot(
 
         store.vv = vv;
         store.frontiers = frontiers.get_frontiers();
+        // FIXME: events are wrong if store was not empty
         Ok(store.get_events(hierarchy, &mut import_context))
     } else {
         todo!("load the diffing");
