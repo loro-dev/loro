@@ -1,5 +1,5 @@
 use js_sys::{Array, Uint8Array};
-use loro_core::{
+use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
