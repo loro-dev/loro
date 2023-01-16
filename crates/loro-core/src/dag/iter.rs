@@ -3,7 +3,7 @@ use num::Zero;
 use super::DagUtils;
 use std::{
     collections::BTreeMap,
-    ops::{Add, Range, RangeBounds},
+    ops::{Range, RangeBounds},
 };
 
 use crate::version::IdSpanVector;
@@ -369,7 +369,6 @@ mod test {
         configure::Configure,
         dag::DagUtils,
         id::{Counter, ID},
-        log_store::{EncodeConfig, EncodeMode},
         LoroCore, VersionVector,
     };
 
@@ -389,13 +388,7 @@ mod test {
 
         text_b.insert(&loro_b, 0, "b1").unwrap();
 
-        loro_c
-            .decode(
-                &loro_b
-                    .encode(EncodeConfig::new(EncodeMode::Snapshot, None))
-                    .unwrap(),
-            )
-            .unwrap();
+        loro_c.decode(&loro_b.encode_all()).unwrap();
 
         text_c.insert(&loro_c, 0, "c1").unwrap();
         let from: Vec<ID> = {
@@ -410,14 +403,7 @@ mod test {
         text_b.insert(&loro_b, 0, "b3").unwrap();
 
         loro_b
-            .decode(
-                &loro_a
-                    .encode(EncodeConfig::new(
-                        EncodeMode::Updates(loro_b.vv_cloned()),
-                        None,
-                    ))
-                    .unwrap(),
-            )
+            .decode(&loro_a.encode_from(loro_b.vv_cloned()))
             .unwrap();
 
         text_b.insert(&loro_b, 0, "b4").unwrap();
@@ -425,14 +411,7 @@ mod test {
         text_c.insert(&loro_c, 0, "c2").unwrap();
 
         loro_c
-            .decode(
-                &loro_b
-                    .encode(EncodeConfig::new(
-                        EncodeMode::Updates(loro_c.vv_cloned()),
-                        None,
-                    ))
-                    .unwrap(),
-            )
+            .decode(&loro_b.encode_from(loro_c.vv_cloned()))
             .unwrap();
 
         text_c.insert(&loro_c, 0, "c3").unwrap();
@@ -490,11 +469,7 @@ mod test {
             text1.insert(&c1, 0, "1").unwrap();
             text2.insert(&c2, 0, "2").unwrap();
         }
-        c1.decode(
-            &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv_cloned()), None))
-                .unwrap(),
-        )
-        .unwrap();
+        c1.decode(&c2.encode_from(c1.vv_cloned())).unwrap();
 
         let mut from_vv = VersionVector::new();
         from_vv.set_last(ID {

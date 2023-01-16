@@ -4,7 +4,6 @@ use loro_core::{
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
     log_store::GcConfig,
-    log_store::{EncodeConfig, EncodeMode},
     ContainerType, List, LoroCore, Map, Text, VersionVector,
 };
 use std::{cell::RefCell, ops::Deref, sync::Arc};
@@ -166,10 +165,7 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self
-            .0
-            .borrow()
-            .encode(EncodeConfig::new(EncodeMode::Snapshot, None).with_default_compress())?)
+        Ok(self.0.borrow().encode_all())
     }
 
     #[wasm_bindgen(js_name = "importSnapshot")]
@@ -192,10 +188,7 @@ impl Loro {
             None => Default::default(),
         };
 
-        Ok(self
-            .0
-            .borrow()
-            .encode(EncodeConfig::new(EncodeMode::Updates(vv), None))?)
+        Ok(self.0.borrow().encode_from(vv))
     }
 
     #[wasm_bindgen(js_name = "importUpdates")]

@@ -407,46 +407,59 @@ pub(super) fn decode_snapshot(
         .map(|changes| changes.last().unwrap().id_last())
         .collect();
 
-    let mut frontiers = vv.clone();
-    for (_, changes) in changes.iter() {
-        for change in changes.iter() {
-            remove_included_frontiers(&mut frontiers, &change.deps);
-        }
-    }
-
-    // rebuild states by snapshot
-    let mut import_context = ImportContext {
-        old_frontiers: smallvec![],
-        new_frontiers: frontiers.get_frontiers(),
-        old_vv: VersionVector::new(),
-        spans: vv.diff(&store.vv).left,
-        new_vv: vv.clone(),
-        diff: Default::default(),
-        patched_old_vv: None,
+    let can_load = match vv.partial_cmp(&store.vv) {
+        Some(ord) => match ord {
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => return Ok(vec![]),
+            std::cmp::Ordering::Greater => true,
+        },
+        None => false,
     };
-    for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
-        let container_idx = store.reg.get_or_create_container_idx(&container_id);
-        container_idx2type.insert(container_idx, container_id.container_type());
-        let state = pool_mapping.into_state(&keys, &clients);
-        let container = store.reg.get_by_idx(container_idx).unwrap();
-        let mut container = container.try_lock().unwrap();
-        container.to_import_snapshot(state, hierarchy, &mut import_context);
+    if can_load {
+        let mut frontiers = vv.clone();
+        for (_, changes) in changes.iter() {
+            for change in changes.iter() {
+                remove_included_frontiers(&mut frontiers, &change.deps);
+            }
+        }
+
+        // rebuild states by snapshot
+        let mut import_context = ImportContext {
+            old_frontiers: smallvec![],
+            new_frontiers: frontiers.get_frontiers(),
+            old_vv: VersionVector::new(),
+            spans: vv.diff(&store.vv).left,
+            new_vv: vv.clone(),
+            diff: Default::default(),
+            patched_old_vv: None,
+        };
+        for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter())
+        {
+            let container_idx = store.reg.get_or_create_container_idx(&container_id);
+            container_idx2type.insert(container_idx, container_id.container_type());
+            let state = pool_mapping.into_state(&keys, &clients);
+            let container = store.reg.get_by_idx(container_idx).unwrap();
+            let mut container = container.try_lock().unwrap();
+            container.to_import_snapshot(state, hierarchy, &mut import_context);
+        }
+
+        store.latest_lamport = changes
+            .values()
+            .map(|changes| changes.last().unwrap().lamport_last())
+            .max()
+            .unwrap();
+        store.latest_timestamp = changes
+            .values()
+            .map(|changes| changes.last().unwrap().timestamp)
+            .max()
+            .unwrap();
+
+        store.changes = changes;
+
+        store.vv = vv;
+        store.frontiers = frontiers.get_frontiers();
+        Ok(store.get_events(hierarchy, &mut import_context))
+    } else {
+        todo!("load the diffing");
     }
-
-    store.latest_lamport = changes
-        .values()
-        .map(|changes| changes.last().unwrap().lamport_last())
-        .max()
-        .unwrap();
-    store.latest_timestamp = changes
-        .values()
-        .map(|changes| changes.last().unwrap().timestamp)
-        .max()
-        .unwrap();
-
-    store.changes = changes;
-
-    store.vv = vv;
-    store.frontiers = frontiers.get_frontiers();
-    Ok(store.get_events(hierarchy, &mut import_context))
 }

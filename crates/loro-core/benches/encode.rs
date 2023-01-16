@@ -5,7 +5,6 @@ mod sync {
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
     use loro_core::container::registry::ContainerWrapper;
-    use loro_core::log_store::{EncodeConfig, EncodeMode};
     use loro_core::LoroCore;
 
     pub fn b4(c: &mut Criterion) {
@@ -25,18 +24,14 @@ mod sync {
                             text.delete(&c1, *pos, *del);
                             text.insert(&c1, *pos, ins);
                         });
-                        let update = c1
-                            .encode(EncodeConfig::new(EncodeMode::Updates(c2.vv_cloned()), None))
-                            .unwrap();
+                        let update = c1.encode_from(c2.vv_cloned());
                         c2.decode(&update).unwrap();
                     } else {
                         t2.with_container(|text| {
                             text.delete(&c2, *pos, *del);
                             text.insert(&c2, *pos, ins);
                         });
-                        let update = c2
-                            .encode(EncodeConfig::new(EncodeMode::Updates(c1.vv_cloned()), None))
-                            .unwrap();
+                        let update = c2.encode_from(c1.vv_cloned());
                         c1.decode(&update).unwrap();
                     }
                 }
@@ -55,24 +50,14 @@ mod sync {
                             text.delete(&c1, *pos, *del);
                             text.insert(&c1, *pos, ins);
                         });
-                        let update = c1
-                            .encode(EncodeConfig::new(
-                                EncodeMode::RleUpdates(c2.vv_cloned()),
-                                None,
-                            ))
-                            .unwrap();
+                        let update = c1.encode_from(c2.vv_cloned());
                         c2.decode(&update).unwrap();
                     } else {
                         t2.with_container(|text| {
                             text.delete(&c2, *pos, *del);
                             text.insert(&c2, *pos, ins);
                         });
-                        let update = c2
-                            .encode(EncodeConfig::new(
-                                EncodeMode::RleUpdates(c1.vv_cloned()),
-                                None,
-                            ))
-                            .unwrap();
+                        let update = c2.encode_from(c1.vv_cloned());
                         c1.decode(&update).unwrap();
                     }
                 }
@@ -102,21 +87,15 @@ mod run {
         let mut b = c.benchmark_group("encode");
         b.bench_function("B4_encode_updates", |b| {
             b.iter(|| {
-                let _ = loro
-                    .encode(EncodeConfig::new(
-                        EncodeMode::Updates(VersionVector::new()),
-                        None,
-                    ))
-                    .unwrap();
+                let _ = loro.encode_with_cfg(
+                    EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
+                );
             })
         });
         b.bench_function("B4_decode_updates", |b| {
-            let buf = loro
-                .encode(EncodeConfig::new(
-                    EncodeMode::Updates(VersionVector::new()),
-                    None,
-                ))
-                .unwrap();
+            let buf = loro.encode_with_cfg(
+                EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
+            );
             let mut store2 = LoroCore::default();
             b.iter(|| {
                 store2.decode(&buf).unwrap();
@@ -124,21 +103,16 @@ mod run {
         });
         b.bench_function("B4_encode_rle_updates", |b| {
             b.iter(|| {
-                let _ = loro
-                    .encode(EncodeConfig::new(
-                        EncodeMode::RleUpdates(VersionVector::new()),
-                        None,
-                    ))
-                    .unwrap();
+                let _ = loro.encode_with_cfg(
+                    EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new()))
+                        .without_compress(),
+                );
             })
         });
         b.bench_function("B4_decode_rle_updates", |b| {
-            let buf = loro
-                .encode(EncodeConfig::new(
-                    EncodeMode::RleUpdates(VersionVector::new()),
-                    None,
-                ))
-                .unwrap();
+            let buf = loro.encode_with_cfg(
+                EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new())).without_compress(),
+            );
             let mut store2 = LoroCore::default();
             b.iter(|| {
                 store2.decode(&buf).unwrap();
@@ -146,11 +120,11 @@ mod run {
         });
         b.bench_function("B4_encode_snapshot", |b| {
             b.iter(|| {
-                let _ = loro.encode(EncodeConfig::from_vv(None)).unwrap();
+                let _ = loro.encode_all();
             })
         });
         b.bench_function("B4_decode_snapshot", |b| {
-            let buf = loro.encode(EncodeConfig::from_vv(None)).unwrap();
+            let buf = loro.encode_all();
             let mut store2 = LoroCore::default();
             b.iter(|| {
                 store2.decode(&buf).unwrap();
@@ -199,11 +173,7 @@ mod import {
                 text2.insert(&c2, 0, "2").unwrap();
             }
             b.iter(|| {
-                c1.decode(
-                    &c2.encode(EncodeConfig::new(EncodeMode::Updates(c1.vv_cloned()), None))
-                        .unwrap(),
-                )
-                .unwrap();
+                c1.decode(&c2.encode_from(c1.vv_cloned())).unwrap();
             })
         });
     }

@@ -281,12 +281,7 @@ fn encode_hierarchy() {
 
     // updates
     println!("updates");
-    let input = c1
-        .encode(EncodeConfig::new(
-            EncodeMode::Updates(VersionVector::new()),
-            None,
-        ))
-        .unwrap();
+    let input = c1.encode_with_cfg(EncodeConfig::update(VersionVector::new()).without_compress());
     let mut c2 = LoroCore::default();
     c2.subscribe_deep(Box::new(move |_event| {
         // println!("event: {:?}", _event);
@@ -296,12 +291,8 @@ fn encode_hierarchy() {
 
     // rle updates
     println!("rle updates");
-    let input = c1
-        .encode(EncodeConfig::new(
-            EncodeMode::RleUpdates(VersionVector::new()),
-            None,
-        ))
-        .unwrap();
+    let input =
+        c1.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
     let mut c2 = LoroCore::default();
     c2.subscribe_deep(Box::new(move |_event| {
         // println!("event: {:?}", _event);
@@ -311,9 +302,7 @@ fn encode_hierarchy() {
 
     // snapshot
     println!("snapshot");
-    let input = c1
-        .encode(EncodeConfig::new(EncodeMode::Snapshot, None))
-        .unwrap();
+    let input = c1.encode_all();
     let mut c2 = LoroCore::default();
     c2.subscribe_deep(Box::new(move |_event| {
         // println!("event: {:?}", _event);
