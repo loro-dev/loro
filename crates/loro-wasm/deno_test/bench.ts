@@ -9,7 +9,7 @@ const wasm = await init();
 
 const automerge = resolve(
   __dirname,
-  "../../loro-core/benches/automerge-paper.json.gz",
+  "../../loro-internal/benches/automerge-paper.json.gz",
 );
 const { txns } = JSON.parse(
   new TextDecoder().decode(compress.inflate(Deno.readFileSync(automerge))),

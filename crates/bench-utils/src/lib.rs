@@ -15,7 +15,7 @@ pub struct TextAction {
 
 pub fn get_automerge_actions() -> Vec<TextAction> {
     const RAW_DATA: &[u8; 901823] =
-        include_bytes!("../../loro-core/benches/automerge-paper.json.gz");
+        include_bytes!("../../loro-internal/benches/automerge-paper.json.gz");
     let mut actions = Vec::new();
     let mut d = GzDecoder::new(&RAW_DATA[..]);
     let mut s = String::new();

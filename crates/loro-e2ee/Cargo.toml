@@ -1,0 +1,16 @@
+[package]
+name = "loro-framework"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fxhash = "0.2.1"
+loro-internal = { path = "../loro-internal" }
+ring = "0.16.20"
+rle = { path = "../rle" }
+sha2 = "0.10.2"
+
+[lib]
+doctest = false

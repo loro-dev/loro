@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, Weak},
 };
 
-use loro_core::{
+use loro_internal::{
     container::registry::ContainerInstance, context::Context, ContainerType, LoroError, LoroValue,
     Prelim, PrelimValue,
 };
