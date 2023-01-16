@@ -85,10 +85,11 @@ impl LogStore {
         hierarchy: &mut Hierarchy,
         mut changes: RemoteClientChanges,
     ) -> Vec<RawEvent> {
-        if let ControlFlow::Break(_) = self.tailor_changes(&mut changes) {
+        self.tailor_changes(&mut changes);
+        if changes.is_empty() {
             return vec![];
         }
-
+        debug_log::debug_dbg!(&changes);
         let mut container_map: FxHashMap<ContainerID, ContainerGuard> = Default::default();
         self.lock_related_containers(&changes, &mut container_map);
         let (next_vv, next_frontiers) = self.push_changes(changes, &mut container_map);
@@ -107,7 +108,7 @@ impl LogStore {
         };
         hierarchy.take_deleted();
 
-        debug_log::group!("apply");
+        debug_log::group!("apply to {}", self.this_client_id);
         self.apply(hierarchy, container_map, &mut context);
         debug_log::group_end!();
 
@@ -351,11 +352,8 @@ impl LogStore {
         }
     }
 
-    fn tailor_changes(&mut self, changes: &mut RemoteClientChanges) -> ControlFlow<()> {
+    fn tailor_changes(&mut self, changes: &mut RemoteClientChanges) {
         changes.retain(|_, v| !v.is_empty());
-        if changes.is_empty() {
-            return ControlFlow::Break(());
-        }
         for (client_id, changes) in changes.iter_mut() {
             let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
             let other_start_ctr = changes.first().unwrap().ctr_start();
@@ -375,6 +373,5 @@ impl LogStore {
             }
         }
         changes.retain(|_, v| !v.is_empty());
-        ControlFlow::Continue(())
     }
 }
