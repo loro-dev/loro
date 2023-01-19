@@ -625,6 +625,17 @@ impl List {
         self.with_event(ctx, |x| x.insert(ctx, pos, value))
     }
 
+    pub fn push<C: Context, P: Prelim>(
+        &mut self,
+        ctx: &C,
+        value: P,
+    ) -> Result<Option<ContainerID>, LoroError> {
+        self.with_event(ctx, |x| {
+            let pos = x.values_len();
+            x.insert(ctx, pos, value)
+        })
+    }
+
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Result<(), LoroError> {
         self.with_event(ctx, |list| Ok((list.delete(ctx, pos, len), ())))
     }
