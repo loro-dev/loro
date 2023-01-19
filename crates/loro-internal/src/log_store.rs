@@ -265,7 +265,12 @@ impl LogStore {
     }
 
     #[inline]
-    pub fn contains(&self, id: ID) -> bool {
+    pub fn contains_container(&self, id: &ContainerID) -> bool {
+        self.reg.contains(id)
+    }
+
+    #[inline]
+    pub fn contains_id(&self, id: ID) -> bool {
         self.changes
             .get(&id.client_id)
             .map_or(0, |changes| changes.atom_len())

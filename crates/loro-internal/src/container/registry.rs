@@ -255,6 +255,11 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
+    pub fn contains(&self, id: &ContainerID) -> bool {
+        self.container_to_idx.contains_key(id)
+    }
+
+    #[inline(always)]
     pub(crate) fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
         self.containers.get(idx.0 as usize).map(|x| &x.container)
     }

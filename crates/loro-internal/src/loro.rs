@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
+    container::ContainerID,
+    dag::DagUtils,
     event::RawEvent,
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
@@ -71,6 +73,11 @@ impl LoroCore {
         let instance = store.get_or_create_container(&id.with_type(ContainerType::Text));
         let cid = store.this_client_id();
         Text::from_instance(instance, cid)
+    }
+
+    pub fn contains(&self, id: &ContainerID) -> bool {
+        let store = self.log_store.try_read().unwrap();
+        store.contains_container(id)
     }
 
     // TODO: make it private
