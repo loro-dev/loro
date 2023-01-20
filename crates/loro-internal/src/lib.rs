@@ -28,7 +28,7 @@ pub mod tests;
 pub mod delta;
 pub mod event;
 mod prelim;
-pub use prelim::{Prelim, PrelimValue};
+pub use prelim::{Prelim, PrelimContainer, PrelimValue};
 mod value;
 
 pub use error::LoroError;
