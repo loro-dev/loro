@@ -89,7 +89,8 @@ impl From<f64> for PrelimValue {
     }
 }
 
-pub struct PrelimText(pub String);
+#[derive(Debug)]
+pub struct PrelimText(String);
 
 impl Prelim for PrelimText {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
@@ -109,7 +110,8 @@ impl Prelim for PrelimText {
     }
 }
 
-pub struct PrelimList(pub Vec<LoroValue>);
+#[derive(Debug)]
+pub struct PrelimList(Vec<LoroValue>);
 
 impl Prelim for PrelimList {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
@@ -129,7 +131,8 @@ impl Prelim for PrelimList {
     }
 }
 
-pub struct PrelimMap(pub FxHashMap<String, LoroValue>);
+#[derive(Debug)]
+pub struct PrelimMap(FxHashMap<String, LoroValue>);
 
 impl Prelim for PrelimMap {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
@@ -148,5 +151,58 @@ impl Prelim for PrelimMap {
             map.insert(ctx, key.into(), value)?;
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum PrelimContainer {
+    Text(PrelimText),
+    Map(PrelimMap),
+    List(PrelimList),
+}
+
+impl Prelim for PrelimContainer {
+    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
+        match self {
+            PrelimContainer::List(p) => p
+                .convert_value()
+                .map(|(v, s)| (v, s.map(PrelimContainer::List))),
+            PrelimContainer::Text(p) => p
+                .convert_value()
+                .map(|(v, s)| (v, s.map(PrelimContainer::Text))),
+            PrelimContainer::Map(p) => p
+                .convert_value()
+                .map(|(v, s)| (v, s.map(PrelimContainer::Map))),
+        }
+    }
+
+    fn integrate<C: Context>(
+        self,
+        ctx: &C,
+        container: Weak<Mutex<ContainerInstance>>,
+    ) -> Result<(), LoroError> {
+        match self {
+            PrelimContainer::List(p) => p.integrate(ctx, container),
+            PrelimContainer::Text(p) => p.integrate(ctx, container),
+            PrelimContainer::Map(p) => p.integrate(ctx, container),
+        }
+    }
+}
+
+impl From<String> for PrelimContainer {
+    fn from(value: String) -> Self {
+        PrelimContainer::Text(PrelimText(value))
+    }
+}
+
+impl From<Vec<LoroValue>> for PrelimContainer {
+    fn from(value: Vec<LoroValue>) -> Self {
+        PrelimContainer::List(PrelimList(value))
+    }
+}
+
+impl From<FxHashMap<String, LoroValue>> for PrelimContainer {
+    fn from(value: FxHashMap<String, LoroValue>) -> Self {
+        PrelimContainer::Map(PrelimMap(value))
     }
 }
