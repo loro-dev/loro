@@ -172,6 +172,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
+name = "cbindgen"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6358dedf60f4d9b8db43ad187391afe959746101346fe51bb978126bec61dfb"
+dependencies = [
+ "clap",
+ "heck",
+ "indexmap",
+ "log",
+ "proc-macro2 1.0.47",
+ "quote 1.0.21",
+ "serde",
+ "serde_json",
+ "syn 1.0.105",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -216,9 +235,12 @@ version = "3.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71655c45cb9845d3270c9d6df84ebe72b4dad3c2ba3f7023ad47c144e4e473a5"
 dependencies = [
+ "atty",
  "bitflags",
  "clap_lex",
  "indexmap",
+ "strsim",
+ "termcolor",
  "textwrap",
 ]
 
@@ -733,6 +755,25 @@ dependencies = [
  "thiserror",
  "tracing",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "loro-ffi"
+version = "0.1.0"
+dependencies = [
+ "cbindgen",
+ "loro-core",
+]
+
+[[package]]
+name = "loro-framework"
+version = "0.1.0"
+dependencies = [
+ "fxhash",
+ "loro-core",
+ "ring",
+ "rle",
+ "sha2",
 ]
 
 [[package]]
@@ -1627,6 +1668,15 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "toml"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1333c76748e868a4d9d1017b5ab53171dfd095f70c712fdb4653a406547f598f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
