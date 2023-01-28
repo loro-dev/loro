@@ -9,32 +9,6 @@ struct Loro(LoroCore);
 #[pyclass]
 struct LoroText(Text);
 
-impl Deref for Loro {
-    type Target = LoroCore;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Loro {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Deref for LoroText {
-    type Target = Text;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for LoroText {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 #[pymethods]
 impl Loro {
     #[new]

@@ -1,6 +1,6 @@
 #include <stdio.h>
 extern "C" {
-    #include "../../target/loro_ffi.h"
+    #include "../target/loro_ffi.h"
 };
 
 int main(void) {

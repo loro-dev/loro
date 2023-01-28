@@ -1,9 +1,6 @@
 use std::ffi::{c_char, c_uint, CStr, CString};
 
-pub type LoroCore = loro_internal::LoroCore;
-pub type Text = loro_internal::Text;
-pub type List = loro_internal::List;
-pub type Map = loro_internal::Map;
+use loro_internal::{LoroCore, Text};
 
 /// create Loro with a random unique client id
 #[no_mangle]
@@ -47,7 +44,7 @@ pub unsafe extern "C" fn text_insert(
     let text = text.as_mut().unwrap();
     let ctx = ctx.as_ref().unwrap();
     let value = CStr::from_ptr(value).to_str().unwrap();
-    text.insert(ctx, pos as usize, value).unwrap();
+    text.insert(ctx, *pos as usize, value).unwrap();
 }
 
 #[no_mangle]
