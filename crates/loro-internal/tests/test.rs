@@ -25,6 +25,19 @@ fn example_list() {
 }
 
 #[test]
+fn example_text() {
+    let mut doc = LoroCore::default();
+    let mut text = doc.get_text("text");
+    text.insert_utf16(&doc, 0, "你好").unwrap();
+    text.insert_utf16(&doc, 1, "我").unwrap();
+    text.insert_utf16(&doc, 1, "abc").unwrap();
+    text.insert_utf16(&doc, 2, "dd").unwrap();
+    println!("text {:?}", text.get_value());
+    text.delete_utf16(&doc, 1, 1).unwrap();
+    println!("text {:?}", text.get_value());
+}
+
+#[test]
 #[cfg(feature = "json")]
 fn example() {
     use loro_internal::ContainerType;

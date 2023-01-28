@@ -526,6 +526,18 @@ impl Text {
         self.with_event(ctx, |x| Ok((x.insert(ctx, pos, text), ())))
     }
 
+    pub fn insert_utf16<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        text: &str,
+    ) -> Result<(), crate::LoroError> {
+        self.with_event(ctx, |x| {
+            let pos = x.state.utf16_to_utf8(pos);
+            Ok((x.insert(ctx, pos, text), ()))
+        })
+    }
+
     pub fn delete<C: Context>(
         &mut self,
         ctx: &C,
@@ -533,6 +545,20 @@ impl Text {
         len: usize,
     ) -> Result<(), crate::LoroError> {
         self.with_event(ctx, |text| Ok((text.delete(ctx, pos, len), ())))
+    }
+
+    pub fn delete_utf16<C: Context>(
+        &mut self,
+        ctx: &C,
+        pos: usize,
+        len: usize,
+    ) -> Result<(), crate::LoroError> {
+        self.with_event(ctx, |text| {
+            let end = pos + len;
+            let pos = text.state.utf16_to_utf8(pos);
+            let len = text.state.utf16_to_utf8(end) - pos;
+            Ok((text.delete(ctx, pos, len), ()))
+        })
     }
 
     pub fn get_value(&self) -> LoroValue {
