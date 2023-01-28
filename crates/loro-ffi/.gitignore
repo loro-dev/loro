@@ -1,2 +1,3 @@
-examples/cpp/loro
-examples/cpp/*.a
+examples/loro
+examples/lib/*
+examples/loro_java
