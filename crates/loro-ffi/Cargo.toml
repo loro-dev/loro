@@ -10,7 +10,7 @@ build = "build.rs"
 loro-internal = { path = "../loro-internal" }
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "cdylib"]
 name = "loro"
 
 

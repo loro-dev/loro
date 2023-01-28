@@ -26,9 +26,9 @@ go run main.go
 
 Candidates:
 
+- [JNR](https://github.com/jnr/jnr-ffi)
 - [Panama](https://jdk.java.net/panama/) [blog](https://jornvernee.github.io/java/panama/rust/panama-ffi/2021/09/03/rust-panama-helloworld.html)
 - [JNI](https://github.com/jni-rs/jni-rs)
-- [JNR](https://github.com/jnr/jnr-ffi)
 
 ### Panama
 
@@ -36,4 +36,12 @@ install panama-jdk and jextract
 
 ```bash
 jextract -I /Library/Developer/CommandLineTools/usr/include/c++/v1 -I /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include -d loro_java -t org.loro -l loro -- lib/loro_ffi.h
+```
+
+### JNR
+
+move `libloro.dylib` into `jnr/app`
+
+```bash
+gradle run
 ```

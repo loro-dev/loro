@@ -1,5 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
 use loro_internal::{LoroCore, Text};
 use pyo3::prelude::*;
 
