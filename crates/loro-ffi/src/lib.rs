@@ -1,9 +1,9 @@
 use std::ffi::{c_char, c_uint, CStr, CString};
 
-pub type LoroCore = loro_core::LoroCore;
-pub type Text = loro_core::Text;
-pub type List = loro_core::List;
-pub type Map = loro_core::Map;
+pub type LoroCore = loro_internal::LoroCore;
+pub type Text = loro_internal::Text;
+pub type List = loro_internal::List;
+pub type Map = loro_internal::Map;
 
 /// create Loro with a random unique client id
 #[no_mangle]

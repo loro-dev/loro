@@ -7,7 +7,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-core = { path = "../loro-core" }
+loro-internal = { path = "../loro-internal" }
 
 [lib]
 crate-type = ["staticlib"]
