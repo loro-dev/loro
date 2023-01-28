@@ -36,7 +36,7 @@ pub unsafe extern "C" fn text_free(text: *mut Text) {
 pub unsafe extern "C" fn text_insert(
     text: *mut Text,
     ctx: *const LoroCore,
-    pos: *const c_uint,
+    pos: usize,
     value: *const c_char,
 ) {
     assert!(!text.is_null());
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn text_insert(
     let text = text.as_mut().unwrap();
     let ctx = ctx.as_ref().unwrap();
     let value = CStr::from_ptr(value).to_str().unwrap();
-    text.insert(ctx, *pos as usize, value).unwrap();
+    text.insert(ctx, pos, value).unwrap();
 }
 
 #[no_mangle]

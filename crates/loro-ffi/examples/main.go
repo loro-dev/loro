@@ -12,8 +12,8 @@ import "fmt"
 func main() {
 	loro := C.loro_new();
 	text := C.loro_get_text(loro, C.CString("text"));
-	pos := C.uint(0);
-	C.text_insert(text, loro, &pos, C.CString("abc"));
+	// pos := C.uint(0);
+	C.text_insert(text, loro, 0, C.CString("abc"));
 	value := C.text_value(text);
 	fmt.Println(C.GoString(value));
 	C.text_free(text);
