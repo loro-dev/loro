@@ -74,8 +74,9 @@ impl Rope {
             loop {
                 match node {
                     Node::Internal(internal_node) => {
-                        if index == 0{
-                            return 0
+                        if index == 0 {
+                            assert_eq!(ans, 0);
+                            return 0;
                         }
                         let result = find_pos_internal(internal_node, index, &src_cache);
                         if !result.found {
