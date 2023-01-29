@@ -31,10 +31,11 @@ fn example_text() {
     text.insert_utf16(&doc, 0, "你好").unwrap();
     text.insert_utf16(&doc, 1, "我").unwrap();
     text.insert_utf16(&doc, 1, "abc").unwrap();
-    text.insert_utf16(&doc, 2, "dd").unwrap();
-    println!("text {:?}", text.get_value());
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你abc我好");
     text.delete_utf16(&doc, 1, 1).unwrap();
-    println!("text {:?}", text.get_value());
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你bc我好");
+    text.delete_utf16(&doc, 0, 1).unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "bc我好");
 }
 
 #[test]
