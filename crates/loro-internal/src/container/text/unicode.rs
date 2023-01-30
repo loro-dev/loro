@@ -252,16 +252,14 @@ where
 
 #[cfg(feature = "test_utils")]
 pub mod test {
-    use std::sync::{Arc, Mutex};
-
+    #![allow(unused)]
     use arbitrary::{Arbitrary, Unstructured};
     use enum_as_inner::EnumAsInner;
     use rle::RleTree;
+    #[allow(unused_imports)]
+    use Action::*;
 
-    use crate::container::text::{
-        string_pool::{PoolString, StringPool},
-        text_content::SliceRange,
-    };
+    use crate::container::text::string_pool::{PoolString, StringPool};
 
     use super::UnicodeTreeTrait;
 
@@ -292,8 +290,6 @@ pub mod test {
         InsertUnknown { pos: u16, len: u8 },
         Delete { pos: u16, len: u8 },
     }
-
-    use Action::*;
 
     pub fn apply(actions: &mut [Action]) {
         let mut test: TestRope = Default::default();
