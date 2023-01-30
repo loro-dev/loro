@@ -13,7 +13,7 @@ impl Pool {
     }
 
     #[inline(always)]
-    pub fn alloc_arr(&mut self, values: Vec<LoroValue>) -> Range<u32> {
+    pub fn alloc_arr<T: IntoIterator<Item = LoroValue>>(&mut self, values: T) -> Range<u32> {
         let start = self.0.len() as u32;
         for v in values {
             self.0.push(v);
