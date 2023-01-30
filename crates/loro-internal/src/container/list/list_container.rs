@@ -58,7 +58,7 @@ impl ListContainer {
         if values.is_empty() {
             return;
         }
-        assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use insert_obj or insert method");
+        assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use push or insert method");
         let store = ctx.log_store();
         let mut store = store.try_write().unwrap();
 
@@ -310,7 +310,6 @@ impl Container for ListContainer {
                 values.push(value.clone());
             }
         }
-
         values.into()
     }
 
@@ -636,6 +635,30 @@ impl List {
         })
     }
 
+    pub fn push_front<C: Context, P: Prelim>(
+        &mut self,
+        ctx: &C,
+        value: P,
+    ) -> Result<Option<ContainerID>, LoroError> {
+        self.with_event(ctx, |x| {
+            let pos = 0;
+            x.insert(ctx, pos, value)
+        })
+    }
+
+    pub fn pop<C: Context>(&mut self, ctx: &C) -> Result<Option<LoroValue>, LoroError> {
+        self.with_event(ctx, |x| {
+            let len = x.values_len();
+            println!("len {}", len);
+            if len == 0 {
+                return Ok((None, None));
+            }
+            let value = x.get(len - 1);
+            println!("value {:?}", value);
+            Ok((x.delete(ctx, len - 1, 1), value))
+        })
+    }
+
     pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Result<(), LoroError> {
         self.with_event(ctx, |list| Ok((list.delete(ctx, pos, len), ())))
     }
@@ -664,6 +687,10 @@ impl List {
             .id
             .clone()
     }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.with_container(|list| list.get_value())
+    }
 }
 
 impl ContainerWrapper for List {
@@ -689,6 +716,29 @@ impl ContainerWrapper for List {
 #[cfg(test)]
 mod test {
     use crate::LoroCore;
+
+    #[test]
+    fn collection() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "ab").unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\"]");
+        list.push(&loro, 12).unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
+        list.push_front(&loro, -3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
+        let last = list.pop(&loro).unwrap().unwrap();
+        assert_eq!(last.to_json(), "12");
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
+        list.delete(&loro, 1, 1).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3]");
+        list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
+            .unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
+        list.delete(&loro, 0, 3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[]");
+        assert_eq!(list.pop(&loro).unwrap(), None);
+    }
 
     #[test]
     fn test_list_get() {
