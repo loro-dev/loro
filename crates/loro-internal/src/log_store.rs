@@ -222,13 +222,6 @@ impl LogStore {
         &self.frontiers
     }
 
-    fn get_change_merge_cfg(&self) -> ChangeMergeCfg {
-        ChangeMergeCfg {
-            max_change_length: self.cfg.change.max_change_length,
-            max_change_interval: self.cfg.change.max_change_interval,
-        }
-    }
-
     /// this method would not get the container and apply op
     pub fn append_local_ops(&mut self, ops: &[Op]) -> (SmallVec<[ID; 2]>, &[ID]) {
         let old_version = self.frontiers.clone();
@@ -302,6 +295,29 @@ impl LogStore {
     #[inline(always)]
     pub fn get_vv(&self) -> &VersionVector {
         &self.vv
+    }
+
+    fn get_change_merge_cfg(&self) -> ChangeMergeCfg {
+        ChangeMergeCfg {
+            max_change_length: self.cfg.change.max_change_length,
+            max_change_interval: self.cfg.change.max_change_interval,
+        }
+    }
+
+    pub(crate) fn max_change_length(&mut self, max_change_length: usize) {
+        self.cfg.change.max_change_length = max_change_length
+    }
+
+    pub(crate) fn max_change_interval(&mut self, max_change_interval: usize) {
+        self.cfg.change.max_change_interval = max_change_interval
+    }
+
+    pub(crate) fn gc(&mut self, gc: bool) {
+        self.cfg.gc.gc = gc;
+    }
+
+    pub(crate) fn snapshot_interval(&mut self, snapshot_interval: u64) {
+        self.cfg.gc.snapshot_interval = snapshot_interval;
     }
 
     #[cfg(feature = "test_utils")]
