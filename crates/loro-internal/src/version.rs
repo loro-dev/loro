@@ -154,11 +154,9 @@ impl PartialOrd for VersionVector {
                     other_greater = false;
                     eq = false;
                 }
-            } else {
-                if *other_end > 0 {
-                    self_greater = false;
-                    eq = false;
-                }
+            } else if *other_end > 0 {
+                self_greater = false;
+                eq = false;
             }
         }
 
@@ -781,6 +779,7 @@ impl PartialOrd for PatchedVersionVector {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::neg_cmp_op_on_partial_ord)]
     use super::*;
     mod cmp {
         use super::*;
@@ -794,6 +793,7 @@ mod tests {
             let a: VersionVector = vec![ID::new(1, 2), ID::new(2, 1)].into();
             let b: VersionVector = vec![ID::new(1, 1), ID::new(2, 2)].into();
             assert_eq!(a.partial_cmp(&b), None);
+
             assert!(!(a > b));
             assert!(!(b > a));
             assert!(!(b == a));

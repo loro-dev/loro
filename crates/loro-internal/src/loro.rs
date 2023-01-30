@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     container::ContainerID,
-    dag::DagUtils,
     event::RawEvent,
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
