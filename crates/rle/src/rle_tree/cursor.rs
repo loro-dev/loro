@@ -377,8 +377,13 @@ impl<'tree, T: Rle, A: RleTreeTrait<T>, M> RawSafeCursor<'tree, T, A, M> {
     }
 
     pub fn get_sliced(&self) -> T {
+        assert_ne!(self.0.len, 0);
         self.as_ref()
             .slice(self.0.offset, self.0.offset + self.0.len)
+    }
+
+    pub fn get_sliced_with_len(&self, len: usize) -> T {
+        self.as_ref().slice(self.0.offset, self.0.offset + len)
     }
 }
 
