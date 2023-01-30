@@ -173,7 +173,7 @@ impl ListContainer {
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
         self.state
             .get(pos)
-            .map(|range| self.raw_data.slice(&range.get_sliced().0))
+            .map(|range| self.raw_data.slice(&range.get_sliced_with_len(1).0))
             .and_then(|slice| slice.first().cloned())
     }
 
@@ -672,5 +672,20 @@ impl ContainerWrapper for List {
 
     fn client_id(&self) -> ClientID {
         self.client_id
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::LoroCore;
+
+    #[test]
+    fn test_list_get() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("id");
+        list.insert(&loro, 0, 123).unwrap();
+        list.insert(&loro, 1, 123).unwrap();
+        assert_eq!(list.get(0), Some(123.into()));
+        assert_eq!(list.get(1), Some(123.into()));
     }
 }
