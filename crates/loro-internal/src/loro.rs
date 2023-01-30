@@ -148,4 +148,31 @@ impl LoroCore {
     pub fn notify(&self, events: Vec<RawEvent>) {
         Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
     }
+
+    // config
+
+    pub fn max_change_length(&mut self, max_change_length: usize) {
+        self.log_store
+            .write()
+            .unwrap()
+            .max_change_length(max_change_length);
+    }
+
+    pub fn max_change_interval(&mut self, max_change_interval: usize) {
+        self.log_store
+            .write()
+            .unwrap()
+            .max_change_interval(max_change_interval);
+    }
+
+    pub fn gc(&mut self, gc: bool) {
+        self.log_store.write().unwrap().gc(gc)
+    }
+
+    pub fn snapshot_interval(&mut self, snapshot_interval: u64) {
+        self.log_store
+            .write()
+            .unwrap()
+            .snapshot_interval(snapshot_interval);
+    }
 }
