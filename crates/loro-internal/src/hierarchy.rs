@@ -346,48 +346,14 @@ impl Hierarchy {
                 event.current_target = target;
             };
             for sub_id in dispatch.sub_ids.iter() {
-                {
-                    let mut hierarchy_guard = hierarchy.try_lock().unwrap();
-                    hierarchy_guard.call_before(observers, sub_id)
-                }
                 if let Some(observer) = observers.get_mut(sub_id) {
                     observer.call(&event);
-                }
-                {
-                    let mut hierarchy_guard = hierarchy.try_lock().unwrap();
-                    hierarchy_guard.call_after(observers, sub_id)
+                    if observer.once() {
+                        let mut hierarchy_guard = hierarchy.try_lock().unwrap();
+                        hierarchy_guard.deleted_observers.insert(*sub_id);
+                    }
                 }
             }
-        }
-    }
-
-    #[inline]
-    fn call_before(
-        &mut self,
-        observers: &mut FxHashMap<SubscriptionID, Observer>,
-        id: &SubscriptionID,
-    ) {
-        if self.deleted_observers.contains(id) {
-            self._remove_observer(id, observers);
-            observers.remove(id);
-            self.deleted_observers.remove(id);
-        }
-    }
-
-    #[inline]
-    fn call_after(
-        &mut self,
-        observers: &mut FxHashMap<SubscriptionID, Observer>,
-        id: &SubscriptionID,
-    ) {
-        // how to simplify ?
-        let remove = if let Some(observer) = observers.get(id) {
-            observer.once()
-        } else {
-            false
-        };
-        if remove {
-            self._remove_observer(id, observers);
         }
     }
 
@@ -447,18 +413,19 @@ impl Hierarchy {
         id: &SubscriptionID,
         observers: &mut FxHashMap<SubscriptionID, Observer>,
     ) {
-        let observer = observers.get(id).unwrap();
-        let root = observer.root();
-        if root {
-            self.root_observers.remove(id);
-        } else {
-            let container = observer.container().as_ref().unwrap();
-            // Assuming the container must exist if the observer exists
-            let x = self.nodes.get_mut(container).unwrap();
-            if observer.deep() {
-                x.observers.remove(id);
+        if let Some(observer) = observers.get(id) {
+            let root = observer.root();
+            if root {
+                self.root_observers.remove(id);
             } else {
-                x.deep_observers.remove(id);
+                let container = observer.container().as_ref().unwrap();
+                // Assuming the container must exist if the observer exists
+                let x = self.nodes.get_mut(container).unwrap();
+                if observer.deep() {
+                    x.observers.remove(id);
+                } else {
+                    x.deep_observers.remove(id);
+                }
             }
         }
         observers.remove(id);
