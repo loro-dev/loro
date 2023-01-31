@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     container::ContainerID,
-    event::RawEvent,
+    event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
     LoroError, LoroValue,
@@ -143,15 +143,18 @@ impl LoroCore {
         self.log_store.try_read().unwrap().to_json()
     }
 
-    pub fn subscribe_deep(&mut self, observer: Observer) -> SubscriptionID {
-        self.hierarchy.try_lock().unwrap().subscribe_root(observer)
+    pub fn subscribe_deep(&mut self, handler: ObserverHandler) -> SubscriptionID {
+        let observer = Observer::new_root(handler);
+        self.hierarchy.try_lock().unwrap().subscribe(observer)
     }
 
-    pub fn unsubscribe_deep(&mut self, subscription: SubscriptionID) -> bool {
-        self.hierarchy
-            .try_lock()
-            .unwrap()
-            .unsubscribe_root(subscription)
+    pub fn unsubscribe_deep(&mut self, subscription: SubscriptionID) {
+        self.hierarchy.try_lock().unwrap().unsubscribe(subscription)
+    }
+
+    pub fn subscribe_once(&mut self, handler: ObserverHandler) -> SubscriptionID {
+        let observer = Observer::new_root(handler).with_once(true);
+        self.hierarchy.try_lock().unwrap().subscribe(observer)
     }
 
     #[instrument(skip_all)]

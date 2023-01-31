@@ -223,7 +223,7 @@ impl Loro {
         }))
     }
 
-    pub fn unsubscribe(&self, subscription: u32) -> bool {
+    pub fn unsubscribe(&self, subscription: u32) {
         self.0.borrow_mut().unsubscribe_deep(subscription)
     }
 }

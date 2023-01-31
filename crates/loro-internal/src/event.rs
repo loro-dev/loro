@@ -73,6 +73,86 @@ pub struct MapDiff {
     pub deleted: FxHashSet<InternalString>,
 }
 
-pub type Observer = Box<dyn FnMut(&Event) + Send>;
+// pub type Observer = Box<dyn FnMut(&Event) + Send>;
+#[derive(Default)]
+pub(crate) struct ObserverOptions {
+    pub(crate) once: bool,
+    pub(crate) container: Option<ContainerID>,
+    pub(crate) deep: bool,
+}
+
+impl ObserverOptions {
+    fn with_container(mut self, container: ContainerID) -> Self {
+        self.container.replace(container);
+        self
+    }
+}
+
+pub type ObserverHandler = Box<dyn FnMut(&Event) + Send>;
+
+pub struct Observer {
+    handler: ObserverHandler,
+    options: ObserverOptions,
+}
+
+impl Observer {
+    pub fn new(
+        handler: ObserverHandler,
+        container: Option<ContainerID>,
+        once: bool,
+        deep: bool,
+    ) -> Self {
+        let options = ObserverOptions {
+            container,
+            once,
+            deep,
+        };
+        Self { handler, options }
+    }
+
+    pub fn new_root(handler: ObserverHandler) -> Self {
+        Self {
+            handler,
+            options: ObserverOptions::default(),
+        }
+    }
+
+    pub fn new_container(handler: ObserverHandler, container: ContainerID) -> Self {
+        Self {
+            handler,
+            options: ObserverOptions::default().with_container(container),
+        }
+    }
+
+    pub fn container(&self) -> &Option<ContainerID> {
+        &self.options.container
+    }
+
+    pub fn root(&self) -> bool {
+        self.options.container.is_none()
+    }
+
+    pub fn deep(&self) -> bool {
+        self.options.deep
+    }
+
+    pub fn with_once(mut self, once: bool) -> Self {
+        self.options.once = once;
+        self
+    }
+
+    pub fn with_deep(mut self, deep: bool) -> Self {
+        self.options.deep = deep;
+        self
+    }
+
+    pub fn once(&self) -> bool {
+        self.options.once
+    }
+
+    pub fn call(&mut self, event: &Event) {
+        (self.handler)(event)
+    }
+}
 
 pub type SubscriptionID = u32;
