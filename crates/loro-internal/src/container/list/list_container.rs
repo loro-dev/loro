@@ -684,12 +684,9 @@ impl List {
         self.with_container(|list| list.iter().enumerate().for_each(f))
     }
 
-    // pub fn map<F: FnMut(&LoroValue) -> R, R>(
-    //     &self,
-    //     f: F,
-    // ) -> Map<impl Iterator<Item = &LoroValue>, F> {
-    //     self.with_container(|list| list.iter().map(f))
-    // }
+    pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
+        self.with_container(|list| list.iter().enumerate().map(f).collect())
+    }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -735,7 +732,7 @@ impl ContainerWrapper for List {
 
 #[cfg(test)]
 mod test {
-    use crate::LoroCore;
+    use crate::{LoroCore, LoroValue, PrelimContainer};
 
     #[test]
     fn test_list_get() {
@@ -786,5 +783,17 @@ mod test {
             };
             assert_eq!(format!("\"{c}\""), v.to_json())
         })
+    }
+
+    #[test]
+    fn map() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "a").unwrap();
+        list.insert(&loro, 1, "b").unwrap();
+        list.insert(&loro, 2, "c").unwrap();
+        // list.insert(&loro, 3, PrelimContainer::from("hello".to_string()))
+        //     .unwrap();
+        assert_eq!(list.map(|(_, v)| v.to_json()),vec!["\"a\"", "\"b\"", "\"c\""]);
     }
 }
