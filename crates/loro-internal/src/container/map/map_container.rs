@@ -76,7 +76,7 @@ impl MapContainer {
             let store = m.read().unwrap();
             let container = store.get_container(&container_id).unwrap();
             drop(store);
-            prelim.integrate(ctx, container);
+            prelim.integrate(ctx, container)?;
             Ok((event, Some(container_id)))
         } else {
             let value = value.into_value().unwrap();
@@ -249,6 +249,26 @@ impl MapContainer {
     pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
         self.get_value().resolve_deep(reg)
     }
+
+    pub fn keys(&self) -> Vec<InternalString> {
+        self.state.keys().cloned().collect()
+    }
+
+    pub fn values(&self) -> Vec<LoroValue> {
+        self.state
+            .values()
+            .map(|value| {
+                let index = value.value;
+                let value = self.pool.slice(&(index..index + 1))[0].clone();
+                value
+                // if let Some(container_id) = value.as_unresolved() {
+                //     LoroValue::Unresolved(container_id.clone())
+                // } else {
+                //      value
+                // }
+            })
+            .collect()
+    }
 }
 
 fn calculate_map_diff(
@@ -302,7 +322,7 @@ impl Container for MapContainer {
 
     fn tracker_init(&mut self, _vv: &crate::version::PatchedVersionVector) {}
 
-    fn tracker_checkout(&mut self, vv: &crate::version::PatchedVersionVector) {}
+    fn tracker_checkout(&mut self, _vv: &crate::version::PatchedVersionVector) {}
 
     fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
         if let Ok(set) = content.into_map() {
@@ -522,6 +542,26 @@ impl Map {
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
         self.with_container(|map| map.get(&key.into()).cloned())
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.with_container(|map| map.keys().into_iter().map(|k| k.to_string()).collect())
+    }
+
+    pub fn values(&self) -> Vec<LoroValue> {
+        self.with_container(|map| map.values())
+    }
+
+    pub fn for_each<F>(&self, f: F)
+    where
+        F: Fn(&InternalString, &LoroValue),
+    {
+        self.with_container(|map| {
+            for (k, v) in map.state.iter() {
+                let value = &map.pool.slice(&(v.value..v.value + 1))[0];
+                f(k, value);
+            }
+        })
     }
 
     pub fn id(&self) -> ContainerID {

@@ -1,5 +1,8 @@
 // TODO: refactor, extract common code with text
-use std::sync::{Mutex, Weak};
+use std::{
+    iter::Map,
+    sync::{Mutex, Weak},
+};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -34,10 +37,12 @@ use crate::{
 
 use super::list_op::InnerListOp;
 
+pub(crate) type ListState = RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>;
+
 #[derive(Debug)]
 pub struct ListContainer {
     id: ContainerID,
-    pub(crate) state: RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8, HeapMode>>,
+    pub(crate) state: ListState,
     pub(crate) raw_data: pool::Pool,
     tracker: Option<Tracker>,
     pool_mapping: Option<PoolMapping<LoroValue>>,
@@ -289,6 +294,12 @@ impl ListContainer {
 
     pub fn to_json(&self, reg: &ContainerRegistry) -> LoroValue {
         self.get_value().resolve_deep(reg)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
+        self.state
+            .iter()
+            .flat_map(|c| self.raw_data.slice(&c.as_ref().0).iter())
     }
 }
 
@@ -649,12 +660,10 @@ impl List {
     pub fn pop<C: Context>(&mut self, ctx: &C) -> Result<Option<LoroValue>, LoroError> {
         self.with_event(ctx, |x| {
             let len = x.values_len();
-            println!("len {}", len);
             if len == 0 {
                 return Ok((None, None));
             }
             let value = x.get(len - 1);
-            println!("value {:?}", value);
             Ok((x.delete(ctx, len - 1, 1), value))
         })
     }
@@ -670,6 +679,17 @@ impl List {
     pub fn len(&self) -> usize {
         self.with_container(|text| text.values_len())
     }
+
+    pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
+        self.with_container(|list| list.iter().enumerate().for_each(f))
+    }
+
+    // pub fn map<F: FnMut(&LoroValue) -> R, R>(
+    //     &self,
+    //     f: F,
+    // ) -> Map<impl Iterator<Item = &LoroValue>, F> {
+    //     self.with_container(|list| list.iter().map(f))
+    // }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -718,6 +738,16 @@ mod test {
     use crate::LoroCore;
 
     #[test]
+    fn test_list_get() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("id");
+        list.insert(&loro, 0, 123).unwrap();
+        list.insert(&loro, 1, 123).unwrap();
+        assert_eq!(list.get(0), Some(123.into()));
+        assert_eq!(list.get(1), Some(123.into()));
+    }
+
+    #[test]
     fn collection() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
@@ -741,12 +771,20 @@ mod test {
     }
 
     #[test]
-    fn test_list_get() {
+    fn for_each() {
         let mut loro = LoroCore::default();
-        let mut list = loro.get_list("id");
-        list.insert(&loro, 0, 123).unwrap();
-        list.insert(&loro, 1, 123).unwrap();
-        assert_eq!(list.get(0), Some(123.into()));
-        assert_eq!(list.get(1), Some(123.into()));
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "a").unwrap();
+        list.insert(&loro, 1, "b").unwrap();
+        list.insert(&loro, 2, "c").unwrap();
+        list.for_each(|(idx, v)| {
+            let c = match idx {
+                0 => "a",
+                1 => "b",
+                2 => "c",
+                _ => unreachable!(),
+            };
+            assert_eq!(format!("\"{c}\""), v.to_json())
+        })
     }
 }
