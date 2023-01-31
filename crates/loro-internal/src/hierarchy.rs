@@ -19,7 +19,7 @@ pub struct Hierarchy {
     root_observers: FxHashSet<SubscriptionID>,
     latest_deleted: FxHashSet<ContainerID>,
     event_counter: SubscriptionID,
-    deleted_observers: Vec<SubscriptionID>,
+    deleted_observers: FxHashSet<SubscriptionID>,
     pending_dispatches: Option<(Event, Vec<EventDispatch>)>,
     calling: bool,
 }
@@ -324,13 +324,14 @@ impl Hierarchy {
         };
         if let (Some(mut observers), Some(dispatches), Some(event)) = (observers, dispatches, event)
         {
-            Self::call_observers(&mut observers, dispatches, event);
+            Self::call_observers(Arc::clone(&hierarchy), &mut observers, dispatches, event);
             Self::reset(hierarchy, observers);
         }
     }
 
     #[inline]
     fn call_observers(
+        hierarchy: Arc<Mutex<Hierarchy>>,
         observers: &mut FxHashMap<SubscriptionID, Observer>,
         dispatches: Vec<EventDispatch>,
         mut event: Event,
@@ -345,9 +346,48 @@ impl Hierarchy {
                 event.current_target = target;
             };
             for sub_id in dispatch.sub_ids.iter() {
-                let observer = observers.get_mut(sub_id).unwrap();
-                observer(&event);
+                {
+                    let mut hierarchy_guard = hierarchy.try_lock().unwrap();
+                    hierarchy_guard.call_before(observers, sub_id)
+                }
+                if let Some(observer) = observers.get_mut(sub_id) {
+                    observer.call(&event);
+                }
+                {
+                    let mut hierarchy_guard = hierarchy.try_lock().unwrap();
+                    hierarchy_guard.call_after(observers, sub_id)
+                }
             }
+        }
+    }
+
+    #[inline]
+    fn call_before(
+        &mut self,
+        observers: &mut FxHashMap<SubscriptionID, Observer>,
+        id: &SubscriptionID,
+    ) {
+        if self.deleted_observers.contains(id) {
+            self._remove_observer(id, observers);
+            observers.remove(id);
+            self.deleted_observers.remove(id);
+        }
+    }
+
+    #[inline]
+    fn call_after(
+        &mut self,
+        observers: &mut FxHashMap<SubscriptionID, Observer>,
+        id: &SubscriptionID,
+    ) {
+        // how to simplify ?
+        let remove = if let Some(observer) = observers.get(id) {
+            observer.once()
+        } else {
+            false
+        };
+        if remove {
+            self._remove_observer(id, observers);
         }
     }
 
@@ -356,42 +396,42 @@ impl Hierarchy {
         let mut hierarchy_guard = hierarchy.try_lock().unwrap();
         let deleted_ids = std::mem::take(&mut hierarchy_guard.deleted_observers);
         for sub_id in deleted_ids.iter() {
-            observers.remove(sub_id);
+            hierarchy_guard._remove_observer(sub_id, &mut observers);
         }
         hierarchy_guard.observers.extend(observers);
         let pending_dispatches = hierarchy_guard.pending_dispatches.take();
         if let Some((event, dispatches)) = pending_dispatches {
             let mut observers = std::mem::take(&mut hierarchy_guard.observers);
             drop(hierarchy_guard);
-            Self::call_observers(&mut observers, dispatches, event);
+            Self::call_observers(Arc::clone(&hierarchy), &mut observers, dispatches, event);
             Self::reset(hierarchy, observers);
         } else {
             hierarchy_guard.calling = false;
         }
     }
 
-    pub fn subscribe(
-        &mut self,
-        container: &ContainerID,
-        observer: Observer,
-        deep: bool,
-    ) -> SubscriptionID {
+    pub fn subscribe(&mut self, observer: Observer) -> SubscriptionID {
         let id = self.next_id();
-        if deep {
-            self.nodes
-                .entry(container.clone())
-                .or_default()
-                .deep_observers
-                .insert(id);
-            self.observers.insert(id, observer);
+        if observer.root() {
+            self.root_observers.insert(id);
         } else {
-            self.nodes
-                .entry(container.clone())
-                .or_default()
-                .observers
-                .insert(id);
-            self.observers.insert(id, observer);
-        }
+            let container = observer.container().as_ref().unwrap();
+            let deep = observer.deep();
+            if deep {
+                self.nodes
+                    .entry(container.clone())
+                    .or_default()
+                    .deep_observers
+                    .insert(id);
+            } else {
+                self.nodes
+                    .entry(container.clone())
+                    .or_default()
+                    .observers
+                    .insert(id);
+            }
+        };
+        self.observers.insert(id, observer);
         id
     }
 
@@ -401,38 +441,43 @@ impl Hierarchy {
         ans
     }
 
-    pub fn unsubscribe(&mut self, container: &ContainerID, id: SubscriptionID) -> bool {
-        if let Some(x) = self.nodes.get_mut(container) {
-            x.observers
-                .remove(&id)
-                .then(|| {
-                    if self.calling {
-                        self.deleted_observers.push(id);
-                    }
-                })
-                .is_some()
+    #[inline]
+    fn _remove_observer(
+        &mut self,
+        id: &SubscriptionID,
+        observers: &mut FxHashMap<SubscriptionID, Observer>,
+    ) {
+        let observer = observers.get(id).unwrap();
+        let root = observer.root();
+        if root {
+            self.root_observers.remove(id);
         } else {
-            // TODO: warning
-            false
+            let container = observer.container().as_ref().unwrap();
+            // Assuming the container must exist if the observer exists
+            let x = self.nodes.get_mut(container).unwrap();
+            if observer.deep() {
+                x.observers.remove(id);
+            } else {
+                x.deep_observers.remove(id);
+            }
         }
+        observers.remove(id);
     }
 
-    pub fn subscribe_root(&mut self, observer: Observer) -> SubscriptionID {
-        let id = self.next_id();
-        self.root_observers.insert(id);
-        self.observers.insert(id, observer);
-        id
-    }
-
-    pub fn unsubscribe_root(&mut self, sub: SubscriptionID) -> bool {
-        self.root_observers
-            .remove(&sub)
-            .then(|| {
-                if self.calling {
-                    self.deleted_observers.push(sub);
-                }
-            })
-            .is_some()
+    // Do we need return the information that the id does not exist ?
+    // Considering if in calling, the delete operation is delayed.
+    pub fn unsubscribe(&mut self, id: SubscriptionID) {
+        if self.calling {
+            self.deleted_observers.insert(id);
+        } else {
+            let removed = self.observers.get(&id).is_none();
+            if !removed {
+                // TODO: how to avoid `take`
+                let mut observers = std::mem::take(&mut self.observers);
+                self._remove_observer(&id, &mut observers);
+                self.observers = observers;
+            }
+        }
     }
 
     pub fn send_notifications_without_lock(
@@ -447,9 +492,11 @@ impl Hierarchy {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Mutex;
+
     use fxhash::FxHashMap;
 
-    use crate::{LoroCore, PrelimContainer};
+    use crate::{container::registry::ContainerWrapper, LoroCore, PrelimContainer};
 
     #[test]
     fn children_parent() {
@@ -471,5 +518,37 @@ mod test {
             loro.parent(&map_container_id).unwrap().unwrap(),
             list_container_id
         )
+    }
+
+    #[test]
+    fn event() {
+        static COUNT: Mutex<u8> = Mutex::new(0);
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        let id1 = list
+            .subscribe(
+                &loro,
+                Box::new(|_| {
+                    *COUNT.lock().unwrap() += 1;
+                }),
+            )
+            .unwrap();
+
+        let id2 = list
+            .subscribe_once(
+                &loro,
+                Box::new(|_| {
+                    *COUNT.lock().unwrap() += 100;
+                }),
+            )
+            .unwrap();
+        list.push(&loro, "a").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&101));
+        list.push(&loro, "b").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&102));
+        list.unsubscribe(&loro, id1).unwrap();
+        list.unsubscribe(&loro, id2).unwrap();
+        list.push(&loro, "c").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&102));
     }
 }

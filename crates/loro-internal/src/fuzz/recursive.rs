@@ -1,7 +1,6 @@
 use std::{
     collections::HashSet,
     fmt::Debug,
-    rc::Rc,
     sync::{Arc, Mutex},
 };
 
@@ -12,11 +11,9 @@ use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
     array_mut_ref,
-    container::{registry::ContainerWrapper, ContainerID},
-    context::Context,
-    event::Diff,
+    container::ContainerID,
+    event::{Diff, Observer},
     id::ClientID,
-    log_store::{EncodeConfig, EncodeMode},
     ContainerType, List, LoroCore, LoroValue, Map, Text,
 };
 
@@ -81,8 +78,7 @@ impl Actor {
         let log_store = actor.loro.log_store.write().unwrap();
         let mut hierarchy = actor.loro.hierarchy.try_lock().unwrap();
         let text = Arc::clone(&actor.text_tracker);
-        hierarchy.subscribe(
-            &ContainerID::new_root("text", ContainerType::Text),
+        hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut text = text.lock().unwrap();
                 for diff in event.diff.iter() {
@@ -108,12 +104,11 @@ impl Actor {
                     }
                 }
             }),
-            false,
-        );
+            ContainerID::new_root("text", ContainerType::Text),
+        ));
 
         let map = Arc::clone(&actor.map_tracker);
-        hierarchy.subscribe(
-            &ContainerID::new_root("map", ContainerType::Map),
+        hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut map = map.lock().unwrap();
                 for diff in event.diff.iter() {
@@ -133,12 +128,11 @@ impl Actor {
                     }
                 }
             }),
-            false,
-        );
+            ContainerID::new_root("map", ContainerType::Map),
+        ));
 
         let list = Arc::clone(&actor.list_tracker);
-        hierarchy.subscribe(
-            &ContainerID::new_root("list", ContainerType::List),
+        hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut list = list.lock().unwrap();
                 for diff in event.diff.iter() {
@@ -166,8 +160,8 @@ impl Actor {
                     }
                 }
             }),
-            false,
-        );
+            ContainerID::new_root("list", ContainerType::List),
+        ));
 
         drop(hierarchy);
         drop(log_store);

@@ -5,7 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    event::{Observer, SubscriptionID},
+    event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
@@ -132,17 +132,22 @@ pub trait Container: Debug + Any + Unpin + Send + Sync {
         hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     );
+
     fn subscribe(
         &self,
         hierarchy: &mut Hierarchy,
-        observer: Observer,
+        handler: ObserverHandler,
         deep: bool,
+        once: bool,
     ) -> SubscriptionID {
-        hierarchy.subscribe(self.id(), observer, deep)
+        let observer = Observer::new_container(handler, self.id().clone())
+            .with_deep(deep)
+            .with_once(once);
+        hierarchy.subscribe(observer)
     }
 
     fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
-        hierarchy.unsubscribe(self.id(), subscription);
+        hierarchy.unsubscribe(subscription);
     }
 }
 

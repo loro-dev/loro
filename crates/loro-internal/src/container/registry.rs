@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use crate::{
     context::Context,
-    event::{Index, Observer, RawEvent, SubscriptionID},
+    event::{Index, Observer, ObserverHandler, RawEvent, SubscriptionID},
     hierarchy::Hierarchy,
     id::ClientID,
     log_store::ImportContext,
@@ -488,20 +488,60 @@ pub trait ContainerWrapper {
     fn subscribe<C: Context>(
         &self,
         ctx: &C,
-        observer: Observer,
+        handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
-            x.subscribe(&mut ctx.hierarchy().try_lock().unwrap(), observer, false)
+            x.subscribe(
+                &mut ctx.hierarchy().try_lock().unwrap(),
+                handler,
+                false,
+                false,
+            )
         })
     }
 
     fn subscribe_deep<C: Context>(
         &self,
         ctx: &C,
-        observer: Observer,
+        handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_container_checked(ctx, |x| {
-            x.subscribe(&mut ctx.hierarchy().try_lock().unwrap(), observer, true)
+            x.subscribe(
+                &mut ctx.hierarchy().try_lock().unwrap(),
+                handler,
+                true,
+                false,
+            )
+        })
+    }
+
+    fn subscribe_once<C: Context>(
+        &self,
+        ctx: &C,
+        handler: ObserverHandler,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.hierarchy().try_lock().unwrap(),
+                handler,
+                false,
+                true,
+            )
+        })
+    }
+
+    fn subscribe_deep_once<C: Context>(
+        &self,
+        ctx: &C,
+        handler: ObserverHandler,
+    ) -> Result<SubscriptionID, LoroError> {
+        self.with_container_checked(ctx, |x| {
+            x.subscribe(
+                &mut ctx.hierarchy().try_lock().unwrap(),
+                handler,
+                true,
+                true,
+            )
         })
     }
 
