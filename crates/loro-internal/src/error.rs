@@ -16,6 +16,8 @@ pub enum LoroError {
     LockError,
     #[error("LoroValue::Unresolved cannot be converted to PrelimValue")]
     PrelimError,
+    #[error("Cannot find ({0}) ")]
+    NotFoundError(Box<str>),
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

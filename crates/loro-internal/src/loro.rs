@@ -7,7 +7,7 @@ use crate::{
     log_store::{EncodeConfig, LoroEncoder},
     LoroError, LoroValue,
 };
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use tracing::instrument;
 
 use crate::{
@@ -77,6 +77,16 @@ impl LoroCore {
     pub fn contains(&self, id: &ContainerID) -> bool {
         let store = self.log_store.try_read().unwrap();
         store.contains_container(id)
+    }
+
+    pub fn children(&self, id: &ContainerID) -> Result<FxHashSet<ContainerID>, LoroError> {
+        let hierarchy = self.hierarchy.try_lock().unwrap();
+        hierarchy.children(id)
+    }
+
+    pub fn parent(&self, id: &ContainerID) -> Result<Option<ContainerID>, LoroError> {
+        let hierarchy = self.hierarchy.try_lock().unwrap();
+        hierarchy.parent(id)
     }
 
     // TODO: make it private

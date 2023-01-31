@@ -8,6 +8,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
     event::{Event, EventDispatch, Index, Observer, Path, PathAndTarget, RawEvent, SubscriptionID},
+    LoroError,
 };
 
 /// [`Hierarchy`] stores the hierarchical relationship between containers
@@ -76,6 +77,20 @@ impl Hierarchy {
             .get(id)
             .map(|node| !node.children.is_empty())
             .unwrap_or(false)
+    }
+
+    pub fn children(&self, id: &ContainerID) -> Result<FxHashSet<ContainerID>, LoroError> {
+        self.nodes
+            .get(id)
+            .ok_or(LoroError::NotFoundError(format!("{:?}", id).into()))
+            .map(|node| node.children.clone())
+    }
+
+    pub fn parent(&self, id: &ContainerID) -> Result<Option<ContainerID>, LoroError> {
+        self.nodes
+            .get(id)
+            .ok_or(LoroError::NotFoundError(format!("{:?}", id).into()))
+            .map(|node| node.parent.clone())
     }
 
     #[inline(always)]
@@ -427,5 +442,34 @@ impl Hierarchy {
         for event in events {
             Hierarchy::notify_without_lock(hierarchy.clone(), event);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use fxhash::FxHashMap;
+
+    use crate::{LoroCore, PrelimContainer};
+
+    #[test]
+    fn children_parent() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        let map_container_id = list
+            .push(&loro, PrelimContainer::from(FxHashMap::default()))
+            .unwrap()
+            .unwrap();
+        let list_container_id = list.id();
+        assert_eq!(
+            loro.children(&list_container_id)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![map_container_id.clone()]
+        );
+        assert_eq!(
+            loro.parent(&map_container_id).unwrap().unwrap(),
+            list_container_id
+        )
     }
 }
