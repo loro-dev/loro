@@ -30,7 +30,7 @@ type Containers = Vec<ContainerID>;
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ChangeEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "Rle", original_type = "u32")]
     pub(super) client_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i32")]
     pub(super) counter: Counter,

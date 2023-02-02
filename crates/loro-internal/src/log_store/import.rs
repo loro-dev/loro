@@ -8,7 +8,7 @@ use crate::{
     version::{Frontiers, IdSpanVector},
 };
 use std::sync::Arc;
-use std::{collections::VecDeque, ops::ControlFlow, sync::MutexGuard};
+use std::{collections::VecDeque, sync::MutexGuard};
 use tracing::instrument;
 
 use fxhash::{FxHashMap, FxHashSet};
