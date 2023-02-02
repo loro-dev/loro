@@ -1,8 +1,5 @@
 // TODO: refactor, extract common code with text
-use std::{
-    iter::Map,
-    sync::{Mutex, Weak},
-};
+use std::sync::{Mutex, Weak};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -794,6 +791,9 @@ mod test {
         list.insert(&loro, 2, "c").unwrap();
         // list.insert(&loro, 3, PrelimContainer::from("hello".to_string()))
         //     .unwrap();
-        assert_eq!(list.map(|(_, v)| v.to_json()),vec!["\"a\"", "\"b\"", "\"c\""]);
+        assert_eq!(
+            list.map(|(_, v)| v.to_json()),
+            vec!["\"a\"", "\"b\"", "\"c\""]
+        );
     }
 }

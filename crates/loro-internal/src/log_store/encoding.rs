@@ -137,8 +137,8 @@ impl LoroEncoder {
                 let diff = self_vv.diff(&vv);
                 let update_total_len = diff
                     .left
-                    .iter()
-                    .map(|(_, value)| value.atom_len())
+                    .values()
+                    .map(|value| value.atom_len())
                     .sum::<usize>();
                 if update_total_len > UPDATE_ENCODE_THRESHOLD {
                     debug_log::debug_log!("Encode RleUpdates");

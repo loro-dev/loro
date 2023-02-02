@@ -127,9 +127,9 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     }
 }
 
-impl From<Vec<LoroValue>> for LoroValue {
-    fn from(vec: Vec<LoroValue>) -> Self {
-        LoroValue::List(Box::new(vec))
+impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
+    fn from(vec: Vec<T>) -> Self {
+        LoroValue::List(Box::new(vec.into_iter().map(|v| v.into()).collect()))
     }
 }
 
