@@ -76,7 +76,7 @@ impl MapContainer {
             let store = m.read().unwrap();
             let container = store.get_container(&container_id).unwrap();
             drop(store);
-            prelim.integrate(ctx, container);
+            prelim.integrate(ctx, container)?;
             Ok((event, Some(container_id)))
         } else {
             let value = value.into_value().unwrap();

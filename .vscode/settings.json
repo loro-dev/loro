@@ -8,6 +8,7 @@
     "heapless",
     "Leeeon",
     "LOGSTORE",
+    "napi",
     "nextest",
     "Peritext",
     "RUSTFLAGS",
