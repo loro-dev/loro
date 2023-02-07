@@ -1,0 +1,21 @@
+{
+  "name": "loro-nodejs-linux-arm64-musl",
+  "version": "0.0.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "loro-nodejs.linux-arm64-musl.node",
+  "files": [
+    "loro-nodejs.linux-arm64-musl.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  },
+  "libc": [
+    "musl"
+  ]
+}

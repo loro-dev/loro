@@ -1,0 +1,15 @@
+{
+  "name": "loro-nodejs-darwin-universal",
+  "version": "0.0.0",
+  "os": [
+    "darwin"
+  ],
+  "main": "loro-nodejs.darwin-universal.node",
+  "files": [
+    "loro-nodejs.darwin-universal.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  }
+}
