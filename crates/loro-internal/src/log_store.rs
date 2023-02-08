@@ -125,7 +125,7 @@ impl LogStore {
             let mut ans = Vec::with_capacity(id_span.atom_len() / 30);
             for change in changes.slice_iter(
                 id_span.counter.min() as usize,
-                id_span.counter.end() as usize,
+                id_span.counter.norm_end() as usize,
             ) {
                 let change = change.value.slice(change.start, change.end);
                 ans.push(change);

@@ -245,7 +245,9 @@ impl CursorMap {
         let mut deletes: Vec<(ID, RleVecWithLen<[IdSpan; 2]>)> =
             Vec::with_capacity(span.atom_len() / 10);
         let mut inserted_set = fxhash::FxHashSet::default();
-        for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
+        for (id, marker) in
+            self.get_range_with_index(span.norm_id_start().into(), span.norm_id_end().into())
+        {
             let id: ID = id.into();
             match marker {
                 Marker::Insert { .. } => {
@@ -265,7 +267,8 @@ impl CursorMap {
                 Marker::Delete(del) => {
                     if span.intersect(&id.to_span(del.atom_len())) {
                         let from = (span.counter.min() - id.counter).max(0);
-                        let to = (span.counter.end() - id.counter).min(del.atom_len() as Counter);
+                        let to =
+                            (span.counter.norm_end() - id.counter).min(del.atom_len() as Counter);
                         if to - from > 0 {
                             deletes.push((id.inc(from), del.slice(from as usize, to as usize)));
                         }
@@ -278,7 +281,9 @@ impl CursorMap {
     }
 
     pub fn get_first_cursors_at_id_span(&self, span: IdSpan) -> Option<FirstCursorResult> {
-        for (id, marker) in self.get_range_with_index(span.min_id().into(), span.end_id().into()) {
+        for (id, marker) in
+            self.get_range_with_index(span.norm_id_start().into(), span.norm_id_end().into())
+        {
             let start_id: u128 = id.max(span.id_start().into());
             let end_id: u128 = span.id_end().into();
             let from = (start_id - id) as usize;
