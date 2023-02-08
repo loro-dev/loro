@@ -1,8 +1,9 @@
 <p align="center">
   <a href="https://loro.dev">
     <picture>
+      <img src="./docs/Loro.svg" width="200"/>
     </picture>
-    <h1 align="center">Loro 🦜</h1>
+    <h1 align="center">Loro</h1>
   </a>
 </p>
 
@@ -22,7 +23,7 @@ It provides a set of data structures that can automatically sync without any con
 Loro supports a variety of data structures and CRDT algorithms. 
 
 - It supports the most used `List`, `Map` and `Text`. 
-- [TODO] [Peritext](https://www.inkandswitch.com/peritext/) for fine-grind rich text operations
+- [WIP] [Peritext](https://www.inkandswitch.com/peritext/) for fine-grind rich text operations
 - [TODO] [Moveable Tree]() for directory-like moving operations 
 - [WIP] Super fast version checkout and undo/redo 
 
