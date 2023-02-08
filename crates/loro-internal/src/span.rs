@@ -88,7 +88,8 @@ impl CounterSpan {
     }
 
     #[inline(always)]
-    pub fn end(&self) -> i32 {
+    /// This is different from end. start may be greater than end. This is the max of start+1 and end
+    pub fn norm_end(&self) -> i32 {
         if self.start < self.end {
             self.end
         } else {
@@ -196,11 +197,6 @@ impl IdSpan {
     }
 
     #[inline(always)]
-    pub fn id_at_begin(&self) -> ID {
-        ID::new(self.client_id, self.counter.start)
-    }
-
-    #[inline(always)]
     pub fn reverse(&mut self) {
         self.counter.reverse();
     }
@@ -210,14 +206,16 @@ impl IdSpan {
         self.counter.normalize_();
     }
 
+    /// This is different from id_start. id_start may be greater than id_end, but this is the min of id_start and id_end-1
     #[inline]
-    pub fn min_id(&self) -> ID {
+    pub fn norm_id_start(&self) -> ID {
         ID::new(self.client_id, self.counter.min())
     }
 
+    /// This is different from id_end. id_start may be greater than id_end. This is the max of id_start+1 and id_end
     #[inline]
-    pub fn end_id(&self) -> ID {
-        ID::new(self.client_id, self.counter.end())
+    pub fn norm_id_end(&self) -> ID {
+        ID::new(self.client_id, self.counter.norm_end())
     }
 
     pub fn to_id_span_vec(self) -> IdSpanVector {
@@ -263,10 +261,12 @@ pub trait HasCounter {
 }
 
 pub trait HasCounterSpan: HasCounter + HasLength {
+    /// end is the exclusive end, last the inclusive end.
     fn ctr_end(&self) -> Counter {
         self.ctr_start() + self.atom_len() as Counter
     }
 
+    /// end is the exclusive end, last the inclusive end.
     fn ctr_last(&self) -> Counter {
         self.ctr_start() + self.atom_len() as Counter - 1
     }
@@ -312,10 +312,12 @@ pub trait HasIdSpan: HasId + HasLength {
         )
     }
 
+    /// end is the exclusive end, last the inclusive end.
     fn id_end(&self) -> ID {
         self.id_start().inc(self.content_len() as i32)
     }
 
+    /// end is the exclusive end, last the inclusive end.
     fn id_last(&self) -> ID {
         self.id_start().inc(self.content_len() as i32 - 1)
     }
@@ -337,10 +339,12 @@ pub trait HasLamport {
 }
 
 pub trait HasLamportSpan: HasLamport + HasLength {
+    /// end is the exclusive end, last the inclusive end.
     fn lamport_end(&self) -> Lamport {
         self.lamport() + self.content_len() as Lamport
     }
 
+    /// end is the exclusive end, last the inclusive end.
     fn lamport_last(&self) -> Lamport {
         self.lamport() + self.content_len() as Lamport - 1
     }
@@ -350,7 +354,7 @@ impl<T: HasLamport + HasLength> HasLamportSpan for T {}
 impl HasId for IdSpan {
     #[inline]
     fn id_start(&self) -> ID {
-        self.min_id()
+        self.norm_id_start()
     }
 }
 

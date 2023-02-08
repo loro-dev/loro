@@ -121,7 +121,7 @@ impl Tracker {
             let mut len = 0;
             for marker in self
                 .id_to_cursor
-                .get_range(id_span.min_id().into(), id_span.end_id().into())
+                .get_range(id_span.norm_id_start().into(), id_span.norm_id_end().into())
             {
                 for span in marker.get_spans(id_span) {
                     len += span.len;

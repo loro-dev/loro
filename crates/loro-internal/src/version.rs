@@ -430,11 +430,11 @@ impl VersionVector {
 
     pub fn extend_to_include(&mut self, span: IdSpan) {
         if let Some(counter) = self.get_mut(&span.client_id) {
-            if *counter < span.counter.end() {
-                *counter = span.counter.end();
+            if *counter < span.counter.norm_end() {
+                *counter = span.counter.norm_end();
             }
         } else {
-            self.insert(span.client_id, span.counter.end());
+            self.insert(span.client_id, span.counter.norm_end());
         }
     }
 
@@ -667,12 +667,12 @@ impl PatchedVersionVector {
             };
 
             if let Some(counter) = self.patch.get_mut(&span.client_id) {
-                if *counter < span.counter.end() {
-                    *counter = span.counter.end();
+                if *counter < span.counter.norm_end() {
+                    *counter = span.counter.norm_end();
                     self.omit_if_needless(span.client_id);
                 }
             } else {
-                let target = span.counter.end();
+                let target = span.counter.norm_end();
                 if self.base.get(&span.client_id) == Some(&target) {
                     continue;
                 }

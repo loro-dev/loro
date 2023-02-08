@@ -17,7 +17,7 @@
 | Lamport                 | [Lamport timestamp](https://en.wikipedia.org/wiki/Lamport_timestamp) |                                                                                                                                                              |
 | Span                    | A series of continuous things                                        |                                                                                                                                                              |
 | Causal Order            | The order of happen-before relationship                              | The DAG expresses the causal order of the changes                                                                                                            |
-| VV                      | [Version Vector](https://en.wikipedia.org/wiki/Version_vector)       |                                                                                                                                                              |
+| VV                      | [Version Vector](https://en.wikipedia.org/wiki/Version_vector)       | In code, it has exclusive end, `VV {0: 8}` means the last op id of client 0 is `0-7`                                                                                                                                                               |
 
 
 ### RLE
@@ -32,3 +32,9 @@ This gives us a compact way to represent the mergeable elements.
 ### Container
 
 Each op is associated with one container. Different CRDT algorithms use different types of containers. There are hierarchical relationship between containers, but they cannot affect each other
+
+# Convention
+
+- There are methods like `id_last`, `id_end`, `lamport_last`, `lamport_end`. `last` refers to the last one, but 
+  `end` refers to the exclusive end of a range. For example, OpSpan ranging from 0-0 till 0-8 has id_last of 0-8 
+  and id_end of 0-9
