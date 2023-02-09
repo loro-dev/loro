@@ -2,12 +2,14 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     container::ContainerID,
+    dag::Dag,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
     LoroError, LoroValue,
 };
 use fxhash::{FxHashMap, FxHashSet};
+use rle::HasLength;
 use tracing::instrument;
 
 use crate::{
@@ -107,15 +109,18 @@ impl LoroCore {
         debug_log::group_end!();
     }
 
+    /// this method will always compress
     pub fn encode_all(&self) -> Vec<u8> {
         LoroEncoder::encode(self, EncodeConfig::snapshot())
     }
 
+    /// encode without compress
     pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
-        debug_log::group!("Encode from {:?}", self.client_id());
-        let ans = LoroEncoder::encode(self, EncodeConfig::from_vv(from).with_default_compress());
-        debug_log::group_end!();
-        ans
+        LoroEncoder::encode(self, EncodeConfig::from_vv(from).without_compress())
+    }
+
+    pub fn encode_from_compress(&self, from: VersionVector) -> Vec<u8> {
+        LoroEncoder::encode(self, EncodeConfig::from_vv(from).with_default_compress())
     }
 
     pub fn encode_with_cfg(&self, config: EncodeConfig) -> Vec<u8> {
