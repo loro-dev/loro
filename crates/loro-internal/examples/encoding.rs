@@ -27,7 +27,7 @@ fn main() {
         start.elapsed().as_millis()
     );
     let start = Instant::now();
-    let buf_snapshot = loro.encode_all();
+    let buf_snapshot = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
     let json_snapshot = loro.to_json();
 
     println!(
