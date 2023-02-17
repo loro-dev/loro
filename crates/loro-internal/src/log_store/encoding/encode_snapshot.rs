@@ -129,6 +129,8 @@ struct SnapshotOpEncoding {
     prop: usize,
     // list range start or del len or map value index
     value: u64,
+    // List: the length of content when inserting, -2 when the inserted content is unknown, and -1 when deleting.
+    // Map: always -1
     #[columnar(strategy = "Rle")]
     value2: i64,
 }
