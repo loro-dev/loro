@@ -135,12 +135,7 @@ mod run {
 
 mod import {
     use criterion::Criterion;
-    use loro_internal::{
-        change::ChangeMergeCfg,
-        configure::Configure,
-        log_store::{EncodeConfig, EncodeMode},
-        LoroCore,
-    };
+    use loro_internal::{change::ChangeMergeCfg, configure::Configure, LoroCore};
 
     pub fn causal_iter(c: &mut Criterion) {
         let mut b = c.benchmark_group("causal_iter");
