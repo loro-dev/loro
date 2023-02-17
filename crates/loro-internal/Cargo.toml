@@ -17,7 +17,6 @@ thiserror = "1.0.31"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
 crdt-list = { version = "0.4.0" }
-owning_ref = "0.4.1"
 postcard = "1.0.2"
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1.1.7", optional = true }
