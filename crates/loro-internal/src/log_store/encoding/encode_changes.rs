@@ -331,12 +331,12 @@ pub(super) fn decode_changes_to_inner_format(
     let mut lamport_map = FxHashMap::default();
     let mut changes_ans = FxHashMap::default();
     // calculate lamport
-    let mut q: VecDeque<_> = changes.keys().copied().collect();
-    let len = q.len();
+    let mut client_ids: VecDeque<_> = changes.keys().copied().collect();
+    let len = client_ids.len();
     let mut loop_time = len;
-    while let Some(client_id) = q.pop_front() {
-        let dq = changes.get_mut(&client_id).unwrap();
-        while let Some(mut change) = dq.pop_front() {
+    while let Some(client_id) = client_ids.pop_front() {
+        let this_client_changes = changes.get_mut(&client_id).unwrap();
+        while let Some(mut change) = this_client_changes.pop_front() {
             match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
                 Ok(lamport) => {
                     change.lamport = lamport;
@@ -351,8 +351,8 @@ pub(super) fn decode_changes_to_inner_format(
                     loop_time = len;
                 }
                 Err(_not_found_client) => {
-                    dq.push_front(change);
-                    q.push_back(client_id);
+                    this_client_changes.push_front(change);
+                    client_ids.push_back(client_id);
                     loop_time -= 1;
                     if loop_time == 0 {
                         unreachable!();
@@ -368,7 +368,7 @@ pub(super) fn decode_changes_to_inner_format(
 }
 
 // snapshot store is None
-pub(super) fn get_lamport_by_deps(
+pub(crate) fn get_lamport_by_deps(
     deps: &SmallVec<[ID; 2]>,
     lamport_map: &FxHashMap<ClientID, Vec<(Range<Counter>, Lamport)>>,
     store: Option<&LogStore>,
