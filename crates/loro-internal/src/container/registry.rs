@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use crate::{
     context::Context,
-    event::{Index, Observer, ObserverHandler, RawEvent, SubscriptionID},
+    event::{Index, ObserverHandler, RawEvent, SubscriptionID},
     hierarchy::Hierarchy,
     id::ClientID,
     log_store::ImportContext,

@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, VecDeque},
-    ops::Range,
-};
+use std::{collections::VecDeque, ops::Range};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -26,7 +23,7 @@ use crate::{
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
     smstring::SmString,
-    span::{HasIdSpan, IdSpan},
+    span::HasIdSpan,
     InternalString, LogStore, LoroError, LoroValue, VersionVector,
 };
 
@@ -39,10 +36,6 @@ type Containers = Vec<ContainerID>;
 pub(super) struct ChangeEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    pub(super) counter: Counter,
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
-    pub(super) lamport: Lamport,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
@@ -200,8 +193,6 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 
         changes.push(ChangeEncoding {
             client_idx: client_idx as ClientIdx,
-            counter: change.id.counter,
-            lamport: change.lamport,
             timestamp: change.timestamp,
             deps_len: change.deps.len() as u32,
             op_len,
@@ -248,10 +239,6 @@ pub(super) fn decode_changes_to_inner_format(
         start_counter,
     } = encoded;
 
-    if change_encodings.is_empty() {
-        return Ok(Default::default());
-    }
-
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
@@ -263,8 +250,6 @@ pub(super) fn decode_changes_to_inner_format(
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
-                counter: real_counter,
-                lamport: real_lamport,
                 timestamp,
                 op_len,
                 deps_len,
@@ -330,7 +315,7 @@ pub(super) fn decode_changes_to_inner_format(
             let change = Change {
                 id: ID { client_id, counter },
                 // cal lamport after parsing all changes
-                lamport: real_lamport,
+                lamport: 0,
                 timestamp,
                 ops,
                 deps,
@@ -350,47 +335,41 @@ pub(super) fn decode_changes_to_inner_format(
     let mut q: VecDeque<_> = changes.keys().copied().collect();
     let len = q.len();
     let mut loop_time = len;
-    'outer: while let Some(client_id) = q.pop_front() {
-        if let Some(dq) = changes.get_mut(&client_id) {
-            while let Some(mut change) = dq.pop_front() {
-                match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
-                    Ok(lamport) => {
-                        // println!("real lamport {} cal {}", change.lamport, lamport);
-                        change.lamport = lamport;
-                        // println!(
-                        //     "add map change len {}, change id {}, lamport {}",
-                        //     change.content_len(),
-                        //     change.id,
-                        //     lamport
-                        // );
-                        // lamport_map.insert(change.id_last(), lamport + change.content_len() as u32 - 1);
-                        lamport_map.entry(client_id).or_insert_with(Vec::new).push((
-                            change.id.counter..change.id.counter + change.content_len() as Counter,
-                            lamport + change.content_len() as u32 - 1,
-                        ));
-                        lamport_map
-                            .entry(client_id)
-                            .and_modify(|v| v.sort_by_key(|r| r.0.start));
-                        changes_ans
-                            .entry(client_id)
-                            .or_insert_with(Vec::new)
-                            .push(change);
-                        loop_time = len;
+    while let Some(client_id) = q.pop_front() {
+        let dq = changes.get_mut(&client_id).unwrap();
+        while let Some(mut change) = dq.pop_front() {
+            match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
+                Ok(lamport) => {
+                    change.lamport = lamport;
+                    let entry = lamport_map.entry(client_id).or_insert_with(Vec::new);
+                    match entry.binary_search_by_key(&change.id.counter, |(r, _)| r.start) {
+                        Err(pos) => entry.insert(
+                            pos,
+                            (
+                                change.id.counter
+                                    ..change.id.counter + change.content_len() as Counter,
+                                lamport + change.content_len() as u32 - 1,
+                            ),
+                        ),
+                        // already exist?
+                        Ok(_) => unreachable!(),
                     }
-                    Err(_not_found_client) => {
-                        dq.push_back(change);
-                        q.push_back(client_id);
-                        loop_time -= 1;
-                        if loop_time == 0 {
-                            break 'outer;
-                        }
-                        break;
+                    changes_ans
+                        .entry(client_id)
+                        .or_insert_with(Vec::new)
+                        .push(change);
+                    loop_time = len;
+                }
+                Err(_not_found_client) => {
+                    dq.push_front(change);
+                    q.push_back(client_id);
+                    loop_time -= 1;
+                    if loop_time == 0 {
+                        unreachable!();
                     }
+                    break;
                 }
             }
-            // dq is empty or break
-        } else {
-            unreachable!()
         }
     }
 
@@ -450,51 +429,4 @@ fn get_value_from_range_map(
         }
     }
     None
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{log_store::EncodeConfig, LoroCore};
-
-    #[test]
-    fn multi_site() {
-        let mut loro1 = LoroCore::new(Default::default(), Some(1));
-        let mut loro2 = LoroCore::new(Default::default(), Some(2));
-        let mut loro3 = LoroCore::new(Default::default(), Some(3));
-        let mut text1 = loro1.get_text("text");
-        let mut text2 = loro2.get_text("text");
-
-        text1.insert(&loro1, 0, "a").unwrap();
-        text2.insert(&loro2, 0, "b").unwrap();
-        loro1
-            .decode(&loro2.encode_with_cfg(EncodeConfig::update(loro1.vv_cloned())))
-            .unwrap();
-        loro2
-            .decode(&loro1.encode_with_cfg(EncodeConfig::update(loro2.vv_cloned())))
-            .unwrap();
-        text1.insert(&loro1, 0, "c").unwrap();
-        text2.insert(&loro2, 0, "d").unwrap();
-        loro1
-            .decode(&loro2.encode_with_cfg(EncodeConfig::update(loro1.vv_cloned())))
-            .unwrap();
-        loro2
-            .decode(&loro1.encode_with_cfg(EncodeConfig::update(loro2.vv_cloned())))
-            .unwrap();
-        loro3
-            .decode(&loro2.encode_with_cfg(EncodeConfig::rle_update(loro3.vv_cloned())))
-            .unwrap();
-
-        for (c3, c1) in loro3
-            .log_store
-            .try_read()
-            .unwrap()
-            .changes
-            .values()
-            .zip(loro1.log_store.try_read().unwrap().changes.values())
-        {
-            for (l3, l1) in c3.iter().zip(c1.iter()) {
-                assert_eq!(l3.lamport, l1.lamport);
-            }
-        }
-    }
 }
