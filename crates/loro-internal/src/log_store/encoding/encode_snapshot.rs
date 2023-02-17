@@ -148,7 +148,6 @@ pub(super) struct SnapshotEncoded {
     containers: Containers,
     container_states: Vec<EncodedStateContent>,
     keys: Vec<InternalString>,
-    start_counter: Vec<Counter>,
 }
 
 const ENCODED_UNKNOWN_SLICE: i64 = -2;
@@ -198,13 +197,10 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
-    let mut start_counter = Vec::new();
     for (key, changes) in store.changes.iter() {
         client_id_to_idx.insert(*key, clients.len() as ClientIdx);
         clients.push(*key);
         change_num += changes.merged_len();
-
-        start_counter.push(changes.first().unwrap().id.counter);
     }
 
     let (_, containers) = store.reg.export();
@@ -286,7 +282,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
         containers,
         container_states,
         keys,
-        start_counter,
     };
     to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
 }
@@ -306,7 +301,6 @@ pub(super) fn decode_snapshot(
         containers,
         container_states,
         keys,
-        start_counter,
     } = encoded;
 
     if change_encodings.is_empty() {
@@ -329,10 +323,8 @@ pub(super) fn decode_snapshot(
         container_idx2type.insert(container_idx, container_id.container_type());
     }
 
-    for (client_idx, this_change_encodings) in
-        &change_encodings.into_iter().group_by(|c| c.client_idx)
-    {
-        let mut counter = start_counter[client_idx as usize];
+    for (_, this_change_encodings) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
+        let mut counter = 0;
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
