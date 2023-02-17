@@ -101,9 +101,13 @@ impl LogStore {
 
     #[inline]
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
-        self.changes
-            .get(&id.client_id)
-            .map(|changes| changes.get(id.counter as usize).unwrap().element)
+        self.changes.get(&id.client_id).and_then(|changes| {
+            if id.counter <= changes.last().unwrap().id_last().counter {
+                Some(changes.get(id.counter as usize).unwrap().element)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<ClientID, Vec<Change<RemoteOp>>> {

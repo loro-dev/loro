@@ -374,10 +374,9 @@ pub(crate) fn get_lamport_by_deps(
 ) -> Result<Lamport, ClientID> {
     let mut ans = Vec::new();
     for id in deps.iter() {
-          if let Some(c) = store.and_then(|x|x.lookup_change(*id)) {
-                let offset = id.counter - c.id.counter;
-                ans.push(c.lamport + offset as u32);
-          } 
+        if let Some(c) = store.and_then(|x| x.lookup_change(*id)) {
+            let offset = id.counter - c.id.counter;
+            ans.push(c.lamport + offset as u32);
         } else if let Some(v) = lamport_map.get(&id.client_id) {
             if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
                 ans.push(lamport + offset);
