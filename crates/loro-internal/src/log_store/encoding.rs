@@ -249,7 +249,7 @@ impl LoroEncoder {
                     encode_updates::decode_updates_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::RleUpdates => {
-                    encode_changes::decode_changes_to_inner_format(decoded)?
+                    encode_changes::decode_changes_to_inner_format(decoded, &store)?
                 }
                 _ => unreachable!("snapshot should not be batched"),
             };
@@ -291,7 +291,7 @@ impl LoroEncoder {
         hierarchy: &mut Hierarchy,
         input: &[u8],
     ) -> Result<Vec<RawEvent>, LoroError> {
-        let changes = encode_changes::decode_changes_to_inner_format(input)?;
+        let changes = encode_changes::decode_changes_to_inner_format(input, store)?;
         Ok(store.import(hierarchy, changes))
     }
 

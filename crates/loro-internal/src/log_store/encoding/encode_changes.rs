@@ -1,8 +1,11 @@
+use std::collections::VecDeque;
+
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
+use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{
@@ -33,10 +36,6 @@ type Containers = Vec<ContainerID>;
 pub(super) struct ChangeEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     pub(super) client_idx: ClientIdx,
-    // #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    // pub(super) counter: Counter,
-    // #[columnar(strategy = "DeltaRle", original_type = "u32")]
-    // pub(super) lamport: Lamport,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
@@ -88,7 +87,6 @@ struct DocEncoding {
     containers: Containers,
     keys: Vec<InternalString>,
     start_counter: Vec<Counter>,
-    start_lamport: Vec<Lamport>,
 }
 
 #[instrument(skip_all)]
@@ -105,7 +103,6 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
     let diff = self_vv.diff(vv);
 
     let mut start_counter = Vec::new();
-    let mut start_lamport = Vec::new();
 
     for span in diff.left.iter() {
         let changes = store.get_changes_slice(span.id_span());
@@ -117,7 +114,6 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             idx
         });
         start_counter.push(changes.first().unwrap().id.counter);
-        start_lamport.push(changes.first().unwrap().lamport);
 
         diff_changes.extend(changes);
     }
@@ -197,8 +193,6 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 
         changes.push(ChangeEncoding {
             client_idx: client_idx as ClientIdx,
-            // counter: change.id.counter,
-            // lamport: change.lamport,
             timestamp: change.timestamp,
             deps_len: change.deps.len() as u32,
             op_len,
@@ -213,11 +207,9 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
         containers: container_ids,
         keys,
         start_counter,
-        start_lamport,
     };
 
     to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
-    // postcard::to_allocvec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
 }
 
 #[instrument(skip_all)]
@@ -227,11 +219,12 @@ pub(super) fn decode_changes(
     input: &[u8],
 ) -> Result<Vec<RawEvent>, LoroError> {
     // TODO: using the one with fewer changes to import
-    decode_changes_to_inner_format(input).map(|changes| store.import(hierarchy, changes))
+    decode_changes_to_inner_format(input, store).map(|changes| store.import(hierarchy, changes))
 }
 
 pub(super) fn decode_changes_to_inner_format(
     input: &[u8],
+    store: &LogStore,
 ) -> Result<RemoteClientChanges, LoroError> {
     let encoded: DocEncoding =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
@@ -244,23 +237,24 @@ pub(super) fn decode_changes_to_inner_format(
         containers,
         keys,
         start_counter,
-        start_lamport,
     } = encoded;
+
+    if change_encodings.is_empty() {
+        return Ok(Default::default());
+    }
 
     let mut op_iter = ops.into_iter();
     let mut changes = FxHashMap::default();
+    let mut lamport_map = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
 
     for (client_idx, this_change_encodings) in
         &change_encodings.into_iter().group_by(|c| c.client_idx)
     {
         let mut counter = start_counter[client_idx as usize];
-        let mut lamport = start_lamport[client_idx as usize];
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
-                // counter: this_counter,
-                // lamport: this_lamport,
                 timestamp,
                 op_len,
                 deps_len,
@@ -268,13 +262,6 @@ pub(super) fn decode_changes_to_inner_format(
 
             let client_id = clients[client_idx as usize];
             let mut ops = RleVec::<[RemoteOp; 2]>::new();
-            let deps = (0..deps_len)
-                .map(|_| {
-                    let raw = deps_iter.next().unwrap();
-                    ID::new(clients[raw.client_idx as usize], raw.counter)
-                })
-                .collect();
-
             let mut delta = 0;
             for op in op_iter.by_ref().take(op_len as usize) {
                 let OpEncoding {
@@ -323,23 +310,121 @@ pub(super) fn decode_changes_to_inner_format(
                 ops.push(remote_op);
             }
 
+            let deps: SmallVec<[ID; 2]> = (0..deps_len)
+                .map(|_| {
+                    let raw = deps_iter.next().unwrap();
+                    ID::new(clients[raw.client_idx as usize], raw.counter)
+                })
+                .collect();
+            // let lamport = get_lamport_by_deps(&deps, &lamport_map, Some(store));
+
             let change = Change {
                 id: ID { client_id, counter },
-                lamport,
+                // cal lamport after parsing all changes
+                lamport: 0,
                 timestamp,
                 ops,
                 deps,
             };
 
             counter += delta;
-            lamport += delta as u32;
 
+            // lamport_map.insert(change.id_last(), lamport);
             changes
                 .entry(client_id)
-                .or_insert_with(Vec::new)
-                .push(change);
+                .or_insert_with(VecDeque::new)
+                .push_back(change)
         }
     }
+    let mut changes_ans = FxHashMap::default();
+    // calculate lamport
+    let mut q: VecDeque<_> = changes.keys().copied().collect();
+    while let Some(client_id) = q.pop_front() {
+        if let Some(dq) = changes.get_mut(&client_id) {
+            while let Some(mut change) = dq.pop_front() {
+                match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
+                    Ok(lamport) => {
+                        change.lamport = lamport;
+                        lamport_map.insert(change.id_last(), lamport);
+                        changes_ans
+                            .entry(client_id)
+                            .or_insert_with(Vec::new)
+                            .push(change);
+                    }
+                    Err(_not_found_client) => {
+                        dq.push_back(change);
+                        q.push_back(client_id);
+                        break;
+                    }
+                }
+            }
+            // dq is empty or break
+        } else {
+            unreachable!()
+        }
+    }
+
     // TODO: using the one with fewer changes to import
-    Ok(changes)
+    Ok(changes_ans)
+}
+
+// snapshot store is None
+pub(super) fn get_lamport_by_deps(
+    deps: &SmallVec<[ID; 2]>,
+    lamport_map: &FxHashMap<ID, Lamport>,
+    store: Option<&LogStore>,
+) -> Result<Lamport, ClientID> {
+    let mut ans = Vec::new();
+    for id in deps.iter() {
+        let lookup_store = store
+            .and_then(|s| s.get_vv().get(&id.client_id))
+            .and_then(|c| (*c > id.counter).then_some(0))
+            .is_some();
+        if lookup_store {
+            if let Some(c) = store.unwrap().lookup_change(*id) {
+                ans.push(c.lamport)
+            } else {
+                unreachable!()
+            }
+        } else if let Some(lamport) = lamport_map.get(id).copied() {
+            ans.push(lamport)
+        } else {
+            return Err(id.client_id);
+        }
+    }
+    Ok(ans.into_iter().max().unwrap_or(0) + 1)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{log_store::EncodeConfig, LoroCore};
+
+    #[test]
+    fn multi_site() {
+        let mut loro1 = LoroCore::new(Default::default(), Some(1));
+        let mut loro2 = LoroCore::new(Default::default(), Some(2));
+        let mut loro3 = LoroCore::new(Default::default(), Some(3));
+        let mut text1 = loro1.get_text("text");
+        let mut text2 = loro2.get_text("text");
+
+        text1.insert(&loro1, 0, "a").unwrap();
+        text2.insert(&loro2, 0, "b").unwrap();
+        loro1
+            .decode(&loro2.encode_with_cfg(EncodeConfig::rle_update(loro1.vv_cloned())))
+            .unwrap();
+        loro2
+            .decode(&loro1.encode_with_cfg(EncodeConfig::rle_update(loro2.vv_cloned())))
+            .unwrap();
+        text1.insert(&loro1, 0, "c").unwrap();
+        text2.insert(&loro2, 0, "d").unwrap();
+        loro1
+            .decode(&loro2.encode_with_cfg(EncodeConfig::rle_update(loro1.vv_cloned())))
+            .unwrap();
+        loro2
+            .decode(&loro1.encode_with_cfg(EncodeConfig::rle_update(loro2.vv_cloned())))
+            .unwrap();
+        loro3
+            .decode(&loro2.encode_with_cfg(EncodeConfig::rle_update(loro3.vv_cloned())))
+            .unwrap();
+    }
 }
