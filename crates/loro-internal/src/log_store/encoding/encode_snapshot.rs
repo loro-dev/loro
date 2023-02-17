@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec, RleVecWithIndex};
@@ -6,7 +8,7 @@ use serde_columnar::{columnar, from_bytes, to_vec};
 use smallvec::smallvec;
 
 use crate::{
-    change::{Change, ChangeMergeCfg, Lamport},
+    change::{Change, ChangeMergeCfg},
     container::text::text_content::SliceRange,
     container::{
         list::list_op::{DeleteSpan, InnerListOp},
@@ -19,7 +21,7 @@ use crate::{
     event::RawEvent,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
-    log_store::ImportContext,
+    log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
     op::{InnerContent, Op},
     span::{HasIdSpan, HasLamportSpan},
     version::TotalOrderStamp,
@@ -145,7 +147,6 @@ pub(super) struct SnapshotEncoded {
     container_states: Vec<EncodedStateContent>,
     keys: Vec<InternalString>,
     start_counter: Vec<Counter>,
-    start_lamport: Vec<Lamport>,
 }
 
 const ENCODED_UNKNOWN_SLICE: i64 = -2;
@@ -196,14 +197,12 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
     let mut start_counter = Vec::new();
-    let mut start_lamport = Vec::new();
     for (key, changes) in store.changes.iter() {
         client_id_to_idx.insert(*key, clients.len() as ClientIdx);
         clients.push(*key);
         change_num += changes.merged_len();
 
         start_counter.push(changes.first().unwrap().id.counter);
-        start_lamport.push(changes.first().unwrap().lamport);
     }
 
     let (_, containers) = store.reg.export();
@@ -286,7 +285,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
         container_states,
         keys,
         start_counter,
-        start_lamport,
     };
     to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
 }
@@ -307,7 +305,6 @@ pub(super) fn decode_snapshot(
         container_states,
         keys,
         start_counter,
-        start_lamport,
     } = encoded;
 
     if change_encodings.is_empty() {
@@ -321,7 +318,7 @@ pub(super) fn decode_snapshot(
     }
 
     let mut op_iter = ops.into_iter();
-    let mut changes = FxHashMap::default();
+    let mut changes_dq = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
     let mut container_idx2type = FxHashMap::default();
 
@@ -334,7 +331,6 @@ pub(super) fn decode_snapshot(
         &change_encodings.into_iter().group_by(|c| c.client_idx)
     {
         let mut counter = start_counter[client_idx as usize];
-        let mut lamport = start_lamport[client_idx as usize];
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
@@ -406,19 +402,54 @@ pub(super) fn decode_snapshot(
 
             let change = Change {
                 id: ID { client_id, counter },
-                lamport,
+                // cal lamport after parsing all changes
+                lamport: 0,
                 timestamp,
                 ops,
                 deps,
             };
 
             counter += delta;
-            lamport += delta as u32;
 
-            changes
+            changes_dq
                 .entry(client_id)
-                .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
-                .push(change);
+                .or_insert_with(VecDeque::new)
+                .push_back(change)
+        }
+    }
+    // calculate lamport
+    let mut lamport_map = FxHashMap::default();
+    let mut changes = FxHashMap::default();
+    // calculate lamport
+    let mut client_ids: VecDeque<_> = changes_dq.keys().copied().collect();
+    let len = client_ids.len();
+    let mut loop_time = len;
+    while let Some(client_id) = client_ids.pop_front() {
+        let this_client_changes = changes_dq.get_mut(&client_id).unwrap();
+        while let Some(mut change) = this_client_changes.pop_front() {
+            match get_lamport_by_deps(&change.deps, &lamport_map, None) {
+                Ok(lamport) => {
+                    change.lamport = lamport;
+                    lamport_map.entry(client_id).or_insert_with(Vec::new).push((
+                        change.id.counter..change.id.counter + change.content_len() as Counter,
+                        lamport,
+                    ));
+                    changes
+                        .entry(client_id)
+                        .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
+                        .push(change);
+                    loop_time = len;
+                }
+                Err(_not_found_client) => {
+                    this_client_changes.push_front(change);
+                    client_ids.push_back(client_id);
+                    loop_time -= 1;
+                    if loop_time == 0 {
+                        unreachable!();
+                    }
+                    break;
+                }
+            }
         }
     }
 
@@ -427,7 +458,7 @@ pub(super) fn decode_snapshot(
         .map(|changes| changes.last().unwrap().id_last())
         .collect();
 
-    debug_log::debug_dbg!(&vv, &changes);
+    debug_log::debug_dbg!(&vv, &changes_dq);
 
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {
