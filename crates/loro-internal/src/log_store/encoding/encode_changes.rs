@@ -114,7 +114,6 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             idx
         });
         start_counter.push(changes.first().unwrap().id.counter);
-
         diff_changes.extend(changes);
     }
 
@@ -341,19 +340,10 @@ pub(super) fn decode_changes_to_inner_format(
             match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
                 Ok(lamport) => {
                     change.lamport = lamport;
-                    let entry = lamport_map.entry(client_id).or_insert_with(Vec::new);
-                    match entry.binary_search_by_key(&change.id.counter, |(r, _)| r.start) {
-                        Err(pos) => entry.insert(
-                            pos,
-                            (
-                                change.id.counter
-                                    ..change.id.counter + change.content_len() as Counter,
-                                lamport + change.content_len() as u32 - 1,
-                            ),
-                        ),
-                        // already exist?
-                        Ok(_) => unreachable!(),
-                    }
+                    lamport_map.entry(client_id).or_insert_with(Vec::new).push((
+                        change.id.counter..change.id.counter + change.content_len() as Counter,
+                        lamport,
+                    ));
                     changes_ans
                         .entry(client_id)
                         .or_insert_with(Vec::new)
@@ -398,7 +388,7 @@ pub(super) fn get_lamport_by_deps(
             }
         } else if let Some(v) = lamport_map.get(&id.client_id) {
             if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
-                ans.push(lamport - offset as u32);
+                ans.push(lamport + offset);
             } else {
                 return Err(id.client_id);
             }
@@ -412,7 +402,7 @@ pub(super) fn get_lamport_by_deps(
 fn get_value_from_range_map(
     v: &[(Range<Counter>, Lamport)],
     key: Counter,
-) -> Option<(Lamport, i32)> {
+) -> Option<(Lamport, u32)> {
     let index = match v.binary_search_by_key(&key, |&(ref range, _)| range.start) {
         Ok(index) => Some(index),
 
@@ -425,7 +415,7 @@ fn get_value_from_range_map(
     if let Some(index) = index {
         let (ref range, value) = v[index];
         if key < range.end {
-            return Some((value, range.end - key - 1));
+            return Some((value, (key - range.start) as u32));
         }
     }
     None
