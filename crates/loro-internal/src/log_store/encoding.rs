@@ -19,12 +19,23 @@ use super::RemoteClientChanges;
 // TODO: Test this threshold
 const UPDATE_ENCODE_THRESHOLD: usize = 512;
 const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
-const ENCODE_SCHEMA_VERSION: &str = "0";
+const ENCODE_SCHEMA_VERSION: u8 = 0;
 pub enum EncodeMode {
     Auto(VersionVector),
     Updates(VersionVector),
     RleUpdates(VersionVector),
     Snapshot,
+}
+
+impl EncodeMode {
+    fn to_byte(&self) -> u8 {
+        match self {
+            EncodeMode::Auto(_) => unreachable!(),
+            EncodeMode::Updates(_) => 0,
+            EncodeMode::RleUpdates(_) => 1,
+            EncodeMode::Snapshot => 2,
+        }
+    }
 }
 
 enum ConcreteEncodeMode {
@@ -126,10 +137,8 @@ impl LoroEncoder {
         let version = ENCODE_SCHEMA_VERSION;
         let EncodeConfig { mode, compress } = config;
         let mut ans = Vec::from(MAGIC_BYTES);
-        let version_bytes = version.as_bytes();
         // maybe u8 is enough
-        ans.push(version_bytes.len() as u8);
-        ans.extend_from_slice(version.as_bytes());
+        ans.push(version);
         ans.push((compress.level() != 0) as u8);
         let mode = match mode {
             EncodeMode::Auto(vv) => {
@@ -174,9 +183,8 @@ impl LoroEncoder {
         if magic_bytes != MAGIC_BYTES {
             return Err(LoroError::DecodeError("Invalid header bytes".into()));
         }
-        let (version_len, input) = input.split_at(1);
+        let (_version, input) = input.split_at(1);
         // check version
-        let (_version, input) = input.split_at(version_len[0] as usize);
         let compress = input[0];
         let mode: ConcreteEncodeMode = input[1].into();
         let mut decoded = Vec::new();
@@ -302,16 +310,5 @@ impl LoroEncoder {
         let ans = encode_snapshot::decode_snapshot(store, hierarchy, input);
         debug_log::group_end!();
         ans
-    }
-}
-
-impl EncodeMode {
-    fn to_byte(&self) -> u8 {
-        match self {
-            EncodeMode::Auto(_) => unreachable!(),
-            EncodeMode::Updates(_) => 0,
-            EncodeMode::RleUpdates(_) => 1,
-            EncodeMode::Snapshot => 2,
-        }
     }
 }
