@@ -19,13 +19,12 @@ fn main() {
     let start = Instant::now();
     let buf =
         loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
-    let json_ori = loro.to_json();
-
     println!(
         "encode changes {} bytes, used {}ms",
         buf.len(),
         start.elapsed().as_millis()
     );
+    let json_ori = loro.to_json();
     let start = Instant::now();
     let buf_snapshot = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
     let json_snapshot = loro.to_json();
@@ -35,6 +34,7 @@ fn main() {
         buf_snapshot.len(),
         start.elapsed().as_millis()
     );
+    let json_snapshot = loro.to_json();
     let mut loro = LoroCore::default();
     let start = Instant::now();
     loro.decode(&buf).unwrap();
