@@ -349,6 +349,7 @@ dependencies = [
  "enum-as-inner",
  "flate2",
  "fxhash",
+ "itertools",
  "num",
  "owning_ref",
  "postcard",
