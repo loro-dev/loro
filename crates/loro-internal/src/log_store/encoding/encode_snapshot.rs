@@ -256,6 +256,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
 
             changes.push(ChangeEncoding {
                 client_idx: client_idx as ClientIdx,
+                counter: change.id.counter,
+                lamport: change.lamport,
                 timestamp: change.timestamp,
                 deps_len: change.deps.len() as u32,
                 op_len: op_len as u32,
@@ -338,8 +340,8 @@ pub(super) fn decode_snapshot(
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
-                // counter: this_counter,
-                // lamport: this_lamport,
+                counter: this_counter,
+                lamport: this_lamport,
                 timestamp,
                 op_len,
                 deps_len,

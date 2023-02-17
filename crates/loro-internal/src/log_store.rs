@@ -370,6 +370,11 @@ impl LogStore {
     pub fn to_json(&self) -> LoroValue {
         self.reg.to_json()
     }
+
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn changes(&self) -> &ClientChanges {
+        &self.changes
+    }
 }
 
 impl Dag for LogStore {

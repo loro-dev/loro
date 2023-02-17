@@ -14,6 +14,7 @@ use crate::{
     container::ContainerID,
     event::{Diff, Observer},
     id::ClientID,
+    log_store::EncodeConfig,
     ContainerType, List, LoroCore, LoroValue, Map, Text,
 };
 
@@ -611,6 +612,25 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         &**value_a.as_list().unwrap(),
         &*a_actor.list_tracker.lock().unwrap(),
     );
+
+    use itertools::Itertools;
+    for key in a_doc
+        .log_store
+        .try_read()
+        .unwrap()
+        .changes()
+        .keys()
+        .sorted()
+    {
+        let as_ = a_doc.log_store.try_read().unwrap();
+        let ca = as_.changes().get(key).unwrap();
+        let bs = b_doc.log_store.try_read().unwrap();
+        let cb = bs.changes().get(key).unwrap();
+        for (la, lb) in ca.iter().zip(cb.iter()) {
+            assert_eq!(la.lamport, lb.lamport);
+            assert_eq!(la.id, lb.id);
+        }
+    }
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -620,8 +640,12 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc.decode(&b_doc.encode_from(a_doc.vv_cloned())).unwrap();
-            b_doc.decode(&a_doc.encode_from(b_doc.vv_cloned())).unwrap();
+            a_doc
+                .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                .unwrap();
+            b_doc
+                .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
+                .unwrap();
             check_eq(a, b);
             debug_log::group_end!();
         }
