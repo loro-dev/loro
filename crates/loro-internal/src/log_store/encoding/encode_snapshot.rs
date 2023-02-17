@@ -422,7 +422,6 @@ pub(super) fn decode_snapshot(
     // calculate lamport
     let mut lamport_map = FxHashMap::default();
     let mut changes = FxHashMap::default();
-    // calculate lamport
     let mut client_ids: VecDeque<_> = changes_dq.keys().copied().collect();
     let len = client_ids.len();
     let mut loop_time = len;
