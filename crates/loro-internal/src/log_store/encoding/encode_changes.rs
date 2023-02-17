@@ -33,10 +33,10 @@ type Containers = Vec<ContainerID>;
 pub(super) struct ChangeEncoding {
     #[columnar(strategy = "Rle", original_type = "u32")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
-    pub(super) counter: Counter,
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
-    pub(super) lamport: Lamport,
+    // #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    // pub(super) counter: Counter,
+    // #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    // pub(super) lamport: Lamport,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
@@ -197,8 +197,8 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 
         changes.push(ChangeEncoding {
             client_idx: client_idx as ClientIdx,
-            counter: change.id.counter,
-            lamport: change.lamport,
+            // counter: change.id.counter,
+            // lamport: change.lamport,
             timestamp: change.timestamp,
             deps_len: change.deps.len() as u32,
             op_len,
@@ -259,8 +259,8 @@ pub(super) fn decode_changes_to_inner_format(
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
-                counter: this_counter,
-                lamport: this_lamport,
+                // counter: this_counter,
+                // lamport: this_lamport,
                 timestamp,
                 op_len,
                 deps_len,
