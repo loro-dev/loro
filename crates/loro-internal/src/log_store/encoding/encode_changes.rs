@@ -328,6 +328,23 @@ pub(super) fn decode_changes_to_inner_format(
         }
     }
 
+    let start_vv: VersionVector = changes
+        .iter()
+        .map(|(client, changes)| (*client, changes.iter().map(|c| c.id.counter).min().unwrap()))
+        .collect::<FxHashMap<_, _>>()
+        .into();
+    if start_vv > store.vv() {
+        return Err(LoroError::DecodeError(
+            format!(
+            "Warning: current Loro version is `{:?}`, but remote changes start at version `{:?}`. 
+        These updates can not be applied",
+            store.get_vv(),
+            start_vv
+        )
+            .into(),
+        ));
+    }
+
     let mut lamport_map = FxHashMap::default();
     let mut changes_ans = FxHashMap::default();
     // calculate lamport
