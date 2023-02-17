@@ -32,6 +32,7 @@ serde_columnar = { version = "0.2.3" }
 tracing = { version = "0.1.37" }
 append-only-bytes = { version = "0.1.4", features = ["u32_range"] }
 flate2 = "1.0"
+itertools = "0.10.5"
 
 [dev-dependencies]
 serde_json = "1.0.87"

@@ -369,6 +369,7 @@ mod test {
         configure::Configure,
         dag::DagUtils,
         id::{Counter, ID},
+        log_store::EncodeConfig,
         LoroCore, VersionVector,
     };
 

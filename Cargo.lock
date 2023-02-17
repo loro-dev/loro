@@ -785,6 +785,7 @@ dependencies = [
  "enum-as-inner",
  "flate2",
  "fxhash",
+ "itertools",
  "js-sys",
  "num",
  "owning_ref",
