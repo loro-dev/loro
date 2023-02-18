@@ -641,12 +641,14 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc
-                .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
-                .unwrap();
-            b_doc
-                .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
-                .unwrap();
+            // a_doc
+            //     .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+            //     .unwrap();
+            // b_doc
+            //     .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
+            //     .unwrap();
+            a_doc.decode(&b_doc.encode_all()).unwrap();
+            b_doc.decode(&a_doc.encode_all()).unwrap();
             check_eq(a, b);
             debug_log::group_end!();
         }
@@ -681,7 +683,6 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 }
 
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
-    // println!("{:?}", actions);
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor::new(i as u64));
@@ -695,7 +696,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.apply_action(action);
     }
 
-    // println!("{}", actions.table());
     debug_log::group!("check synced");
     check_synced(&mut sites);
     debug_log::group_end!();
@@ -984,7 +984,7 @@ mod failed_tests {
     #[test]
     fn list_unknown() {
         test_multi_sites(
-            3,
+            5,
             &mut [
                 List {
                     site: 139,
@@ -1018,7 +1018,7 @@ mod failed_tests {
     #[test]
     fn path_issue() {
         test_multi_sites(
-            2,
+            5,
             &mut [
                 List {
                     site: 1,
