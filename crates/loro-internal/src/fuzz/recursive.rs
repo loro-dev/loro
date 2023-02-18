@@ -629,6 +629,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         for (la, lb) in ca.iter().zip(cb.iter()) {
             assert_eq!(la.lamport, lb.lamport);
             assert_eq!(la.id, lb.id);
+            assert!(!la.deps.iter().any(|u| !lb.deps.contains(u)))
         }
     }
 }
