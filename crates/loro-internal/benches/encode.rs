@@ -120,11 +120,11 @@ mod run {
         });
         b.bench_function("B4_encode_snapshot", |b| {
             b.iter(|| {
-                let _ = loro.encode_all();
+                let _ = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
             })
         });
         b.bench_function("B4_decode_snapshot", |b| {
-            let buf = loro.encode_all();
+            let buf = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
             let mut store2 = LoroCore::default();
             b.iter(|| {
                 store2.decode(&buf).unwrap();
