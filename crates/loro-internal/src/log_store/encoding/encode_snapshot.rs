@@ -15,7 +15,6 @@ use crate::{
         list::list_op::{DeleteSpan, InnerListOp},
         map::{InnerMapSet, ValueSlot},
         pool_mapping::StateContent,
-        registry::ContainerIdx,
         Container, ContainerID,
     },
     dag::{remove_included_frontiers, Dag},
@@ -24,7 +23,7 @@ use crate::{
     id::{ClientID, Counter, ID},
     log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
     op::{InnerContent, Op},
-    span::{HasIdSpan, HasLamportSpan},
+    span::HasLamportSpan,
     version::TotalOrderStamp,
     ContainerType, InternalString, LogStore, LoroCore, LoroError, LoroValue, VersionVector,
 };
@@ -128,8 +127,8 @@ struct SnapshotOpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // list range start or del len or map value index
-    value: u64,
+    // list range start or del len or map value index, maybe negative
+    value: i64,
     // List: the length of content when inserting, -2 when the inserted content is unknown, and -1 when deleting.
     // Map: always -1
     #[columnar(strategy = "Rle")]
@@ -159,22 +158,22 @@ fn convert_inner_content(
     op_content: &InnerContent,
     key_to_idx: &mut FxHashMap<InternalString, usize>,
     keys: &mut Vec<InternalString>,
-) -> (usize, u64, i64) {
+) -> (usize, i64, i64) {
     let (prop, value, is_del) = match &op_content {
         InnerContent::List(list_op) => match list_op {
             InnerListOp::Insert { slice, pos } => {
                 if slice.is_unknown() {
-                    (*pos, slice.content_len() as u64, ENCODED_UNKNOWN_SLICE)
+                    (*pos, slice.content_len() as i64, ENCODED_UNKNOWN_SLICE)
                 } else {
                     (
                         *pos,
-                        slice.0.start as u64,
+                        slice.0.start as i64,
                         (slice.0.end - slice.0.start) as i64,
                     )
                 }
             }
             InnerListOp::Delete(span) => {
-                (span.pos as usize, span.len as u64, ENCODED_DELETED_CONTENT)
+                (span.pos as usize, span.len as i64, ENCODED_DELETED_CONTENT)
             }
         },
         InnerContent::Map(map_set) => {
@@ -184,7 +183,7 @@ fn convert_inner_content(
                     keys.push(key.clone());
                     keys.len() - 1
                 }),
-                *value as u64,
+                *value as i64,
                 ENCODED_PLACEHOLDER,
             )
         }
@@ -329,14 +328,18 @@ pub(super) fn decode_snapshot(
 
     // calc vv
     let vv = calc_vv(&change_encodings, &ops, &clients, &idx_to_container_type);
+    // println!("remote vv {:?} self vv {:?}", vv, &store.vv);
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {
             std::cmp::Ordering::Less => {
                 // TODO warning
-                println!("[Warning] the vv of encoded snapshot is smaller than self, no change is applied");
+                debug_log::debug_log!("[Warning] the vv of encoded snapshot is smaller than self, no change is applied");
                 return Ok(vec![]);
             }
-            std::cmp::Ordering::Equal => return Ok(vec![]),
+            std::cmp::Ordering::Equal => {
+                debug_log::debug_log!("vv is equal, no change is applied");
+                return Ok(vec![]);
+            }
             std::cmp::Ordering::Greater => store.vv.is_empty(),
         },
         None => false,
@@ -416,7 +419,7 @@ pub(super) fn decode_snapshot(
                                 }
                             } else {
                                 InnerListOp::Insert {
-                                    slice: (value as u32..(value as i64 + value2) as u32).into(),
+                                    slice: (value as u32..(value + value2) as u32).into(),
                                     pos: prop,
                                 }
                             }
@@ -498,6 +501,7 @@ pub(super) fn decode_snapshot(
     }
 
     if can_load {
+        // println!("can load");
         let mut import_context = load_snapshot(
             store,
             hierarchy,
@@ -521,6 +525,7 @@ pub(super) fn decode_snapshot(
             &clients,
         );
         let diff_changes = new_store.export(&store.vv);
+        // println!("diff change {:?}", diff_changes);
         Ok(store.import(hierarchy, diff_changes))
     }
 }
@@ -608,11 +613,11 @@ fn calc_vv(
                     _ => {
                         let is_del = value2 == ENCODED_DELETED_CONTENT;
                         if is_del {
-                            value
+                            value.unsigned_abs()
                         } else {
                             let is_unknown = value2 == ENCODED_UNKNOWN_SLICE;
                             if is_unknown {
-                                value
+                                value as u64
                             } else {
                                 value2 as u64
                             }
@@ -635,19 +640,11 @@ mod test {
     #[test]
     fn cannot_load() {
         let mut loro = LoroCore::new(Default::default(), Some(1));
-        let mut list = loro.get_list("list");
-        list.insert(&loro, 0, ContainerType::Text).unwrap();
-
+        let mut map = loro.get_map("map");
+        map.insert(&loro, "0", ContainerType::List).unwrap();
+        map.delete(&loro, "0").unwrap();
         let mut loro2 = LoroCore::new(Default::default(), Some(2));
-        loro2.import(loro.export(loro2.vv_cloned()));
-
-        let mut list2 = loro2.get_list("list");
-        list2.delete(&loro2, 0, 1).unwrap();
-        loro.import(loro2.export(loro.vv_cloned()));
-
-        let mut list = loro.get_list("list");
-        list.insert(&loro, 0, "abc").unwrap();
-        loro2.decode(&loro.encode_all()).unwrap();
         loro.decode(&loro2.encode_all()).unwrap();
+        loro2.decode(&loro.encode_all()).unwrap();
     }
 }

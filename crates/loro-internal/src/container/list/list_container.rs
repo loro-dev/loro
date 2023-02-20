@@ -380,13 +380,23 @@ impl Container for ListContainer {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
                         let mut delta = Delta::new();
-                        let delta_vec = self.raw_data.slice(&slice.0).to_vec();
+                        // unknown
+                        let delta_vec = if slice.is_unknown() {
+                            let mut ans = Vec::with_capacity(slice.atom_len());
+                            for _ in 0..slice.content_len() {
+                                ans.push(LoroValue::Null);
+                            }
+                            ans
+                        } else {
+                            self.raw_data.slice(&slice.0).to_vec()
+                        };
                         delta.retain(*pos);
                         delta.insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
-
-                    self.update_hierarchy_on_insert(hierarchy, slice);
+                    if !slice.is_unknown() {
+                        self.update_hierarchy_on_insert(hierarchy, slice);
+                    }
                     self.state.insert(*pos, slice.clone());
                 }
                 InnerListOp::Delete(span) => {
@@ -729,7 +739,7 @@ impl ContainerWrapper for List {
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroCore, LoroValue, PrelimContainer};
+    use crate::LoroCore;
 
     #[test]
     fn test_list_get() {
