@@ -5,6 +5,7 @@ mod sync {
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
     use loro_internal::container::registry::ContainerWrapper;
+    use loro_internal::log_store::EncodeConfig;
     use loro_internal::LoroCore;
 
     pub fn b4(c: &mut Criterion) {
@@ -14,24 +15,23 @@ mod sync {
         b.bench_function("update", |b| {
             let mut c1 = LoroCore::new(Default::default(), Some(0));
             let mut c2 = LoroCore::new(Default::default(), Some(1));
-            let t1 = c1.get_text("text");
-            let t2 = c2.get_text("text");
+            let mut t1 = c1.get_text("text");
+            let mut t2 = c2.get_text("text");
             b.iter(|| {
                 for (i, action) in actions.iter().enumerate() {
+                    if i > 2000 {
+                        break;
+                    }
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
-                        t1.with_container(|text| {
-                            text.delete(&c1, *pos, *del);
-                            text.insert(&c1, *pos, ins);
-                        });
-                        let update = c1.encode_from(c2.vv_cloned());
+                        t1.delete(&c1, *pos, *del).unwrap();
+                        t1.insert(&c1, *pos, ins).unwrap();
+                        let update = c1.encode_with_cfg(EncodeConfig::update(c2.vv_cloned()));
                         c2.decode(&update).unwrap();
                     } else {
-                        t2.with_container(|text| {
-                            text.delete(&c2, *pos, *del);
-                            text.insert(&c2, *pos, ins);
-                        });
-                        let update = c2.encode_from(c1.vv_cloned());
+                        t2.delete(&c2, *pos, *del).unwrap();
+                        t2.insert(&c2, *pos, ins).unwrap();
+                        let update = c2.encode_with_cfg(EncodeConfig::update(c1.vv_cloned()));
                         c1.decode(&update).unwrap();
                     }
                 }
@@ -44,20 +44,23 @@ mod sync {
             let t2 = c2.get_text("text");
             b.iter(|| {
                 for (i, action) in actions.iter().enumerate() {
+                    if i > 2000 {
+                        break;
+                    }
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
                         t1.with_container(|text| {
                             text.delete(&c1, *pos, *del);
                             text.insert(&c1, *pos, ins);
                         });
-                        let update = c1.encode_from(c2.vv_cloned());
+                        let update = c1.encode_with_cfg(EncodeConfig::rle_update(c2.vv_cloned()));
                         c2.decode(&update).unwrap();
                     } else {
                         t2.with_container(|text| {
                             text.delete(&c2, *pos, *del);
                             text.insert(&c2, *pos, ins);
                         });
-                        let update = c2.encode_from(c1.vv_cloned());
+                        let update = c2.encode_with_cfg(EncodeConfig::rle_update(c1.vv_cloned()));
                         c1.decode(&update).unwrap();
                     }
                 }

@@ -328,7 +328,6 @@ pub(super) fn decode_snapshot(
 
     // calc vv
     let vv = calc_vv(&change_encodings, &ops, &clients, &idx_to_container_type);
-    // println!("remote vv {:?} self vv {:?}", vv, &store.vv);
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {
             std::cmp::Ordering::Less => {
@@ -350,7 +349,7 @@ pub(super) fn decode_snapshot(
     let mut deps_iter = deps.into_iter();
     let mut idx_to_container_idx = FxHashMap::default();
 
-    // the container_idx need to be calculated first
+    // the container_idx needs to be calculated first
     // because the op needs the corresponding container (in new or old store)
     let new_loro = LoroCore::default();
     let mut new_store = new_loro.log_store.try_write().unwrap();
@@ -501,7 +500,6 @@ pub(super) fn decode_snapshot(
     }
 
     if can_load {
-        // println!("can load");
         let mut import_context = load_snapshot(
             store,
             hierarchy,
