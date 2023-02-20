@@ -2,7 +2,7 @@ use bench_utils::{get_automerge_actions, TextAction};
 use loro_internal::{log_store::EncodeConfig, LoroCore, VersionVector};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
-fn main() {
+fn parallel() {
     let mut rng: StdRng = SeedableRng::seed_from_u64(1);
 
     let actions = get_automerge_actions();
@@ -33,4 +33,33 @@ fn main() {
     println!("parallel doc size {} bytes", encoded.len());
     let encoded = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
     println!("parallel doc size {} bytes", encoded.len());
+}
+
+fn real_time() {
+    let actions = get_automerge_actions();
+    let mut c1 = LoroCore::new(Default::default(), Some(0));
+    let mut c2 = LoroCore::new(Default::default(), Some(1));
+    let mut t1 = c1.get_text("text");
+    let mut t2 = c2.get_text("text");
+    for (i, action) in actions.iter().enumerate() {
+        if i > 2000 {
+            break;
+        }
+        let TextAction { pos, ins, del } = action;
+        if i % 2 == 0 {
+            t1.delete(&c1, *pos, *del).unwrap();
+            t1.insert(&c1, *pos, ins).unwrap();
+            let update = c1.encode_with_cfg(EncodeConfig::update(c2.vv_cloned()));
+            c2.decode(&update).unwrap();
+        } else {
+            t2.delete(&c2, *pos, *del).unwrap();
+            t2.insert(&c2, *pos, ins).unwrap();
+            let update = c2.encode_with_cfg(EncodeConfig::update(c1.vv_cloned()));
+            c1.decode(&update).unwrap();
+        }
+    }
+}
+
+fn main() {
+    real_time()
 }
