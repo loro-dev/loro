@@ -99,8 +99,8 @@ mod run {
             let buf = loro.encode_with_cfg(
                 EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
             );
-            let mut store2 = LoroCore::default();
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });
@@ -116,8 +116,8 @@ mod run {
             let buf = loro.encode_with_cfg(
                 EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new())).without_compress(),
             );
-            let mut store2 = LoroCore::default();
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });
@@ -128,8 +128,8 @@ mod run {
         });
         b.bench_function("B4_decode_snapshot", |b| {
             let buf = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
-            let mut store2 = LoroCore::default();
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });
@@ -144,33 +144,34 @@ mod import {
         let mut b = c.benchmark_group("causal_iter");
         b.sample_size(10);
         b.bench_function("parallel_500", |b| {
-            let mut c1 = LoroCore::new(
-                Configure {
-                    change: ChangeMergeCfg {
-                        max_change_length: 0,
-                        max_change_interval: 0,
-                    },
-                    ..Default::default()
-                },
-                Some(1),
-            );
-            let mut c2 = LoroCore::new(
-                Configure {
-                    change: ChangeMergeCfg {
-                        max_change_length: 0,
-                        max_change_interval: 0,
-                    },
-                    ..Default::default()
-                },
-                Some(2),
-            );
-            let mut text1 = c1.get_text("text");
-            let mut text2 = c2.get_text("text");
-            for _ in 0..500 {
-                text1.insert(&c1, 0, "1").unwrap();
-                text2.insert(&c2, 0, "2").unwrap();
-            }
             b.iter(|| {
+                let mut c1 = LoroCore::new(
+                    Configure {
+                        change: ChangeMergeCfg {
+                            max_change_length: 0,
+                            max_change_interval: 0,
+                        },
+                        ..Default::default()
+                    },
+                    Some(1),
+                );
+                let mut c2 = LoroCore::new(
+                    Configure {
+                        change: ChangeMergeCfg {
+                            max_change_length: 0,
+                            max_change_interval: 0,
+                        },
+                        ..Default::default()
+                    },
+                    Some(2),
+                );
+                let mut text1 = c1.get_text("text");
+                let mut text2 = c2.get_text("text");
+                for _ in 0..500 {
+                    text1.insert(&c1, 0, "1").unwrap();
+                    text2.insert(&c2, 0, "2").unwrap();
+                }
+
                 c1.decode(&c2.encode_from(c1.vv_cloned())).unwrap();
             })
         });
