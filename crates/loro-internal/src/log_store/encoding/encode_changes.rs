@@ -39,8 +39,13 @@ pub(super) struct ChangeEncoding {
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
+    /// The length of deps that exclude the dep on the same client
     #[columnar(strategy = "Rle")]
     pub(super) deps_len: u32,
+    /// Whether the change has a dep on the same client.
+    /// It can save lots of space by using this field instead of [`DepsEncoding`]
+    #[columnar(strategy = "BoolRle")]
+    pub(super) dep_on_self: bool,
 }
 
 #[columnar(vec, ser, de)]
@@ -135,11 +140,18 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 
     for change in diff_changes {
         let client_idx = client_id_to_idx[&change.id.client_id];
+        let mut dep_on_self = false;
+        let mut deps_len = 0;
         for dep in change.deps.iter() {
-            deps.push(DepsEncoding::new(
-                *client_id_to_idx.get(&dep.client_id).unwrap(),
-                dep.counter,
-            ));
+            if change.id.client_id != dep.client_id {
+                deps.push(DepsEncoding::new(
+                    *client_id_to_idx.get(&dep.client_id).unwrap(),
+                    dep.counter,
+                ));
+                deps_len += 1;
+            } else {
+                dep_on_self = true;
+            }
         }
 
         let mut op_len = 0;
@@ -193,8 +205,9 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
         changes.push(ChangeEncoding {
             client_idx: client_idx as ClientIdx,
             timestamp: change.timestamp,
-            deps_len: change.deps.len() as u32,
+            deps_len,
             op_len,
+            dep_on_self,
         });
     }
 
@@ -252,6 +265,7 @@ pub(super) fn decode_changes_to_inner_format(
                 timestamp,
                 op_len,
                 deps_len,
+                dep_on_self,
             } = change_encoding;
 
             let client_id = clients[client_idx as usize];
@@ -304,12 +318,15 @@ pub(super) fn decode_changes_to_inner_format(
                 ops.push(remote_op);
             }
 
-            let deps: SmallVec<[ID; 2]> = (0..deps_len)
+            let mut deps: SmallVec<[ID; 2]> = (0..deps_len)
                 .map(|_| {
                     let raw = deps_iter.next().unwrap();
                     ID::new(clients[raw.client_idx as usize], raw.counter)
                 })
                 .collect();
+            if dep_on_self {
+                deps.push(ID::new(client_id, counter - 1));
+            }
 
             let change = Change {
                 id: ID { client_id, counter },

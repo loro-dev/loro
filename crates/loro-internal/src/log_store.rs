@@ -239,12 +239,6 @@ impl LogStore {
             client_id: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         };
-        if id.counter > 0 {
-            let self_dep = id.inc(-1);
-            if !self.frontiers.contains(&self_dep) {
-                self.frontiers.push(self_dep);
-            }
-        }
         let last = ops.last().unwrap();
         let last_ctr = last.ctr_last();
         let last_id = ID::new(self.this_client_id, last_ctr);

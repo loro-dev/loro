@@ -423,7 +423,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         Zero
     }
 
-    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, hint: Option<Zero>) -> Zero {
+    fn update_cache_internal(node: &mut InternalNode<'_, T, Self>, _hint: Option<Zero>) -> Zero {
         if node.children.is_empty() {
             node.cache.end = node.cache.start;
             return Zero;
@@ -608,7 +608,7 @@ impl<T: Rle + HasIndex, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T
         node.children[child_index].get_start_index()
     }
 
-    fn value_to_update(x: &T) -> Self::CacheInParent {
+    fn value_to_update(_x: &T) -> Self::CacheInParent {
         Zero
     }
 }

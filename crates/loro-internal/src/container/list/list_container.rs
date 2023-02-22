@@ -235,6 +235,10 @@ impl ListContainer {
 
         for state in self.state.iter_range(pos, Some(pos + len)) {
             let range = &state.get_sliced().0;
+
+            if SliceRange::from(range.start..range.end).is_unknown() {
+                continue;
+            }
             for value in self.raw_data.slice(range).iter() {
                 if let LoroValue::Unresolved(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);

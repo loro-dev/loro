@@ -9,6 +9,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
+#[allow(unused_imports)]
 use crate::{
     array_mut_ref,
     container::ContainerID,
@@ -641,14 +642,18 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            // a_doc
-            //     .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
-            //     .unwrap();
-            // b_doc
-            //     .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
-            //     .unwrap();
-            a_doc.decode(&b_doc.encode_all()).unwrap();
-            b_doc.decode(&a_doc.encode_all()).unwrap();
+            if i % 2 == 0 {
+                a_doc
+                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .unwrap();
+                b_doc
+                    .decode(&a_doc.encode_with_cfg(EncodeConfig::update(b_doc.vv_cloned())))
+                    .unwrap();
+            } else {
+                a_doc.decode(&b_doc.encode_all()).unwrap();
+                b_doc.decode(&a_doc.encode_all()).unwrap();
+            }
+
             check_eq(a, b);
             debug_log::group_end!();
         }
@@ -1286,27 +1291,30 @@ mod failed_tests {
         test_multi_sites(
             5,
             &mut [
-                Text {
-                    site: 0,
+                List {
+                    site: 4,
                     container_idx: 0,
-                    pos: 0,
-                    value: 32125,
-                    is_del: false,
+                    key: 0,
+                    value: I32(1),
                 },
                 SyncAll,
-                Text {
-                    site: 2,
+                List {
+                    site: 0,
                     container_idx: 0,
-                    pos: 1,
-                    value: 1,
-                    is_del: true,
+                    key: 0,
+                    value: Container(C::Text),
                 },
-                Text {
-                    site: 2,
+                List {
+                    site: 0,
                     container_idx: 0,
-                    pos: 0,
-                    value: 1,
-                    is_del: true,
+                    key: 1,
+                    value: I32(2105376125),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 1,
+                    value: Null,
                 },
             ],
         )
@@ -1318,121 +1326,7 @@ mod failed_tests {
         minify_error(
             5,
             vec![
-                Map {
-                    site: 0,
-                    container_idx: 255,
-                    key: 255,
-                    value: Null,
-                },
                 SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: I32(2105376125),
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: false,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Container(C::List),
-                },
                 SyncAll,
                 SyncAll,
                 SyncAll,
@@ -1446,9 +1340,16 @@ mod failed_tests {
                     key: 64,
                     value: Null,
                 },
-                List {
-                    site: 64,
-                    container_idx: 64,
+                SyncAll,
+                Map {
+                    site: 21,
+                    container_idx: 21,
+                    key: 21,
+                    value: Null,
+                },
+                Map {
+                    site: 21,
+                    container_idx: 125,
                     key: 125,
                     value: I32(2105376125),
                 },
@@ -1463,63 +1364,129 @@ mod failed_tests {
                     site: 125,
                     container_idx: 125,
                     pos: 125,
-                    value: 27517,
+                    value: 32125,
                     is_del: true,
                 },
                 Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                SyncAll,
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 255,
+                    key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 70,
+                    container_idx: 255,
+                    key: 255,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 21,
+                    container_idx: 21,
+                    key: 21,
+                    value: Null,
+                },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Map {
+                    site: 21,
+                    container_idx: 21,
+                    key: 21,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: I32(353703189),
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(2105376125),
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
                     is_del: true,
                 },
                 Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
                     is_del: true,
                 },
                 Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
                     is_del: true,
                 },
                 Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 107,
-                    value: 27499,
-                    is_del: true,
-                },
-                Text {
-                    site: 107,
-                    container_idx: 107,
-                    pos: 64,
-                    value: 16448,
+                    site: 125,
+                    container_idx: 64,
+                    pos: 70,
+                    value: 17990,
                     is_del: false,
                 },
                 List {
@@ -1535,9 +1502,57 @@ mod failed_tests {
                     value: Null,
                 },
                 List {
+                    site: 125,
+                    container_idx: 125,
+                    key: 125,
+                    value: I32(2105376125),
+                },
+                List {
+                    site: 70,
+                    container_idx: 70,
+                    key: 70,
+                    value: Null,
+                },
+                List {
                     site: 64,
                     container_idx: 64,
-                    key: 255,
+                    key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
                     value: Null,
                 },
                 Map {

@@ -2,11 +2,10 @@ use std::collections::VecDeque;
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use num::Zero;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -222,20 +221,22 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
-        for (i, change) in change_vec.iter().enumerate() {
+        for change in change_vec.iter() {
             let client_id = change.id.client_id;
             let mut op_len = 0;
-            let mut this_deps_len = 0;
+            let mut deps_len = 0;
+            let mut dep_on_self = false;
             for dep in change.deps.iter() {
                 // the first change will encode the self-client deps
-                if !i.is_zero() && dep.client_id == client_id {
-                    continue;
+                if dep.client_id == client_id {
+                    dep_on_self = true;
+                } else {
+                    deps.push(DepsEncoding::new(
+                        *client_id_to_idx.get(&dep.client_id).unwrap(),
+                        dep.counter,
+                    ));
+                    deps_len += 1;
                 }
-                deps.push(DepsEncoding::new(
-                    *client_id_to_idx.get(&dep.client_id).unwrap(),
-                    dep.counter,
-                ));
-                this_deps_len += 1;
             }
             for op in change.ops.iter() {
                 let container_idx = op.container;
@@ -264,7 +265,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
             changes.push(ChangeEncoding {
                 client_idx: client_idx as ClientIdx,
                 timestamp: change.timestamp,
-                deps_len: this_deps_len,
+                deps_len,
+                dep_on_self,
                 op_len: op_len as u32,
             });
         }
@@ -366,24 +368,17 @@ pub(super) fn decode_snapshot(
 
     for (_, this_changes_encoding) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
         let mut counter = 0;
-        let mut next_change_deps_counter = 0;
-        for (i, change_encoding) in this_changes_encoding.enumerate() {
+        for change_encoding in this_changes_encoding {
             let ChangeEncoding {
                 client_idx,
                 timestamp,
                 op_len,
                 deps_len,
+                dep_on_self,
             } = change_encoding;
 
             let client_id = clients[client_idx as usize];
             let mut ops = RleVec::<[Op; 2]>::new();
-            let mut deps = (0..deps_len)
-                .map(|_| {
-                    let raw = deps_iter.next().unwrap();
-                    ID::new(clients[raw.client_idx as usize], raw.counter)
-                })
-                .collect::<Vec<_>>();
-
             let mut delta = 0;
             for op in op_iter.by_ref().take(op_len as usize) {
                 let SnapshotOpEncoding {
@@ -435,25 +430,23 @@ pub(super) fn decode_snapshot(
                 ops.push(op);
             }
 
-            if i.is_zero() {
-                // first change
-                next_change_deps_counter = deps
-                    .iter()
-                    .filter(|&d| d.client_id == client_id)
-                    .map(|d| d.counter)
-                    .next()
-                    .unwrap_or(0);
-            } else {
-                deps.push(ID::new(client_id, next_change_deps_counter - 1));
+            let mut deps = (0..deps_len)
+                .map(|_| {
+                    let raw = deps_iter.next().unwrap();
+                    ID::new(clients[raw.client_idx as usize], raw.counter)
+                })
+                .collect::<SmallVec<_>>();
+
+            if dep_on_self {
+                deps.push(ID::new(client_id, counter - 1));
             }
-            next_change_deps_counter += delta;
             let change = Change {
                 id: ID { client_id, counter },
                 // cal lamport after parsing all changes
                 lamport: 0,
                 timestamp,
                 ops,
-                deps: deps.into(),
+                deps,
             };
 
             counter += delta;

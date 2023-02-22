@@ -2,14 +2,12 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
     container::ContainerID,
-    dag::Dag,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
     LoroError, LoroValue,
 };
 use fxhash::{FxHashMap, FxHashSet};
-use rle::HasLength;
 use tracing::instrument;
 
 use crate::{

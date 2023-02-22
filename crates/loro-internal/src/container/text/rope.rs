@@ -40,7 +40,7 @@ impl Rope {
         )
     }
 
-    pub fn utf8_to_utf16(&self, index: usize) -> usize {
+    pub fn _utf8_to_utf16(&self, index: usize) -> usize {
         self.process_cursor_at(
             index,
             |x| x.utf8 as usize,
