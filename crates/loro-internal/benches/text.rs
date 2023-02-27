@@ -43,13 +43,11 @@ mod run {
         b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
-                let text = loro.get_text("text");
-                text.with_container(|text| {
-                    for TextAction { pos, ins, del } in actions.iter() {
-                        text.delete(&loro, *pos, *del);
-                        text.insert(&loro, *pos, ins);
-                    }
-                })
+                let mut text = loro.get_text("text");
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&loro, *pos, *del).unwrap();
+                    text.insert(&loro, *pos, ins).unwrap();
+                }
             })
         });
 
@@ -57,13 +55,11 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 loro.subscribe_deep(Box::new(|_| {}));
-                let text = loro.get_text("text");
-                text.with_container(|text| {
-                    for TextAction { pos, ins, del } in actions.iter() {
-                        text.delete(&loro, *pos, *del);
-                        text.insert(&loro, *pos, ins);
-                    }
-                })
+                let mut text = loro.get_text("text");
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&loro, *pos, *del).unwrap();
+                    text.insert(&loro, *pos, ins).unwrap();
+                }
             })
         });
 
@@ -72,12 +68,10 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
+                let mut text = loro.get_text("text");
                 for TextAction { pos, ins, del } in actions.iter() {
-                    let text = loro.get_text("text");
-                    text.with_container(|text| {
-                        text.delete(&loro, *pos, *del);
-                        text.insert(&loro, *pos, ins);
-                    });
+                    text.delete(&loro, *pos, *del).unwrap();
+                    text.insert(&loro, *pos, ins).unwrap();
 
                     loro_b.import(loro.export(loro_b.vv_cloned()));
                 }
@@ -90,6 +84,8 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut loro_b = LoroCore::default();
+                let mut text = loro.get_text("text");
+                let mut text2 = loro_b.get_text("text");
                 let mut i = 0;
                 for TextAction { pos, ins, del } in actions.iter() {
                     let pos = *pos;
@@ -99,12 +95,11 @@ mod run {
                         break;
                     }
 
-                    let mut text = loro.get_text("text");
                     text.delete(&loro, pos, del).unwrap();
                     text.insert(&loro, pos, ins).unwrap();
-                    let mut text = loro_b.get_text("text");
-                    text.delete(&loro_b, pos, del).unwrap();
-                    text.insert(&loro_b, pos, ins).unwrap();
+
+                    text2.delete(&loro_b, pos, del).unwrap();
+                    text2.insert(&loro_b, pos, ins).unwrap();
                     loro_b.import(loro.export(loro_b.vv_cloned()));
                     loro.import(loro_b.export(loro.vv_cloned()));
                 }

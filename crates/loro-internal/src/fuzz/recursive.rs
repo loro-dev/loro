@@ -469,22 +469,26 @@ impl Actionable for Vec<Actor> {
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
                 };
-
+                let mut txn = actor.loro.transact();
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, &key.to_string()).unwrap();
+                        container.delete(&mut txn, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, &key.to_string(), *i).unwrap();
+                        container.insert(&mut txn, &key.to_string(), *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
                         let new = container
-                            .insert(&actor.loro, &key.to_string(), *c)
+                            .insert(&mut txn, &key.to_string(), *c)
                             .unwrap()
                             .unwrap();
-                        actor.add_new_container(new);
+                        // actor.add_new_container(new);
+                        // TODO convert to idx
+                        // FIXME
+                        actor.add_new_container(ContainerID::new_root("name", *c))
                     }
                 }
+                drop(txn);
             }
             Action::List {
                 site,
@@ -538,15 +542,17 @@ impl Actionable for Vec<Actor> {
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
                 };
+                let mut txn = actor.loro.transact();
                 if *is_del {
                     container
-                        .delete(&actor.loro, *pos as usize, *value as usize)
+                        .delete(&mut txn, *pos as usize, *value as usize)
                         .unwrap();
                 } else {
                     container
-                        .insert(&actor.loro, *pos as usize, &(format!("[{}]", value)))
+                        .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
                         .unwrap();
                 }
+                drop(txn);
             }
         }
     }

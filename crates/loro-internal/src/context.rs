@@ -4,7 +4,10 @@ use std::{
 };
 
 use crate::{
-    container::{registry::ContainerInstance, ContainerID},
+    container::{
+        registry::{ContainerIdx, ContainerInstance},
+        ContainerID,
+    },
     hierarchy::Hierarchy,
     transaction::Transaction,
     LogStore, LoroCore,
@@ -14,6 +17,7 @@ pub trait Context {
     fn log_store(&self) -> Arc<RwLock<LogStore>>;
     fn hierarchy(&self) -> Arc<Mutex<Hierarchy>>;
     fn get_container(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>>;
+    fn get_container_by_idx(&self, id: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>>;
 }
 
 impl Context for LoroCore {
@@ -27,6 +31,10 @@ impl Context for LoroCore {
 
     fn get_container(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.log_store.try_read().unwrap().get_container(id)
+    }
+
+    fn get_container_by_idx(&self, id: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.log_store.try_read().unwrap().get_container_by_idx(id)
     }
 }
 
@@ -44,5 +52,9 @@ where
 
     fn get_container(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.borrow().get_container(id)
+    }
+
+    fn get_container_by_idx(&self, id: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.borrow().get_container_by_idx(id)
     }
 }

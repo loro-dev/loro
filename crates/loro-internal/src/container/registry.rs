@@ -22,7 +22,7 @@ use crate::{
     op::{Op, RemoteContent, RichOp},
     transaction::op::TransactionOp,
     version::PatchedVersionVector,
-    LoroError, LoroValue,
+    LogStore, LoroError, LoroValue,
 };
 
 use super::{
@@ -209,9 +209,11 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
         match self {
-            ContainerInstance::List(x) => x.apply_txn_op(op, id),
+            ContainerInstance::List(x) => x.apply_txn_op(store, op),
+            ContainerInstance::Map(x) => x.apply_txn_op(store, op),
+            ContainerInstance::Text(x) => x.apply_txn_op(store, op),
             _ => unimplemented!(),
         }
     }
@@ -254,8 +256,8 @@ impl ContainerRegistry {
     #[inline]
     fn create(&mut self, id: ContainerID, idx: ContainerIdx) -> ContainerInstance {
         match id.container_type() {
-            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
-            ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
+            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id, idx))),
+            ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id, idx))),
             ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id, idx))),
         }
     }
@@ -284,8 +286,10 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub(crate) fn get_by_idx(&self, idx: &ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
-        self.containers.get(idx).map(|x| &x.container)
+    pub(crate) fn get_by_idx(&self, idx: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.containers
+            .get(idx)
+            .map(|x| Arc::downgrade(&x.container))
     }
 
     #[inline(always)]

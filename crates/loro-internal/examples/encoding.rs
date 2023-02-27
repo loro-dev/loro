@@ -3,18 +3,17 @@ use std::{io::Write, time::Instant};
 use bench_utils::TextAction;
 use flate2::write::GzEncoder;
 use loro_internal::VersionVector;
-use loro_internal::{container::registry::ContainerWrapper, log_store::EncodeConfig, LoroCore};
+use loro_internal::{log_store::EncodeConfig, LoroCore};
 
 fn main() {
     let actions = bench_utils::get_automerge_actions();
     let mut loro = LoroCore::default();
-    let text = loro.get_text("text");
-    text.with_container(|text| {
-        for TextAction { pos, ins, del } in actions.iter() {
-            text.delete(&loro, *pos, *del);
-            text.insert(&loro, *pos, ins);
-        }
-    });
+    let mut text = loro.get_text("text");
+
+    for TextAction { pos, ins, del } in actions.iter() {
+        text.delete(&loro, *pos, *del).unwrap();
+        text.insert(&loro, *pos, ins).unwrap();
+    }
 
     let start = Instant::now();
     let buf =

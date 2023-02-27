@@ -1,8 +1,5 @@
 // TODO: refactor, extract common code with text
-use std::{
-    ops::Range,
-    sync::{Mutex, Weak},
-};
+use std::sync::{Mutex, Weak};
 
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -22,7 +19,6 @@ use crate::{
         },
         Container, ContainerID, ContainerType,
     },
-    context::Context,
     delta::Delta,
     event::{Diff, Index},
     hierarchy::Hierarchy,
@@ -37,7 +33,7 @@ use crate::{
     },
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError,
+    LogStore, LoroError, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -81,7 +77,7 @@ impl ListContainer {
                     value.into_container().unwrap(),
                 ))?
                 .unwrap();
-            prelim.integrate(txn, container.idx());
+            prelim.integrate(txn, container.idx())?;
             Ok(Some(container))
         } else {
             let value = value.into_value().unwrap();
@@ -121,7 +117,8 @@ impl ListContainer {
         Ok(())
     }
 
-    fn apply_txn_op_impl(&mut self, op: &ListTxnOp, id: ID) -> Op {
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOp) -> Op {
+        let id = store.next_id();
         match op {
             ListTxnOp::Delete { pos, len, .. } => self.apply_delete(*pos, *len, id),
             ListTxnOp::InsertBatchValue { pos, values } => {
@@ -688,9 +685,9 @@ impl Container for ListContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
         let op = op.as_list().unwrap().1;
-        self.apply_txn_op_impl(op, id)
+        self.apply_txn_op_impl(store, op)
     }
 }
 
@@ -725,21 +722,27 @@ impl List {
     //     self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
     // }
 
-    pub fn insert<P: Prelim>(
+    pub fn insert<T: Transact, P: Prelim>(
         &mut self,
-        txn: &mut Transaction,
+        txn: &T,
         pos: usize,
         value: P,
     ) -> Result<Option<TransactionalContainer>, LoroError> {
+        let txn = txn.transact();
+        let mut txn = txn.try_lock().unwrap();
+        let txn = txn.as_mut();
         // TODO: check client id
         self.with_container(|x| x.insert(txn, pos, value))
     }
 
-    pub fn push<P: Prelim>(
+    pub fn push<T: Transact, P: Prelim>(
         &mut self,
-        txn: &mut Transaction,
+        txn: &T,
         value: P,
     ) -> Result<Option<TransactionalContainer>, LoroError> {
+        let txn = txn.transact();
+        let mut txn = txn.try_lock().unwrap();
+        let txn = txn.as_mut();
         self.with_container(|x| {
             let pos = x.values_len();
             x.insert(txn, pos, value)
@@ -768,12 +771,15 @@ impl List {
     //     })
     // }
 
-    pub fn delete(
+    pub fn delete<T: Transact>(
         &mut self,
-        txn: &mut Transaction,
+        txn: &T,
         pos: usize,
         len: usize,
     ) -> Result<(), LoroError> {
+        let txn = txn.transact();
+        let mut txn = txn.try_lock().unwrap();
+        let txn = txn.as_mut();
         self.with_container(|list| list.delete(txn, pos, len))
     }
 

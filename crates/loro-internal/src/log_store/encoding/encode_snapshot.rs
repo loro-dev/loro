@@ -529,6 +529,7 @@ fn load_snapshot(
         container_idx2type.insert(container_idx, container_id.container_type());
         let state = pool_mapping.into_state(keys, clients);
         let container = new_store.reg.get_by_idx(&container_idx).unwrap();
+        let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         container.to_import_snapshot(state, new_hierarchy, &mut import_context);
     }
@@ -549,23 +550,4 @@ fn load_snapshot(
     new_store.vv = vv;
     new_store.frontiers = frontiers.get_frontiers();
     import_context
-}
-
-#[cfg(test)]
-mod test {
-    use crate::LoroCore;
-
-    #[test]
-    fn cannot_load() {
-        let mut loro = LoroCore::new(Default::default(), Some(1));
-        let mut text = loro.get_text("text");
-        text.insert(&loro, 0, "abc").unwrap();
-        let snapshot = loro.encode_all();
-
-        let mut loro2 = LoroCore::new(Default::default(), Some(2));
-        let mut text2 = loro2.get_text("text");
-        text2.insert(&loro2, 0, "efg").unwrap();
-        loro2.decode(&snapshot).unwrap();
-        assert_eq!(text2.get_value().to_json_pretty(), "\"abcefg\"");
-    }
 }

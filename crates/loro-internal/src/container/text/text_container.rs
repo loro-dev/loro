@@ -1,7 +1,4 @@
-use std::{
-    ops::Range,
-    sync::{Mutex, Weak},
-};
+use std::sync::{Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
@@ -12,7 +9,7 @@ use crate::{
     container::{
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
-        registry::{ContainerInstance, ContainerWrapper},
+        registry::{ContainerIdx, ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
     },
     context::Context,
@@ -22,10 +19,13 @@ use crate::{
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
-    transaction::op::TransactionOp,
+    transaction::{
+        op::{TextTxnOp, TransactionOp},
+        Transaction,
+    },
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError,
+    LogStore, LoroError, Transact,
 };
 
 use super::{
@@ -38,6 +38,7 @@ use super::{
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
+    idx: ContainerIdx,
     state: Rope,
     raw_str: StringPool,
     tracker: Option<Tracker>,
@@ -45,9 +46,10 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub(crate) fn new(id: ContainerID) -> Self {
+    pub(crate) fn new(id: ContainerID, idx: ContainerIdx) -> Self {
         Self {
             id,
+            idx,
             raw_str: StringPool::default(),
             tracker: None,
             state: Default::default(),
@@ -55,96 +57,161 @@ impl TextContainer {
         }
     }
 
-    #[instrument(skip_all)]
-    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<RawEvent> {
+    #[inline(always)]
+    pub fn insert(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        text: &str,
+    ) -> Result<(), LoroError> {
         if text.is_empty() {
-            return None;
+            return Ok(());
         }
+        txn.insert(TransactionOp::insert_text(self.idx, pos, text))?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn delete(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+    ) -> Result<(), LoroError> {
+        if len == 0 {
+            return Ok(());
+        }
+        txn.insert(TransactionOp::delete_text(self.idx, pos, len))?;
+        Ok(())
+    }
+
+    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOp) -> Op {
+        let id = store.next_id();
+        match op {
+            TextTxnOp::Insert { pos, text } => self.apply_insert(*pos, text.as_ref(), id),
+            TextTxnOp::Delete { pos, len } => self.apply_delete(*pos, *len, id),
+        }
+    }
+
+    pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, id: ID) -> Op {
         if self.state.len() < pos {
             panic!("insert index out of range");
         }
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
         self.state.insert(pos, slice);
-        let op = Op::new(
+        Op::new(
             id,
             InnerContent::List(InnerListOp::Insert {
                 slice: op_slice,
                 pos,
             }),
-            store.get_or_create_container_idx(&self.id),
-        );
-
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-
-        // notify
-        let h = hierarchy.try_lock().unwrap();
-        if h.should_notify(&self.id) {
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.insert(text.to_owned());
-            h.get_abs_path(&store.reg, self.id())
-                .map(|abs_path| RawEvent {
-                    diff: vec![Diff::Text(delta)],
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                    abs_path,
-                })
-        } else {
-            None
-        }
+            self.idx,
+        )
     }
 
-    #[instrument(skip_all)]
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
-        if len == 0 {
-            return None;
-        }
-
+    pub(crate) fn apply_delete(&mut self, pos: usize, len: usize, id: ID) -> Op {
         if self.state.len() < pos + len {
             panic!("deletion out of range");
         }
-
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
-        let op = Op::new(
+        self.state.delete_range(Some(pos), Some(pos + len));
+        Op::new(
             id,
             InnerContent::List(InnerListOp::new_del(pos, len)),
-            store.get_or_create_container_idx(&self.id),
-        );
-
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-
-        // notify
-        let h = hierarchy.try_lock().unwrap();
-        self.state.delete_range(Some(pos), Some(pos + len));
-        if h.should_notify(&self.id) {
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.delete(len);
-            h.get_abs_path(&store.reg, self.id())
-                .map(|abs_path| RawEvent {
-                    diff: vec![Diff::Text(delta)],
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                    abs_path,
-                })
-        } else {
-            None
-        }
+            self.idx,
+        )
     }
+
+    // #[instrument(skip_all)]
+    // pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<RawEvent> {
+    //     if text.is_empty() {
+    //         return None;
+    //     }
+    //     if self.state.len() < pos {
+    //         panic!("insert index out of range");
+    //     }
+    //     let store = ctx.log_store();
+    //     let hierarchy = ctx.hierarchy();
+    //     let mut store = store.write().unwrap();
+    //     let id = store.next_id();
+    //     let slice = self.raw_str.alloc(text);
+    //     let op_slice = SliceRange::from_pool_string(&slice);
+    //     self.state.insert(pos, slice);
+    //     let op = Op::new(
+    //         id,
+    //         InnerContent::List(InnerListOp::Insert {
+    //             slice: op_slice,
+    //             pos,
+    //         }),
+    //         store.get_or_create_container_idx(&self.id),
+    //     );
+
+    //     let (old_version, new_version) = store.append_local_ops(&[op]);
+    //     let new_version = new_version.into();
+
+    //     // notify
+    //     let h = hierarchy.try_lock().unwrap();
+    //     if h.should_notify(&self.id) {
+    //         let mut delta = Delta::new();
+    //         delta.retain(pos);
+    //         delta.insert(text.to_owned());
+    //         h.get_abs_path(&store.reg, self.id())
+    //             .map(|abs_path| RawEvent {
+    //                 diff: vec![Diff::Text(delta)],
+    //                 local: true,
+    //                 old_version,
+    //                 new_version,
+    //                 container_id: self.id.clone(),
+    //                 abs_path,
+    //             })
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    // #[instrument(skip_all)]
+    // pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
+    //     if len == 0 {
+    //         return None;
+    //     }
+
+    //     if self.state.len() < pos + len {
+    //         panic!("deletion out of range");
+    //     }
+
+    //     let store = ctx.log_store();
+    //     let hierarchy = ctx.hierarchy();
+    //     let mut store = store.write().unwrap();
+    //     let id = store.next_id();
+    //     let op = Op::new(
+    //         id,
+    //         InnerContent::List(InnerListOp::new_del(pos, len)),
+    //         store.get_or_create_container_idx(&self.id),
+    //     );
+
+    //     let (old_version, new_version) = store.append_local_ops(&[op]);
+    //     let new_version = new_version.into();
+
+    //     // notify
+    //     let h = hierarchy.try_lock().unwrap();
+    //     self.state.delete_range(Some(pos), Some(pos + len));
+    //     if h.should_notify(&self.id) {
+    //         let mut delta = Delta::new();
+    //         delta.retain(pos);
+    //         delta.delete(len);
+    //         h.get_abs_path(&store.reg, self.id())
+    //             .map(|abs_path| RawEvent {
+    //                 diff: vec![Diff::Text(delta)],
+    //                 local: true,
+    //                 old_version,
+    //                 new_version,
+    //                 container_id: self.id.clone(),
+    //                 abs_path,
+    //             })
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn text_len(&self) -> usize {
         self.state.len()
@@ -487,8 +554,9 @@ impl Container for TextContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
-        todo!()
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
+        let op = op.as_text().unwrap().1;
+        self.apply_txn_op_impl(store, op)
     }
 }
 
@@ -526,47 +594,54 @@ impl Text {
             .clone()
     }
 
-    pub fn insert<C: Context>(
+    pub fn insert<T: Transact>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         pos: usize,
         text: &str,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |x| Ok((x.insert(ctx, pos, text), ())))
+        let txn = txn.transact();
+        let mut txn = txn.try_lock().unwrap();
+        let txn = txn.as_mut();
+        self.with_container(|x| x.insert(txn, pos, text))
     }
 
-    pub fn insert_utf16<C: Context>(
+    pub fn insert_utf16(
         &mut self,
-        ctx: &C,
+        txn: &mut Transaction,
         pos: usize,
         text: &str,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |x| {
+        self.with_container(|x| {
             let pos = x.state.utf16_to_utf8(pos);
-            Ok((x.insert(ctx, pos, text), ()))
+            x.insert(txn, pos, text)
         })
     }
 
-    pub fn delete<C: Context>(
+    pub fn delete<T: Transact>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |text| Ok((text.delete(ctx, pos, len), ())))
+        let txn = txn.transact();
+        let mut txn = txn.try_lock().unwrap();
+        let txn = txn.as_mut();
+        // let txn = txn.try_lock().unwrap().as_mut();
+        self.with_container(|text| text.delete(txn, pos, len))
     }
 
-    pub fn delete_utf16<C: Context>(
+    pub fn delete_utf16(
         &mut self,
-        ctx: &C,
+        txn: &mut Transaction,
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |text| {
+        self.with_container(|text| {
             let end = pos + len;
             let pos = text.state.utf16_to_utf8(pos);
             let len = text.state.utf16_to_utf8(end) - pos;
-            Ok((text.delete(ctx, pos, len), ()))
+            text.delete(txn, pos, len)
         })
     }
 

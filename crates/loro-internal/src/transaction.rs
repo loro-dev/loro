@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, RwLock},
+    ops::{Deref, DerefMut},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use fxhash::FxHashSet;
@@ -10,13 +11,14 @@ use crate::{
     delta::Delta,
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
+    id::ClientID,
     ContainerType, LogStore, LoroCore, LoroError,
 };
 
 use self::{
     checker::Checker,
     container::TransactionalContainer,
-    op::{ListTxnOp, TransactionOp},
+    op::{ListTxnOp, MapTxnOp, TransactionOp},
 };
 
 mod checker;
@@ -24,33 +26,70 @@ pub mod container;
 pub(crate) mod op;
 
 pub trait Transact {
-    fn transact(&self) -> Transaction;
+    fn transact(&self) -> TransactionWrap;
 }
 
 impl Transact for LoroCore {
-    fn transact(&self) -> Transaction {
-        Transaction::new(Arc::clone(&self.log_store), Arc::clone(&self.hierarchy))
+    fn transact(&self) -> TransactionWrap {
+        TransactionWrap(Arc::new(Mutex::new(Transaction::new(
+            Arc::downgrade(&self.log_store),
+            Arc::downgrade(&self.hierarchy),
+        ))))
     }
 }
 
+impl Transact for TransactionWrap {
+    fn transact(&self) -> TransactionWrap {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl AsMut<Transaction> for Transaction {
+    fn as_mut(&mut self) -> &mut Transaction {
+        self
+    }
+}
+
+impl Deref for TransactionWrap {
+    type Target = Arc<Mutex<Transaction>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct TransactionWrap(pub Arc<Mutex<Transaction>>);
+
 pub struct Transaction {
-    pub(crate) store: Arc<RwLock<LogStore>>,
-    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
+    client_id: ClientID,
+    pub(crate) store: Weak<RwLock<LogStore>>,
+    pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     // sort by [ContainerIdx]
     pub(crate) pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
     checker: Checker,
     deleted_container: FxHashSet<ContainerIdx>,
+    committed: bool,
 }
 
 impl Transaction {
-    pub(crate) fn new(store: Arc<RwLock<LogStore>>, hierarchy: Arc<Mutex<Hierarchy>>) -> Self {
+    pub(crate) fn new(store: Weak<RwLock<LogStore>>, hierarchy: Weak<Mutex<Hierarchy>>) -> Self {
+        let client_id = {
+            let store = store.upgrade().unwrap();
+            let store = store.try_read().unwrap();
+            store.this_client_id
+        };
         Self {
+            client_id,
             store,
             hierarchy,
             pending_ops: Default::default(),
             deleted_container: Default::default(),
             checker: Default::default(),
+            committed: false,
         }
+    }
+
+    pub(crate) fn client_id(&self) -> ClientID {
+        self.client_id
     }
 
     pub(crate) fn insert(
@@ -60,6 +99,8 @@ impl Transaction {
         self.checker.check(&op)?;
         let ans = match op {
             TransactionOp::List { container, .. } => self.insert_list(container, op),
+            TransactionOp::Map { container, .. } => self.insert_map(container, op),
+            TransactionOp::Text { container, .. } => self.insert_text(container, op),
         };
         Ok(ans)
     }
@@ -72,26 +113,71 @@ impl Transaction {
     where
         F: FnOnce(&LogStore) -> R,
     {
-        let store = self.store.read().unwrap();
+        let store = self.store.upgrade().unwrap();
+        let store = store.read().unwrap();
         f(&store)
-    }
-
-    fn with_store_hierarchy<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&Self, &LogStore, &Hierarchy) -> R,
-    {
-        let store = self.store.try_read().unwrap();
-        let hierarchy = self.hierarchy.try_lock().unwrap();
-        f(&self, &store, &hierarchy)
     }
 
     fn with_store_hierarchy_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&Self, &mut LogStore, &mut Hierarchy) -> R,
     {
-        let mut store = self.store.try_write().unwrap();
-        let mut hierarchy = self.hierarchy.try_lock().unwrap();
-        f(&self, &mut store, &mut hierarchy)
+        let store = self.store.upgrade().unwrap();
+        let mut store = store.try_write().unwrap();
+        let hierarchy = self.hierarchy.upgrade().unwrap();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        f(self, &mut store, &mut hierarchy)
+    }
+
+    fn insert_text(
+        &mut self,
+        container_idx: ContainerIdx,
+        op: TransactionOp,
+    ) -> Option<TransactionalContainer> {
+        self.pending_ops
+            .entry(container_idx)
+            .or_insert_with(Vec::new)
+            .push(op);
+        None
+    }
+
+    fn insert_map(
+        &mut self,
+        container_idx: ContainerIdx,
+        mut op: TransactionOp,
+    ) -> Option<TransactionalContainer> {
+        let ans = match op.as_map_mut().unwrap().1 {
+            MapTxnOp::Insert { key, value } => None,
+            MapTxnOp::InsertContainer {
+                key,
+                type_,
+                container,
+            } => {
+                let next_container_idx = self
+                    .store
+                    .upgrade()
+                    .unwrap()
+                    .try_read()
+                    .unwrap()
+                    .next_container_idx();
+                *container = Some(next_container_idx);
+                Some(TransactionalContainer::new(*type_, next_container_idx))
+            }
+            MapTxnOp::Delete {
+                key,
+                deleted_container,
+            } => {
+                self.deleted_container
+                    .extend((*deleted_container).into_iter());
+                None
+            }
+        };
+        self.pending_ops
+            .entry(container_idx)
+            .or_insert_with(Vec::new)
+            .push(op);
+
+        ans
     }
 
     fn insert_list(
@@ -104,7 +190,13 @@ impl Transaction {
                 container, type_, ..
             } => {
                 // record the created container
-                let next_container_idx = self.store.try_read().unwrap().next_container_idx();
+                let next_container_idx = self
+                    .store
+                    .upgrade()
+                    .unwrap()
+                    .try_read()
+                    .unwrap()
+                    .next_container_idx();
                 *container = Some(next_container_idx);
                 Some(TransactionalContainer::new(*type_, next_container_idx))
             }
@@ -122,7 +214,7 @@ impl Transaction {
 
         self.pending_ops
             .entry(container_idx)
-            .or_insert_with(|| Vec::new())
+            .or_insert_with(Vec::new)
             .push(op);
 
         ans
@@ -130,15 +222,16 @@ impl Transaction {
 
     fn apply_ops_emit_event(&mut self) {
         let pending_ops = std::mem::take(&mut self.pending_ops);
-        self.with_store_hierarchy_mut(|_txn, store, hierarchy| {
+        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
             for (idx, ops) in pending_ops.into_iter() {
                 let container = store.reg.get_by_idx(&idx).unwrap();
+                let container = container.upgrade().unwrap();
                 let mut container = container.try_lock().unwrap();
                 let container_id = container.id().clone();
                 let mut store_ops = Vec::with_capacity(ops.len());
                 for op in ops.iter() {
-                    let id = store.next_id();
-                    store_ops.push(container.apply_txn_op(op, id));
+                    // let id = store.next_id();
+                    store_ops.push(container.apply_txn_op(store, op));
                 }
                 drop(container);
                 let (old_version, new_version) = store.append_local_ops(&store_ops);
@@ -148,8 +241,9 @@ impl Transaction {
                     for op in ops {
                         // TODO delta
                     }
-                    if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &container_id) {
-                        Some(RawEvent {
+                    hierarchy
+                        .get_abs_path(&store.reg, &container_id)
+                        .map(|abs_path| RawEvent {
                             container_id: container_id.clone(),
                             old_version,
                             new_version,
@@ -157,9 +251,6 @@ impl Transaction {
                             local: true,
                             abs_path,
                         })
-                    } else {
-                        None
-                    }
                 } else {
                     None
                 };
@@ -215,6 +306,10 @@ impl Transaction {
     }
 
     pub fn commit(&mut self) {
+        if self.committed {
+            return;
+        }
+        self.committed = true;
         // TODO: transaction commit
         // 1. compress op
         // 2. maybe rebase
@@ -237,7 +332,7 @@ impl Transaction {
             ops.iter_mut()
                 .filter(|op| op.is_insert_container())
                 .for_each(|op| {
-                    op.register_container_and_convert(self);
+                    op.register_container_and_convert(self).unwrap();
                 });
         });
         self.pending_ops = pending_ops;

@@ -6,7 +6,7 @@ use loro_internal::context::Context;
 use loro_internal::id::ID;
 
 use loro_internal::log_store::EncodeConfig;
-use loro_internal::{ContainerType, LoroCore, VersionVector};
+use loro_internal::{ContainerType, List, LoroCore, Text, Transact, VersionVector};
 
 #[test]
 fn send_sync() {
@@ -137,7 +137,7 @@ fn list() {
 #[test]
 #[cfg(feature = "json")]
 fn map() {
-    use loro_internal::LoroValue;
+    use loro_internal::{LoroValue, Map};
 
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");
@@ -157,9 +157,11 @@ fn map() {
     let map_id = root
         .insert(&loro, "map", loro_internal::ContainerType::Map)
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .idx();
     drop(root);
-    let mut sub_map = loro.get_map(&map_id);
+    let sub_map = loro.get_container_by_idx(&map_id).unwrap();
+    let mut sub_map = Map::from_instance(sub_map, loro.client_id());
     sub_map.insert(&loro, "sub", false).unwrap();
     drop(sub_map);
     let root = loro.get_map("root");
@@ -237,8 +239,8 @@ fn test_recursive_should_panic() {
     let mut store_b = LoroCore::new(Default::default(), Some(2));
     let mut text_a = store_a.get_text("text_a");
     let mut text_b = store_b.get_text("text_b");
-    text_a.insert(&store_a, 0, "012").unwrap();
-    text_b.insert(&store_a, 1, "34").unwrap();
+    text_a.insert(&mut store_a.transact(), 0, "012").unwrap();
+    text_b.insert(&mut store_a.transact(), 1, "34").unwrap();
 }
 
 #[test]
@@ -281,21 +283,18 @@ fn encode_hierarchy() {
 
     let mut c1 = LoroCore::default();
     let mut map = c1.get_map("map");
-    let (_, text_id) = {
-        let list_id = map.insert(&c1, "a", ContainerType::List).unwrap();
-        let list = c1.get_container(&list_id.unwrap()).unwrap();
-        let list = list.upgrade().unwrap();
-        let mut list = list.try_lock().unwrap();
-        let list = list.as_list_mut().unwrap();
-        list.insert(&c1, 0, ContainerType::Text).unwrap()
-    };
-    {
-        let text = c1.get_container(&text_id.unwrap()).unwrap();
-        let text = text.upgrade().unwrap();
-        let mut text = text.try_lock().unwrap();
-        let text = text.as_text_mut().unwrap();
-        text.insert(&c1, 0, "text_text");
-    };
+    let list_id = map.insert(&c1, "a", ContainerType::List).unwrap();
+    let list = c1.get_container_by_idx(&list_id.unwrap().idx()).unwrap();
+    let list = List::from_instance(list, c1.client_id());
+    let txn = c1.transact();
+    let idx = list
+        .insert(&txn, 0, ContainerType::Text)
+        .unwrap()
+        .unwrap()
+        .idx();
+    let text = c1.get_container_by_idx(&idx).unwrap();
+    let text = Text::from_instance(text, c1.client_id());
+    text.insert(&c1, 0, "text_text");
 
     // updates
     println!("updates");

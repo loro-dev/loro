@@ -181,6 +181,7 @@ impl LogStore {
 
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
         let container = self.reg.get_by_idx(&op.container).unwrap();
+        let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
@@ -375,6 +376,14 @@ impl LogStore {
     #[inline(always)]
     pub fn get_container(&self, container: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.reg.get(container)
+    }
+
+    #[inline(always)]
+    pub fn get_container_by_idx(
+        &self,
+        container: &ContainerIdx,
+    ) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.reg.get_by_idx(container)
     }
 
     pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {

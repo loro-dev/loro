@@ -1,12 +1,9 @@
-use std::collections::BTreeMap;
-
 use enum_as_inner::EnumAsInner;
 use smallvec::SmallVec;
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
-    delta::Delta,
-    ContainerType, LoroError, LoroValue,
+    ContainerType, InternalString, LoroError, LoroValue,
 };
 
 use super::Transaction;
@@ -16,6 +13,37 @@ pub enum TransactionOp {
     List {
         container: ContainerIdx,
         op: ListTxnOp,
+    },
+    Map {
+        container: ContainerIdx,
+        op: MapTxnOp,
+    },
+    Text {
+        container: ContainerIdx,
+        op: TextTxnOp,
+    },
+}
+
+#[derive(Debug)]
+pub enum TextTxnOp {
+    Insert { pos: usize, text: Box<str> },
+    Delete { pos: usize, len: usize },
+}
+
+#[derive(Debug)]
+pub enum MapTxnOp {
+    Insert {
+        key: InternalString,
+        value: LoroValue,
+    },
+    InsertContainer {
+        key: InternalString,
+        type_: ContainerType,
+        container: Option<ContainerIdx>,
+    },
+    Delete {
+        key: InternalString,
+        deleted_container: Option<ContainerIdx>,
     },
 }
 
@@ -48,6 +76,65 @@ impl TransactionOp {
     pub(crate) fn container_idx(&self) -> ContainerIdx {
         match self {
             Self::List { container, .. } => *container,
+            Self::Map { container, .. } => *container,
+            Self::Text { container, .. } => *container,
+        }
+    }
+
+    pub(crate) fn insert_text(container: ContainerIdx, pos: usize, text: &str) -> Self {
+        Self::Text {
+            container,
+            op: TextTxnOp::Insert {
+                pos,
+                text: text.into(),
+            },
+        }
+    }
+
+    pub(crate) fn delete_text(container: ContainerIdx, pos: usize, len: usize) -> Self {
+        Self::Text {
+            container,
+            op: TextTxnOp::Delete { pos, len },
+        }
+    }
+
+    pub(crate) fn insert_map_value(
+        container: ContainerIdx,
+        key: InternalString,
+        value: LoroValue,
+    ) -> Self {
+        Self::Map {
+            container,
+            op: MapTxnOp::Insert { key, value },
+        }
+    }
+
+    pub(crate) fn insert_map_container(
+        container: ContainerIdx,
+        key: InternalString,
+        type_: ContainerType,
+    ) -> Self {
+        TransactionOp::Map {
+            container,
+            op: MapTxnOp::InsertContainer {
+                key,
+                type_,
+                container: None,
+            },
+        }
+    }
+
+    pub(crate) fn delete_map(
+        container: ContainerIdx,
+        key: InternalString,
+        deleted_container: Option<ContainerIdx>,
+    ) -> Self {
+        TransactionOp::Map {
+            container,
+            op: MapTxnOp::Delete {
+                key,
+                deleted_container,
+            },
         }
     }
 
@@ -102,7 +189,9 @@ impl TransactionOp {
 
     pub fn is_insert_container(&self) -> bool {
         match self {
-            TransactionOp::List { container, op } => op.is_insert_container(),
+            TransactionOp::List { op, .. } => op.is_insert_container(),
+            TransactionOp::Map { op, .. } => op.is_insert_container(),
+            _ => false,
         }
     }
 
@@ -119,16 +208,22 @@ impl TransactionOp {
                 };
                 Ok(())
             }
+            TransactionOp::Map { container, op } => {
+                let id = op.register_container(txn, *container)?;
+                *op = MapTxnOp::Insert {
+                    key: op.key().clone(),
+                    value: LoroValue::Unresolved(id.into()),
+                };
+                Ok(())
+            }
+            _ => unreachable!("Text cannot insert container"),
         }
     }
 }
 
 impl ListTxnOp {
     pub fn is_insert_container(&self) -> bool {
-        match self {
-            ListTxnOp::InsertContainer { .. } => true,
-            _ => false,
-        }
+        matches!(self, ListTxnOp::InsertContainer { .. })
     }
 
     pub fn register_container(
@@ -152,6 +247,35 @@ impl ListTxnOp {
             ListTxnOp::Delete { pos, .. } => *pos,
             ListTxnOp::InsertBatchValue { pos, .. } => *pos,
             ListTxnOp::InsertContainer { pos, .. } => *pos,
+        }
+    }
+}
+
+impl MapTxnOp {
+    pub fn key(&self) -> &InternalString {
+        match self {
+            MapTxnOp::Insert { key, .. } => key,
+            MapTxnOp::InsertContainer { key, .. } => key,
+            MapTxnOp::Delete { key, .. } => key,
+        }
+    }
+
+    pub fn is_insert_container(&self) -> bool {
+        matches!(self, Self::InsertContainer { .. })
+    }
+
+    pub fn register_container(
+        &self,
+        txn: &mut Transaction,
+        parent_idx: ContainerIdx,
+    ) -> Result<ContainerID, LoroError> {
+        match self {
+            MapTxnOp::InsertContainer {
+                type_, container, ..
+            } => Ok(txn.register_container(container.unwrap(), *type_, parent_idx)),
+            _ => Err(LoroError::TransactionError(
+                "not insert container op".into(),
+            )),
         }
     }
 }
