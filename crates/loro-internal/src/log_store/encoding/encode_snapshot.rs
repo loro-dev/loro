@@ -528,7 +528,7 @@ fn load_snapshot(
         let container_idx = new_store.reg.get_or_create_container_idx(&container_id);
         container_idx2type.insert(container_idx, container_id.container_type());
         let state = pool_mapping.into_state(keys, clients);
-        let container = new_store.reg.get_by_idx(container_idx).unwrap();
+        let container = new_store.reg.get_by_idx(&container_idx).unwrap();
         let mut container = container.try_lock().unwrap();
         container.to_import_snapshot(state, new_hierarchy, &mut import_context);
     }

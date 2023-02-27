@@ -1,4 +1,7 @@
-use std::sync::{Mutex, Weak};
+use std::{
+    ops::Range,
+    sync::{Mutex, Weak},
+};
 
 use super::{super::pool::Pool, InnerMapSet};
 use crate::{
@@ -6,7 +9,9 @@ use crate::{
         pool_mapping::{MapPoolMapping, StateContent},
         registry::ContainerRegistry,
     },
+    id::ID,
     op::OwnedRichOp,
+    transaction::op::TransactionOp,
     LoroError,
 };
 use fxhash::FxHashMap;
@@ -69,20 +74,21 @@ impl MapContainer {
         key: InternalString,
         value: P,
     ) -> Result<(Option<RawEvent>, Option<ContainerID>), LoroError> {
-        let (value, maybe_container) = value.convert_value()?;
-        if let Some(prelim) = maybe_container {
-            let (event, container_id) = self.insert_obj(ctx, key, value.into_container().unwrap());
-            let m = ctx.log_store();
-            let store = m.read().unwrap();
-            let container = store.get_container(&container_id).unwrap();
-            drop(store);
-            prelim.integrate(ctx, container)?;
-            Ok((event, Some(container_id)))
-        } else {
-            let value = value.into_value().unwrap();
-            let event = self.insert_value(ctx, key, value)?;
-            Ok((event, None))
-        }
+        todo!();
+        // let (value, maybe_container) = value.convert_value()?;
+        // if let Some(prelim) = maybe_container {
+        //     let (event, container_id) = self.insert_obj(ctx, key, value.into_container().unwrap());
+        //     let m = ctx.log_store();
+        //     let store = m.read().unwrap();
+        //     let container = store.get_container(&container_id).unwrap();
+        //     drop(store);
+        //     prelim.integrate(ctx, container)?;
+        //     Ok((event, Some(container_id)))
+        // } else {
+        //     let value = value.into_value().unwrap();
+        //     let event = self.insert_value(ctx, key, value)?;
+        //     Ok((event, None))
+        // }
     }
 
     fn insert_value<C: Context>(
@@ -502,6 +508,10 @@ impl Container for MapContainer {
         } else {
             unreachable!()
         }
+    }
+
+    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
+        todo!()
     }
 }
 

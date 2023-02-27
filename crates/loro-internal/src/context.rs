@@ -6,6 +6,7 @@ use std::{
 use crate::{
     container::{registry::ContainerInstance, ContainerID},
     hierarchy::Hierarchy,
+    transaction::Transaction,
     LogStore, LoroCore,
 };
 

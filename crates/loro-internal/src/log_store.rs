@@ -10,10 +10,10 @@ pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
-    sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
+    sync::{atomic::AtomicU32, Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
@@ -180,7 +180,7 @@ impl LogStore {
     }
 
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
-        let container = self.reg.get_by_idx(op.container).unwrap();
+        let container = self.reg.get_by_idx(&op.container).unwrap();
         let mut container = container.try_lock().unwrap();
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
@@ -267,11 +267,21 @@ impl LogStore {
     }
 
     #[inline]
+    pub fn contains_container_idx(&self, id: &ContainerIdx) -> bool {
+        self.reg.contains_idx(id)
+    }
+
+    #[inline]
     pub fn contains_id(&self, id: ID) -> bool {
         self.changes
             .get(&id.client_id)
             .map_or(0, |changes| changes.atom_len())
             > id.counter as usize
+    }
+
+    #[inline]
+    pub(crate) fn next_container_idx(&self) -> ContainerIdx {
+        self.reg.next_idx_and_add_1()
     }
 
     #[inline]

@@ -1,4 +1,7 @@
-use std::sync::{Mutex, Weak};
+use std::{
+    ops::Range,
+    sync::{Mutex, Weak},
+};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
@@ -16,11 +19,13 @@ use crate::{
     delta::Delta,
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter},
+    id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
+    transaction::op::TransactionOp,
     value::LoroValue,
     version::PatchedVersionVector,
+    LoroError,
 };
 
 use super::{
@@ -480,6 +485,10 @@ impl Container for TextContainer {
         } else {
             unreachable!()
         }
+    }
+
+    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
+        todo!()
     }
 }
 

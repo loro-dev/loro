@@ -15,7 +15,7 @@ use crate::{
     event::{Diff, Observer},
     id::ClientID,
     log_store::EncodeConfig,
-    ContainerType, List, LoroCore, LoroValue, Map, Text,
+    ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -502,22 +502,25 @@ impl Actionable for Vec<Actor> {
                     #[allow(clippy::unnecessary_unwrap)]
                     container.unwrap()
                 };
-
+                let mut txn = actor.loro.transact();
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, *key as usize, 1).unwrap();
+                        container.delete(&mut txn, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, *key as usize, *i).unwrap();
+                        container.insert(&mut txn, *key as usize, *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
                         let new = container
-                            .insert(&actor.loro, *key as usize, *c)
+                            .insert(&mut txn, *key as usize, *c)
                             .unwrap()
                             .unwrap();
-                        actor.add_new_container(new)
+                        // TODO convert to idx
+                        // FIXME
+                        actor.add_new_container(ContainerID::new_root("name", *c))
                     }
                 }
+                drop(txn);
             }
             Action::Text {
                 site,

@@ -1,11 +1,14 @@
 use std::{
-    ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLockWriteGuard, Weak},
+    ops::{Deref, DerefMut, Range},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, RwLockWriteGuard, Weak,
+    },
 };
 
 use enum_as_inner::EnumAsInner;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use owning_ref::OwningRefMut;
 use smallvec::SmallVec;
 use tracing::instrument;
@@ -14,9 +17,10 @@ use crate::{
     context::Context,
     event::{Index, ObserverHandler, RawEvent, SubscriptionID},
     hierarchy::Hierarchy,
-    id::ClientID,
+    id::{ClientID, ID},
     log_store::ImportContext,
-    op::{RemoteContent, RichOp},
+    op::{Op, RemoteContent, RichOp},
+    transaction::op::TransactionOp,
     version::PatchedVersionVector,
     LoroError, LoroValue,
 };
@@ -26,8 +30,8 @@ use super::{
     Container, ContainerID, ContainerType,
 };
 
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
-pub(crate) struct ContainerIdx(u32);
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
+pub struct ContainerIdx(u32);
 
 impl ContainerIdx {
     pub(crate) fn to_u32(self) -> u32 {
@@ -204,6 +208,13 @@ impl Container for ContainerInstance {
             ContainerInstance::List(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
         }
     }
+
+    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op {
+        match self {
+            ContainerInstance::List(x) => x.apply_txn_op(op, id),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl ContainerInstance {
@@ -221,7 +232,8 @@ impl ContainerInstance {
 #[derive(Debug)]
 pub struct ContainerRegistry {
     container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
-    containers: Vec<ContainerAndId>,
+    containers: FxHashMap<ContainerIdx, ContainerAndId>,
+    next_container_idx: Arc<AtomicU32>,
 }
 
 #[derive(Debug)]
@@ -234,16 +246,17 @@ impl ContainerRegistry {
     pub fn new() -> Self {
         ContainerRegistry {
             container_to_idx: FxHashMap::default(),
-            containers: Vec::new(),
+            containers: FxHashMap::default(),
+            next_container_idx: Arc::new(AtomicU32::new(0)),
         }
     }
 
     #[inline]
-    fn create(&mut self, id: ContainerID) -> ContainerInstance {
+    fn create(&mut self, id: ContainerID, idx: ContainerIdx) -> ContainerInstance {
         match id.container_type() {
             ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
             ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
-            ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id))),
+            ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id, idx))),
         }
     }
 
@@ -251,7 +264,8 @@ impl ContainerRegistry {
     pub fn get(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.container_to_idx
             .get(id)
-            .map(|x| Arc::downgrade(&self.containers[x.0 as usize].container))
+            .and_then(|x| self.containers.get(x))
+            .map(|x| Arc::downgrade(&x.container))
     }
 
     #[inline(always)]
@@ -260,8 +274,18 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub(crate) fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
-        self.containers.get(idx.0 as usize).map(|x| &x.container)
+    pub fn contains_idx(&self, idx: &ContainerIdx) -> bool {
+        self.containers.contains_key(idx)
+    }
+
+    #[inline(always)]
+    pub fn all_container_idx(&self) -> FxHashSet<ContainerIdx> {
+        self.containers.keys().copied().collect()
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_by_idx(&self, idx: &ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
+        self.containers.get(idx).map(|x| &x.container)
     }
 
     #[inline(always)]
@@ -270,35 +294,50 @@ impl ContainerRegistry {
     }
 
     pub(crate) fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
-        self.containers.get(idx.0 as usize).map(|x| &x.id)
+        self.containers.get(&idx).map(|x| &x.id)
     }
 
     #[inline(always)]
-    pub(crate) fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
-        let idx = self.next_idx();
+    pub(crate) fn insert(
+        &mut self,
+        id: ContainerID,
+        idx: ContainerIdx,
+        container: ContainerInstance,
+    ) -> ContainerIdx {
         self.container_to_idx.insert(id.clone(), idx);
-        self.containers.push(ContainerAndId {
-            container: Arc::new(Mutex::new(container)),
-            id,
-        });
+        self.containers.insert(
+            idx,
+            ContainerAndId {
+                container: Arc::new(Mutex::new(container)),
+                id,
+            },
+        );
 
         idx
     }
 
     #[inline(always)]
-    fn next_idx(&self) -> ContainerIdx {
-        ContainerIdx(self.containers.len() as u32)
+    pub(crate) fn next_idx_and_add_1(&self) -> ContainerIdx {
+        let idx = self.next_container_idx.fetch_add(1, Ordering::SeqCst);
+        let ans = ContainerIdx::from_u32(idx);
+        ans
     }
 
     pub(crate) fn register(&mut self, id: &ContainerID) -> ContainerIdx {
-        let container = self.create(id.clone());
-        self.insert(id.clone(), container)
+        let idx = self.next_idx_and_add_1();
+        let container = self.create(id.clone(), idx);
+        self.insert(id.clone(), idx, container);
+        idx
+    }
+
+    pub(crate) fn register_txn(&mut self, idx: ContainerIdx, id: ContainerID) {
+        let container = self.create(id.clone(), idx);
+        self.insert(id, idx, container);
     }
 
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> Weak<Mutex<ContainerInstance>> {
         if !self.container_to_idx.contains_key(id) {
-            let container = self.create(id.clone());
-            self.insert(id.clone(), container);
+            self.register(id);
         }
 
         self.get(id).unwrap()
@@ -308,14 +347,13 @@ impl ContainerRegistry {
         if let Some(idx) = self.container_to_idx.get(id) {
             *idx
         } else {
-            let container = self.create(id.clone());
-            self.insert(id.clone(), container)
+            self.register(id)
         }
     }
 
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
-        for ContainerAndId { container, id: _ } in self.containers.iter_mut() {
+        for (_, ContainerAndId { container, id: _ }) in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.try_lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }
@@ -324,7 +362,7 @@ impl ContainerRegistry {
 
     pub fn to_json(&self) -> LoroValue {
         let mut map = FxHashMap::default();
-        for ContainerAndId { container, id } in self.containers.iter() {
+        for (_, ContainerAndId { container, id }) in self.containers.iter() {
             if let ContainerID::Root {
                 name,
                 container_type,
@@ -351,7 +389,7 @@ impl ContainerRegistry {
     pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
         (
             &self.container_to_idx,
-            self.containers.iter().map(|x| x.id.clone()).collect(),
+            self.containers.iter().map(|(_, x)| x.id.clone()).collect(),
         )
     }
 }

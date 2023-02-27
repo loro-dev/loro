@@ -8,7 +8,8 @@ use crate::{
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
-    op::{InnerContent, RemoteContent, RichOp},
+    op::{InnerContent, Op, RemoteContent, RichOp},
+    transaction::op::TransactionOp,
     version::PatchedVersionVector,
     InternalString, LoroError, LoroValue, ID,
 };
@@ -19,6 +20,7 @@ use smallvec::SmallVec;
 use std::{
     any::Any,
     fmt::{Debug, Display},
+    ops::Range,
 };
 
 use self::pool_mapping::StateContent;
@@ -149,6 +151,8 @@ pub trait Container: Debug + Any + Unpin + Send + Sync {
     fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
         hierarchy.unsubscribe(subscription);
     }
+
+    fn apply_txn_op(&mut self, op: &TransactionOp, id: ID) -> Op;
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

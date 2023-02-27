@@ -24,6 +24,8 @@ mod smstring;
 mod span;
 #[cfg(test)]
 pub mod tests;
+mod transaction;
+pub use transaction::Transact;
 
 pub mod delta;
 pub mod event;
