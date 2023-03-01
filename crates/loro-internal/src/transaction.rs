@@ -57,7 +57,7 @@ impl Deref for TransactionWrap {
     }
 }
 
-pub struct TransactionWrap(pub Arc<Mutex<Transaction>>);
+pub struct TransactionWrap(pub(crate) Arc<Mutex<Transaction>>);
 
 pub struct Transaction {
     client_id: ClientID,

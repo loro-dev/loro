@@ -67,6 +67,7 @@ pub enum ListTxnOp {
     Delete {
         pos: usize,
         len: usize,
+        
         deleted_container: Option<SmallVec<[ContainerIdx; 1]>>,
     },
 }

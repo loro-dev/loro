@@ -473,10 +473,8 @@ impl Container for ListContainer {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
-                        let mut delta = Delta::new();
                         let delta_vec = self.raw_data.slice(&slice.0).to_vec();
-                        delta.retain(*pos);
-                        delta.insert(delta_vec);
+                        let delta = Delta::new().retain(*pos).insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
 
@@ -485,9 +483,9 @@ impl Container for ListContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(span.start() as usize);
-                        delta.delete(span.atom_len());
+                        let delta = Delta::new()
+                            .retain(span.start() as usize)
+                            .delete(span.atom_len());
                         context.push_diff(&self.id, Diff::List(delta));
                     }
 
@@ -543,9 +541,7 @@ impl Container for ListContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
-                        delta.delete(len);
+                        let delta = Delta::new().retain(pos).delete(len);
                         diff.push(Diff::List(delta));
                     }
 
@@ -568,15 +564,12 @@ impl Container for ListContainer {
                 }
                 Effect::Ins { pos, content } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
                         let s = if content.is_unknown() {
                             (0..content.atom_len()).map(|_| LoroValue::Null).collect()
                         } else {
                             self.raw_data.slice(&content.0).to_vec()
                         };
-
-                        delta.insert(s);
+                        let delta = Delta::new().retain(pos).insert(s);
                         diff.push(Diff::List(delta));
                     }
                     if !content.is_unknown() {
@@ -665,10 +658,9 @@ impl Container for ListContainer {
             // notify
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
-                let mut delta = Delta::new();
                 let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
-                delta.retain(0);
-                delta.insert(delta_vec);
+                let delta = Delta::new().retain(0).insert(delta_vec);
+
                 ctx.push_diff(&self.id, Diff::List(delta));
             }
         } else {
@@ -850,9 +842,9 @@ mod test {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("id");
         {
-            let mut txn = loro.transact();
-            list.insert(&mut txn, 0, 123).unwrap();
-            list.insert(&mut txn, 1, 123).unwrap();
+            let txn = loro.transact();
+            list.insert(&txn, 0, 123).unwrap();
+            list.insert(&txn, 1, 123).unwrap();
         }
         assert_eq!(list.get(0), Some(123.into()));
         assert_eq!(list.get(1), Some(123.into()));
