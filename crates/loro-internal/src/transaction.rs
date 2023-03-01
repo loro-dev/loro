@@ -4,15 +4,17 @@ use std::{
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
-use fxhash::FxHashSet;
+use fxhash::{FxHashMap, FxHashSet};
+use rle::RleVec;
 
 use crate::{
     container::{registry::ContainerIdx, Container, ContainerID},
-    delta::Delta,
+    delta::{DeltaItem, SeqDelta},
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
-    id::ClientID,
-    ContainerType, LogStore, LoroCore, LoroError,
+    id::{ClientID, ID},
+    transaction::op::Value,
+    ContainerType, LogStore, LoroCore, LoroError, LoroValue,
 };
 
 use self::{
@@ -50,13 +52,6 @@ impl AsMut<Transaction> for Transaction {
     }
 }
 
-impl Deref for TransactionWrap {
-    type Target = Arc<Mutex<Transaction>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 pub struct TransactionWrap(pub(crate) Arc<Mutex<Transaction>>);
 
 pub struct Transaction {
@@ -65,7 +60,9 @@ pub struct Transaction {
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     // sort by [ContainerIdx]
     pub(crate) pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
+    compressed_op: Vec<TransactionOp>,
     checker: Checker,
+    created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
     deleted_container: FxHashSet<ContainerIdx>,
     committed: bool,
 }
@@ -82,27 +79,41 @@ impl Transaction {
             store,
             hierarchy,
             pending_ops: Default::default(),
-            deleted_container: Default::default(),
+            compressed_op: Default::default(),
             checker: Default::default(),
+            created_container: Default::default(),
+            deleted_container: Default::default(),
             committed: false,
         }
+    }
+
+    pub fn next_container_idx(&mut self) -> ContainerIdx {
+        let store = self.store.upgrade().unwrap();
+        let store = store.try_read().unwrap();
+        store.next_container_idx()
     }
 
     pub(crate) fn client_id(&self) -> ClientID {
         self.client_id
     }
 
-    pub(crate) fn insert(
+    pub(crate) fn push(
         &mut self,
         op: TransactionOp,
-    ) -> Result<Option<TransactionalContainer>, LoroError> {
+        created_container: Option<ContainerIdx>,
+    ) -> Result<(), LoroError> {
         self.checker.check(&op)?;
-        let ans = match op {
-            TransactionOp::List { container, .. } => self.insert_list(container, op),
-            TransactionOp::Map { container, .. } => self.insert_map(container, op),
-            TransactionOp::Text { container, .. } => self.insert_text(container, op),
-        };
-        Ok(ans)
+        if let Some(idx) = created_container {
+            self.created_container
+                .entry(op.container_idx())
+                .or_insert_with(FxHashSet::default)
+                .insert(idx);
+        }
+        self.pending_ops
+            .entry(op.container_idx())
+            .or_insert_with(Vec::new)
+            .push(op);
+        Ok(())
     }
 
     pub(crate) fn get_container_idx_by_id(&self, id: &ContainerID) -> Option<ContainerIdx> {
@@ -129,134 +140,48 @@ impl Transaction {
         f(self, &mut store, &mut hierarchy)
     }
 
-    fn insert_text(
-        &mut self,
-        container_idx: ContainerIdx,
-        op: TransactionOp,
-    ) -> Option<TransactionalContainer> {
-        self.pending_ops
-            .entry(container_idx)
-            .or_insert_with(Vec::new)
-            .push(op);
-        None
-    }
-
-    fn insert_map(
-        &mut self,
-        container_idx: ContainerIdx,
-        mut op: TransactionOp,
-    ) -> Option<TransactionalContainer> {
-        let ans = match op.as_map_mut().unwrap().1 {
-            MapTxnOp::Insert { key, value } => None,
-            MapTxnOp::InsertContainer {
-                key,
-                type_,
-                container,
-            } => {
-                let next_container_idx = self
-                    .store
-                    .upgrade()
-                    .unwrap()
-                    .try_read()
-                    .unwrap()
-                    .next_container_idx();
-                *container = Some(next_container_idx);
-                Some(TransactionalContainer::new(*type_, next_container_idx))
-            }
-            MapTxnOp::Delete {
-                key,
-                deleted_container,
-            } => {
-                self.deleted_container
-                    .extend((*deleted_container).into_iter());
-                None
-            }
-        };
-        self.pending_ops
-            .entry(container_idx)
-            .or_insert_with(Vec::new)
-            .push(op);
-
-        ans
-    }
-
-    fn insert_list(
-        &mut self,
-        container_idx: ContainerIdx,
-        mut op: TransactionOp,
-    ) -> Option<TransactionalContainer> {
-        let ans = match op.as_list_mut().unwrap().1 {
-            ListTxnOp::InsertContainer {
-                container, type_, ..
-            } => {
-                // record the created container
-                let next_container_idx = self
-                    .store
-                    .upgrade()
-                    .unwrap()
-                    .try_read()
-                    .unwrap()
-                    .next_container_idx();
-                *container = Some(next_container_idx);
-                Some(TransactionalContainer::new(*type_, next_container_idx))
-            }
-            ListTxnOp::Delete {
-                deleted_container: Some(deleted_container),
-                ..
-            } => {
-                // record the deleted container
-                self.deleted_container
-                    .extend(deleted_container.clone().into_iter());
-                None
-            }
-            _ => None,
-        };
-
-        self.pending_ops
-            .entry(container_idx)
-            .or_insert_with(Vec::new)
-            .push(op);
-
-        ans
-    }
-
     fn apply_ops_emit_event(&mut self) {
-        let pending_ops = std::mem::take(&mut self.pending_ops);
-        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            for (idx, ops) in pending_ops.into_iter() {
+        let compressed_op = std::mem::take(&mut self.compressed_op);
+        let events = self.with_store_hierarchy_mut(|_txn, store, hierarchy| {
+            let mut events = Vec::with_capacity(compressed_op.len());
+            for op in compressed_op {
+                let idx = op.container_idx();
                 let container = store.reg.get_by_idx(&idx).unwrap();
                 let container = container.upgrade().unwrap();
                 let mut container = container.try_lock().unwrap();
                 let container_id = container.id().clone();
-                let mut store_ops = Vec::with_capacity(ops.len());
-                for op in ops.iter() {
-                    // let id = store.next_id();
-                    store_ops.push(container.apply_txn_op(store, op));
-                }
+                let type_ = container_id.container_type();
+                let store_ops = container.apply_txn_op(store, &op);
                 drop(container);
                 let (old_version, new_version) = store.append_local_ops(&store_ops);
                 let new_version = new_version.into();
                 let event = if hierarchy.should_notify(&container_id) {
-                    let mut delta = Delta::new();
-                    for op in ops {
-                        // TODO delta
+                    match type_ {
+                        ContainerType::List => {
+                            let delta = op.into_list().unwrap().1.into_event_format();
+                            hierarchy
+                                .get_abs_path(&store.reg, &container_id)
+                                .map(|abs_path| RawEvent {
+                                    container_id: container_id.clone(),
+                                    old_version,
+                                    new_version,
+                                    diff: vec![Diff::List(delta)],
+                                    local: true,
+                                    abs_path,
+                                })
+                        }
+                        _ => unimplemented!(),
                     }
-                    hierarchy
-                        .get_abs_path(&store.reg, &container_id)
-                        .map(|abs_path| RawEvent {
-                            container_id: container_id.clone(),
-                            old_version,
-                            new_version,
-                            diff: vec![Diff::List(delta)],
-                            local: true,
-                            abs_path,
-                        })
                 } else {
                     None
                 };
-                // Emit event
+                events.push(event);
             }
-        })
+            events
+        });
+        for event in events.into_iter().flatten() {
+            Hierarchy::notify_without_lock(self.hierarchy.upgrade().unwrap(), event);
+        }
     }
 
     fn register_container(
@@ -285,24 +210,52 @@ impl Transaction {
     // - If a container really needs to be created, we create it at once and convert this op into InsertValue with `LoroValue::Unresolved`
     // - merge this op with
     fn compress_ops(&mut self) {
-        // TODO:
-        self.pending_ops.values_mut().for_each(|ops| {
-            let owned_ops = std::mem::take(ops);
-            *ops = owned_ops
-                .into_iter()
-                .map(|op| {
-                    if let TransactionOp::List {
-                        container,
-                        op: ListTxnOp::InsertValue { pos, value },
-                    } = op
-                    {
-                        TransactionOp::insert_list_batch_value(container, pos, vec![value])
-                    } else {
-                        op
+        let pending_ops = std::mem::take(&mut self.pending_ops);
+        for (idx, ops) in pending_ops {
+            if self.deleted_container.remove(&idx) {
+                continue;
+            }
+            let type_ = ops.first().unwrap().container_type();
+            match type_ {
+                ContainerType::List => {
+                    let new_op = ops.into_iter().fold(ListTxnOp::new(), |a, mut b| {
+                        self.convert_op_container(&mut b);
+                        let list_op = b.list_inner();
+                        a.compose(list_op)
+                    });
+                    self.compressed_op.push(TransactionOp::List {
+                        container: idx,
+                        ops: new_op,
+                    })
+                }
+                _ => unimplemented!(),
+            };
+            // The rest containers that are still in `created_container` have been deleted.
+            if let Some(deleted_containers) = self.created_container.remove(&idx) {
+                self.deleted_container.extend(deleted_containers);
+            }
+        }
+    }
+
+    fn convert_op_container(&mut self, op: &mut TransactionOp) {
+        match op {
+            TransactionOp::List { container, ops } => {
+                for item in ops.iter_mut() {
+                    if let Some((value, _)) = item.as_insert_mut() {
+                        assert_eq!(value.len(), 1);
+                        if let Some((type_, idx)) = value.first().unwrap().as_container() {
+                            self.created_container
+                                .get_mut(container)
+                                .unwrap()
+                                .remove(idx);
+                            let id = self.register_container(*idx, *type_, *container);
+                            *value = vec![Value::Value(LoroValue::Unresolved(id.into()))];
+                        }
                     }
-                })
-                .collect();
-        });
+                }
+            }
+            _ => unimplemented!(),
+        };
     }
 
     pub fn commit(&mut self) {
@@ -318,24 +271,7 @@ impl Transaction {
 
         // apply op
 
-        // remove the ops of the deleted container
-        std::mem::take(&mut self.deleted_container)
-            .iter()
-            .for_each(|idx| {
-                // the ops of deleted_container must be created in exist container
-                self.pending_ops.remove(idx);
-            });
-
         // convert InsertContainer op to Insert op with LoroValue::Unresolved
-        let mut pending_ops = std::mem::take(&mut self.pending_ops);
-        pending_ops.values_mut().for_each(|ops| {
-            ops.iter_mut()
-                .filter(|op| op.is_insert_container())
-                .for_each(|op| {
-                    op.register_container_and_convert(self).unwrap();
-                });
-        });
-        self.pending_ops = pending_ops;
 
         // compress op
         self.compress_ops();

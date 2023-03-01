@@ -209,7 +209,7 @@ impl Container for ContainerInstance {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
         match self {
             ContainerInstance::List(x) => x.apply_txn_op(store, op),
             ContainerInstance::Map(x) => x.apply_txn_op(store, op),

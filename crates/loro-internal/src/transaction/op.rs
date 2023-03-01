@@ -1,18 +1,62 @@
 use enum_as_inner::EnumAsInner;
-use smallvec::SmallVec;
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
+    delta::{DeltaItem, Meta, SeqDelta},
     ContainerType, InternalString, LoroError, LoroValue,
 };
 
 use super::Transaction;
 
+pub(crate) type ListTxnOp = SeqDelta<Vec<Value>>;
+
+impl ListTxnOp {
+    pub(super) fn into_event_format(self) -> SeqDelta<Vec<LoroValue>> {
+        let items = self
+            .inner()
+            .into_iter()
+            .map(|item| item.into_event_format())
+            .collect();
+        SeqDelta { vec: items }
+    }
+}
+
+impl<M: Meta> DeltaItem<Vec<Value>, M> {
+    pub(crate) fn into_event_format(self) -> DeltaItem<Vec<LoroValue>, M> {
+        match self {
+            DeltaItem::Delete(l) => DeltaItem::Delete(l),
+            DeltaItem::Retain { len, meta } => DeltaItem::Retain { len, meta },
+            DeltaItem::Insert { value, meta } => DeltaItem::Insert {
+                value: value.into_iter().map(|v| v.into_value().unwrap()).collect(),
+                meta,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, EnumAsInner)]
+pub enum Value {
+    Value(LoroValue),
+    Container((ContainerType, ContainerIdx)),
+}
+
+impl From<LoroValue> for Value {
+    fn from(value: LoroValue) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<(ContainerType, ContainerIdx)> for Value {
+    fn from(value: (ContainerType, ContainerIdx)) -> Self {
+        Self::Container(value)
+    }
+}
+
 #[derive(Debug, EnumAsInner)]
 pub enum TransactionOp {
     List {
         container: ContainerIdx,
-        op: ListTxnOp,
+        ops: ListTxnOp,
     },
     Map {
         container: ContainerIdx,
@@ -47,31 +91,6 @@ pub enum MapTxnOp {
     },
 }
 
-#[derive(Debug)]
-pub enum ListTxnOp {
-    InsertValue {
-        pos: usize,
-        value: LoroValue,
-    },
-    InsertBatchValue {
-        pos: usize,
-        values: Vec<LoroValue>,
-    },
-    InsertContainer {
-        pos: usize,
-        type_: ContainerType,
-        // The ContainerIdx will be create by Transaction
-        // And when the transaction applies the op, it will be converted to real ContainerID and the op will be merged into [Self::InsertBatchValue]
-        container: Option<ContainerIdx>,
-    },
-    Delete {
-        pos: usize,
-        len: usize,
-        
-        deleted_container: Option<SmallVec<[ContainerIdx; 1]>>,
-    },
-}
-
 // TODO: builder?
 impl TransactionOp {
     pub(crate) fn container_idx(&self) -> ContainerIdx {
@@ -79,6 +98,45 @@ impl TransactionOp {
             Self::List { container, .. } => *container,
             Self::Map { container, .. } => *container,
             Self::Text { container, .. } => *container,
+        }
+    }
+
+    pub(crate) fn container_type(&self) -> ContainerType {
+        match self {
+            Self::List { .. } => ContainerType::List,
+            Self::Map { .. } => ContainerType::Map,
+            Self::Text { .. } => ContainerType::Text,
+        }
+    }
+
+    pub(crate) fn list_inner(self) -> ListTxnOp {
+        if let TransactionOp::List { container, ops: op } = self {
+            op
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub(crate) fn list_op_mut(&mut self) -> &mut ListTxnOp {
+        if let TransactionOp::List { container, ops: op } = self {
+            op
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub(crate) fn has_insert_container(&self) -> bool {
+        match self {
+            Self::List { ops: op, .. } => op.items().iter().any(|op| {
+                op.as_insert()
+                    .and_then(|(vs, _)| {
+                        vs.iter()
+                            .any(|v| matches!(v, Value::Container(_)))
+                            .then_some(0)
+                    })
+                    .is_some()
+            }),
+            _ => unimplemented!(),
         }
     }
 
@@ -142,7 +200,7 @@ impl TransactionOp {
     pub(crate) fn insert_list_value(container: ContainerIdx, pos: usize, value: LoroValue) -> Self {
         Self::List {
             container,
-            op: ListTxnOp::InsertValue { pos, value },
+            ops: SeqDelta::new().retain(pos).insert(vec![Value::from(value)]),
         }
     }
 
@@ -153,7 +211,9 @@ impl TransactionOp {
     ) -> Self {
         Self::List {
             container,
-            op: ListTxnOp::InsertBatchValue { pos, values },
+            ops: SeqDelta::new()
+                .retain(pos)
+                .insert(values.into_iter().map(|v| v.into()).collect()),
         }
     }
 
@@ -161,93 +221,20 @@ impl TransactionOp {
         container: ContainerIdx,
         pos: usize,
         type_: ContainerType,
+        idx: ContainerIdx,
     ) -> Self {
         Self::List {
             container,
-            op: ListTxnOp::InsertContainer {
-                pos,
-                type_,
-                container: None,
-            },
+            ops: SeqDelta::new()
+                .retain(pos)
+                .insert(vec![(type_, idx).into()]),
         }
     }
 
-    pub(crate) fn delete_list(
-        container: ContainerIdx,
-        pos: usize,
-        len: usize,
-        deleted_container: Option<SmallVec<[ContainerIdx; 1]>>,
-    ) -> Self {
+    pub(crate) fn delete_list(container: ContainerIdx, pos: usize, len: usize) -> Self {
         Self::List {
             container,
-            op: ListTxnOp::Delete {
-                pos,
-                len,
-                deleted_container,
-            },
-        }
-    }
-
-    pub fn is_insert_container(&self) -> bool {
-        match self {
-            TransactionOp::List { op, .. } => op.is_insert_container(),
-            TransactionOp::Map { op, .. } => op.is_insert_container(),
-            _ => false,
-        }
-    }
-
-    pub fn register_container_and_convert(
-        &mut self,
-        txn: &mut Transaction,
-    ) -> Result<(), LoroError> {
-        match self {
-            TransactionOp::List { container, op } => {
-                let id = op.register_container(txn, *container)?;
-                *op = ListTxnOp::InsertValue {
-                    pos: op.pos(),
-                    value: LoroValue::Unresolved(id.into()),
-                };
-                Ok(())
-            }
-            TransactionOp::Map { container, op } => {
-                let id = op.register_container(txn, *container)?;
-                *op = MapTxnOp::Insert {
-                    key: op.key().clone(),
-                    value: LoroValue::Unresolved(id.into()),
-                };
-                Ok(())
-            }
-            _ => unreachable!("Text cannot insert container"),
-        }
-    }
-}
-
-impl ListTxnOp {
-    pub fn is_insert_container(&self) -> bool {
-        matches!(self, ListTxnOp::InsertContainer { .. })
-    }
-
-    pub fn register_container(
-        &self,
-        txn: &mut Transaction,
-        parent_idx: ContainerIdx,
-    ) -> Result<ContainerID, LoroError> {
-        match self {
-            ListTxnOp::InsertContainer {
-                type_, container, ..
-            } => Ok(txn.register_container(container.unwrap(), *type_, parent_idx)),
-            _ => Err(LoroError::TransactionError(
-                "not insert container op".into(),
-            )),
-        }
-    }
-
-    pub fn pos(&self) -> usize {
-        match self {
-            ListTxnOp::InsertValue { pos, .. } => *pos,
-            ListTxnOp::Delete { pos, .. } => *pos,
-            ListTxnOp::InsertBatchValue { pos, .. } => *pos,
-            ListTxnOp::InsertContainer { pos, .. } => *pos,
+            ops: SeqDelta::new().retain(pos).delete(len),
         }
     }
 }
@@ -265,7 +252,7 @@ impl MapTxnOp {
         matches!(self, Self::InsertContainer { .. })
     }
 
-    pub fn register_container(
+    pub(crate) fn register_container(
         &self,
         txn: &mut Transaction,
         parent_idx: ContainerIdx,

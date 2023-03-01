@@ -70,7 +70,7 @@ impl MapContainer {
         }
     }
 
-    pub fn insert<P: Prelim>(
+    pub(crate) fn insert<P: Prelim>(
         &mut self,
         txn: &mut Transaction,
         key: InternalString,
@@ -78,29 +78,34 @@ impl MapContainer {
     ) -> Result<Option<TransactionalContainer>, LoroError> {
         let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
-            let container = txn
-                .insert(TransactionOp::insert_map_container(
-                    self.idx,
-                    key,
-                    value.into_container().unwrap(),
-                ))?
-                .unwrap();
-            prelim.integrate(txn, container.idx())?;
-            Ok(Some(container))
+            let idx = txn.next_container_idx();
+            txn.push(
+                TransactionOp::insert_map_container(self.idx, key, value.into_container().unwrap()),
+                Some(idx),
+            )?;
+            prelim.integrate(txn, idx)?;
+            Ok(None)
         } else {
             let value = value.into_value().unwrap();
-            txn.insert(TransactionOp::insert_map_value(self.idx, key, value))?;
+            txn.push(TransactionOp::insert_map_value(self.idx, key, value), None)?;
             Ok(None)
         }
     }
 
-    pub fn delete(&mut self, txn: &mut Transaction, key: InternalString) -> Result<(), LoroError> {
+    pub(crate) fn delete(
+        &mut self,
+        txn: &mut Transaction,
+        key: InternalString,
+    ) -> Result<(), LoroError> {
         let deleted_container = if let Some(LoroValue::Unresolved(id)) = self.get(&key) {
             txn.get_container_idx_by_id(id.as_ref())
         } else {
             None
         };
-        txn.insert(TransactionOp::delete_map(self.idx, key, deleted_container))?;
+        txn.push(
+            TransactionOp::delete_map(self.idx, key, deleted_container),
+            None,
+        )?;
         Ok(())
     }
 
@@ -128,12 +133,13 @@ impl MapContainer {
         }
     }
 
-    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &MapTxnOp) -> Op {
-        match op {
-            MapTxnOp::Insert { key, value } => self.apply_insert(store, key.into(), value.clone()),
-            MapTxnOp::Delete { key, .. } => self.apply_insert(store, key.into(), LoroValue::Null),
-            _ => unreachable!(),
-        }
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &MapTxnOp) -> Vec<Op> {
+        todo!()
+        // match op {
+        //     MapTxnOp::Insert { key, value } => self.apply_insert(store, key.into(), value.clone()),
+        //     MapTxnOp::Delete { key, .. } => self.apply_insert(store, key.into(), LoroValue::Null),
+        //     _ => unreachable!(),
+        // }
     }
 
     // fn insert_value<C: Context>(
@@ -555,7 +561,7 @@ impl Container for MapContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
         let op = op.as_map().unwrap().1;
         self.apply_txn_op_impl(store, op)
     }
@@ -590,14 +596,14 @@ impl Map {
         value: V,
     ) -> Result<Option<TransactionalContainer>, LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         self.with_container(|map| map.insert(txn, key.into(), value))
     }
 
     pub fn delete<T: Transact>(&mut self, txn: &T, key: &str) -> Result<(), LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         self.with_container(|map| Ok(map.delete(txn, key.into())?))
     }

@@ -11,7 +11,7 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::op::TransactionOp,
     version::PatchedVersionVector,
-    InternalString, LoroError, LoroValue, ID, LogStore,
+    InternalString, LogStore, LoroError, LoroValue, ID,
 };
 
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,7 @@ pub trait Container: Debug + Any + Unpin + Send + Sync {
         hierarchy.unsubscribe(subscription);
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op;
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op>;
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

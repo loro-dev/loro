@@ -19,10 +19,10 @@ use crate::{
         },
         Container, ContainerID, ContainerType,
     },
-    delta::Delta,
+    delta::{DeltaItem, SeqDelta},
     event::{Diff, Index},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
@@ -62,7 +62,7 @@ impl ListContainer {
         }
     }
 
-    pub fn insert<P: Prelim>(
+    pub(crate) fn insert<P: Prelim>(
         &self,
         txn: &mut Transaction,
         pos: usize,
@@ -70,65 +70,66 @@ impl ListContainer {
     ) -> Result<Option<TransactionalContainer>, LoroError> {
         let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
-            let container = txn
-                .insert(TransactionOp::insert_list_container(
+            let idx = txn.next_container_idx();
+            txn.push(
+                TransactionOp::insert_list_container(
                     self.idx,
                     pos,
                     value.into_container().unwrap(),
-                ))?
-                .unwrap();
-            prelim.integrate(txn, container.idx())?;
-            Ok(Some(container))
+                    idx,
+                ),
+                Some(idx),
+            )?;
+            prelim.integrate(txn, idx)?;
+            // TODO: return container
+            Ok(None)
         } else {
             let value = value.into_value().unwrap();
-            txn.insert(TransactionOp::insert_list_value(self.idx, pos, value))?;
+            txn.push(TransactionOp::insert_list_value(self.idx, pos, value), None)?;
             Ok(None)
         }
     }
 
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> Result<(), LoroError> {
-        // check whether there is a container in the deleted range
-        let mut deleted_container = SmallVec::<[ContainerIdx; 1]>::default();
-        for i in pos..(pos + len) {
-            let value = self.get(i);
-            if let Some(LoroValue::Unresolved(id)) = value {
-                deleted_container.push(txn.get_container_idx_by_id(id.as_ref()).unwrap())
-            }
-        }
-
-        let deleted_container = (pos..(pos + len))
-            .map(|i| {
-                let value = self.get(i);
-                if let Some(LoroValue::Unresolved(id)) = value {
-                    Some(txn.get_container_idx_by_id(id.as_ref()).unwrap())
-                } else {
-                    None
-                }
-            })
-            .filter(|&c| c.is_some())
-            .collect();
-
-        txn.insert(TransactionOp::delete_list(
-            self.idx,
-            pos,
-            len,
-            deleted_container,
-        ))?;
+    pub(crate) fn delete(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+    ) -> Result<(), LoroError> {
+        txn.push(TransactionOp::delete_list(self.idx, pos, len), None)?;
         Ok(())
     }
 
-    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOp) -> Op {
-        let id = store.next_id();
-        match op {
-            ListTxnOp::Delete { pos, len, .. } => self.apply_delete(*pos, *len, id),
-            ListTxnOp::InsertBatchValue { pos, values } => {
-                self.apply_batch_insert(*pos, values.clone(), id)
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOp) -> Vec<Op> {
+        let mut index = 0;
+        let mut ops = Vec::new();
+        for item in op.items() {
+            let item = item.clone().into_event_format();
+            match item {
+                DeltaItem::Retain { len, .. } => index += len,
+                DeltaItem::Insert { value, .. } => {
+                    let len = value.len();
+                    let op = self.apply_batch_insert(index, value, store);
+                    index += len;
+                    ops.push(op);
+                }
+                DeltaItem::Delete(len) => {
+                    index -= len;
+                    let op = self.apply_delete(index, len, store);
+                    ops.push(op);
+                }
             }
-            _ => unreachable!("Transaction should merge insert ops into batch insert op"),
         }
+        ops
     }
 
-    fn apply_batch_insert(&mut self, pos: usize, values: Vec<LoroValue>, id: ID) -> Op {
+    fn apply_batch_insert(
+        &mut self,
+        pos: usize,
+        values: Vec<LoroValue>,
+        store: &mut LogStore,
+    ) -> Op {
+        let id = store.next_id();
         let slice = self.raw_data.alloc_arr(values);
         self.state.insert(pos, slice.clone().into());
         Op::new(
@@ -141,7 +142,8 @@ impl ListContainer {
         )
     }
 
-    fn apply_delete(&mut self, pos: usize, len: usize, id: ID) -> Op {
+    fn apply_delete(&mut self, pos: usize, len: usize, store: &mut LogStore) -> Op {
+        let id = store.next_id();
         self.state.delete_range(Some(pos), Some(pos + len));
         Op::new(
             id,
@@ -474,7 +476,7 @@ impl Container for ListContainer {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
                         let delta_vec = self.raw_data.slice(&slice.0).to_vec();
-                        let delta = Delta::new().retain(*pos).insert(delta_vec);
+                        let delta = SeqDelta::new().retain(*pos).insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
 
@@ -483,7 +485,7 @@ impl Container for ListContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let delta = Delta::new()
+                        let delta = SeqDelta::new()
                             .retain(span.start() as usize)
                             .delete(span.atom_len());
                         context.push_diff(&self.id, Diff::List(delta));
@@ -541,7 +543,7 @@ impl Container for ListContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let delta = Delta::new().retain(pos).delete(len);
+                        let delta = SeqDelta::new().retain(pos).delete(len);
                         diff.push(Diff::List(delta));
                     }
 
@@ -569,7 +571,7 @@ impl Container for ListContainer {
                         } else {
                             self.raw_data.slice(&content.0).to_vec()
                         };
-                        let delta = Delta::new().retain(pos).insert(s);
+                        let delta = SeqDelta::new().retain(pos).insert(s);
                         diff.push(Diff::List(delta));
                     }
                     if !content.is_unknown() {
@@ -659,7 +661,7 @@ impl Container for ListContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
-                let delta = Delta::new().retain(0).insert(delta_vec);
+                let delta = SeqDelta::new().retain(0).insert(delta_vec);
 
                 ctx.push_diff(&self.id, Diff::List(delta));
             }
@@ -677,7 +679,7 @@ impl Container for ListContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
         let op = op.as_list().unwrap().1;
         self.apply_txn_op_impl(store, op)
     }
@@ -721,7 +723,7 @@ impl List {
         value: P,
     ) -> Result<Option<TransactionalContainer>, LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         // TODO: check client id
         self.with_container(|x| x.insert(txn, pos, value))
@@ -733,7 +735,7 @@ impl List {
         value: P,
     ) -> Result<Option<TransactionalContainer>, LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         self.with_container(|x| {
             let pos = x.values_len();
@@ -770,7 +772,7 @@ impl List {
         len: usize,
     ) -> Result<(), LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         self.with_container(|list| list.delete(txn, pos, len))
     }
@@ -835,7 +837,7 @@ impl ContainerWrapper for List {
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroCore, LoroValue, PrelimContainer, Transact};
+    use crate::{LoroCore, PrelimContainer, Transact};
 
     #[test]
     fn test_list_get() {

@@ -4,8 +4,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
 use crate::{
-    container::registry::{ContainerIdx, ContainerInstance},
-    context::Context,
+    container::registry::ContainerIdx,
     transaction::{op::TransactionOp, Transaction},
     ContainerType, LoroError, LoroValue,
 };
@@ -116,7 +115,10 @@ impl Prelim for PrelimList {
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
         for (i, value) in self.0.into_iter().enumerate() {
-            txn.insert(TransactionOp::insert_list_value(container_idx, i, value));
+            txn.push(
+                TransactionOp::insert_list_value(container_idx, i, value),
+                None,
+            )?;
         }
         Ok(())
     }

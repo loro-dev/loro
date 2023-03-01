@@ -2,7 +2,9 @@ use enum_as_inner::EnumAsInner;
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
-use crate::{container::ContainerID, delta::Delta, version::Frontiers, InternalString, LoroValue};
+use crate::{
+    container::ContainerID, delta::SeqDelta, version::Frontiers, InternalString, LoroValue,
+};
 
 #[derive(Debug)]
 pub struct RawEvent {
@@ -49,8 +51,8 @@ pub enum Index {
 
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
-    List(Delta<Vec<LoroValue>>),
-    Text(Delta<String>),
+    List(SeqDelta<Vec<LoroValue>>),
+    Text(SeqDelta<String>),
     Map(MapDiff),
 }
 

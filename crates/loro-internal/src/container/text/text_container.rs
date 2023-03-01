@@ -13,7 +13,7 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    delta::Delta,
+    delta::SeqDelta,
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
@@ -58,7 +58,7 @@ impl TextContainer {
     }
 
     #[inline(always)]
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         txn: &mut Transaction,
         pos: usize,
@@ -67,12 +67,12 @@ impl TextContainer {
         if text.is_empty() {
             return Ok(());
         }
-        txn.insert(TransactionOp::insert_text(self.idx, pos, text))?;
+        txn.push(TransactionOp::insert_text(self.idx, pos, text), None)?;
         Ok(())
     }
 
     #[inline(always)]
-    pub fn delete(
+    pub(crate) fn delete(
         &mut self,
         txn: &mut Transaction,
         pos: usize,
@@ -81,16 +81,17 @@ impl TextContainer {
         if len == 0 {
             return Ok(());
         }
-        txn.insert(TransactionOp::delete_text(self.idx, pos, len))?;
+        txn.push(TransactionOp::delete_text(self.idx, pos, len), None)?;
         Ok(())
     }
 
-    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOp) -> Op {
+    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOp) -> Vec<Op> {
         let id = store.next_id();
-        match op {
-            TextTxnOp::Insert { pos, text } => self.apply_insert(*pos, text.as_ref(), id),
-            TextTxnOp::Delete { pos, len } => self.apply_delete(*pos, *len, id),
-        }
+        todo!()
+        // match op {
+        //     TextTxnOp::Insert { pos, text } => self.apply_insert(*pos, text.as_ref(), id),
+        //     TextTxnOp::Delete { pos, len } => self.apply_delete(*pos, *len, id),
+        // }
     }
 
     pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, id: ID) -> Op {
@@ -367,7 +368,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
-                        let delta = Delta::new().retain(*pos).insert(s);
+                        let delta = SeqDelta::new().retain(*pos).insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(
@@ -377,7 +378,7 @@ impl Container for TextContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let delta = Delta::new()
+                        let delta = SeqDelta::new()
                             .retain(span.start() as usize)
                             .delete(span.atom_len());
                         ctx.push_diff(&self.id, Diff::Text(delta));
@@ -431,7 +432,7 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let delta = Delta::new().retain(pos).delete(len);
+                        let delta = SeqDelta::new().retain(pos).delete(len);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -445,7 +446,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&content.0).to_owned()
                         };
-                        let delta = Delta::new().retain(pos).insert(s);
+                        let delta = SeqDelta::new().retain(pos).insert(s);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -538,7 +539,7 @@ impl Container for TextContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let s = self.raw_str.slice(&(0..state_len)).to_owned();
-                let delta = Delta::new().retain(0).insert(s);
+                let delta = SeqDelta::new().retain(0).insert(s);
                 ctx.push_diff(&self.id, Diff::Text(delta));
             }
         } else {
@@ -546,7 +547,7 @@ impl Container for TextContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Op {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
         let op = op.as_text().unwrap().1;
         self.apply_txn_op_impl(store, op)
     }
@@ -593,22 +594,22 @@ impl Text {
         text: &str,
     ) -> Result<(), crate::LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         self.with_container(|x| x.insert(txn, pos, text))
     }
 
-    pub fn insert_utf16(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        text: &str,
-    ) -> Result<(), crate::LoroError> {
-        self.with_container(|x| {
-            let pos = x.state.utf16_to_utf8(pos);
-            x.insert(txn, pos, text)
-        })
-    }
+    // pub fn insert_utf16(
+    //     &mut self,
+    //     txn: &mut Transaction,
+    //     pos: usize,
+    //     text: &str,
+    // ) -> Result<(), crate::LoroError> {
+    //     self.with_container(|x| {
+    //         let pos = x.state.utf16_to_utf8(pos);
+    //         x.insert(txn, pos, text)
+    //     })
+    // }
 
     pub fn delete<T: Transact>(
         &mut self,
@@ -617,25 +618,25 @@ impl Text {
         len: usize,
     ) -> Result<(), crate::LoroError> {
         let txn = txn.transact();
-        let mut txn = txn.try_lock().unwrap();
+        let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
         // let txn = txn.try_lock().unwrap().as_mut();
         self.with_container(|text| text.delete(txn, pos, len))
     }
 
-    pub fn delete_utf16(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        len: usize,
-    ) -> Result<(), crate::LoroError> {
-        self.with_container(|text| {
-            let end = pos + len;
-            let pos = text.state.utf16_to_utf8(pos);
-            let len = text.state.utf16_to_utf8(end) - pos;
-            text.delete(txn, pos, len)
-        })
-    }
+    // pub fn delete_utf16(
+    //     &mut self,
+    //     txn: &mut Transaction,
+    //     pos: usize,
+    //     len: usize,
+    // ) -> Result<(), crate::LoroError> {
+    //     self.with_container(|text| {
+    //         let end = pos + len;
+    //         let pos = text.state.utf16_to_utf8(pos);
+    //         let len = text.state.utf16_to_utf8(end) - pos;
+    //         text.delete(txn, pos, len)
+    //     })
+    // }
 
     pub fn get_value(&self) -> LoroValue {
         self.instance
