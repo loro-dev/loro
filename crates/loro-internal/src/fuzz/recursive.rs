@@ -11,11 +11,12 @@ use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
     array_mut_ref,
-    container::ContainerID,
+    container::{registry::ContainerIdx, ContainerID},
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
     log_store::EncodeConfig,
+    transaction::container::TransactionalContainer,
     ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 
@@ -261,11 +262,22 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, new: ContainerID) {
-        match new.container_type() {
-            ContainerType::Text => self.text_containers.push(self.loro.get_text(new)),
-            ContainerType::Map => self.map_containers.push(self.loro.get_map(new)),
-            ContainerType::List => self.list_containers.push(self.loro.get_list(new)),
+    fn add_new_container(&mut self, container: TransactionalContainer) {
+        let new = container.idx;
+        let type_ = container.type_;
+        let store = self.loro.log_store.try_read().unwrap();
+        let client_id = store.this_client_id;
+        let instance = store.get_container_by_idx(&new).unwrap();
+        match type_ {
+            ContainerType::Text => self
+                .text_containers
+                .push(Text::from_instance(instance, client_id)),
+            ContainerType::Map => self
+                .map_containers
+                .push(Map::from_instance(instance, client_id)),
+            ContainerType::List => self
+                .list_containers
+                .push(List::from_instance(instance, client_id)),
         }
     }
 }
@@ -470,26 +482,27 @@ impl Actionable for Vec<Actor> {
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
                 };
-                let mut txn = actor.loro.transact();
-                match value {
+                let txn = actor.loro.transact();
+                let container = match value {
                     FuzzValue::Null => {
-                        container.delete(&mut txn, &key.to_string()).unwrap();
+                        container.delete(&txn, &key.to_string()).unwrap();
+                        None
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&mut txn, &key.to_string(), *i).unwrap();
+                        container.insert(&txn, &key.to_string(), *i).unwrap();
+                        None
                     }
-                    FuzzValue::Container(c) => {
-                        let new = container
-                            .insert(&mut txn, &key.to_string(), *c)
+                    FuzzValue::Container(c) => Some(
+                        container
+                            .insert(&txn, &key.to_string(), *c)
                             .unwrap()
-                            .unwrap();
-                        // actor.add_new_container(new);
-                        // TODO convert to idx
-                        // FIXME
-                        actor.add_new_container(ContainerID::new_root("name", *c))
-                    }
-                }
+                            .unwrap(),
+                    ),
+                };
                 drop(txn);
+                if let Some(container) = container {
+                    actor.add_new_container(container);
+                }
             }
             Action::List {
                 site,
@@ -507,25 +520,24 @@ impl Actionable for Vec<Actor> {
                     #[allow(clippy::unnecessary_unwrap)]
                     container.unwrap()
                 };
-                let mut txn = actor.loro.transact();
-                match value {
+                let txn = actor.loro.transact();
+                let container = match value {
                     FuzzValue::Null => {
-                        container.delete(&mut txn, *key as usize, 1).unwrap();
+                        container.delete(&txn, *key as usize, 1).unwrap();
+                        None
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&mut txn, *key as usize, *i).unwrap();
+                        container.insert(&txn, *key as usize, *i).unwrap();
+                        None
                     }
                     FuzzValue::Container(c) => {
-                        let new = container
-                            .insert(&mut txn, *key as usize, *c)
-                            .unwrap()
-                            .unwrap();
-                        // TODO convert to idx
-                        // FIXME
-                        actor.add_new_container(ContainerID::new_root("name", *c))
+                        Some(container.insert(&txn, *key as usize, *c).unwrap().unwrap())
                     }
-                }
+                };
                 drop(txn);
+                if let Some(container) = container {
+                    actor.add_new_container(container);
+                }
             }
             Action::Text {
                 site,
@@ -543,14 +555,14 @@ impl Actionable for Vec<Actor> {
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
                 };
-                let mut txn = actor.loro.transact();
+                let txn = actor.loro.transact();
                 if *is_del {
                     container
-                        .delete(&mut txn, *pos as usize, *value as usize)
+                        .delete(&txn, *pos as usize, *value as usize)
                         .unwrap();
                 } else {
                     container
-                        .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
+                        .insert(&txn, *pos as usize, &(format!("[{}]", value)))
                         .unwrap();
                 }
                 drop(txn);

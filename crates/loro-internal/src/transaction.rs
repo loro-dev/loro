@@ -1,18 +1,15 @@
 use std::{
     collections::BTreeMap,
-    ops::{Deref, DerefMut},
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
-use rle::RleVec;
 
 use crate::{
     container::{registry::ContainerIdx, Container, ContainerID},
-    delta::{DeltaItem, SeqDelta},
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
-    id::{ClientID, ID},
+    id::ClientID,
     transaction::op::Value,
     ContainerType, LogStore, LoroCore, LoroError, LoroValue, Map,
 };

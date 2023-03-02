@@ -79,17 +79,13 @@ impl MapContainer {
         let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
             let idx = txn.next_container_idx();
+            let type_ = value.into_container().unwrap();
             txn.push(
-                TransactionOp::insert_map_container(
-                    self.idx,
-                    key,
-                    value.into_container().unwrap(),
-                    idx,
-                ),
+                TransactionOp::insert_map_container(self.idx, key, type_, idx),
                 Some(idx),
             )?;
             prelim.integrate(txn, idx)?;
-            Ok(None)
+            Ok(Some(TransactionalContainer::new(idx, type_)))
         } else {
             let value = value.into_value().unwrap();
             txn.push(TransactionOp::insert_map_value(self.idx, key, value), None)?;

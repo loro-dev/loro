@@ -71,18 +71,14 @@ impl ListContainer {
         let (value, maybe_container) = value.convert_value()?;
         if let Some(prelim) = maybe_container {
             let idx = txn.next_container_idx();
+            let type_ = value.into_container().unwrap();
             txn.push(
-                TransactionOp::insert_list_container(
-                    self.idx,
-                    pos,
-                    value.into_container().unwrap(),
-                    idx,
-                ),
+                TransactionOp::insert_list_container(self.idx, pos, type_, idx),
                 Some(idx),
             )?;
             prelim.integrate(txn, idx)?;
             // TODO: return container
-            Ok(None)
+            Ok(Some(TransactionalContainer::new(idx, type_)))
         } else {
             let value = value.into_value().unwrap();
             txn.push(TransactionOp::insert_list_value(self.idx, pos, value), None)?;
