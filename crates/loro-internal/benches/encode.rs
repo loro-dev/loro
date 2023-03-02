@@ -11,11 +11,11 @@ mod sync {
         let mut b = c.benchmark_group("encode_with_sync");
         b.sample_size(10);
         b.bench_function("update", |b| {
-            let mut c1 = LoroCore::new(Default::default(), Some(0));
-            let mut c2 = LoroCore::new(Default::default(), Some(1));
-            let mut t1 = c1.get_text("text");
-            let mut t2 = c2.get_text("text");
             b.iter(|| {
+                let mut c1 = LoroCore::new(Default::default(), Some(0));
+                let mut c2 = LoroCore::new(Default::default(), Some(1));
+                let mut t1 = c1.get_text("text");
+                let mut t2 = c2.get_text("text");
                 for (i, action) in actions.iter().enumerate() {
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
@@ -34,11 +34,11 @@ mod sync {
             })
         });
         b.bench_function("rle update", |b| {
-            let mut c1 = LoroCore::new(Default::default(), Some(0));
-            let mut c2 = LoroCore::new(Default::default(), Some(1));
-            let mut t1 = c1.get_text("text");
-            let mut t2 = c2.get_text("text");
             b.iter(|| {
+                let mut c1 = LoroCore::new(Default::default(), Some(0));
+                let mut c2 = LoroCore::new(Default::default(), Some(1));
+                let mut t1 = c1.get_text("text");
+                let mut t2 = c2.get_text("text");
                 for (i, action) in actions.iter().enumerate() {
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
@@ -62,16 +62,18 @@ mod run {
     use super::*;
     use bench_utils::TextAction;
     use loro_internal::log_store::{EncodeConfig, EncodeMode};
-    use loro_internal::{LoroCore, VersionVector};
+    use loro_internal::{LoroCore, Transact, VersionVector};
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
         let mut loro = LoroCore::default();
         let mut text = loro.get_text("text");
+        let txn = loro.transact();
         for TextAction { pos, ins, del } in actions.iter() {
-            text.delete(&loro, *pos, *del).unwrap();
-            text.insert(&loro, *pos, ins).unwrap();
+            text.delete(&txn, *pos, *del).unwrap();
+            text.insert(&txn, *pos, ins).unwrap();
         }
+        drop(txn);
 
         let mut b = c.benchmark_group("encode");
         b.bench_function("B4_encode_updates", |b| {
@@ -85,8 +87,9 @@ mod run {
             let buf = loro.encode_with_cfg(
                 EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
             );
-            let mut store2 = LoroCore::default();
+
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });
@@ -102,8 +105,8 @@ mod run {
             let buf = loro.encode_with_cfg(
                 EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new())).without_compress(),
             );
-            let mut store2 = LoroCore::default();
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });
@@ -114,8 +117,8 @@ mod run {
         });
         b.bench_function("B4_decode_snapshot", |b| {
             let buf = loro.encode_all();
-            let mut store2 = LoroCore::default();
             b.iter(|| {
+                let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
             })
         });

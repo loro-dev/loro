@@ -13,14 +13,14 @@ use crate::{
         Container, ContainerID, ContainerType,
     },
     context::Context,
-    delta::SeqDelta,
+    delta::{DeltaItem, SeqDelta},
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::{
-        op::{TextTxnOp, TransactionOp},
+        op::{TextTxnOps, TransactionOp},
         Transaction,
     },
     value::LoroValue,
@@ -57,19 +57,19 @@ impl TextContainer {
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn insert(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        text: &str,
-    ) -> Result<(), LoroError> {
-        if text.is_empty() {
-            return Ok(());
-        }
-        txn.push(TransactionOp::insert_text(self.idx, pos, text), None)?;
-        Ok(())
-    }
+    // #[inline(always)]
+    // pub(crate) fn insert(
+    //     &mut self,
+    //     txn: &mut Transaction,
+    //     pos: usize,
+    //     text: &str,
+    // ) -> Result<(), LoroError> {
+    //     if text.is_empty() {
+    //         return Ok(());
+    //     }
+
+    //     Ok(())
+    // }
 
     #[inline(always)]
     pub(crate) fn delete(
@@ -85,19 +85,33 @@ impl TextContainer {
         Ok(())
     }
 
-    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOp) -> Vec<Op> {
-        let id = store.next_id();
-        todo!()
-        // match op {
-        //     TextTxnOp::Insert { pos, text } => self.apply_insert(*pos, text.as_ref(), id),
-        //     TextTxnOp::Delete { pos, len } => self.apply_delete(*pos, *len, id),
-        // }
+    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOps) -> Vec<Op> {
+        let mut index = 0;
+        let mut ops = Vec::new();
+        for item in op.items() {
+            match item {
+                DeltaItem::Retain { len, .. } => index += len,
+                DeltaItem::Insert { value, .. } => {
+                    let len = value.len();
+                    let op = self.apply_insert(index, value, store);
+                    index += len;
+                    ops.push(op);
+                }
+                DeltaItem::Delete(len) => {
+                    index -= len;
+                    let op = self.apply_delete(index, *len, store);
+                    ops.push(op);
+                }
+            }
+        }
+        ops
     }
 
-    pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, id: ID) -> Op {
+    pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, store: &mut LogStore) -> Op {
         if self.state.len() < pos {
             panic!("insert index out of range");
         }
+        let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
         self.state.insert(pos, slice);
@@ -111,10 +125,11 @@ impl TextContainer {
         )
     }
 
-    pub(crate) fn apply_delete(&mut self, pos: usize, len: usize, id: ID) -> Op {
+    pub(crate) fn apply_delete(&mut self, pos: usize, len: usize, store: &mut LogStore) -> Op {
         if self.state.len() < pos + len {
             panic!("deletion out of range");
         }
+        let id = store.next_id();
         self.state.delete_range(Some(pos), Some(pos + len));
         Op::new(
             id,
@@ -587,16 +602,21 @@ impl Text {
             .clone()
     }
 
-    pub fn insert<T: Transact>(
+    pub fn insert<T: Transact, S: Into<String>>(
         &mut self,
         txn: &T,
         pos: usize,
-        text: &str,
+        text: S,
     ) -> Result<(), crate::LoroError> {
+        // TODO: opt api
+        let text = text.into();
+        if text.is_empty() {
+            return Ok(());
+        }
         let txn = txn.transact();
         let mut txn = txn.0.try_lock().unwrap();
         let txn = txn.as_mut();
-        self.with_container(|x| x.insert(txn, pos, text))
+        self.with_container(|x| txn.push(TransactionOp::insert_text(x.idx, pos, text), None))
     }
 
     // pub fn insert_utf16(

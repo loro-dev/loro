@@ -20,7 +20,7 @@ use crate::{
 use self::{
     checker::Checker,
     container::TransactionalContainer,
-    op::{ListTxnOp, MapTxnOp, TransactionOp},
+    op::{ListTxnOps, MapTxnOp, TextTxnOps, TransactionOp},
 };
 
 mod checker;
@@ -218,12 +218,22 @@ impl Transaction {
             let type_ = ops.first().unwrap().container_type();
             match type_ {
                 ContainerType::List => {
-                    let new_op = ops.into_iter().fold(ListTxnOp::new(), |a, mut b| {
+                    let new_op = ops.into_iter().fold(ListTxnOps::new(), |a, mut b| {
                         self.convert_op_container(&mut b);
                         let list_op = b.list_inner();
                         a.compose(list_op)
                     });
                     self.compressed_op.push(TransactionOp::List {
+                        container: idx,
+                        ops: new_op,
+                    })
+                }
+                ContainerType::Text => {
+                    let new_op = ops.into_iter().fold(TextTxnOps::new(), |a, mut b| {
+                        let list_op = b.text_inner();
+                        a.compose(list_op)
+                    });
+                    self.compressed_op.push(TransactionOp::Text {
                         container: idx,
                         ops: new_op,
                     })

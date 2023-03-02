@@ -2,7 +2,7 @@ use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{container::registry::ContainerIdx, delta::SeqDelta, InternalString, LoroError};
 
-use super::op::{MapTxnOp, TextTxnOp, TransactionOp, Value};
+use super::op::{ListTxnOps, MapTxnOp, TextTxnOps, TransactionOp, Value};
 
 /// [ListChecker] maintains the length of all list container during one transaction,
 /// when a op is be inserted, it will check whether the position or the length of deletion is valid.
@@ -12,7 +12,7 @@ pub(super) struct ListChecker {
 }
 
 impl ListChecker {
-    pub(super) fn check(&mut self, op: &SeqDelta<Vec<Value>>) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, op: &ListTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -23,7 +23,7 @@ pub(super) struct TextChecker {
 }
 
 impl TextChecker {
-    pub(super) fn check(&mut self, op: &TextTxnOp) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, op: &TextTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -52,7 +52,7 @@ impl Checker {
         match op {
             TransactionOp::List { container, ops: op } => self.list.check(op),
             TransactionOp::Map { container, op } => self.map.check(op),
-            TransactionOp::Text { container, op } => self.text.check(op),
+            TransactionOp::Text { container, ops: op } => self.text.check(op),
         }
     }
 }

@@ -28,7 +28,7 @@ use crate::{
     prelim::Prelim,
     transaction::{
         container::TransactionalContainer,
-        op::{ListTxnOp, TransactionOp},
+        op::{ListTxnOps, TransactionOp},
         Transaction,
     },
     value::LoroValue,
@@ -100,7 +100,7 @@ impl ListContainer {
         Ok(())
     }
 
-    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOp) -> Vec<Op> {
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOps) -> Vec<Op> {
         let mut index = 0;
         let mut ops = Vec::new();
         for item in op.items() {

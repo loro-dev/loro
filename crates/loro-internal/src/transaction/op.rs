@@ -8,9 +8,10 @@ use crate::{
 
 use super::Transaction;
 
-pub(crate) type ListTxnOp = SeqDelta<Vec<Value>>;
+pub(crate) type ListTxnOps = SeqDelta<Vec<Value>>;
+pub(crate) type TextTxnOps = SeqDelta<String>;
 
-impl ListTxnOp {
+impl ListTxnOps {
     pub(super) fn into_event_format(self) -> SeqDelta<Vec<LoroValue>> {
         let items = self
             .inner()
@@ -56,7 +57,7 @@ impl From<(ContainerType, ContainerIdx)> for Value {
 pub enum TransactionOp {
     List {
         container: ContainerIdx,
-        ops: ListTxnOp,
+        ops: ListTxnOps,
     },
     Map {
         container: ContainerIdx,
@@ -64,14 +65,8 @@ pub enum TransactionOp {
     },
     Text {
         container: ContainerIdx,
-        op: TextTxnOp,
+        ops: TextTxnOps,
     },
-}
-
-#[derive(Debug)]
-pub enum TextTxnOp {
-    Insert { pos: usize, text: Box<str> },
-    Delete { pos: usize, len: usize },
 }
 
 #[derive(Debug)]
@@ -109,51 +104,48 @@ impl TransactionOp {
         }
     }
 
-    pub(crate) fn list_inner(self) -> ListTxnOp {
-        if let TransactionOp::List { container, ops: op } = self {
-            op
+    pub(crate) fn list_inner(self) -> ListTxnOps {
+        if let TransactionOp::List { ops, .. } = self {
+            ops
         } else {
             unreachable!()
         }
     }
 
-    pub(crate) fn list_op_mut(&mut self) -> &mut ListTxnOp {
-        if let TransactionOp::List { container, ops: op } = self {
-            op
+    pub(crate) fn text_inner(self) -> TextTxnOps {
+        if let TransactionOp::Text { ops, .. } = self {
+            ops
         } else {
             unreachable!()
         }
     }
 
-    pub(crate) fn has_insert_container(&self) -> bool {
-        match self {
-            Self::List { ops: op, .. } => op.items().iter().any(|op| {
-                op.as_insert()
-                    .and_then(|(vs, _)| {
-                        vs.iter()
-                            .any(|v| matches!(v, Value::Container(_)))
-                            .then_some(0)
-                    })
-                    .is_some()
-            }),
-            _ => unimplemented!(),
-        }
-    }
+    // pub(crate) fn has_insert_container(&self) -> bool {
+    //     match self {
+    //         Self::List { ops: op, .. } => op.items().iter().any(|op| {
+    //             op.as_insert()
+    //                 .and_then(|(vs, _)| {
+    //                     vs.iter()
+    //                         .any(|v| matches!(v, Value::Container(_)))
+    //                         .then_some(0)
+    //                 })
+    //                 .is_some()
+    //         }),
+    //         _ => unimplemented!(),
+    //     }
+    // }
 
-    pub(crate) fn insert_text(container: ContainerIdx, pos: usize, text: &str) -> Self {
+    pub(crate) fn insert_text(container: ContainerIdx, pos: usize, text: String) -> Self {
         Self::Text {
             container,
-            op: TextTxnOp::Insert {
-                pos,
-                text: text.into(),
-            },
+            ops: TextTxnOps::new().retain(pos).insert(text),
         }
     }
 
     pub(crate) fn delete_text(container: ContainerIdx, pos: usize, len: usize) -> Self {
         Self::Text {
             container,
-            op: TextTxnOp::Delete { pos, len },
+            ops: TextTxnOps::new().retain(pos).delete(len),
         }
     }
 
