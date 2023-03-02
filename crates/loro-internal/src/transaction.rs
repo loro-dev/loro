@@ -14,13 +14,12 @@ use crate::{
     hierarchy::Hierarchy,
     id::{ClientID, ID},
     transaction::op::Value,
-    ContainerType, LogStore, LoroCore, LoroError, LoroValue,
+    ContainerType, LogStore, LoroCore, LoroError, LoroValue, Map,
 };
 
 use self::{
     checker::Checker,
-    container::TransactionalContainer,
-    op::{ListTxnOps, MapTxnOp, TextTxnOps, TransactionOp},
+    op::{ListTxnOps, MapTxnOps, TextTxnOps, TransactionOp},
 };
 
 mod checker;
@@ -56,10 +55,10 @@ pub struct TransactionWrap(pub(crate) Arc<Mutex<Transaction>>);
 
 pub struct Transaction {
     client_id: ClientID,
-    pub(crate) store: Weak<RwLock<LogStore>>,
-    pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
+    store: Weak<RwLock<LogStore>>,
+    hierarchy: Weak<Mutex<Hierarchy>>,
     // sort by [ContainerIdx]
-    pub(crate) pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
+    pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
     compressed_op: Vec<TransactionOp>,
     checker: Checker,
     created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
@@ -162,7 +161,7 @@ impl Transaction {
                             hierarchy
                                 .get_abs_path(&store.reg, &container_id)
                                 .map(|abs_path| RawEvent {
-                                    container_id: container_id.clone(),
+                                    container_id,
                                     old_version,
                                     new_version,
                                     diff: vec![Diff::List(delta)],
@@ -170,7 +169,36 @@ impl Transaction {
                                     abs_path,
                                 })
                         }
-                        _ => unimplemented!(),
+                        ContainerType::Text => {
+                            let delta = op.into_text().unwrap().1;
+                            hierarchy
+                                .get_abs_path(&store.reg, &container_id)
+                                .map(|abs_path| RawEvent {
+                                    container_id,
+                                    old_version,
+                                    new_version,
+                                    diff: vec![Diff::Text(delta)],
+                                    local: true,
+                                    abs_path,
+                                })
+                        }
+                        ContainerType::Map => {
+                            let delta = {
+                                let map = store.get_container(&container_id).unwrap();
+                                let map = Map::from_instance(map, store.this_client_id);
+                                op.into_map().unwrap().1.into_event_format(&map)
+                            };
+                            hierarchy
+                                .get_abs_path(&store.reg, &container_id)
+                                .map(|abs_path| RawEvent {
+                                    container_id,
+                                    old_version,
+                                    new_version,
+                                    diff: vec![Diff::Map(delta)],
+                                    local: true,
+                                    abs_path,
+                                })
+                        }
                     }
                 } else {
                     None
@@ -220,8 +248,8 @@ impl Transaction {
                 ContainerType::List => {
                     let new_op = ops.into_iter().fold(ListTxnOps::new(), |a, mut b| {
                         self.convert_op_container(&mut b);
-                        let list_op = b.list_inner();
-                        a.compose(list_op)
+                        let b = b.list_inner();
+                        a.compose(b)
                     });
                     self.compressed_op.push(TransactionOp::List {
                         container: idx,
@@ -229,16 +257,26 @@ impl Transaction {
                     })
                 }
                 ContainerType::Text => {
-                    let new_op = ops.into_iter().fold(TextTxnOps::new(), |a, mut b| {
-                        let list_op = b.text_inner();
-                        a.compose(list_op)
+                    let new_op = ops.into_iter().fold(TextTxnOps::new(), |a, b| {
+                        let b = b.text_inner();
+                        a.compose(b)
                     });
                     self.compressed_op.push(TransactionOp::Text {
                         container: idx,
                         ops: new_op,
                     })
                 }
-                _ => unimplemented!(),
+                ContainerType::Map => {
+                    let new_op = ops.into_iter().fold(MapTxnOps::new(), |a, mut b| {
+                        self.convert_op_container(&mut b);
+                        let b = b.map_inner();
+                        a.compose(b)
+                    });
+                    self.compressed_op.push(TransactionOp::Map {
+                        container: idx,
+                        ops: new_op,
+                    })
+                }
             };
             // The rest containers that are still in `created_container` have been deleted.
             if let Some(deleted_containers) = self.created_container.remove(&idx) {
@@ -264,7 +302,19 @@ impl Transaction {
                     }
                 }
             }
-            _ => unimplemented!(),
+            TransactionOp::Map { container, ops } => {
+                for (_k, v) in ops.added.iter_mut() {
+                    if let Some((type_, idx)) = v.as_container() {
+                        self.created_container
+                            .get_mut(container)
+                            .unwrap()
+                            .remove(idx);
+                        let id = self.register_container(*idx, *type_, *container);
+                        *v = Value::Value(LoroValue::Unresolved(id.into()));
+                    }
+                }
+            }
+            _ => unreachable!(),
         };
     }
 

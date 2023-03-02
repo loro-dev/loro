@@ -1,9 +1,8 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    container::ContainerID, delta::SeqDelta, version::Frontiers, InternalString, LoroValue,
+    container::ContainerID, delta::{SeqDelta, MapDiff}, version::Frontiers, InternalString, LoroValue,
 };
 
 #[derive(Debug)]
@@ -54,25 +53,6 @@ pub enum Diff {
     List(SeqDelta<Vec<LoroValue>>),
     Text(SeqDelta<String>),
     Map(MapDiff),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ValuePair {
-    pub old: LoroValue,
-    pub new: LoroValue,
-}
-
-impl From<(LoroValue, LoroValue)> for ValuePair {
-    fn from((old, new): (LoroValue, LoroValue)) -> Self {
-        ValuePair { old, new }
-    }
-}
-
-#[derive(Default, Clone, Debug, Serialize)]
-pub struct MapDiff {
-    pub added: FxHashMap<InternalString, LoroValue>,
-    pub updated: FxHashMap<InternalString, ValuePair>,
-    pub deleted: FxHashSet<InternalString>,
 }
 
 // pub type Observer = Box<dyn FnMut(&Event) + Send>;

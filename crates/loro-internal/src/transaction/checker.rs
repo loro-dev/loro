@@ -1,8 +1,8 @@
 use fxhash::{FxHashMap, FxHashSet};
 
-use crate::{container::registry::ContainerIdx, delta::SeqDelta, InternalString, LoroError};
+use crate::{container::registry::ContainerIdx, InternalString, LoroError};
 
-use super::op::{ListTxnOps, MapTxnOp, TextTxnOps, TransactionOp, Value};
+use super::op::{ListTxnOps, MapTxnOps, TextTxnOps, TransactionOp};
 
 /// [ListChecker] maintains the length of all list container during one transaction,
 /// when a op is be inserted, it will check whether the position or the length of deletion is valid.
@@ -34,7 +34,7 @@ pub(super) struct MapChecker {
 }
 
 impl MapChecker {
-    pub(super) fn check(&mut self, op: &MapTxnOp) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, op: &MapTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -51,7 +51,7 @@ impl Checker {
     pub(super) fn check(&mut self, op: &TransactionOp) -> Result<(), LoroError> {
         match op {
             TransactionOp::List { container, ops: op } => self.list.check(op),
-            TransactionOp::Map { container, op } => self.map.check(op),
+            TransactionOp::Map { container, ops: op } => self.map.check(op),
             TransactionOp::Text { container, ops: op } => self.text.check(op),
         }
     }

@@ -10,6 +10,7 @@ mod run {
     use loro_internal::fuzz::test_multi_sites;
     use loro_internal::fuzz::Action;
     use loro_internal::LoroCore;
+    use loro_internal::Transact;
     use rand::Rng;
     use rand::SeedableRng;
 
@@ -44,9 +45,12 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut text = loro.get_text("text");
-                for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&loro, *pos, *del).unwrap();
-                    text.insert(&loro, *pos, ins).unwrap();
+                {
+                    let txn = loro.transact();
+                    for TextAction { pos, ins, del } in actions.iter() {
+                        text.delete(&txn, *pos, *del).unwrap();
+                        text.insert(&txn, *pos, ins).unwrap();
+                    }
                 }
             })
         });
@@ -56,9 +60,12 @@ mod run {
                 let mut loro = LoroCore::default();
                 loro.subscribe_deep(Box::new(|_| {}));
                 let mut text = loro.get_text("text");
-                for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&loro, *pos, *del).unwrap();
-                    text.insert(&loro, *pos, ins).unwrap();
+                {
+                    let txn = loro.transact();
+                    for TextAction { pos, ins, del } in actions.iter() {
+                        text.delete(&txn, *pos, *del).unwrap();
+                        text.insert(&txn, *pos, ins).unwrap();
+                    }
                 }
             })
         });
@@ -70,8 +77,11 @@ mod run {
                 let mut loro_b = LoroCore::default();
                 let mut text = loro.get_text("text");
                 for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&loro, *pos, *del).unwrap();
-                    text.insert(&loro, *pos, ins).unwrap();
+                    {
+                        let txn = loro.transact();
+                        text.delete(&txn, *pos, *del).unwrap();
+                        text.insert(&txn, *pos, ins).unwrap();
+                    }
 
                     loro_b.import(loro.export(loro_b.vv_cloned()));
                 }
@@ -95,11 +105,17 @@ mod run {
                         break;
                     }
 
-                    text.delete(&loro, pos, del).unwrap();
-                    text.insert(&loro, pos, ins).unwrap();
+                    {
+                        let txn = loro.transact();
+                        text.delete(&txn, pos, del).unwrap();
+                        text.insert(&txn, pos, ins).unwrap();
+                    }
 
-                    text2.delete(&loro_b, pos, del).unwrap();
-                    text2.insert(&loro_b, pos, ins).unwrap();
+                    {
+                        let txn = loro_b.transact();
+                        text2.delete(&txn, pos, del).unwrap();
+                        text2.insert(&txn, pos, ins).unwrap();
+                    }
                     loro_b.import(loro.export(loro_b.vv_cloned()));
                     loro.import(loro_b.export(loro.vv_cloned()));
                 }

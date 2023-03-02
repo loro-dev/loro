@@ -1,15 +1,32 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    container::{registry::ContainerIdx, ContainerID},
-    delta::{DeltaItem, Meta, SeqDelta},
-    ContainerType, InternalString, LoroError, LoroValue,
+    container::registry::ContainerIdx,
+    delta::{DeltaItem, MapDiff, MapDiffRaw, Meta, SeqDelta},
+    ContainerType, InternalString, LoroValue, Map,
 };
-
-use super::Transaction;
 
 pub(crate) type ListTxnOps = SeqDelta<Vec<Value>>;
 pub(crate) type TextTxnOps = SeqDelta<String>;
+pub(crate) type MapTxnOps = MapDiffRaw<Value>;
+
+impl MapTxnOps {
+    pub(super) fn into_event_format(self, map_container: &Map) -> MapDiff {
+        let mut ans = MapDiff::default();
+        for (k, v) in self.added.into_iter() {
+            let v = v.into_value().unwrap();
+            if let Some(old) = map_container.get(&k) {
+                ans.updated.insert(k, (old, v).into());
+            } else {
+                ans.added.insert(k, v);
+            }
+        }
+        for k in self.deleted {
+            ans.deleted.insert(k);
+        }
+        ans
+    }
+}
 
 impl ListTxnOps {
     pub(super) fn into_event_format(self) -> SeqDelta<Vec<LoroValue>> {
@@ -61,7 +78,7 @@ pub enum TransactionOp {
     },
     Map {
         container: ContainerIdx,
-        op: MapTxnOp,
+        ops: MapTxnOps,
     },
     Text {
         container: ContainerIdx,
@@ -69,24 +86,6 @@ pub enum TransactionOp {
     },
 }
 
-#[derive(Debug)]
-pub enum MapTxnOp {
-    Insert {
-        key: InternalString,
-        value: LoroValue,
-    },
-    InsertContainer {
-        key: InternalString,
-        type_: ContainerType,
-        container: Option<ContainerIdx>,
-    },
-    Delete {
-        key: InternalString,
-        deleted_container: Option<ContainerIdx>,
-    },
-}
-
-// TODO: builder?
 impl TransactionOp {
     pub(crate) fn container_idx(&self) -> ContainerIdx {
         match self {
@@ -120,20 +119,13 @@ impl TransactionOp {
         }
     }
 
-    // pub(crate) fn has_insert_container(&self) -> bool {
-    //     match self {
-    //         Self::List { ops: op, .. } => op.items().iter().any(|op| {
-    //             op.as_insert()
-    //                 .and_then(|(vs, _)| {
-    //                     vs.iter()
-    //                         .any(|v| matches!(v, Value::Container(_)))
-    //                         .then_some(0)
-    //                 })
-    //                 .is_some()
-    //         }),
-    //         _ => unimplemented!(),
-    //     }
-    // }
+    pub(crate) fn map_inner(self) -> MapTxnOps {
+        if let TransactionOp::Map { ops, .. } = self {
+            ops
+        } else {
+            unreachable!()
+        }
+    }
 
     pub(crate) fn insert_text(container: ContainerIdx, pos: usize, text: String) -> Self {
         Self::Text {
@@ -156,7 +148,7 @@ impl TransactionOp {
     ) -> Self {
         Self::Map {
             container,
-            op: MapTxnOp::Insert { key, value },
+            ops: MapTxnOps::new().insert(key, value.into()),
         }
     }
 
@@ -164,28 +156,18 @@ impl TransactionOp {
         container: ContainerIdx,
         key: InternalString,
         type_: ContainerType,
+        idx: ContainerIdx,
     ) -> Self {
         TransactionOp::Map {
             container,
-            op: MapTxnOp::InsertContainer {
-                key,
-                type_,
-                container: None,
-            },
+            ops: MapTxnOps::new().insert(key, Value::Container((type_, idx))),
         }
     }
 
-    pub(crate) fn delete_map(
-        container: ContainerIdx,
-        key: InternalString,
-        deleted_container: Option<ContainerIdx>,
-    ) -> Self {
+    pub(crate) fn delete_map(container: ContainerIdx, key: &InternalString) -> Self {
         TransactionOp::Map {
             container,
-            op: MapTxnOp::Delete {
-                key,
-                deleted_container,
-            },
+            ops: MapTxnOps::new().delete(key),
         }
     }
 
@@ -219,7 +201,7 @@ impl TransactionOp {
             container,
             ops: SeqDelta::new()
                 .retain(pos)
-                .insert(vec![(type_, idx).into()]),
+                .insert(vec![Value::Container((type_, idx))]),
         }
     }
 
@@ -227,35 +209,6 @@ impl TransactionOp {
         Self::List {
             container,
             ops: SeqDelta::new().retain(pos).delete(len),
-        }
-    }
-}
-
-impl MapTxnOp {
-    pub fn key(&self) -> &InternalString {
-        match self {
-            MapTxnOp::Insert { key, .. } => key,
-            MapTxnOp::InsertContainer { key, .. } => key,
-            MapTxnOp::Delete { key, .. } => key,
-        }
-    }
-
-    pub fn is_insert_container(&self) -> bool {
-        matches!(self, Self::InsertContainer { .. })
-    }
-
-    pub(crate) fn register_container(
-        &self,
-        txn: &mut Transaction,
-        parent_idx: ContainerIdx,
-    ) -> Result<ContainerID, LoroError> {
-        match self {
-            MapTxnOp::InsertContainer {
-                type_, container, ..
-            } => Ok(txn.register_container(container.unwrap(), *type_, parent_idx)),
-            _ => Err(LoroError::TransactionError(
-                "not insert container op".into(),
-            )),
         }
     }
 }

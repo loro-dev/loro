@@ -12,6 +12,7 @@ use tabled::{TableIteratorExt, Tabled};
 use crate::{
     array_mut_ref,
     container::ContainerID,
+    delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
     log_store::EncodeConfig,
@@ -88,14 +89,14 @@ impl Actor {
                             let mut index = 0;
                             for item in delta.iter() {
                                 match item {
-                                    crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                                    DeltaItem::Retain { len, meta: _ } => {
                                         index += len;
                                     }
-                                    crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                                    DeltaItem::Insert { value, meta: _ } => {
                                         text.insert_str(index, value);
                                         index += value.len();
                                     }
-                                    crate::delta::DeltaItem::Delete(len) => {
+                                    DeltaItem::Delete(len) => {
                                         text.drain(index..index + *len);
                                     }
                                 }
@@ -142,16 +143,16 @@ impl Actor {
                             let mut index = 0;
                             for item in delta.iter() {
                                 match item {
-                                    crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                                    DeltaItem::Retain { len, meta: _ } => {
                                         index += len;
                                     }
-                                    crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                                    DeltaItem::Insert { value, meta: _ } => {
                                         for v in value {
                                             list.insert(index, v.clone());
                                             index += 1;
                                         }
                                     }
-                                    crate::delta::DeltaItem::Delete(len) => {
+                                    DeltaItem::Delete(len) => {
                                         list.drain(index..index + *len);
                                     }
                                 }
