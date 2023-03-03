@@ -185,9 +185,12 @@ impl Hierarchy {
                     .unwrap()
                     .try_lock()
                     .unwrap()
-                    .index_of_child(node_id)
-                    .unwrap();
-                path.push(index);
+                    .index_of_child(node_id);
+                if let Some(index) = index {
+                    path.push(index);
+                } else {
+                    return None;
+                }
             } else {
                 match node_id {
                     ContainerID::Root {

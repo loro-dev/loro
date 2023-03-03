@@ -110,7 +110,6 @@ impl ListContainer {
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
-                    index -= len;
                     let op = self.apply_delete(index, len, store);
                     ops.push(op);
                 }

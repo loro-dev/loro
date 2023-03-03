@@ -158,7 +158,7 @@ fn map() {
         .insert(&loro, "map", loro_internal::ContainerType::Map)
         .unwrap()
         .unwrap()
-        .idx();
+        .idx;
     drop(root);
     let sub_map = loro.get_container_by_idx(&map_id).unwrap();
     let mut sub_map = Map::from_instance(sub_map, loro.client_id());
@@ -284,14 +284,14 @@ fn encode_hierarchy() {
     let mut c1 = LoroCore::default();
     let mut map = c1.get_map("map");
     let list_id = map.insert(&c1, "a", ContainerType::List).unwrap();
-    let list = c1.get_container_by_idx(&list_id.unwrap().idx()).unwrap();
+    let list = c1.get_container_by_idx(&list_id.unwrap().idx).unwrap();
     let list = List::from_instance(list, c1.client_id());
     let txn = c1.transact();
     let idx = list
         .insert(&txn, 0, ContainerType::Text)
         .unwrap()
         .unwrap()
-        .idx();
+        .idx;
     let text = c1.get_container_by_idx(&idx).unwrap();
     let text = Text::from_instance(text, c1.client_id());
     text.insert(&c1, 0, "text_text");
