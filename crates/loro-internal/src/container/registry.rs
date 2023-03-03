@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex, RwLockWriteGuard, Weak,
@@ -15,20 +15,93 @@ use tracing::instrument;
 
 use crate::{
     context::Context,
-    event::{Index, ObserverHandler, RawEvent, SubscriptionID},
+    event::{Index, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
-    id::{ClientID, ID},
+    id::ClientID,
     log_store::ImportContext,
     op::{Op, RemoteContent, RichOp},
-    transaction::op::TransactionOp,
+    transaction::{op::TransactionOp, Transaction},
     version::PatchedVersionVector,
-    LogStore, LoroError, LoroValue,
+    List, LogStore, LoroError, LoroValue, Map, Text, Transact,
 };
 
 use super::{
     list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
     Container, ContainerID, ContainerType,
 };
+
+pub enum ContainerTemp {
+    List(List),
+    Map(Map),
+    Text(Text),
+}
+
+impl ContainerTemp {
+    pub(crate) fn new(idx: ContainerIdx, type_: ContainerType, client_id: ClientID) -> Self {
+        match type_ {
+            ContainerType::List => Self::List(List::from_idx(idx, client_id)),
+            ContainerType::Map => Self::Map(Map::from_idx(idx, client_id)),
+            ContainerType::Text => Self::Text(Text::from_idx(idx, client_id)),
+        }
+    }
+
+    pub fn idx(&self) -> ContainerIdx {
+        match self {
+            ContainerTemp::List(x) => x.idx(),
+            ContainerTemp::Map(x) => x.idx(),
+            ContainerTemp::Text(x) => x.idx(),
+        }
+    }
+
+    pub fn type_(&self) -> ContainerType {
+        match self {
+            ContainerTemp::List(_) => ContainerType::List,
+            ContainerTemp::Map(_) => ContainerType::Map,
+            ContainerTemp::Text(_) => ContainerType::Text,
+        }
+    }
+}
+
+#[derive(Debug, EnumAsInner)]
+pub enum ContainerInner {
+    Instance(Weak<Mutex<ContainerInstance>>),
+    Temp(ContainerIdx),
+}
+
+impl ContainerInner {
+    pub fn idx(&self) -> ContainerIdx {
+        match self {
+            ContainerInner::Instance(i) => i.upgrade().unwrap().try_lock().unwrap().idx(),
+            ContainerInner::Temp(idx) => *idx,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        //TODO:
+        todo!()
+    }
+}
+
+impl Clone for ContainerInner {
+    fn clone(&self) -> Self {
+        match self {
+            ContainerInner::Instance(weak) => ContainerInner::Instance(Weak::clone(weak)),
+            ContainerInner::Temp(idx) => ContainerInner::Temp(*idx),
+        }
+    }
+}
+
+impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
+    fn from(value: Weak<Mutex<ContainerInstance>>) -> Self {
+        Self::Instance(value)
+    }
+}
+
+impl From<ContainerIdx> for ContainerInner {
+    fn from(value: ContainerIdx) -> Self {
+        Self::Temp(value)
+    }
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
 pub struct ContainerIdx(u32);
@@ -59,6 +132,15 @@ impl Container for ContainerInstance {
             ContainerInstance::Text(x) => x.id(),
             ContainerInstance::Dyn(x) => x.id(),
             ContainerInstance::List(x) => x.id(),
+        }
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        match self {
+            ContainerInstance::Map(x) => x.idx(),
+            ContainerInstance::Text(x) => x.idx(),
+            ContainerInstance::Dyn(x) => x.idx(),
+            ContainerInstance::List(x) => x.idx(),
         }
     }
 
@@ -445,60 +527,44 @@ pub trait LockContainer {
 pub trait ContainerWrapper {
     type Container: Container;
 
-    fn with_container<F, R>(&self, f: F) -> R
+    fn container_inner(&self) -> &ContainerInner;
+
+    fn with_container<F, R>(&self, f: F) -> Result<R, LoroError>
     where
         F: FnOnce(&mut Self::Container) -> R;
 
-    fn with_container_checked<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
+    fn with_transaction_container<F, R>(&self, txn: &mut Transaction, f: F) -> R
     where
-        F: FnOnce(&mut Self::Container) -> R,
+        F: FnOnce(&mut Transaction, &ContainerInner) -> R,
     {
-        let store_client_id = ctx.log_store().read().unwrap().this_client_id();
-        if store_client_id != self.client_id() {
-            return Err(LoroError::UnmatchedContext {
-                expected: self.client_id(),
-                found: store_client_id,
-            });
-        }
-        Ok(self.with_container(f))
+        f(txn, self.container_inner())
     }
 
-    fn with_event<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
+    fn with_transaction_checked<T: Transact, F, R>(&self, txn: &T, f: F) -> Result<R, LoroError>
     where
-        F: FnOnce(&mut Self::Container) -> Result<(Option<RawEvent>, R), LoroError>,
+        F: FnOnce(&mut Transaction, &ContainerInner) -> R,
     {
-        let log_store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let log_store = log_store.write().unwrap();
-        let store_client_id = log_store.this_client_id();
-        if store_client_id != self.client_id() {
+        let txn = txn.transact();
+        let mut txn = txn.0.try_lock().unwrap();
+        let txn = txn.as_mut();
+
+        if txn.client_id() != self.client_id() {
             return Err(LoroError::UnmatchedContext {
                 expected: self.client_id(),
-                found: store_client_id,
+                found: txn.client_id(),
             });
         }
-        drop(log_store);
-        let (event, ans) = self.with_container(f)?;
-        let ans = match event {
-            Some(event) => {
-                debug_log::debug_log!("get event");
-                Hierarchy::notify_without_lock(hierarchy, event);
-                Ok(ans)
-            }
-            None => Ok(ans),
-        };
-
-        ans
+        Ok(self.with_transaction_container(txn, f))
     }
 
     fn client_id(&self) -> ClientID;
 
     fn id(&self) -> ContainerID {
-        self.with_container(|x| x.id().clone())
+        self.with_container(|x| x.id().clone()).unwrap()
     }
 
     fn get_value(&self) -> LoroValue {
-        self.with_container(|x| x.get_value())
+        self.with_container(|x| x.get_value()).unwrap()
     }
 
     fn get_value_deep<C: Context>(&self, ctx: &C) -> LoroValue {
@@ -527,73 +593,73 @@ pub trait ContainerWrapper {
         value
     }
 
-    fn subscribe<C: Context>(
+    fn subscribe<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                false,
-                false,
-            )
+        self.with_transaction_checked(txn, |txn, x| {
+            let x = x.as_instance().unwrap().upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.subscribe(&mut h, handler, false, false)
         })
     }
 
-    fn subscribe_deep<C: Context>(
+    fn subscribe_deep<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                true,
-                false,
-            )
+        self.with_transaction_checked(txn, |txn, x| {
+            let x = x.as_instance().unwrap().upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.subscribe(&mut h, handler, true, false)
         })
     }
 
-    fn subscribe_once<C: Context>(
+    fn subscribe_once<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                false,
-                true,
-            )
+        self.with_transaction_checked(txn, |txn, x| {
+            let x = x.as_instance().unwrap().upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.subscribe(&mut h, handler, false, true)
         })
     }
 
-    fn subscribe_deep_once<C: Context>(
+    fn subscribe_deep_once<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                true,
-                true,
-            )
+        self.with_transaction_checked(txn, |txn, x| {
+            let x = x.as_instance().unwrap().upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.subscribe(&mut h, handler, true, true)
         })
     }
 
-    fn unsubscribe<C: Context>(
+    fn unsubscribe<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         subscription: SubscriptionID,
     ) -> Result<(), LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.unsubscribe(&mut ctx.hierarchy().try_lock().unwrap(), subscription)
+        self.with_transaction_checked(txn, |txn, x| {
+            let x = x.as_instance().unwrap().upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.unsubscribe(&mut h, subscription)
         })
     }
 }

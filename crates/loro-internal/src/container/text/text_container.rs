@@ -9,20 +9,16 @@ use crate::{
     container::{
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
-        registry::{ContainerIdx, ContainerInstance, ContainerWrapper},
+        registry::{ContainerIdx, ContainerInner, ContainerInstance, ContainerWrapper},
         Container, ContainerID, ContainerType,
     },
-    context::Context,
     delta::{DeltaItem, SeqDelta},
-    event::{Diff, RawEvent},
+    event::Diff,
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
-    transaction::{
-        op::{TextTxnOps, TransactionOp},
-        Transaction,
-    },
+    transaction::op::{TextTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
     LogStore, LoroError, Transact,
@@ -55,34 +51,6 @@ impl TextContainer {
             state: Default::default(),
             pool_mapping: None,
         }
-    }
-
-    // #[inline(always)]
-    // pub(crate) fn insert(
-    //     &mut self,
-    //     txn: &mut Transaction,
-    //     pos: usize,
-    //     text: &str,
-    // ) -> Result<(), LoroError> {
-    //     if text.is_empty() {
-    //         return Ok(());
-    //     }
-
-    //     Ok(())
-    // }
-
-    #[inline(always)]
-    pub(crate) fn delete(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        len: usize,
-    ) -> Result<(), LoroError> {
-        if len == 0 {
-            return Ok(());
-        }
-        txn.push(TransactionOp::delete_text(self.idx, pos, len), None)?;
-        Ok(())
     }
 
     pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOps) -> Vec<Op> {
@@ -137,97 +105,6 @@ impl TextContainer {
         )
     }
 
-    // #[instrument(skip_all)]
-    // pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<RawEvent> {
-    //     if text.is_empty() {
-    //         return None;
-    //     }
-    //     if self.state.len() < pos {
-    //         panic!("insert index out of range");
-    //     }
-    //     let store = ctx.log_store();
-    //     let hierarchy = ctx.hierarchy();
-    //     let mut store = store.write().unwrap();
-    //     let id = store.next_id();
-    //     let slice = self.raw_str.alloc(text);
-    //     let op_slice = SliceRange::from_pool_string(&slice);
-    //     self.state.insert(pos, slice);
-    //     let op = Op::new(
-    //         id,
-    //         InnerContent::List(InnerListOp::Insert {
-    //             slice: op_slice,
-    //             pos,
-    //         }),
-    //         store.get_or_create_container_idx(&self.id),
-    //     );
-
-    //     let (old_version, new_version) = store.append_local_ops(&[op]);
-    //     let new_version = new_version.into();
-
-    //     // notify
-    //     let h = hierarchy.try_lock().unwrap();
-    //     if h.should_notify(&self.id) {
-    //         let mut delta = Delta::new();
-    //         delta.retain(pos);
-    //         delta.insert(text.to_owned());
-    //         h.get_abs_path(&store.reg, self.id())
-    //             .map(|abs_path| RawEvent {
-    //                 diff: vec![Diff::Text(delta)],
-    //                 local: true,
-    //                 old_version,
-    //                 new_version,
-    //                 container_id: self.id.clone(),
-    //                 abs_path,
-    //             })
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    // #[instrument(skip_all)]
-    // pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
-    //     if len == 0 {
-    //         return None;
-    //     }
-
-    //     if self.state.len() < pos + len {
-    //         panic!("deletion out of range");
-    //     }
-
-    //     let store = ctx.log_store();
-    //     let hierarchy = ctx.hierarchy();
-    //     let mut store = store.write().unwrap();
-    //     let id = store.next_id();
-    //     let op = Op::new(
-    //         id,
-    //         InnerContent::List(InnerListOp::new_del(pos, len)),
-    //         store.get_or_create_container_idx(&self.id),
-    //     );
-
-    //     let (old_version, new_version) = store.append_local_ops(&[op]);
-    //     let new_version = new_version.into();
-
-    //     // notify
-    //     let h = hierarchy.try_lock().unwrap();
-    //     self.state.delete_range(Some(pos), Some(pos + len));
-    //     if h.should_notify(&self.id) {
-    //         let mut delta = Delta::new();
-    //         delta.retain(pos);
-    //         delta.delete(len);
-    //         h.get_abs_path(&store.reg, self.id())
-    //             .map(|abs_path| RawEvent {
-    //                 diff: vec![Diff::Text(delta)],
-    //                 local: true,
-    //                 old_version,
-    //                 new_version,
-    //                 container_id: self.id.clone(),
-    //                 abs_path,
-    //             })
-    //     } else {
-    //         None
-    //     }
-    // }
-
     pub fn text_len(&self) -> usize {
         self.state.len()
     }
@@ -255,10 +132,17 @@ impl TextContainer {
 }
 
 impl Container for TextContainer {
+    #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
     }
 
+    #[inline(always)]
+    fn idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    #[inline(always)]
     fn type_(&self) -> ContainerType {
         ContainerType::Text
     }
@@ -567,38 +451,39 @@ impl Container for TextContainer {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Text {
-    instance: Weak<Mutex<ContainerInstance>>,
+    container: ContainerInner,
     client_id: ClientID,
-}
-
-impl Clone for Text {
-    fn clone(&self) -> Self {
-        Self {
-            instance: Weak::clone(&self.instance),
-            client_id: self.client_id,
-        }
-    }
+    container_idx: ContainerIdx,
 }
 
 impl Text {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+        let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
-            instance,
+            container: ContainerInner::from(instance),
             client_id,
+            container_idx,
         }
     }
 
-    pub fn id(&self) -> ContainerID {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_text()
-            .unwrap()
-            .id
-            .clone()
+    pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
+        Self {
+            container: ContainerInner::from(idx),
+            client_id,
+            container_idx: idx,
+        }
+    }
+
+    #[inline(always)]
+    pub fn idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
+
+    #[inline(always)]
+    pub fn id(&self) -> Result<ContainerID, LoroError> {
+        self.with_container(|x| x.id.clone())
     }
 
     pub fn insert<T: Transact, S: Into<String>>(
@@ -612,23 +497,19 @@ impl Text {
         if text.is_empty() {
             return Ok(());
         }
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-        self.with_container(|x| txn.push(TransactionOp::insert_text(x.idx, pos, text), None))
+        self.with_transaction_checked(txn, |txn, _| {
+            txn.push(TransactionOp::insert_text(self.idx(), pos, text), None)
+        })?
     }
 
-    // pub fn insert_utf16(
-    //     &mut self,
-    //     txn: &mut Transaction,
-    //     pos: usize,
-    //     text: &str,
-    // ) -> Result<(), crate::LoroError> {
-    //     self.with_container(|x| {
-    //         let pos = x.state.utf16_to_utf8(pos);
-    //         x.insert(txn, pos, text)
-    //     })
-    // }
+    pub fn insert_utf16<T: Transact, S: Into<String>>(
+        &mut self,
+        _txn: &T,
+        _pos: usize,
+        _text: S,
+    ) -> Result<(), crate::LoroError> {
+        todo!()
+    }
 
     pub fn delete<T: Transact>(
         &mut self,
@@ -636,40 +517,39 @@ impl Text {
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-        // let txn = txn.try_lock().unwrap().as_mut();
-        self.with_container(|text| text.delete(txn, pos, len))
+        self.with_transaction_checked(txn, |txn, _| {
+            if len == 0 {
+                return Ok(());
+            }
+            txn.push(TransactionOp::delete_text(self.idx(), pos, len), None)
+        })?
     }
 
-    // pub fn delete_utf16(
-    //     &mut self,
-    //     txn: &mut Transaction,
-    //     pos: usize,
-    //     len: usize,
-    // ) -> Result<(), crate::LoroError> {
-    //     self.with_container(|text| {
-    //         let end = pos + len;
-    //         let pos = text.state.utf16_to_utf8(pos);
-    //         let len = text.state.utf16_to_utf8(end) - pos;
-    //         text.delete(txn, pos, len)
-    //     })
-    // }
+    pub fn delete_utf16<T: Transact>(
+        &mut self,
+        _txn: &T,
+        _pos: usize,
+        _len: usize,
+    ) -> Result<(), crate::LoroError> {
+        todo!()
+        // self.with_container(|text| {
+        //     let end = pos + len;
+        //     let pos = text.state.utf16_to_utf8(pos);
+        //     let len = text.state.utf16_to_utf8(end) - pos;
+        //     text.delete(txn, pos, len)
+        // })
+    }
+
+    pub fn try_get_value(&self) -> Result<LoroValue, LoroError> {
+        self.with_container(|x| x.get_value())
+    }
 
     pub fn get_value(&self) -> LoroValue {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_text()
-            .unwrap()
-            .get_value()
+        self.try_get_value().unwrap()
     }
 
     pub fn len(&self) -> usize {
-        self.with_container(|text| text.text_len())
+        todo!()
     }
 
     #[must_use]
@@ -681,19 +561,24 @@ impl Text {
 impl ContainerWrapper for Text {
     type Container = TextContainer;
 
-    fn with_container<F, R>(&self, f: F) -> R
+    fn client_id(&self) -> crate::id::ClientID {
+        self.client_id
+    }
+
+    fn container_inner(&self) -> &ContainerInner {
+        &self.container
+    }
+
+    #[inline(always)]
+    fn with_container<F, R>(&self, f: F) -> Result<R, LoroError>
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let w = self.instance.upgrade().unwrap();
-        let mut container_instance = w.try_lock().unwrap();
-        let text = container_instance.as_text_mut().unwrap();
-        let ans = f(text);
-        drop(container_instance);
-        ans
-    }
+        let ContainerInner::Instance(ref instance) = self.container else {return Err(LoroError::TempContainerError)};
 
-    fn client_id(&self) -> crate::id::ClientID {
-        self.client_id
+        let w = instance.upgrade().unwrap();
+        let mut container_instance = w.try_lock().unwrap();
+        let x = container_instance.as_text_mut().unwrap();
+        Ok(f(x))
     }
 }

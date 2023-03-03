@@ -20,7 +20,6 @@ use self::{
 };
 
 mod checker;
-pub mod container;
 pub(crate) mod op;
 
 pub trait Transact {
@@ -52,8 +51,8 @@ pub struct TransactionWrap(pub(crate) Arc<Mutex<Transaction>>);
 
 pub struct Transaction {
     client_id: ClientID,
-    store: Weak<RwLock<LogStore>>,
-    hierarchy: Weak<Mutex<Hierarchy>>,
+    pub(crate) store: Weak<RwLock<LogStore>>,
+    pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     // sort by [ContainerIdx]
     pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
     compressed_op: Vec<TransactionOp>,
@@ -83,7 +82,7 @@ impl Transaction {
         }
     }
 
-    pub fn next_container_idx(&mut self) -> ContainerIdx {
+    pub(crate) fn next_container_idx(&mut self) -> ContainerIdx {
         let store = self.store.upgrade().unwrap();
         let store = store.try_read().unwrap();
         store.next_container_idx()
@@ -227,13 +226,6 @@ impl Transaction {
         })
     }
 
-    // We merge the Ops by [ContainerIdx] order, and
-    // First iteration
-    // - Multiple `InsertValue` are merged into a `InsertBatch`
-    // - If a container which was created newly is deleted, we remove the [ContainerIdx] in `pending_ops` immediately.
-    // Second iteration
-    // - If a container really needs to be created, we create it at once and convert this op into InsertValue with `LoroValue::Unresolved`
-    // - merge this op with
     fn compress_ops(&mut self) {
         let pending_ops = std::mem::take(&mut self.pending_ops);
         for (idx, ops) in pending_ops {
@@ -325,17 +317,7 @@ impl Transaction {
         // 2. maybe rebase
         // 3. batch apply op
         // 4. aggregate event
-
-        // apply op
-
-        // convert InsertContainer op to Insert op with LoroValue::Unresolved
-
-        // compress op
         self.compress_ops();
-
-        // TODO: when merge the ops of the newly created container, the deleted container need to be recorded
-        // TODO: merge the ops
-
         self.apply_ops_emit_event();
     }
 }

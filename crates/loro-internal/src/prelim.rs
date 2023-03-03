@@ -1,7 +1,7 @@
-use std::sync::{Mutex, Weak};
+
 
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+
 
 use crate::{
     container::registry::ContainerIdx,
@@ -41,7 +41,7 @@ where
         Ok((PrelimValue::Value(value), None))
     }
 
-    fn integrate(self, txn: &mut Transaction, container: ContainerIdx) -> Result<(), LoroError> {
+    fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -51,7 +51,7 @@ impl Prelim for ContainerType {
         Ok((PrelimValue::Container(self), Some(self)))
     }
 
-    fn integrate(self, txn: &mut Transaction, container: ContainerIdx) -> Result<(), LoroError> {
+    fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
         Ok(())
     }
 }

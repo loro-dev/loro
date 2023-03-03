@@ -28,7 +28,7 @@ fn main() {
     let json_ori = loro.to_json();
     let start = Instant::now();
     let buf_snapshot = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
-    let json_snapshot = loro.to_json();
+    let _json_snapshot = loro.to_json();
 
     println!(
         "encode snapshot {} bytes, used {}ms",

@@ -10,10 +10,10 @@ pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
-    sync::{atomic::AtomicU32, Arc, Mutex, MutexGuard, RwLock, Weak},
+    sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;

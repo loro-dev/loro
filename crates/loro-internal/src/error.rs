@@ -21,6 +21,9 @@ pub enum LoroError {
     // TODO: more details transaction error
     #[error("Transaction error ({0}) ")]
     TransactionError(Box<str>),
+    // TODO:
+    #[error("TempContainer cannot execute this function ")]
+    TempContainerError,
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

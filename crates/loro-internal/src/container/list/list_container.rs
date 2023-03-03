@@ -12,7 +12,10 @@ use crate::{
         list::list_op::ListOp,
         pool,
         pool_mapping::{PoolMapping, StateContent},
-        registry::{ContainerIdx, ContainerInstance, ContainerRegistry, ContainerWrapper},
+        registry::{
+            ContainerIdx, ContainerInner, ContainerInstance, ContainerRegistry, ContainerTemp,
+            ContainerWrapper,
+        },
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
@@ -27,9 +30,7 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     transaction::{
-        container::TransactionalContainer,
         op::{ListTxnOps, TransactionOp},
-        Transaction,
     },
     value::LoroValue,
     version::PatchedVersionVector,
@@ -60,40 +61,6 @@ impl ListContainer {
             state: Default::default(),
             pool_mapping: None,
         }
-    }
-
-    pub(crate) fn insert<P: Prelim>(
-        &self,
-        txn: &mut Transaction,
-        pos: usize,
-        value: P,
-    ) -> Result<Option<TransactionalContainer>, LoroError> {
-        let (value, maybe_container) = value.convert_value()?;
-        if let Some(prelim) = maybe_container {
-            let idx = txn.next_container_idx();
-            let type_ = value.into_container().unwrap();
-            txn.push(
-                TransactionOp::insert_list_container(self.idx, pos, type_, idx),
-                Some(idx),
-            )?;
-            prelim.integrate(txn, idx)?;
-            // TODO: return container
-            Ok(Some(TransactionalContainer::new(idx, type_)))
-        } else {
-            let value = value.into_value().unwrap();
-            txn.push(TransactionOp::insert_list_value(self.idx, pos, value), None)?;
-            Ok(None)
-        }
-    }
-
-    pub(crate) fn delete(
-        &self,
-        txn: &mut Transaction,
-        pos: usize,
-        len: usize,
-    ) -> Result<(), LoroError> {
-        txn.push(TransactionOp::delete_list(self.idx, pos, len), None)?;
-        Ok(())
     }
 
     fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOps) -> Vec<Op> {
@@ -146,171 +113,6 @@ impl ListContainer {
             self.idx,
         )
     }
-
-    // pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
-    //     if values.is_empty() {
-    //         return;
-    //     }
-    //     assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use push or insert method");
-    //     let store = ctx.log_store();
-    //     let mut store = store.try_write().unwrap();
-
-    //     let id = store.next_id();
-
-    //     let slice = self.raw_data.alloc_arr(values);
-    //     self.state.insert(pos, slice.clone().into());
-    //     let op = Op::new(
-    //         id,
-    //         InnerContent::List(InnerListOp::Insert {
-    //             slice: slice.into(),
-    //             pos,
-    //         }),
-    //         store.get_or_create_container_idx(&self.id),
-    //     );
-    //     store.append_local_ops(&[op]);
-    // }
-
-    // pub fn insert<C: Context, P: Prelim>(
-    //     &mut self,
-    //     ctx: &C,
-    //     pos: usize,
-    //     value: P,
-    // ) -> Result<(Option<RawEvent>, Option<ContainerID>), LoroError> {
-    //     let (value, maybe_container) = value.convert_value()?;
-    //     if let Some(prelim) = maybe_container {
-    //         let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
-    //         let m = ctx.log_store();
-    //         let store = m.read().unwrap();
-    //         let container = store.get_container(&container_id).unwrap();
-    //         drop(store);
-    //         prelim.integrate(ctx, container)?;
-    //         Ok((event, Some(container_id)))
-    //     } else {
-    //         let value = value.into_value().unwrap();
-    //         let event = self.insert_value(ctx, pos, value);
-    //         Ok((event, None))
-    //     }
-    // }
-
-    // fn insert_value<C: Context>(
-    //     &mut self,
-    //     ctx: &C,
-    //     pos: usize,
-    //     value: LoroValue,
-    // ) -> Option<RawEvent> {
-    //     let store = ctx.log_store();
-    //     let hierarchy = ctx.hierarchy();
-    //     let mut store = store.write().unwrap();
-    //     let id = store.next_id();
-    //     let slice = self.raw_data.alloc(value);
-    //     self.state.insert(pos, slice.clone().into());
-    //     let op = Op::new(
-    //         id,
-    //         InnerContent::List(InnerListOp::Insert {
-    //             slice: slice.clone().into(),
-    //             pos,
-    //         }),
-    //         store.get_or_create_container_idx(&self.id),
-    //     );
-    //     let (old_version, new_version) = store.append_local_ops(&[op]);
-    //     let new_version = new_version.into();
-    //     let hierarchy = hierarchy.try_lock().unwrap();
-    //     if hierarchy.should_notify(&self.id) {
-    //         let value = self.raw_data.slice(&slice)[0].clone();
-    //         let mut delta = Delta::new();
-    //         delta.retain(pos);
-    //         delta.insert(vec![value]);
-    //         if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, self.id()) {
-    //             Some(RawEvent {
-    //                 container_id: self.id.clone(),
-    //                 old_version,
-    //                 new_version,
-    //                 diff: vec![Diff::List(delta)],
-    //                 local: true,
-    //                 abs_path,
-    //             })
-    //         } else {
-    //             None
-    //         }
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    // fn insert_obj<C: Context>(
-    //     &mut self,
-    //     ctx: &C,
-    //     pos: usize,
-    //     obj: ContainerType,
-    // ) -> (Option<RawEvent>, ContainerID) {
-    //     let m = ctx.log_store();
-    //     let hierarchy = ctx.hierarchy();
-    //     let mut store = m.write().unwrap();
-    //     let (container_id, _) = store.create_container(obj);
-    //     // Update hierarchy info
-    //     let mut hierarchy = hierarchy.try_lock().unwrap();
-    //     hierarchy.add_child(&self.id, &container_id);
-
-    //     drop(hierarchy);
-    //     drop(store);
-    //     // TODO: we can avoid this lock
-    //     let event = self.insert_value(
-    //         ctx,
-    //         pos,
-    //         LoroValue::Unresolved(Box::new(container_id.clone())),
-    //     );
-
-    //     (event, container_id)
-    // }
-
-    // pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
-    //     if len == 0 {
-    //         return None;
-    //     }
-
-    //     if self.state.len() < pos + len {
-    //         panic!("deletion out of range");
-    //     }
-
-    //     let store = ctx.log_store();
-    //     let hierarchy = ctx.hierarchy();
-    //     let mut store = store.write().unwrap();
-    //     let id = store.next_id();
-    //     let op = Op::new(
-    //         id,
-    //         InnerContent::List(InnerListOp::new_del(pos, len)),
-    //         store.get_or_create_container_idx(&self.id),
-    //     );
-
-    //     let (old_version, new_version) = store.append_local_ops(&[op]);
-    //     let new_version = new_version.into();
-    //     let mut hierarchy = hierarchy.try_lock().unwrap();
-
-    //     // Update hierarchy info
-    //     self.update_hierarchy_on_delete(&mut hierarchy, pos, len);
-
-    //     self.state.delete_range(Some(pos), Some(pos + len));
-
-    //     if hierarchy.should_notify(&self.id) {
-    //         let mut delta = Delta::new();
-    //         delta.retain(pos);
-    //         delta.delete(len);
-    //         if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
-    //             Some(RawEvent {
-    //                 diff: vec![Diff::List(delta)],
-    //                 local: true,
-    //                 old_version,
-    //                 new_version,
-    //                 container_id: self.id.clone(),
-    //                 abs_path,
-    //             })
-    //         } else {
-    //             None
-    //         }
-    //     } else {
-    //         None
-    //     }
-    // }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
         self.state
@@ -392,10 +194,17 @@ impl ListContainer {
 }
 
 impl Container for ListContainer {
+    #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
     }
 
+    #[inline(always)]
+    fn idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    #[inline(always)]
     fn type_(&self) -> ContainerType {
         ContainerType::Text
     }
@@ -680,28 +489,65 @@ impl Container for ListContainer {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct List {
-    instance: Weak<Mutex<ContainerInstance>>,
+    container: ContainerInner,
     client_id: ClientID,
-}
-
-impl Clone for List {
-    fn clone(&self) -> Self {
-        Self {
-            instance: Weak::clone(&self.instance),
-            client_id: self.client_id,
-        }
-    }
+    container_idx: ContainerIdx,
 }
 
 impl List {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+        let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
-            instance,
+            container: ContainerInner::from(instance),
             client_id,
+            container_idx,
         }
     }
 
+    pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
+        Self {
+            container: ContainerInner::from(idx),
+            client_id,
+            container_idx: idx,
+        }
+    }
+
+    #[inline(always)]
+    pub fn idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
+
+    pub fn insert<T: Transact, P: Prelim>(
+        &mut self,
+        txn: &T,
+        pos: usize,
+        value: P,
+    ) -> Result<Option<ContainerTemp>, LoroError> {
+        self.with_transaction_checked(txn, |txn, _x| {
+            let (value, maybe_container) = value.convert_value()?;
+            if let Some(prelim) = maybe_container {
+                let idx = txn.next_container_idx();
+                let type_ = value.into_container().unwrap();
+                txn.push(
+                    TransactionOp::insert_list_container(self.idx(), pos, type_, idx),
+                    Some(idx),
+                )?;
+                prelim.integrate(txn, idx)?;
+                Ok(Some(ContainerTemp::new(idx, type_, self.client_id)))
+            } else {
+                let value = value.into_value().unwrap();
+                txn.push(
+                    TransactionOp::insert_list_value(self.idx(), pos, value),
+                    None,
+                )?;
+                Ok(None)
+            }
+        })?
+    }
+
+    // TODO
     // pub fn insert_batch<C: Context>(
     //     &mut self,
     //     ctx: &C,
@@ -711,32 +557,20 @@ impl List {
     //     self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
     // }
 
-    pub fn insert<T: Transact, P: Prelim>(
-        &mut self,
-        txn: &T,
-        pos: usize,
-        value: P,
-    ) -> Result<Option<TransactionalContainer>, LoroError> {
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-        // TODO: check client id
-        self.with_container(|x| x.insert(txn, pos, value))
-    }
-
-    pub fn push<T: Transact, P: Prelim>(
-        &mut self,
-        txn: &T,
-        value: P,
-    ) -> Result<Option<TransactionalContainer>, LoroError> {
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-        self.with_container(|x| {
-            let pos = x.values_len();
-            x.insert(txn, pos, value)
-        })
-    }
+    // TODO
+    // pub fn push<T: Transact, P: Prelim>(
+    //     &mut self,
+    //     txn: &T,
+    //     value: P,
+    // ) -> Result<Option<TransactionalContainer>, LoroError> {
+    //     let txn = txn.transact();
+    //     let mut txn = txn.0.try_lock().unwrap();
+    //     let txn = txn.as_mut();
+    //     self.with_container(|x| {
+    //         let pos = x.values_len();
+    //         x.insert(txn, pos, value)
+    //     })
+    // }
 
     // pub fn push_front<C: Context, P: Prelim>(
     //     &mut self,
@@ -766,46 +600,55 @@ impl List {
         pos: usize,
         len: usize,
     ) -> Result<(), LoroError> {
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-        self.with_container(|list| list.delete(txn, pos, len))
+        self.with_transaction_checked(txn, |txn, _x| {
+            txn.push(TransactionOp::delete_list(self.idx(), pos, len), None)
+        })?
     }
 
-    pub fn get(&self, pos: usize) -> Option<LoroValue> {
+    /// If the container is a [ContainerInstance], it will return the value of the element at that position or None if out of bounds.
+    ///
+    /// Otherwise, it will raise a [LoroError::TempContainerError].
+    pub fn try_get(&self, pos: usize) -> Result<Option<LoroValue>, LoroError> {
         self.with_container(|list| list.get(pos))
     }
 
+    /// Return the value of the element at that position or None if out of bounds.
+    ///
+    /// This is an ergonomics version of [`Self::try_get()`] if you assert the container is a [ContainerInstance].
+    ///
+    /// # Panic
+    /// This function will panic if the container is [ContainerTemp].
+    pub fn get(&self, pos: usize) -> Option<LoroValue> {
+        self.with_container(|list| list.get(pos)).unwrap()
+    }
+
     pub fn len(&self) -> usize {
-        self.with_container(|list| list.values_len())
+        self.container.len()
     }
 
-    pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
-        self.with_container(|list| list.iter().enumerate().for_each(f))
-    }
+    // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
+    //     self.with_container(|list| list.iter().enumerate().for_each(f))
+    // }
 
-    pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
-        self.with_container(|list| list.iter().enumerate().map(f).collect())
-    }
+    // TODO
+    // pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
+    //     self.with_container(|list| list.iter().enumerate().map(f).collect())
+    // }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn id(&self) -> ContainerID {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_list()
-            .unwrap()
-            .id
-            .clone()
+    pub fn id(&self) -> Result<ContainerID, LoroError> {
+        self.with_container(|list| list.id.clone())
     }
 
     pub fn get_value(&self) -> LoroValue {
+        self.try_get_value().unwrap()
+    }
+
+    pub fn try_get_value(&self) -> Result<LoroValue, LoroError> {
         self.with_container(|list| list.get_value())
     }
 }
@@ -813,26 +656,30 @@ impl List {
 impl ContainerWrapper for List {
     type Container = ListContainer;
 
-    fn with_container<F, R>(&self, f: F) -> R
+    fn with_container<F, R>(&self, f: F) -> Result<R, LoroError>
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let w = self.instance.upgrade().unwrap();
+        let ContainerInner::Instance(ref instance) = self.container else {return Err(LoroError::TempContainerError)};
+
+        let w = instance.upgrade().unwrap();
         let mut container_instance = w.try_lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
-        let ans = f(list);
-        drop(container_instance);
-        ans
+        Ok(f(list))
     }
 
     fn client_id(&self) -> ClientID {
         self.client_id
     }
+
+    fn container_inner(&self) -> &ContainerInner {
+        &self.container
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroCore, PrelimContainer, Transact};
+    use crate::{LoroCore, Transact};
 
     #[test]
     fn test_list_get() {

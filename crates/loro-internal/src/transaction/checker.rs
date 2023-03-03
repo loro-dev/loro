@@ -12,7 +12,7 @@ pub(super) struct ListChecker {
 }
 
 impl ListChecker {
-    pub(super) fn check(&mut self, op: &ListTxnOps) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, _op: &ListTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -23,7 +23,7 @@ pub(super) struct TextChecker {
 }
 
 impl TextChecker {
-    pub(super) fn check(&mut self, op: &TextTxnOps) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, _op: &TextTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -34,7 +34,7 @@ pub(super) struct MapChecker {
 }
 
 impl MapChecker {
-    pub(super) fn check(&mut self, op: &MapTxnOps) -> Result<(), LoroError> {
+    pub(super) fn check(&mut self, _op: &MapTxnOps) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -50,9 +50,9 @@ pub(super) struct Checker {
 impl Checker {
     pub(super) fn check(&mut self, op: &TransactionOp) -> Result<(), LoroError> {
         match op {
-            TransactionOp::List { container, ops: op } => self.list.check(op),
-            TransactionOp::Map { container, ops: op } => self.map.check(op),
-            TransactionOp::Text { container, ops: op } => self.text.check(op),
+            TransactionOp::List { container: _, ops: op } => self.list.check(op),
+            TransactionOp::Map { container: _, ops: op } => self.map.check(op),
+            TransactionOp::Text { container: _, ops: op } => self.text.check(op),
         }
     }
 }

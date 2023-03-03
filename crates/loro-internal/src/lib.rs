@@ -4,6 +4,7 @@
 //!
 //!
 #![deny(clippy::undocumented_unsafe_blocks)]
+#![warn(rustdoc::broken_intra_doc_links)]
 
 pub mod change;
 pub mod configure;

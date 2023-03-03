@@ -292,6 +292,7 @@ impl LoroEncoder {
         input: &[u8],
     ) -> Result<Vec<RawEvent>, LoroError> {
         let changes = encode_changes::decode_changes_to_inner_format(input, store)?;
+        println!("changes {:?}", changes);
         Ok(store.import(hierarchy, changes))
     }
 

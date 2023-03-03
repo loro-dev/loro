@@ -9,7 +9,6 @@ use crate::{
         ContainerID,
     },
     hierarchy::Hierarchy,
-    transaction::Transaction,
     LogStore, LoroCore,
 };
 
