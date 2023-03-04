@@ -22,74 +22,37 @@ use crate::{
     op::{Op, RemoteContent, RichOp},
     transaction::{op::TransactionOp, Transaction},
     version::PatchedVersionVector,
-    List, LogStore, LoroError, LoroValue, Map, Text, Transact,
+    LogStore, LoroError, LoroValue, Transact,
 };
 
 use super::{
-    list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
-    Container, ContainerID, ContainerType,
+    list::ListContainer, map::MapContainer, pool_mapping::StateContent, temp::ContainerTemp,
+    text::TextContainer, Container, ContainerID, ContainerType,
 };
 
-pub enum ContainerTemp {
-    List(List),
-    Map(Map),
-    Text(Text),
-}
-
-impl ContainerTemp {
-    pub(crate) fn new(idx: ContainerIdx, type_: ContainerType, client_id: ClientID) -> Self {
-        match type_ {
-            ContainerType::List => Self::List(List::from_idx(idx, client_id)),
-            ContainerType::Map => Self::Map(Map::from_idx(idx, client_id)),
-            ContainerType::Text => Self::Text(Text::from_idx(idx, client_id)),
-        }
-    }
-
-    pub fn idx(&self) -> ContainerIdx {
-        match self {
-            ContainerTemp::List(x) => x.idx(),
-            ContainerTemp::Map(x) => x.idx(),
-            ContainerTemp::Text(x) => x.idx(),
-        }
-    }
-
-    pub fn type_(&self) -> ContainerType {
-        match self {
-            ContainerTemp::List(_) => ContainerType::List,
-            ContainerTemp::Map(_) => ContainerType::Map,
-            ContainerTemp::Text(_) => ContainerType::Text,
-        }
-    }
-}
-
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum ContainerInner {
     Instance(Weak<Mutex<ContainerInstance>>),
-    Temp(ContainerIdx),
+    Temp(ContainerTemp),
 }
 
 impl ContainerInner {
     pub fn idx(&self) -> ContainerIdx {
         match self {
             ContainerInner::Instance(i) => i.upgrade().unwrap().try_lock().unwrap().idx(),
-            ContainerInner::Temp(idx) => *idx,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        //TODO:
-        todo!()
-    }
-}
-
-impl Clone for ContainerInner {
-    fn clone(&self) -> Self {
-        match self {
-            ContainerInner::Instance(weak) => ContainerInner::Instance(Weak::clone(weak)),
-            ContainerInner::Temp(idx) => ContainerInner::Temp(*idx),
+            ContainerInner::Temp(t) => t.idx(),
         }
     }
 }
+
+// impl Clone for ContainerInner {
+//     fn clone(&self) -> Self {
+//         match self {
+//             ContainerInner::Instance(weak) => ContainerInner::Instance(Weak::clone(weak)),
+//             ContainerInner::Temp(x) => ContainerInner::Temp(*x.clone()),
+//         }
+//     }
+// }
 
 impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
     fn from(value: Weak<Mutex<ContainerInstance>>) -> Self {
@@ -97,8 +60,8 @@ impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
     }
 }
 
-impl From<ContainerIdx> for ContainerInner {
-    fn from(value: ContainerIdx) -> Self {
+impl From<ContainerTemp> for ContainerInner {
+    fn from(value: ContainerTemp) -> Self {
         Self::Temp(value)
     }
 }

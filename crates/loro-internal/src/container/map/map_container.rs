@@ -4,13 +4,12 @@ use super::{super::pool::Pool, InnerMapSet};
 use crate::{
     container::{
         pool_mapping::{MapPoolMapping, StateContent},
-        registry::{ContainerIdx, ContainerInner, ContainerRegistry, ContainerTemp},
+        registry::{ContainerIdx, ContainerInner, ContainerRegistry},
+        temp::ContainerTemp,
     },
     delta::MapDiff,
     op::OwnedRichOp,
-    transaction::{
-        op::{MapTxnOps, TransactionOp},
-    },
+    transaction::op::{MapTxnOps, TransactionOp},
     LogStore, LoroError, Transact,
 };
 use fxhash::FxHashMap;
@@ -402,7 +401,7 @@ impl Map {
 
     pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::Map)),
             client_id,
             container_idx: idx,
         }
@@ -429,7 +428,7 @@ impl Map {
                     Some(idx),
                 )?;
                 prelim.integrate(txn, idx)?;
-                Ok(Some(ContainerTemp::new(idx, type_, self.client_id)))
+                Ok(Some(ContainerTemp::new(idx, type_)))
             } else {
                 let value = value.into_value().unwrap();
                 txn.push(

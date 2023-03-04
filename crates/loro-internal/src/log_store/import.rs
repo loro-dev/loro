@@ -112,8 +112,6 @@ impl LogStore {
         self.apply(hierarchy, container_map, &mut context);
         debug_log::group_end!();
 
-        println!("context: {:?}", context);
-
         let events = self.get_events(hierarchy, &mut context);
         self.update_version_info(context.new_vv, next_frontiers);
         events

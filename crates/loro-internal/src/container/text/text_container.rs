@@ -10,6 +10,7 @@ use crate::{
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
         registry::{ContainerIdx, ContainerInner, ContainerInstance, ContainerWrapper},
+        temp::ContainerTemp,
         Container, ContainerID, ContainerType,
     },
     delta::{DeltaItem, SeqDelta},
@@ -470,7 +471,7 @@ impl Text {
 
     pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::Text)),
             client_id,
             container_idx: idx,
         }
@@ -549,7 +550,8 @@ impl Text {
     }
 
     pub fn len(&self) -> usize {
-        todo!()
+        // TODO
+        self.with_container(|x| x.text_len()).unwrap()
     }
 
     #[must_use]

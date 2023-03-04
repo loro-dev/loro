@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
-    container::ContainerID,
+    container::{temp::ContainerTemp, ContainerID},
+    context::Context,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
     log_store::{EncodeConfig, LoroEncoder},
@@ -73,6 +74,24 @@ impl LoroCore {
         let instance = store.get_or_create_container(&id.with_type(ContainerType::Text));
         let cid = store.this_client_id();
         Text::from_instance(instance, cid)
+    }
+
+    pub fn get_list_by_temp(&self, temp_container: ContainerTemp) -> Option<List> {
+        let cid = self.client_id();
+        self.get_container_by_idx(&temp_container.idx())
+            .map(|i| List::from_instance(i, cid))
+    }
+
+    pub fn get_map_by_temp(&self, temp_container: ContainerTemp) -> Option<Map> {
+        let cid = self.client_id();
+        self.get_container_by_idx(&temp_container.idx())
+            .map(|i| Map::from_instance(i, cid))
+    }
+
+    pub fn get_text_by_temp(&self, temp_container: ContainerTemp) -> Option<Text> {
+        let cid = self.client_id();
+        self.get_container_by_idx(&temp_container.idx())
+            .map(|i| Text::from_instance(i, cid))
     }
 
     pub fn contains(&self, id: &ContainerID) -> bool {

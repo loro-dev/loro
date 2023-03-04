@@ -14,12 +14,8 @@ use crate::{
     ContainerType, LogStore, LoroCore, LoroError, LoroValue, Map,
 };
 
-use self::{
-    checker::Checker,
-    op::{ListTxnOps, MapTxnOps, TextTxnOps, TransactionOp},
-};
+use self::op::{ListTxnOps, MapTxnOps, TextTxnOps, TransactionOp};
 
-mod checker;
 pub(crate) mod op;
 
 pub trait Transact {
@@ -56,7 +52,6 @@ pub struct Transaction {
     // sort by [ContainerIdx]
     pending_ops: BTreeMap<ContainerIdx, Vec<TransactionOp>>,
     compressed_op: Vec<TransactionOp>,
-    checker: Checker,
     created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
     deleted_container: FxHashSet<ContainerIdx>,
     committed: bool,
@@ -75,7 +70,6 @@ impl Transaction {
             hierarchy,
             pending_ops: Default::default(),
             compressed_op: Default::default(),
-            checker: Default::default(),
             created_container: Default::default(),
             deleted_container: Default::default(),
             committed: false,
@@ -97,7 +91,6 @@ impl Transaction {
         op: TransactionOp,
         created_container: Option<ContainerIdx>,
     ) -> Result<(), LoroError> {
-        self.checker.check(&op)?;
         if let Some(idx) = created_container {
             self.created_container
                 .entry(op.container_idx())
@@ -277,16 +270,18 @@ impl Transaction {
     fn convert_op_container(&mut self, op: &mut TransactionOp) {
         match op {
             TransactionOp::List { container, ops } => {
+                // TODO: cache the containers?
                 for item in ops.iter_mut() {
                     if let Some((value, _)) = item.as_insert_mut() {
-                        assert_eq!(value.len(), 1);
-                        if let Some((type_, idx)) = value.first().unwrap().as_container() {
-                            self.created_container
-                                .get_mut(container)
-                                .unwrap()
-                                .remove(idx);
-                            let id = self.register_container(*idx, *type_, *container);
-                            *value = vec![Value::Value(LoroValue::Unresolved(id.into()))];
+                        for v in value {
+                            if let Some((type_, idx)) = v.as_container() {
+                                self.created_container
+                                    .get_mut(container)
+                                    .unwrap()
+                                    .remove(idx);
+                                let id = self.register_container(*idx, *type_, *container);
+                                *v = Value::Value(LoroValue::Unresolved(id.into()));
+                            }
                         }
                     }
                 }

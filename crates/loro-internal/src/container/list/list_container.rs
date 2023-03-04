@@ -13,9 +13,9 @@ use crate::{
         pool,
         pool_mapping::{PoolMapping, StateContent},
         registry::{
-            ContainerIdx, ContainerInner, ContainerInstance, ContainerRegistry, ContainerTemp,
-            ContainerWrapper,
+            ContainerIdx, ContainerInner, ContainerInstance, ContainerRegistry, ContainerWrapper,
         },
+        temp::ContainerTemp,
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
@@ -29,9 +29,7 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
-    transaction::{
-        op::{ListTxnOps, TransactionOp},
-    },
+    transaction::op::{ListTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
     LogStore, LoroError, Transact,
@@ -508,7 +506,7 @@ impl List {
 
     pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::List)),
             client_id,
             container_idx: idx,
         }
@@ -519,6 +517,7 @@ impl List {
         self.container_idx
     }
 
+    /// Inserts an element at position index within the List
     pub fn insert<T: Transact, P: Prelim>(
         &mut self,
         txn: &T,
@@ -535,7 +534,7 @@ impl List {
                     Some(idx),
                 )?;
                 prelim.integrate(txn, idx)?;
-                Ok(Some(ContainerTemp::new(idx, type_, self.client_id)))
+                Ok(Some(ContainerTemp::new(idx, type_)))
             } else {
                 let value = value.into_value().unwrap();
                 txn.push(
@@ -547,53 +546,53 @@ impl List {
         })?
     }
 
-    // TODO
-    // pub fn insert_batch<C: Context>(
-    //     &mut self,
-    //     ctx: &C,
-    //     pos: usize,
-    //     values: Vec<LoroValue>,
-    // ) -> Result<(), LoroError> {
-    //     self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
-    // }
+    /// Inserts some elements at position index within the List
+    pub fn insert_batch<T: Transact>(
+        &mut self,
+        txn: &T,
+        pos: usize,
+        values: Vec<LoroValue>,
+    ) -> Result<(), LoroError> {
+        self.with_transaction_checked(txn, |txn, _| {
+            txn.push(
+                TransactionOp::insert_list_batch_value(self.idx(), pos, values),
+                None,
+            )
+        })?
+    }
 
-    // TODO
-    // pub fn push<T: Transact, P: Prelim>(
-    //     &mut self,
-    //     txn: &T,
-    //     value: P,
-    // ) -> Result<Option<TransactionalContainer>, LoroError> {
-    //     let txn = txn.transact();
-    //     let mut txn = txn.0.try_lock().unwrap();
-    //     let txn = txn.as_mut();
-    //     self.with_container(|x| {
-    //         let pos = x.values_len();
-    //         x.insert(txn, pos, value)
-    //     })
-    // }
+    /// Appends an element to the back
+    pub fn push<T: Transact, P: Prelim>(
+        &mut self,
+        txn: &T,
+        value: P,
+    ) -> Result<Option<ContainerTemp>, LoroError> {
+        let pos = self.len();
+        self.insert(txn, pos, value)
+    }
 
-    // pub fn push_front<C: Context, P: Prelim>(
-    //     &mut self,
-    //     ctx: &C,
-    //     value: P,
-    // ) -> Result<Option<ContainerID>, LoroError> {
-    //     self.with_event(ctx, |x| {
-    //         let pos = 0;
-    //         x.insert(ctx, pos, value)
-    //     })
-    // }
+    // Inserts an element to the front
+    pub fn push_front<T: Transact, P: Prelim>(
+        &mut self,
+        txn: &T,
+        value: P,
+    ) -> Result<Option<ContainerTemp>, LoroError> {
+        let pos = 0;
+        self.insert(txn, pos, value)
+    }
 
-    // pub fn pop<C: Context>(&mut self, ctx: &C) -> Result<Option<LoroValue>, LoroError> {
-    //     self.with_event(ctx, |x| {
-    //         let len = x.values_len();
-    //         if len == 0 {
-    //             return Ok((None, None));
-    //         }
-    //         let value = x.get(len - 1);
-    //         Ok((x.delete(ctx, len - 1, 1), value))
-    //     })
-    // }
+    /// Removes the last element from the List and returns it, or None if it is empty.
+    pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
+        if self.is_empty() {
+            return Ok(None);
+        }
+        let pos = self.len() - 1;
+        let ans = self.get(pos);
+        self.delete(txn, pos, 1)?;
+        Ok(ans)
+    }
 
+    /// Removes the specified range (pos..pos+len) from the List
     pub fn delete<T: Transact>(
         &mut self,
         txn: &T,
@@ -623,7 +622,10 @@ impl List {
     }
 
     pub fn len(&self) -> usize {
-        self.container.len()
+        match &self.container {
+            ContainerInner::Instance(_) => self.with_container(|x| x.values_len()).unwrap(),
+            ContainerInner::Temp(temp) => temp.as_list().unwrap().len(),
+        }
     }
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
@@ -694,28 +696,28 @@ mod test {
         assert_eq!(list.get(1), Some(123.into()));
     }
 
-    // #[test]
-    // fn collection() {
-    //     let mut loro = LoroCore::default();
-    //     let mut list = loro.get_list("list");
-    //     list.insert(&loro, 0, "ab").unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[\"ab\"]");
-    //     list.push(&loro, 12).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
-    //     list.push_front(&loro, -3).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
-    //     let last = list.pop(&loro).unwrap().unwrap();
-    //     assert_eq!(last.to_json(), "12");
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
-    //     list.delete(&loro, 1, 1).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3]");
-    //     list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
-    //         .unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
-    //     list.delete(&loro, 0, 3).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[]");
-    //     assert_eq!(list.pop(&loro).unwrap(), None);
-    // }
+    #[test]
+    fn collection() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "ab").unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\"]");
+        list.push(&loro, 12).unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
+        list.push_front(&loro, -3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
+        let last = list.pop(&loro).unwrap().unwrap();
+        assert_eq!(last.to_json(), "12");
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
+        list.delete(&loro, 1, 1).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3]");
+        list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
+            .unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
+        list.delete(&loro, 0, 3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[]");
+        assert_eq!(list.pop(&loro).unwrap(), None);
+    }
 
     // #[test]
     // fn for_each() {
