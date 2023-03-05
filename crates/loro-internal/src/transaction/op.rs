@@ -187,7 +187,7 @@ impl TransactionOp {
             container,
             ops: SeqDelta::new()
                 .retain(pos)
-                .insert(values.into_iter().map(|v| v.into()).collect()),
+                .insert(values.into_iter().map(Value::Value).collect::<Vec<_>>()),
         }
     }
 
