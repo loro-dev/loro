@@ -2,7 +2,10 @@ use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    container::ContainerID, delta::{SeqDelta, MapDiff}, version::Frontiers, InternalString, LoroValue,
+    container::ContainerID,
+    delta::{Delta, MapDiff},
+    version::Frontiers,
+    InternalString, LoroValue,
 };
 
 #[derive(Debug)]
@@ -50,8 +53,8 @@ pub enum Index {
 
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
-    List(SeqDelta<Vec<LoroValue>>),
-    Text(SeqDelta<String>),
+    List(Delta<Vec<LoroValue>>),
+    Text(Delta<String>),
     Map(MapDiff),
 }
 

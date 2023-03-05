@@ -22,7 +22,7 @@ use crate::{
         },
         Container, ContainerID, ContainerType,
     },
-    delta::{DeltaItem, SeqDelta},
+    delta::{Delta, DeltaItem},
     event::{Diff, Index},
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
@@ -278,7 +278,7 @@ impl Container for ListContainer {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
                         let delta_vec = self.raw_data.slice(&slice.0).to_vec();
-                        let delta = SeqDelta::new().retain(*pos).insert(delta_vec);
+                        let delta = Delta::new().retain(*pos).insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
 
@@ -287,7 +287,7 @@ impl Container for ListContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let delta = SeqDelta::new()
+                        let delta = Delta::new()
                             .retain(span.start() as usize)
                             .delete(span.atom_len());
                         context.push_diff(&self.id, Diff::List(delta));
@@ -345,7 +345,7 @@ impl Container for ListContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let delta = SeqDelta::new().retain(pos).delete(len);
+                        let delta = Delta::new().retain(pos).delete(len);
                         diff.push(Diff::List(delta));
                     }
 
@@ -373,7 +373,7 @@ impl Container for ListContainer {
                         } else {
                             self.raw_data.slice(&content.0).to_vec()
                         };
-                        let delta = SeqDelta::new().retain(pos).insert(s);
+                        let delta = Delta::new().retain(pos).insert(s);
                         diff.push(Diff::List(delta));
                     }
                     if !content.is_unknown() {
@@ -463,7 +463,7 @@ impl Container for ListContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
-                let delta = SeqDelta::new().retain(0).insert(delta_vec);
+                let delta = Delta::new().retain(0).insert(delta_vec);
 
                 ctx.push_diff(&self.id, Diff::List(delta));
             }

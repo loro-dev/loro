@@ -13,7 +13,7 @@ use crate::{
         temp::ContainerTemp,
         Container, ContainerID, ContainerType,
     },
-    delta::{DeltaItem, SeqDelta},
+    delta::{Delta, DeltaItem},
     event::Diff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
@@ -267,7 +267,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
-                        let delta = SeqDelta::new().retain(*pos).insert(s);
+                        let delta = Delta::new().retain(*pos).insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(
@@ -277,7 +277,7 @@ impl Container for TextContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let delta = SeqDelta::new()
+                        let delta = Delta::new()
                             .retain(span.start() as usize)
                             .delete(span.atom_len());
                         ctx.push_diff(&self.id, Diff::Text(delta));
@@ -331,7 +331,7 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let delta = SeqDelta::new().retain(pos).delete(len);
+                        let delta = Delta::new().retain(pos).delete(len);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -345,7 +345,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&content.0).to_owned()
                         };
-                        let delta = SeqDelta::new().retain(pos).insert(s);
+                        let delta = Delta::new().retain(pos).insert(s);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -438,7 +438,7 @@ impl Container for TextContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let s = self.raw_str.slice(&(0..state_len)).to_owned();
-                let delta = SeqDelta::new().retain(0).insert(s);
+                let delta = Delta::new().retain(0).insert(s);
                 ctx.push_diff(&self.id, Diff::Text(delta));
             }
         } else {

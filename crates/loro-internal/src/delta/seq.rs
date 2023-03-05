@@ -5,11 +5,11 @@ use smallvec::{smallvec, SmallVec};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeqDelta<Value, Meta = ()> {
-    pub(crate) vec: SmallVec<[DeltaItem<Value, Meta>; 2]>,
+pub struct Delta<Value, Meta = ()> {
+    pub(crate) vec: Vec<DeltaItem<Value, Meta>>,
 }
 
-impl<V: Serialize, M: Serialize> Serialize for SeqDelta<V, M> {
+impl<V: Serialize, M: Serialize> Serialize for Delta<V, M> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -20,45 +20,37 @@ impl<V: Serialize, M: Serialize> Serialize for SeqDelta<V, M> {
 
 #[derive(Debug, EnumAsInner, PartialEq, Eq, Clone, Serialize)]
 pub enum DeltaItem<Value, Meta> {
-    Retain { len: usize, meta: Meta },
-    Insert { value: Value, meta: Meta },
+    Retain { len: usize, meta: Option<Meta> },
+    Insert { value: Value, meta: Option<Meta> },
     Delete(usize),
 }
 
 pub trait Meta: Debug + Clone + PartialEq {
-    fn none() -> Self;
     fn empty() -> Self;
     fn is_empty(&self) -> bool;
-    fn is_meta_none(&self) -> bool;
-    fn compose(self, other: Self) -> Self;
 }
 
 impl Meta for () {
-    fn none() -> Self {}
     fn empty() -> Self {}
     fn is_empty(&self) -> bool {
         true
     }
-    fn is_meta_none(&self) -> bool {
-        true
-    }
-    fn compose(self, _other: Self) -> Self {}
 }
 
 pub trait DeltaValue: Debug + HasLength + Sliceable + Clone + PartialEq {
-    fn extend(&mut self, other: Self);
+    fn value_extend(&mut self, other: Self);
 }
 
 impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
-    pub fn get_meta(&self) -> Option<&M> {
+    pub fn meta(&self) -> &Option<M> {
         match self {
-            DeltaItem::Insert { meta, .. } => Some(meta),
-            DeltaItem::Retain { meta, .. } => Some(meta),
-            _ => None,
+            DeltaItem::Insert { meta, .. } => meta,
+            DeltaItem::Retain { meta, .. } => meta,
+            _ => &None,
         }
     }
 
-    pub fn meta(&mut self, meta: M) {
+    pub fn set_meta(&mut self, meta: Option<M>) {
         match self {
             DeltaItem::Insert { meta: m, .. } => *m = meta,
             DeltaItem::Retain { meta: m, .. } => *m = meta,
@@ -120,7 +112,7 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
             if next_op.is_none() {
                 return DeltaItem::Retain {
                     len: usize::MAX,
-                    meta: M::none(),
+                    meta: None,
                 };
             }
         }
@@ -155,9 +147,9 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         ans
     }
 
-    fn rest(&mut self) -> SmallVec<[DeltaItem<V, M>; 2]> {
+    fn rest(&mut self) -> Vec<DeltaItem<V, M>> {
         if !self.has_next() {
-            smallvec![]
+            vec![]
         } else if self.offset == 0 {
             // TODO avoid cloning
             self.ops[self.index..].into()
@@ -168,8 +160,8 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
             let rest = self.ops[self.index..].to_vec();
             self.offset = offset;
             self.index = index;
-            let mut ans = smallvec![next];
-            ans.extend(rest);
+            let mut ans = vec![next];
+            ans.value_extend(rest);
             ans
         }
     }
@@ -219,30 +211,31 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
     }
 }
 
-impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
+impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     pub fn new() -> Self {
-        Self {
-            vec: SmallVec::new(),
-        }
+        Self { vec: Vec::new() }
     }
 
     pub fn items(&self) -> &[DeltaItem<Value, M>] {
         &self.vec
     }
 
-    pub fn inner(self) -> SmallVec<[DeltaItem<Value, M>; 2]> {
+    pub fn inner(self) -> Vec<DeltaItem<Value, M>> {
         self.vec
     }
 
     pub fn retain_with_meta(mut self, len: usize, meta: M) -> Self {
-        self.push(DeltaItem::Retain { len, meta });
+        self.push(DeltaItem::Retain {
+            len,
+            meta: Some(meta),
+        });
         self
     }
 
     pub fn insert_with_meta<V: Into<Value>>(mut self, value: V, meta: M) -> Self {
         self.push(DeltaItem::Insert {
             value: value.into(),
-            meta,
+            meta: Some(meta),
         });
         self
     }
@@ -259,17 +252,14 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
             return self;
         }
 
-        self.push(DeltaItem::Retain {
-            len,
-            meta: M::none(),
-        });
+        self.push(DeltaItem::Retain { len, meta: None });
         self
     }
 
     pub fn insert<V: Into<Value>>(mut self, value: V) -> Self {
         self.push(DeltaItem::Insert {
             value: value.into(),
-            meta: M::none(),
+            meta: None,
         });
         self
     }
@@ -299,20 +289,20 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
                     return;
                 }
             }
-            if new_op.get_meta() == last_op.get_meta() {
+            if new_op.meta() == last_op.meta() {
                 if new_op.is_insert() && last_op.is_insert() {
                     // TODO avoid cloning
                     let mut value = last_op.as_insert_mut().unwrap().0.clone();
-                    value.extend(new_op.as_insert().unwrap().0.clone());
+                    value.value_extend(new_op.as_insert().unwrap().0.clone());
                     self.vec[index - 1] = DeltaItem::Insert {
                         value,
-                        meta: new_op.get_meta().unwrap().clone(),
+                        meta: new_op.meta().clone(),
                     };
                     return;
                 } else if new_op.is_retain() && last_op.is_retain() {
                     self.vec[index - 1] = DeltaItem::Retain {
                         len: last_op.content_len() + new_op.content_len(),
-                        meta: new_op.get_meta().unwrap().clone(),
+                        meta: new_op.meta().clone(),
                     };
                     return;
                 }
@@ -334,7 +324,7 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
     }
 
     pub fn into_op_iter(self) -> DeltaIterator<Value, M> {
-        DeltaIterator::new(self.vec)
+        DeltaIterator::new(self.vec.into())
     }
 
     pub fn len(&self) -> usize {
@@ -349,10 +339,10 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
     pub fn compose(self, other: Self) -> Self {
         let mut this_iter = self.into_op_iter();
         let mut other_iter = other.into_op_iter();
-        let mut ops = smallvec![];
+        let mut ops = vec![];
         let first_other = other_iter.peek();
         if let Some(first_other) = first_other {
-            if first_other.is_retain() && first_other.get_meta().is_none() {
+            if first_other.is_retain() && first_other.meta().is_none() {
                 let mut first_left = first_other.content_len();
                 let mut first_this = this_iter.peek();
                 while let Some(first_this_inner) = first_this {
@@ -370,7 +360,7 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
                 }
             }
         }
-        let mut delta = SeqDelta { vec: ops };
+        let mut delta = Delta { vec: ops };
         while this_iter.has_next() || other_iter.has_next() {
             if other_iter.peek_is_insert() {
                 delta.push(other_iter.next(None));
@@ -384,24 +374,26 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
                     let mut new_op = if this_op.is_retain() {
                         DeltaItem::Retain {
                             len: length,
-                            meta: M::none(),
+                            meta: None,
                         }
                     } else {
                         this_op.clone()
                     };
-                    let meta = this_op
-                        .get_meta()
-                        .unwrap()
-                        .clone()
-                        .compose(other_op.get_meta().unwrap().clone());
-                    new_op.meta(meta);
+                    let meta = if other_op.meta().is_none() {
+                        this_op.meta().clone()
+                    } else if other_op.meta().as_ref().unwrap().is_empty() {
+                        None
+                    } else {
+                        other_op.meta().clone()
+                    };
+                    new_op.set_meta(meta);
                     delta.push(new_op.clone());
                     if !other_iter.has_next() && delta.vec.last().unwrap().eq(&new_op) {
                         let vec = this_iter.rest();
                         if vec.is_empty() {
                             return delta.chop();
                         }
-                        let rest = SeqDelta { vec };
+                        let rest = Delta { vec };
                         return delta.concat(rest).chop();
                     }
                 } else if other_op.is_delete() && this_op.is_retain() {
@@ -413,14 +405,14 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
     }
 
     fn concat(&mut self, mut other: Self) -> Self {
-        let mut delta = SeqDelta {
+        let mut delta = Delta {
             vec: self.vec.clone(),
         };
         if !other.vec.is_empty() {
             // TODO: why?
             let other_first = other.vec.remove(0);
             delta.push(other_first);
-            delta.vec.extend(other.vec);
+            delta.vec.value_extend(other.vec);
         }
         delta
     }
@@ -428,7 +420,7 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
     fn chop(mut self) -> Self {
         let last_op = self.vec.last();
         if let Some(last_op) = last_op {
-            if last_op.is_retain() && last_op.get_meta().unwrap().is_meta_none() {
+            if last_op.is_retain() && last_op.meta().is_none() {
                 self.vec.pop();
             }
         }
@@ -436,108 +428,82 @@ impl<Value: DeltaValue, M: Meta> SeqDelta<Value, M> {
     }
 }
 
-impl<Value: DeltaValue, M: Meta> Default for SeqDelta<Value, M> {
+impl<Value: DeltaValue, M: Meta> Default for Delta<Value, M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl<T: Clone + PartialEq + Debug> DeltaValue for Vec<T> {
-    fn extend(&mut self, other: Self) {
-        <Vec<_> as std::iter::Extend<_>>::extend(self, other)
+    fn value_extend(&mut self, other: Self) {
+        self.extend(other)
     }
 }
 
 impl DeltaValue for String {
-    fn extend(&mut self, other: Self) {
+    fn value_extend(&mut self, other: Self) {
         self.push_str(&other)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{DeltaItem, Meta, SeqDelta};
+    use super::{Delta, DeltaItem, Meta};
 
     #[derive(Debug, PartialEq, Clone, Default)]
-    struct M {
+    struct TestMeta {
         bold: Option<bool>,
         color: Option<()>,
     }
 
-    type TestMeta = Option<M>;
-
     impl Meta for TestMeta {
-        fn none() -> Self {
-            None
-        }
-
-        fn is_meta_none(&self) -> bool {
-            self.is_none()
-        }
-
         fn empty() -> Self {
-            Some(M {
+            TestMeta {
                 bold: None,
                 color: None,
-            })
+            }
         }
         fn is_empty(&self) -> bool {
-            self.is_some()
-                && self.as_ref().unwrap().bold.is_none()
-                && self.as_ref().unwrap().color.is_none()
-        }
-
-        fn compose(self, other: Self) -> Self {
-            if other.is_empty() {
-                None
-            } else if other.is_none() {
-                self
-            } else {
-                other
-            }
+            self.bold.is_none() && self.color.is_none()
         }
     }
 
-    type TestDelta = SeqDelta<String, TestMeta>;
-    const BOLD_META: TestMeta = Some(M {
+    type TestDelta = Delta<String, TestMeta>;
+    const BOLD_META: TestMeta = TestMeta {
         bold: Some(true),
         color: None,
-    });
-    const COLOR_META: TestMeta = Some(M {
+    };
+    const COLOR_META: TestMeta = TestMeta {
         bold: None,
         color: Some(()),
-    });
-    const EMPTY_META: TestMeta = Some(M {
+    };
+    const EMPTY_META: TestMeta = TestMeta {
         bold: None,
         color: None,
-    });
-    // const ALL_META: TestMeta = Some(M {
-    //     bold: Some(true),
-    //     color: Some(()),
-    // });
+    };
 
     #[test]
     fn delta_push() {
-        let mut a: SeqDelta<String, ()> = SeqDelta::new().insert("a".to_string());
+        let mut a: Delta<String, ()> = Delta::new().insert("a".to_string());
         a.push(DeltaItem::Insert {
             value: "b".to_string(),
-            meta: (),
+            meta: None,
         });
-        assert_eq!(a, SeqDelta::new().insert("ab".to_string()));
+        assert_eq!(a, Delta::new().insert("ab".to_string()));
     }
 
     #[test]
     fn delta_compose() {
-        let a: SeqDelta<String, ()> = SeqDelta::new().retain(3).insert("abcde".to_string());
-        let b = SeqDelta::new().retain(5).delete(6);
+        let a: Delta<String, ()> = Delta::new().retain(3).insert("abcde".to_string());
+        let b = Delta::new().retain(5).delete(6);
         assert_eq!(
             a.compose(b),
-            SeqDelta::new().retain(3).insert("ab".to_string()).delete(3)
+            Delta::new().retain(3).insert("ab".to_string()).delete(3)
         );
 
-        let a: SeqDelta<String, ()> = SeqDelta::new().insert("123".to_string());
-        let b = SeqDelta::new().retain(1).insert("123".to_string());
-        assert_eq!(a.compose(b), SeqDelta::new().insert("112323".to_string()));
+        let a: Delta<String, ()> = Delta::new().insert("123".to_string());
+        let b = Delta::new().retain(1).insert("123".to_string());
+        assert_eq!(a.compose(b), Delta::new().insert("112323".to_string()));
     }
 
     #[test]

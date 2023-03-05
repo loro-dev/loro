@@ -2,12 +2,12 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     container::registry::ContainerIdx,
-    delta::{DeltaItem, MapDiff, MapDiffRaw, Meta, SeqDelta},
+    delta::{Delta, DeltaItem, MapDiff, MapDiffRaw, Meta},
     ContainerType, InternalString, LoroValue, Map,
 };
 
-pub(crate) type ListTxnOps = SeqDelta<Vec<Value>>;
-pub(crate) type TextTxnOps = SeqDelta<String>;
+pub(crate) type ListTxnOps = Delta<Vec<Value>>;
+pub(crate) type TextTxnOps = Delta<String>;
 pub(crate) type MapTxnOps = MapDiffRaw<Value>;
 
 impl MapTxnOps {
@@ -29,13 +29,13 @@ impl MapTxnOps {
 }
 
 impl ListTxnOps {
-    pub(super) fn into_event_format(self) -> SeqDelta<Vec<LoroValue>> {
+    pub(super) fn into_event_format(self) -> Delta<Vec<LoroValue>> {
         let items = self
             .inner()
             .into_iter()
             .map(|item| item.into_event_format())
             .collect();
-        SeqDelta { vec: items }
+        Delta { vec: items }
     }
 }
 
@@ -174,7 +174,7 @@ impl TransactionOp {
     pub(crate) fn insert_list_value(container: ContainerIdx, pos: usize, value: LoroValue) -> Self {
         Self::List {
             container,
-            ops: SeqDelta::new().retain(pos).insert(vec![Value::from(value)]),
+            ops: Delta::new().retain(pos).insert(vec![Value::from(value)]),
         }
     }
 
@@ -185,7 +185,7 @@ impl TransactionOp {
     ) -> Self {
         Self::List {
             container,
-            ops: SeqDelta::new()
+            ops: Delta::new()
                 .retain(pos)
                 .insert(values.into_iter().map(Value::Value).collect::<Vec<_>>()),
         }
@@ -199,7 +199,7 @@ impl TransactionOp {
     ) -> Self {
         Self::List {
             container,
-            ops: SeqDelta::new()
+            ops: Delta::new()
                 .retain(pos)
                 .insert(vec![Value::Container((type_, idx))]),
         }
@@ -208,7 +208,7 @@ impl TransactionOp {
     pub(crate) fn delete_list(container: ContainerIdx, pos: usize, len: usize) -> Self {
         Self::List {
             container,
-            ops: SeqDelta::new().retain(pos).delete(len),
+            ops: Delta::new().retain(pos).delete(len),
         }
     }
 }
