@@ -1,7 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::Serialize;
-use smallvec::{smallvec, SmallVec};
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +38,7 @@ impl Meta for () {
 
 pub trait DeltaValue: Debug + HasLength + Sliceable + Clone + PartialEq {
     fn value_extend(&mut self, other: Self);
+    fn take(&mut self, length: usize) -> Self;
 }
 
 impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
@@ -55,6 +55,39 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
             DeltaItem::Insert { meta: m, .. } => *m = meta,
             DeltaItem::Retain { meta: m, .. } => *m = meta,
             _ => {}
+        }
+    }
+
+    fn take_meta(&mut self) -> Option<M> {
+        match self {
+            DeltaItem::Insert { meta, .. } => std::mem::take(meta),
+            DeltaItem::Retain { meta, .. } => std::mem::take(meta),
+            _ => None,
+        }
+    }
+
+    // change self-length to self.len()-length
+    // and return the taken one.
+    pub(crate) fn take(&mut self, length: usize) -> Self {
+        match self {
+            DeltaItem::Insert { value, meta } => {
+                let v = value.take(length);
+                Self::Insert {
+                    value: v,
+                    meta: meta.clone(),
+                }
+            }
+            DeltaItem::Retain { len, meta } => {
+                *len -= length;
+                Self::Retain {
+                    len: length,
+                    meta: meta.clone(),
+                }
+            }
+            DeltaItem::Delete(len) => {
+                *len -= length;
+                Self::Delete(length)
+            }
         }
     }
 
@@ -84,17 +117,18 @@ impl<Value: HasLength, Meta> HasLength for DeltaItem<Value, Meta> {
 impl<Value, Meta> Mergable for DeltaItem<Value, Meta> {}
 
 pub struct DeltaIterator<V, M: Meta> {
-    ops: SmallVec<[DeltaItem<V, M>; 2]>,
-    index: usize,
-    offset: usize,
+    // The reversed Vec uses pop() to simulate getting the first element each time
+    ops: Vec<DeltaItem<V, M>>,
+    // index: usize,
+    // offset: usize,
 }
 
 impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
-    fn new(ops: SmallVec<[DeltaItem<V, M>; 2]>) -> Self {
+    fn new(ops: Vec<DeltaItem<V, M>>) -> Self {
         Self {
             ops,
-            index: 0,
-            offset: 0,
+            // index: 0,
+            // offset: 0,
         }
     }
 
@@ -106,80 +140,49 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         if len.is_none() {
             len = Some(usize::MAX)
         }
-        let mut length = len.unwrap();
-        {
-            let next_op = self.peek();
-            if next_op.is_none() {
-                return DeltaItem::Retain {
-                    len: usize::MAX,
-                    meta: None,
-                };
-            }
+        let length = len.unwrap();
+
+        let next_op = self.peek_mut();
+        if next_op.is_none() {
+            return DeltaItem::Retain {
+                len: usize::MAX,
+                meta: None,
+            };
         }
-        // TODO: Maybe can avoid cloning
-        let op = self.peek().unwrap();
+        let op = next_op.unwrap();
         let op_length = op.content_len();
-        let offset = self.offset;
-        let (index_delta, offset_delta) = {
-            if length >= op_length - offset {
-                length = op_length - offset;
-                (1, -(offset as isize))
-            } else {
-                (0, length as isize)
-            }
-        };
-
-        let ans = if op.is_delete() {
-            DeltaItem::Delete(length)
+        if length < op_length {
+            // a part of the peek op
+            op.take(length)
         } else {
-            let mut ans_op = op.clone();
-            if ans_op.is_retain() {
-                *ans_op.as_retain_mut().unwrap().0 = length;
-            } else if ans_op.is_insert() {
-                let v = ans_op.as_insert_mut().unwrap().0;
-                *v = v.slice(offset, offset + length);
-            }
-            ans_op
-        };
-
-        self.index += index_delta;
-        self.offset = (self.offset as isize + offset_delta) as usize;
-        ans
+            self.take_peek().unwrap()
+        }
     }
 
-    fn rest(&mut self) -> Vec<DeltaItem<V, M>> {
-        if !self.has_next() {
-            vec![]
-        } else if self.offset == 0 {
-            // TODO avoid cloning
-            self.ops[self.index..].into()
-        } else {
-            let offset = self.offset;
-            let index = self.index;
-            let next = self.next(None);
-            let rest = self.ops[self.index..].to_vec();
-            self.offset = offset;
-            self.index = index;
-            let mut ans = vec![next];
-            ans.value_extend(rest);
-            ans
-        }
+    fn peek_mut(&mut self) -> Option<&mut DeltaItem<V, M>> {
+        self.ops.last_mut()
+    }
+
+    fn take_peek(&mut self) -> Option<DeltaItem<V, M>> {
+        self.ops.pop()
+    }
+
+    fn rest(mut self) -> Vec<DeltaItem<V, M>> {
+        self.ops.reverse();
+        self.ops
     }
 
     fn has_next(&self) -> bool {
-        self.peek_length() < usize::MAX
+        !self.ops.is_empty()
     }
 
     fn peek(&self) -> Option<&DeltaItem<V, M>> {
-        self.ops.get(self.index)
+        self.ops.last()
     }
 
     fn peek_length(&self) -> usize {
         if let Some(op) = self.peek() {
-            if op.content_len() == usize::MAX {
-                return usize::MAX;
-            }
-            op.content_len() - self.offset
+            op.content_len()
         } else {
             usize::MAX
         }
@@ -264,14 +267,15 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         self
     }
 
-    pub fn push(&mut self, new_op: DeltaItem<Value, M>) {
+    // If the new_op is merged, return true
+    pub fn push(&mut self, new_op: DeltaItem<Value, M>) -> bool {
         let mut index = self.vec.len();
         let last_op = self.vec.last_mut();
         if let Some(mut last_op) = last_op {
             if new_op.is_delete() && last_op.is_delete() {
                 self.vec[index - 1] =
                     DeltaItem::Delete(last_op.content_len() + new_op.content_len());
-                return;
+                return true;
             }
             // Since it does not matter if we insert before or after deleting at the same index,
             // always prefer to insert first
@@ -279,14 +283,14 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 index -= 1;
                 if index == 0 {
                     self.vec.insert(0, new_op);
-                    return;
+                    return true;
                 }
                 let _last_op = self.vec.get_mut(index - 1);
                 if let Some(_last_op_inner) = _last_op {
                     last_op = _last_op_inner;
                 } else {
                     self.vec.insert(0, new_op);
-                    return;
+                    return true;
                 }
             }
             if new_op.meta() == last_op.meta() {
@@ -298,20 +302,22 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                         value,
                         meta: new_op.meta().clone(),
                     };
-                    return;
+                    return true;
                 } else if new_op.is_retain() && last_op.is_retain() {
                     self.vec[index - 1] = DeltaItem::Retain {
                         len: last_op.content_len() + new_op.content_len(),
                         meta: new_op.meta().clone(),
                     };
-                    return;
+                    return true;
                 }
             }
         }
         if index == self.vec.len() {
             self.vec.push(new_op);
+            false
         } else {
             self.vec.insert(index, new_op);
+            true
         }
     }
 
@@ -324,7 +330,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     }
 
     pub fn into_op_iter(self) -> DeltaIterator<Value, M> {
-        DeltaIterator::new(self.vec.into())
+        DeltaIterator::new(self.vec.into_iter().rev().collect())
     }
 
     pub fn len(&self) -> usize {
@@ -368,27 +374,25 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 delta.push(this_iter.next(None));
             } else {
                 let length = this_iter.peek_length().min(other_iter.peek_length());
-                let this_op = this_iter.next(length);
-                let other_op = other_iter.next(length);
+                let mut this_op = this_iter.next(length);
+                let mut other_op = other_iter.next(length);
                 if other_op.is_retain() {
-                    let mut new_op = if this_op.is_retain() {
-                        DeltaItem::Retain {
-                            len: length,
-                            meta: None,
-                        }
-                    } else {
-                        this_op.clone()
-                    };
                     let meta = if other_op.meta().is_none() {
-                        this_op.meta().clone()
+                        this_op.take_meta()
                     } else if other_op.meta().as_ref().unwrap().is_empty() {
                         None
                     } else {
-                        other_op.meta().clone()
+                        other_op.take_meta()
                     };
-                    new_op.set_meta(meta);
-                    delta.push(new_op.clone());
-                    if !other_iter.has_next() && delta.vec.last().unwrap().eq(&new_op) {
+                    let new_op = if this_op.is_retain() {
+                        DeltaItem::Retain { len: length, meta }
+                    } else {
+                        this_op.set_meta(meta);
+                        this_op
+                    };
+                    let merged = delta.push(new_op);
+                    let concat_rest = !other_iter.has_next() && !merged;
+                    if concat_rest {
                         let vec = this_iter.rest();
                         if vec.is_empty() {
                             return delta.chop();
@@ -404,17 +408,13 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         delta.chop()
     }
 
-    fn concat(&mut self, mut other: Self) -> Self {
-        let mut delta = Delta {
-            vec: self.vec.clone(),
-        };
+    fn concat(mut self, mut other: Self) -> Self {
         if !other.vec.is_empty() {
-            // TODO: why?
             let other_first = other.vec.remove(0);
-            delta.push(other_first);
-            delta.vec.value_extend(other.vec);
+            self.push(other_first);
+            self.vec.value_extend(other.vec);
         }
-        delta
+        self
     }
 
     fn chop(mut self) -> Self {
@@ -438,11 +438,19 @@ impl<T: Clone + PartialEq + Debug> DeltaValue for Vec<T> {
     fn value_extend(&mut self, other: Self) {
         self.extend(other)
     }
+
+    fn take(&mut self, length: usize) -> Self {
+        self.drain(0..length).collect()
+    }
 }
 
 impl DeltaValue for String {
     fn value_extend(&mut self, other: Self) {
         self.push_str(&other)
+    }
+
+    fn take(&mut self, length: usize) -> Self {
+        self.drain(0..length).collect()
     }
 }
 

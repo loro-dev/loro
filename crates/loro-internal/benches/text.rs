@@ -41,6 +41,7 @@ mod run {
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
         let mut b = c.benchmark_group("direct_apply");
+        b.sample_size(10);
         b.bench_function("B4", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
@@ -70,7 +71,7 @@ mod run {
             })
         });
 
-        b.sample_size(10);
+        // b.sample_size(10);
         b.bench_function("B4DirectSync", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
