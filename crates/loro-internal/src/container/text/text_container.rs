@@ -11,18 +11,18 @@ use crate::{
         pool_mapping::{PoolMapping, StateContent},
         registry::{ContainerIdx, ContainerInner, ContainerInstance, ContainerWrapper},
         temp::ContainerTemp,
-        Container, ContainerID, ContainerType,
+        ContainerID, ContainerTrait, ContainerType,
     },
     delta::{Delta, DeltaItem},
     event::Diff,
     hierarchy::Hierarchy,
-    id::{ClientID, Counter},
+    id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::op::{TextTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
-    LogStore, LoroError, Transact,
+    LogStore, LoroCore, LoroError, Transact,
 };
 
 use super::{
@@ -57,17 +57,23 @@ impl TextContainer {
     pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOps) -> Vec<Op> {
         let mut index = 0;
         let mut ops = Vec::new();
+        let mut offset = 0;
+        let id = store.next_id();
         for item in op.items() {
             match item {
                 DeltaItem::Retain { len, .. } => index += len,
                 DeltaItem::Insert { value, .. } => {
                     let len = value.len();
-                    let op = self.apply_insert(index, value, store);
+                    let id = id.inc(offset);
+                    offset += 1;
+                    let op = self.apply_insert(index, value, id);
                     index += len;
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
-                    let op = self.apply_delete(index, *len, store);
+                    let id = id.inc(offset);
+                    offset += 1;
+                    let op = self.apply_delete(index, *len, id);
                     ops.push(op);
                 }
             }
@@ -75,11 +81,10 @@ impl TextContainer {
         ops
     }
 
-    pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, store: &mut LogStore) -> Op {
+    pub(crate) fn apply_insert(&mut self, pos: usize, text: &str, id: ID) -> Op {
         if self.state.len() < pos {
             panic!("insert index out of range");
         }
-        let id = store.next_id();
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
         self.state.insert(pos, slice);
@@ -93,11 +98,10 @@ impl TextContainer {
         )
     }
 
-    pub(crate) fn apply_delete(&mut self, pos: usize, len: usize, store: &mut LogStore) -> Op {
+    pub(crate) fn apply_delete(&mut self, pos: usize, len: usize, id: ID) -> Op {
         if self.state.len() < pos + len {
             panic!("deletion out of range");
         }
-        let id = store.next_id();
         self.state.delete_range(Some(pos), Some(pos + len));
         Op::new(
             id,
@@ -132,7 +136,7 @@ impl TextContainer {
     }
 }
 
-impl Container for TextContainer {
+impl ContainerTrait for TextContainer {
     #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
@@ -565,6 +569,18 @@ impl ContainerWrapper for Text {
 
     fn client_id(&self) -> crate::id::ClientID {
         self.client_id
+    }
+
+    fn is_instance(&self) -> bool {
+        matches!(self.container, ContainerInner::Instance(_))
+    }
+
+    fn try_to_update(&mut self, loro: &LoroCore) {
+        if !self.is_instance() {
+            let idx = self.idx();
+            let new = loro.get_text_by_idx(&idx).unwrap();
+            *self = new;
+        }
     }
 
     fn container_inner(&self) -> &ContainerInner {

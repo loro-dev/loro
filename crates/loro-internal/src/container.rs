@@ -5,15 +5,17 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
+    container::registry::ContainerWrapper,
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::op::TransactionOp,
     version::PatchedVersionVector,
-    InternalString, LogStore, LoroError, LoroValue, ID,
+    InternalString, List, LogStore, LoroCore, LoroError, LoroValue, Map, Text, ID,
 };
 
+use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -46,6 +48,49 @@ pub enum ContainerType {
     // Custom(u16),
 }
 
+#[derive(Debug, EnumAsInner)]
+pub enum Container {
+    Text(Text),
+    Map(Map),
+    List(List),
+}
+
+impl Container {
+    pub fn idx(&self) -> ContainerIdx {
+        match self {
+            Container::List(x) => x.idx(),
+            Container::Map(x) => x.idx(),
+            Container::Text(x) => x.idx(),
+        }
+    }
+
+    pub fn type_(&self) -> ContainerType {
+        match self {
+            Container::List(_x) => ContainerType::List,
+            Container::Map(_x) => ContainerType::Map,
+            Container::Text(_x) => ContainerType::Text,
+        }
+    }
+}
+
+impl From<List> for Container {
+    fn from(value: List) -> Self {
+        Container::List(value)
+    }
+}
+
+impl From<Map> for Container {
+    fn from(value: Map) -> Self {
+        Container::Map(value)
+    }
+}
+
+impl From<Text> for Container {
+    fn from(value: Text) -> Self {
+        Container::Text(value)
+    }
+}
+
 impl Display for ContainerType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -71,7 +116,7 @@ impl TryFrom<&str> for ContainerType {
     }
 }
 
-pub trait Container: Debug + Any + Unpin + Send + Sync {
+pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     fn id(&self) -> &ContainerID;
     fn idx(&self) -> ContainerIdx;
     fn type_(&self) -> ContainerType;

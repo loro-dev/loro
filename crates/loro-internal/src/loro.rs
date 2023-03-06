@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
-    container::{temp::ContainerTemp, ContainerID},
+    container::{registry::ContainerIdx, temp::ContainerTemp, ContainerID},
     context::Context,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
@@ -76,21 +76,21 @@ impl LoroCore {
         Text::from_instance(instance, cid)
     }
 
-    pub fn get_list_by_temp(&self, temp_container: ContainerTemp) -> Option<List> {
+    pub fn get_list_by_idx(&self, idx: &ContainerIdx) -> Option<List> {
         let cid = self.client_id();
-        self.get_container_by_idx(&temp_container.idx())
+        self.get_container_by_idx(idx)
             .map(|i| List::from_instance(i, cid))
     }
 
-    pub fn get_map_by_temp(&self, temp_container: ContainerTemp) -> Option<Map> {
+    pub fn get_map_by_idx(&self, idx: &ContainerIdx) -> Option<Map> {
         let cid = self.client_id();
-        self.get_container_by_idx(&temp_container.idx())
+        self.get_container_by_idx(idx)
             .map(|i| Map::from_instance(i, cid))
     }
 
-    pub fn get_text_by_temp(&self, temp_container: ContainerTemp) -> Option<Text> {
+    pub fn get_text_by_idx(&self, idx: &ContainerIdx) -> Option<Text> {
         let cid = self.client_id();
-        self.get_container_by_idx(&temp_container.idx())
+        self.get_container_by_idx(idx)
             .map(|i| Text::from_instance(i, cid))
     }
 

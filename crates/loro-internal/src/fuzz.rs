@@ -4,6 +4,7 @@ use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
+pub mod recursive_txn;
 
 use crate::{
     array_mut_ref, id::ClientID, log_store::EncodeConfig, LoroCore, Transact, VersionVector,

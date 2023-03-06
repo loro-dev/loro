@@ -8,7 +8,7 @@ use crate::{
     container::{registry::ContainerRegistry, ContainerID},
     delta::DeltaItem,
     event::{Diff, Index, Path},
-    Container,
+    ContainerTrait,
 };
 
 /// [LoroValue] is used to represents the state of CRDT at a given version

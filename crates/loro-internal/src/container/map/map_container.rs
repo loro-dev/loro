@@ -8,9 +8,10 @@ use crate::{
         temp::ContainerTemp,
     },
     delta::MapDiff,
+    id::ID,
     op::OwnedRichOp,
     transaction::op::{MapTxnOps, TransactionOp},
-    LogStore, LoroError, Transact,
+    Container, List, LogStore, LoroCore, LoroError, Text, Transact,
 };
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
@@ -18,7 +19,7 @@ use smallvec::{smallvec, SmallVec};
 use crate::{
     container::{
         registry::{ContainerInstance, ContainerWrapper},
-        Container, ContainerID, ContainerType,
+        ContainerID, ContainerTrait, ContainerType,
     },
     event::{Diff, Index},
     hierarchy::Hierarchy,
@@ -67,8 +68,13 @@ impl MapContainer {
         }
     }
 
-    fn apply_insert(&mut self, store: &mut LogStore, key: InternalString, value: LoroValue) -> Op {
-        let id = store.next_id();
+    fn apply_insert(
+        &mut self,
+        key: InternalString,
+        value: LoroValue,
+        id: ID,
+        store: &mut LogStore,
+    ) -> Op {
         let value_index = self.pool.alloc(value).start;
         let order = TotalOrderStamp {
             client_id: store.this_client_id,
@@ -94,11 +100,17 @@ impl MapContainer {
     fn apply_txn_op_impl(&mut self, store: &mut LogStore, ops: &MapTxnOps) -> Vec<Op> {
         let ops = ops.clone();
         let mut store_ops = Vec::with_capacity(ops.added.len() + ops.deleted.len());
+        let mut offset = 0;
+        let id = store.next_id();
         for (k, v) in ops.added.into_iter() {
-            store_ops.push(self.apply_insert(store, k, v.into_value().unwrap()));
+            let id = id.inc(offset);
+            offset += 1;
+            store_ops.push(self.apply_insert(k, v.into_value().unwrap(), id, store));
         }
         for k in ops.deleted {
-            store_ops.push(self.apply_insert(store, k, LoroValue::Null));
+            let id = id.inc(offset);
+            offset += 1;
+            store_ops.push(self.apply_insert(k, LoroValue::Null, id, store));
         }
         store_ops
     }
@@ -141,6 +153,10 @@ impl MapContainer {
         self.get_value().resolve_deep(reg)
     }
 
+    pub fn len(&self) -> usize {
+        self.state.len()
+    }
+
     pub fn keys(&self) -> Vec<InternalString> {
         self.state.keys().cloned().collect()
     }
@@ -157,7 +173,7 @@ impl MapContainer {
     }
 }
 
-impl Container for MapContainer {
+impl ContainerTrait for MapContainer {
     #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
@@ -390,7 +406,10 @@ pub struct Map {
 }
 
 impl Map {
-    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub(crate) fn from_instance(
+        instance: Weak<Mutex<ContainerInstance>>,
+        client_id: ClientID,
+    ) -> Self {
         let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
             container: ContainerInner::from(instance),
@@ -399,7 +418,7 @@ impl Map {
         }
     }
 
-    pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
+    pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
             container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::Map)),
             client_id,
@@ -417,7 +436,7 @@ impl Map {
         txn: &T,
         key: &str,
         value: V,
-    ) -> Result<Option<ContainerTemp>, LoroError> {
+    ) -> Result<Option<Container>, LoroError> {
         self.with_transaction_checked(txn, |txn, _| {
             let (value, maybe_container) = value.convert_value()?;
             if let Some(prelim) = maybe_container {
@@ -428,7 +447,12 @@ impl Map {
                     Some(idx),
                 )?;
                 prelim.integrate(txn, idx)?;
-                Ok(Some(ContainerTemp::new(idx, type_)))
+                let container = match type_ {
+                    ContainerType::List => Container::from(List::from_idx(idx, self.client_id)),
+                    ContainerType::Map => Container::from(Map::from_idx(idx, self.client_id)),
+                    ContainerType::Text => Container::from(Text::from_idx(idx, self.client_id)),
+                };
+                Ok(Some(container))
             } else {
                 let value = value.into_value().unwrap();
                 txn.push(
@@ -458,8 +482,12 @@ impl Map {
         self.with_container(|map| map.get(&key.into()).cloned())
     }
 
-    pub fn keys(&self) -> Vec<String> {
-        todo!()
+    /// Need clone
+    pub fn keys(&self) -> Vec<InternalString> {
+        match &self.container {
+            ContainerInner::Instance(_) => self.with_container(|x| x.keys()).unwrap(),
+            ContainerInner::Temp(temp) => temp.as_map().unwrap().keys(),
+        }
     }
 
     pub fn values(&self) -> Result<Vec<LoroValue>, LoroError> {
@@ -491,7 +519,10 @@ impl Map {
     }
 
     pub fn len(&self) -> usize {
-        todo!()
+        match &self.container {
+            ContainerInner::Instance(_) => self.with_container(|x| x.len()).unwrap(),
+            ContainerInner::Temp(temp) => temp.as_map().unwrap().len(),
+        }
     }
 
     #[must_use]
@@ -505,6 +536,18 @@ impl ContainerWrapper for Map {
 
     fn client_id(&self) -> ClientID {
         self.client_id
+    }
+
+    fn is_instance(&self) -> bool {
+        matches!(self.container, ContainerInner::Instance(_))
+    }
+
+    fn try_to_update(&mut self, loro: &LoroCore) {
+        if !self.is_instance() {
+            let idx = self.idx();
+            let new = loro.get_map_by_idx(&idx).unwrap();
+            *self = new;
+        }
     }
 
     fn container_inner(&self) -> &ContainerInner {

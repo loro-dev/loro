@@ -15,7 +15,7 @@ use crate::{
         map::{InnerMapSet, ValueSlot},
         pool_mapping::StateContent,
         registry::ContainerIdx,
-        Container, ContainerID,
+        ContainerID, ContainerTrait,
     },
     dag::remove_included_frontiers,
     event::RawEvent,

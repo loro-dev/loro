@@ -42,7 +42,7 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
 // TODO: rename as Key?
 pub(crate) type InternalString = DefaultAtom;
-pub(crate) use container::Container;
+pub use container::{Container, ContainerTrait};
 
 pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use log_store::LogStore;

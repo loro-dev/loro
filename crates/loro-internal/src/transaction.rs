@@ -6,7 +6,7 @@ use std::{
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::{registry::ContainerIdx, Container, ContainerID},
+    container::{registry::ContainerIdx, ContainerID, ContainerTrait},
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
     id::ClientID,
@@ -104,19 +104,6 @@ impl Transaction {
         Ok(())
     }
 
-    pub(crate) fn get_container_idx_by_id(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.with_store(|store| store.reg.get_idx(id))
-    }
-
-    fn with_store<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&LogStore) -> R,
-    {
-        let store = self.store.upgrade().unwrap();
-        let store = store.read().unwrap();
-        f(&store)
-    }
-
     fn with_store_hierarchy_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&Self, &mut LogStore, &mut Hierarchy) -> R,
@@ -130,6 +117,7 @@ impl Transaction {
 
     fn apply_ops_emit_event(&mut self) {
         let compressed_op = std::mem::take(&mut self.compressed_op);
+        println!("compressed op {:?}", compressed_op);
         let events = self.with_store_hierarchy_mut(|_txn, store, hierarchy| {
             let mut events = Vec::with_capacity(compressed_op.len());
             for op in compressed_op {
@@ -140,6 +128,7 @@ impl Transaction {
                 let container_id = container.id().clone();
                 let type_ = container_id.container_type();
                 let store_ops = container.apply_txn_op(store, &op);
+                println!("store ops: {:?}", store_ops);
                 drop(container);
                 let (old_version, new_version) = store.append_local_ops(&store_ops);
                 let new_version = new_version.into();
@@ -209,7 +198,13 @@ impl Transaction {
     ) -> ContainerID {
         self.with_store_hierarchy_mut(|_txn, s, h| {
             let id = s.next_id();
-            let container_id = ContainerID::new_normal(id, type_);
+            let mut container_id = ContainerID::new_normal(id, type_);
+
+            while s.reg.contains(&container_id) {
+                if let ContainerID::Normal { id, .. } = &mut container_id {
+                    id.counter += 1;
+                }
+            }
 
             let parent_id = s.reg.get_id(parent_idx).unwrap();
             h.add_child(parent_id, &container_id);

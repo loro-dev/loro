@@ -16,7 +16,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use rle::{slice_vec_by, HasLength, RleVecWithIndex};
 
 use crate::{
-    container::{registry::ContainerInstance, Container, ContainerID},
+    container::{registry::ContainerInstance, ContainerID, ContainerTrait},
     dag::{remove_included_frontiers, DagUtils},
     op::RichOp,
     span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},

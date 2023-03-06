@@ -79,8 +79,12 @@ impl MapTemp {
             checker: MapChecker::from_idx(idx),
         }
     }
-    pub(crate) fn keys(&self) -> &FxHashSet<InternalString> {
-        &self.checker.keys
+    pub(crate) fn keys(&self) -> Vec<InternalString> {
+        self.checker.keys.iter().cloned().collect()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.checker.keys.len()
     }
 }
 

@@ -11,11 +11,12 @@ use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
     array_mut_ref,
-    container::{temp::ContainerTemp, ContainerID},
+    container::{registry::ContainerWrapper, temp::ContainerTemp, ContainerID},
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
     log_store::EncodeConfig,
+    transaction::TransactionWrap,
     Container, ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 
@@ -48,6 +49,7 @@ pub enum Action {
 }
 
 struct Actor {
+    txn: TransactionWrap,
     loro: LoroCore,
     value_tracker: Arc<Mutex<LoroValue>>,
     map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
@@ -60,8 +62,11 @@ struct Actor {
 
 impl Actor {
     fn new(id: ClientID) -> Self {
+        let loro = LoroCore::new(Default::default(), Some(id));
+        let txn = loro.transact();
         let mut actor = Actor {
-            loro: LoroCore::new(Default::default(), Some(id)),
+            loro,
+            txn,
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
             map_tracker: Default::default(),
             list_tracker: Default::default(),
@@ -173,6 +178,21 @@ impl Actor {
         actor.list_containers.push(actor.loro.get_list("list"));
         actor
     }
+
+    fn commit(&mut self) {
+        let new_txn = self.loro.transact();
+        let txn = std::mem::replace(&mut self.txn, new_txn);
+        drop(txn);
+        for x in self.text_containers.iter_mut() {
+            x.try_to_update(&self.loro);
+        }
+        for x in self.list_containers.iter_mut() {
+            x.try_to_update(&self.loro);
+        }
+        for x in self.map_containers.iter_mut() {
+            x.try_to_update(&self.loro);
+        }
+    }
 }
 
 #[derive(Arbitrary, Clone, Debug, PartialEq, Eq)]
@@ -263,21 +283,12 @@ trait Actionable {
 
 impl Actor {
     fn add_new_container(&mut self, container: Container) {
-        let new = container.idx();
+        // let new = container.idx();
         let type_ = container.type_();
-        let store = self.loro.log_store.try_read().unwrap();
-        let client_id = store.this_client_id;
-        let instance = store.get_container_by_idx(&new).unwrap();
         match type_ {
-            ContainerType::Text => self
-                .text_containers
-                .push(Text::from_instance(instance, client_id)),
-            ContainerType::Map => self
-                .map_containers
-                .push(Map::from_instance(instance, client_id)),
-            ContainerType::List => self
-                .list_containers
-                .push(List::from_instance(instance, client_id)),
+            ContainerType::Text => self.text_containers.push(container.into_text().unwrap()),
+            ContainerType::Map => self.map_containers.push(container.into_map().unwrap()),
+            ContainerType::List => self.list_containers.push(container.into_list().unwrap()),
         }
     }
 }
@@ -356,6 +367,9 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
+                // commit txn
+                a.commit();
+                b.commit();
                 let mut visited = HashSet::new();
                 a.map_containers.iter().for_each(|x| {
                     visited.insert(x.id().unwrap());
@@ -411,6 +425,7 @@ impl Actionable for Vec<Actor> {
             Action::SyncAll => {
                 let mut visited = HashSet::new();
                 let a = &mut self[0];
+                a.commit();
                 a.map_containers.iter().for_each(|x| {
                     visited.insert(x.id().unwrap());
                 });
@@ -423,6 +438,8 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.commit();
+                    b.commit();
                     a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id().unwrap();
@@ -449,6 +466,8 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.commit();
+                    b.commit();
                     b.loro.import(a.loro.export(b.loro.vv_cloned()));
                     b.map_containers = a
                         .map_containers
@@ -474,6 +493,7 @@ impl Actionable for Vec<Actor> {
                 value,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.map_containers.get_mut(*container_idx as usize);
                 let container = if let Some(container) = container {
                     container
@@ -482,27 +502,21 @@ impl Actionable for Vec<Actor> {
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
                 };
-                let txn = actor.loro.transact();
-                let container = match value {
+                match value {
                     FuzzValue::Null => {
-                        container.delete(&txn, &key.to_string()).unwrap();
-                        None
+                        container.delete(txn, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&txn, &key.to_string(), *i).unwrap();
-                        None
+                        container.insert(txn, &key.to_string(), *i).unwrap();
                     }
-                    FuzzValue::Container(c) => Some(
-                        container
-                            .insert(&txn, &key.to_string(), *c)
+                    FuzzValue::Container(c) => {
+                        let container = container
+                            .insert(txn, &key.to_string(), *c)
                             .unwrap()
-                            .unwrap(),
-                    ),
+                            .unwrap();
+                        actor.add_new_container(container);
+                    }
                 };
-                drop(txn);
-                if let Some(container) = container {
-                    actor.add_new_container(container);
-                }
             }
             Action::List {
                 site,
@@ -511,6 +525,7 @@ impl Actionable for Vec<Actor> {
                 value,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.list_containers.get_mut(*container_idx as usize);
                 let container = if container.is_none() {
                     let list = actor.loro.get_list("list");
@@ -520,24 +535,18 @@ impl Actionable for Vec<Actor> {
                     #[allow(clippy::unnecessary_unwrap)]
                     container.unwrap()
                 };
-                let txn = actor.loro.transact();
-                let container = match value {
+                match value {
                     FuzzValue::Null => {
-                        container.delete(&txn, *key as usize, 1).unwrap();
-                        None
+                        container.delete(txn, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&txn, *key as usize, *i).unwrap();
-                        None
+                        container.insert(txn, *key as usize, *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        Some(container.insert(&txn, *key as usize, *c).unwrap().unwrap())
+                        let container = container.insert(txn, *key as usize, *c).unwrap().unwrap();
+                        actor.add_new_container(container);
                     }
                 };
-                drop(txn);
-                if let Some(container) = container {
-                    actor.add_new_container(container);
-                }
             }
             Action::Text {
                 site,
@@ -547,6 +556,7 @@ impl Actionable for Vec<Actor> {
                 is_del,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.text_containers.get_mut(*container_idx as usize);
                 let container = if let Some(container) = container {
                     container
@@ -555,17 +565,15 @@ impl Actionable for Vec<Actor> {
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
                 };
-                let txn = actor.loro.transact();
                 if *is_del {
                     container
-                        .delete(&txn, *pos as usize, *value as usize)
+                        .delete(txn, *pos as usize, *value as usize)
                         .unwrap();
                 } else {
                     container
-                        .insert(&txn, *pos as usize, &(format!("[{}]", value)))
+                        .insert(txn, *pos as usize, &(format!("[{}]", value)))
                         .unwrap();
                 }
-                drop(txn);
             }
         }
     }
@@ -659,6 +667,8 @@ fn check_synced(sites: &mut [Actor]) {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);
             let (a, b) = array_mut_ref!(sites, [i, j]);
+            a.commit();
+            b.commit();
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
@@ -1306,24 +1316,27 @@ mod failed_tests {
         test_multi_sites(
             5,
             &mut [
-                Map {
-                    site: 1,
+                Text {
+                    site: 2,
                     container_idx: 0,
-                    key: 21,
-                    value: Container(C::List),
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 1,
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 2,
                     container_idx: 0,
-                    key: 21,
-                    value: Container(C::List),
+                    pos: 2,
+                    value: 39064,
+                    is_del: false,
                 },
-                SyncAll,
-                List {
-                    site: 4,
-                    container_idx: 1,
-                    key: 0,
-                    value: I32(1),
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
             ],
         )
@@ -1335,425 +1348,84 @@ mod failed_tests {
         minify_error(
             5,
             vec![
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 0,
+                Text {
+                    site: 2,
                     container_idx: 0,
-                    key: 0,
-                    value: Null,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 152,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 242,
-                    value: Null,
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 2,
+                    is_del: true,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 28,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Container(C::List),
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 41,
+                    value: 45232,
+                    is_del: false,
                 },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 39064,
+                    is_del: false,
                 },
                 List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
-                },
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
-                },
-                List {
-                    site: 21,
-                    container_idx: 255,
-                    key: 64,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
+                    site: 1,
                     container_idx: 0,
                     key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
+                    value: I32(-1734829928),
                 },
             ],
             test_multi_sites,

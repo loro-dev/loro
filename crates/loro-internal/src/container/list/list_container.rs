@@ -20,19 +20,20 @@ use crate::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
         },
-        Container, ContainerID, ContainerType,
+        ContainerID, ContainerTrait, ContainerType,
     },
+    context::Context,
     delta::{Delta, DeltaItem},
     event::{Diff, Index},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter},
+    id::{ClientID, Counter, ID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
     transaction::op::{ListTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
-    LogStore, LoroError, Transact,
+    Container, LogStore, LoroCore, LoroError, Map, Text, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -64,18 +65,24 @@ impl ListContainer {
     fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOps) -> Vec<Op> {
         let mut index = 0;
         let mut ops = Vec::new();
+        let id = store.next_id();
+        let mut offset = 0;
         for item in op.items() {
             let item = item.clone().into_event_format();
             match item {
                 DeltaItem::Retain { len, .. } => index += len,
                 DeltaItem::Insert { value, .. } => {
                     let len = value.len();
-                    let op = self.apply_batch_insert(index, value, store);
+                    let id = id.inc(offset);
+                    offset += 1;
+                    let op = self.apply_batch_insert(index, value, id);
                     index += len;
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
-                    let op = self.apply_delete(index, len, store);
+                    let id = id.inc(offset);
+                    offset += 1;
+                    let op = self.apply_delete(index, len, id);
                     ops.push(op);
                 }
             }
@@ -83,13 +90,7 @@ impl ListContainer {
         ops
     }
 
-    fn apply_batch_insert(
-        &mut self,
-        pos: usize,
-        values: Vec<LoroValue>,
-        store: &mut LogStore,
-    ) -> Op {
-        let id = store.next_id();
+    fn apply_batch_insert(&mut self, pos: usize, values: Vec<LoroValue>, id: ID) -> Op {
         let slice = self.raw_data.alloc_arr(values);
         self.state.insert(pos, slice.clone().into());
         Op::new(
@@ -102,8 +103,7 @@ impl ListContainer {
         )
     }
 
-    fn apply_delete(&mut self, pos: usize, len: usize, store: &mut LogStore) -> Op {
-        let id = store.next_id();
+    fn apply_delete(&mut self, pos: usize, len: usize, id: ID) -> Op {
         self.state.delete_range(Some(pos), Some(pos + len));
         Op::new(
             id,
@@ -191,7 +191,7 @@ impl ListContainer {
     }
 }
 
-impl Container for ListContainer {
+impl ContainerTrait for ListContainer {
     #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
@@ -495,7 +495,10 @@ pub struct List {
 }
 
 impl List {
-    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub(crate) fn from_instance(
+        instance: Weak<Mutex<ContainerInstance>>,
+        client_id: ClientID,
+    ) -> Self {
         let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
             container: ContainerInner::from(instance),
@@ -504,7 +507,7 @@ impl List {
         }
     }
 
-    pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
+    pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
             container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::List)),
             client_id,
@@ -523,18 +526,23 @@ impl List {
         txn: &T,
         pos: usize,
         value: P,
-    ) -> Result<Option<ContainerTemp>, LoroError> {
+    ) -> Result<Option<Container>, LoroError> {
         self.with_transaction_checked(txn, |txn, _x| {
             let (value, maybe_container) = value.convert_value()?;
             if let Some(prelim) = maybe_container {
-                let idx = txn.next_container_idx();
                 let type_ = value.into_container().unwrap();
+                let idx = txn.next_container_idx();
                 txn.push(
                     TransactionOp::insert_list_container(self.idx(), pos, type_, idx),
                     Some(idx),
                 )?;
                 prelim.integrate(txn, idx)?;
-                Ok(Some(ContainerTemp::new(idx, type_)))
+                let container = match type_ {
+                    ContainerType::List => Container::from(List::from_idx(idx, self.client_id)),
+                    ContainerType::Map => Container::from(Map::from_idx(idx, self.client_id)),
+                    ContainerType::Text => Container::from(Text::from_idx(idx, self.client_id)),
+                };
+                Ok(Some(container))
             } else {
                 let value = value.into_value().unwrap();
                 txn.push(
@@ -566,7 +574,7 @@ impl List {
         &mut self,
         txn: &T,
         value: P,
-    ) -> Result<Option<ContainerTemp>, LoroError> {
+    ) -> Result<Option<Container>, LoroError> {
         let pos = self.len();
         self.insert(txn, pos, value)
     }
@@ -576,7 +584,7 @@ impl List {
         &mut self,
         txn: &T,
         value: P,
-    ) -> Result<Option<ContainerTemp>, LoroError> {
+    ) -> Result<Option<Container>, LoroError> {
         let pos = 0;
         self.insert(txn, pos, value)
     }
@@ -670,12 +678,24 @@ impl ContainerWrapper for List {
         Ok(f(list))
     }
 
+    fn is_instance(&self) -> bool {
+        matches!(self.container, ContainerInner::Instance(_))
+    }
+
     fn client_id(&self) -> ClientID {
         self.client_id
     }
 
     fn container_inner(&self) -> &ContainerInner {
         &self.container
+    }
+
+    fn try_to_update(&mut self, loro: &LoroCore) {
+        if !self.is_instance() {
+            let idx = self.idx();
+            let new = loro.get_list_by_idx(&idx).unwrap();
+            *self = new;
+        }
     }
 }
 

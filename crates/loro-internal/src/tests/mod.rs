@@ -16,11 +16,11 @@ pub const PROPTEST_FACTOR_1: usize = 0;
 fn size_of() {
     use crate::change::Change;
     use crate::{
-        container::{map::MapSet, text::text_content::ListSlice, ContainerID},
+        container::{map::MapSet, text::text_content::ListSlice, ContainerID, ContainerTrait},
         id::ID,
         op::{Op, RemoteContent},
         span::IdSpan,
-        Container, InternalString,
+        InternalString,
     };
     use std::ops::Range;
 
@@ -31,7 +31,7 @@ fn size_of() {
     println!("InsertContent {}", std::mem::size_of::<RemoteContent>());
     println!("MapSet {}", std::mem::size_of::<MapSet>());
     println!("ListSlice {}", std::mem::size_of::<ListSlice>());
-    println!("Box {}", std::mem::size_of::<Box<dyn Container>>());
+    println!("Box {}", std::mem::size_of::<Box<dyn ContainerTrait>>());
     println!("LoroValue {}", std::mem::size_of::<LoroValue>());
     println!("ID {}", std::mem::size_of::<ID>());
     println!("Vec {}", std::mem::size_of::<Vec<ID>>());
