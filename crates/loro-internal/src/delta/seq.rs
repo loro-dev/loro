@@ -440,7 +440,9 @@ impl<T: Clone + PartialEq + Debug> DeltaValue for Vec<T> {
     }
 
     fn take(&mut self, length: usize) -> Self {
-        self.drain(0..length).collect()
+        let mut new = self.split_off(length);
+        std::mem::swap(self, &mut new);
+        new
     }
 }
 
@@ -450,7 +452,9 @@ impl DeltaValue for String {
     }
 
     fn take(&mut self, length: usize) -> Self {
-        self.drain(0..length).collect()
+        let mut new = self.split_off(length);
+        std::mem::swap(self, &mut new);
+        new
     }
 }
 
