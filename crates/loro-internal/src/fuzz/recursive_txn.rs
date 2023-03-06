@@ -11,7 +11,7 @@ use tabled::{TableIteratorExt, Tabled};
 
 use crate::{
     array_mut_ref,
-    container::{registry::ContainerWrapper, temp::ContainerTemp, ContainerID},
+    container::{registry::ContainerWrapper, ContainerID},
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,

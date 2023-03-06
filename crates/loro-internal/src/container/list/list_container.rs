@@ -68,20 +68,21 @@ impl ListContainer {
         let id = store.next_id();
         let mut offset = 0;
         for item in op.items() {
+            // TODO avoid clone
             let item = item.clone().into_event_format();
             match item {
                 DeltaItem::Retain { len, .. } => index += len,
                 DeltaItem::Insert { value, .. } => {
                     let len = value.len();
                     let id = id.inc(offset);
-                    offset += 1;
+                    offset += len as i32;
                     let op = self.apply_batch_insert(index, value, id);
                     index += len;
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
                     let id = id.inc(offset);
-                    offset += 1;
+                    offset += len as i32;
                     let op = self.apply_delete(index, len, id);
                     ops.push(op);
                 }

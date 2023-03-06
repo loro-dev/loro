@@ -65,14 +65,14 @@ impl TextContainer {
                 DeltaItem::Insert { value, .. } => {
                     let len = value.len();
                     let id = id.inc(offset);
-                    offset += 1;
+                    offset += len as i32;
                     let op = self.apply_insert(index, value, id);
                     index += len;
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
                     let id = id.inc(offset);
-                    offset += 1;
+                    offset += *len as i32;
                     let op = self.apply_delete(index, *len, id);
                     ops.push(op);
                 }

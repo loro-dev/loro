@@ -117,7 +117,6 @@ impl Transaction {
 
     fn apply_ops_emit_event(&mut self) {
         let compressed_op = std::mem::take(&mut self.compressed_op);
-        println!("compressed op {:?}", compressed_op);
         let events = self.with_store_hierarchy_mut(|_txn, store, hierarchy| {
             let mut events = Vec::with_capacity(compressed_op.len());
             for op in compressed_op {
@@ -128,7 +127,6 @@ impl Transaction {
                 let container_id = container.id().clone();
                 let type_ = container_id.container_type();
                 let store_ops = container.apply_txn_op(store, &op);
-                println!("store ops: {:?}", store_ops);
                 drop(container);
                 let (old_version, new_version) = store.append_local_ops(&store_ops);
                 let new_version = new_version.into();
