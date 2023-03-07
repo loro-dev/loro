@@ -47,6 +47,7 @@ pub struct ListContainer {
     pub(crate) raw_data: pool::Pool,
     tracker: Option<Tracker>,
     pool_mapping: Option<PoolMapping<LoroValue>>,
+    checker: ListChecker,
 }
 
 impl ListContainer {
@@ -58,6 +59,7 @@ impl ListContainer {
             tracker: None,
             state: Default::default(),
             pool_mapping: None,
+            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -491,7 +493,6 @@ pub struct List {
     container: ContainerInner,
     client_id: ClientID,
     container_idx: ContainerIdx,
-    checker: ListChecker,
 }
 
 impl List {
@@ -508,16 +509,14 @@ impl List {
             container: ContainerInner::from(instance),
             client_id,
             container_idx,
-            checker: ListChecker::new(container_idx, current_length),
         }
     }
 
     pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::new_temp(idx, ContainerType::List),
             client_id,
             container_idx: idx,
-            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -636,9 +635,11 @@ impl List {
         self.with_container(|list| list.get(pos)).unwrap()
     }
 
-    pub fn len(&self) -> usize {
-        self.checker.current_length
+    pub fn len(&self) -> Result<usize, LoroError> {
+        self.with_container(|list| list.values_len())
     }
+
+    pub fn committed_len(&self) -> Result<usize, LoroError> {}
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
     //     self.with_container(|list| list.iter().enumerate().for_each(f))
@@ -664,6 +665,22 @@ impl List {
 
     pub fn try_get_value(&self) -> Result<LoroValue, LoroError> {
         self.with_container(|list| list.get_value())
+    }
+
+    fn with_checker<F: FnOnce(&mut ListChecker) -> R, R>(&self, f: F) -> R {
+        let checker = match &self.container {
+            ContainerInner::Instance(_) => self.with_container(|x| &mut x.checker).unwrap(),
+            ContainerInner::Temp(c) => c.as_list_mut().unwrap(),
+        };
+        f(checker)
+    }
+
+    fn with_checker_mut<F: FnOnce(&mut ListChecker) -> R, R>(&mut self, f: F) -> R {
+        let checker = match &mut self.container {
+            ContainerInner::Instance(_) => self.with_container(|x| &mut x.checker).unwrap(),
+            ContainerInner::Temp(c) => c.as_list_mut().unwrap(),
+        };
+        f(checker)
     }
 }
 
@@ -699,6 +716,12 @@ impl ContainerWrapper for List {
             let idx = self.idx();
             let new = loro.get_list_by_idx(&idx).unwrap();
             *self = new;
+        }
+    }
+
+    fn update_checker_length(&mut self) {
+        if self.is_instance() {
+            self.checker.current_length = self.instance_content_len().unwrap();
         }
     }
 }

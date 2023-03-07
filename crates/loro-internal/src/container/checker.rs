@@ -1,8 +1,35 @@
+use enum_as_inner::EnumAsInner;
 use fxhash::FxHashSet;
 
+use crate::ContainerType;
 use crate::{container::registry::ContainerIdx, InternalString, LoroError};
 
 use crate::transaction::op::MapTxnOps;
+
+#[derive(Debug, Clone, EnumAsInner)]
+pub(crate) enum Checker {
+    List(ListChecker),
+    Map(MapChecker),
+    // TODO:
+    Text(ListChecker),
+}
+
+impl Checker {
+    pub(crate) fn new(idx: ContainerIdx, type_: ContainerType) -> Self {
+        match type_ {
+            ContainerType::List => Self::List(ListChecker::from_idx(idx)),
+            ContainerType::Text => Self::Text(ListChecker::from_idx(idx)),
+            ContainerType::Map => Self::Map(MapChecker::from_idx(idx)),
+        }
+    }
+    pub(crate) fn idx(&self) -> ContainerIdx {
+        match self {
+            Checker::List(c) => c.idx,
+            Checker::Map(c) => c.idx,
+            Checker::Text(c) => c.idx,
+        }
+    }
+}
 
 /// [ListChecker] maintains the length of all list container during one transaction,
 /// when a op is be inserted, it will check whether the position or the length of deletion is valid.

@@ -1305,30 +1305,38 @@ mod failed_tests {
     fn list_slice_err() {
         test_multi_sites(
             5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Text),
-                },
-                Map {
-                    site: 4,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(-2021161081),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::List),
-                },
+            &mut  [
                 List {
                     site: 0,
-                    container_idx: 1,
+                    container_idx: 0,
                     key: 0,
                     value: I32(1),
+                },
+                SyncAll,
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
                 },
             ],
         )

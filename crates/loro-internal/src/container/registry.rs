@@ -26,34 +26,32 @@ use crate::{
 };
 
 use super::{
-    list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
-    ContainerID, ContainerTrait, ContainerType,
+    checker::Checker, list::ListContainer, map::MapContainer, pool_mapping::StateContent,
+    text::TextContainer, ContainerID, ContainerTrait, ContainerType,
 };
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum ContainerInner {
     Instance(Weak<Mutex<ContainerInstance>>),
-    Temp(ContainerIdx),
+    Temp(Checker),
 }
 
 impl ContainerInner {
     pub fn idx(&self) -> ContainerIdx {
         match self {
             ContainerInner::Instance(i) => i.upgrade().unwrap().try_lock().unwrap().idx(),
-            ContainerInner::Temp(idx) => *idx,
+            ContainerInner::Temp(c) => c.idx(),
         }
+    }
+
+    pub fn new_temp(idx: ContainerIdx, type_: ContainerType) -> Self {
+        Self::Temp(Checker::new(idx, type_))
     }
 }
 
 impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
     fn from(value: Weak<Mutex<ContainerInstance>>) -> Self {
         Self::Instance(value)
-    }
-}
-
-impl From<ContainerIdx> for ContainerInner {
-    fn from(value: ContainerIdx) -> Self {
-        Self::Temp(value)
     }
 }
 
@@ -484,6 +482,9 @@ pub trait ContainerWrapper {
 
     /// If Container is temporary, convert it to ContainerInstance
     fn try_to_update(&mut self, loro: &LoroCore);
+
+    // TODO: remove this
+    fn update_checker_length(&mut self);
 
     fn container_inner(&self) -> &ContainerInner;
 

@@ -575,4 +575,6 @@ impl ContainerWrapper for Map {
         let map = container_instance.as_map_mut().unwrap();
         Ok(f(map))
     }
+
+    fn update_checker_length(&mut self) {}
 }

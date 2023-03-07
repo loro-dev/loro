@@ -569,6 +569,10 @@ impl Text {
         self.checker.current_length
     }
 
+    pub fn instance_content_len(&self) -> Result<usize, LoroError> {
+        self.with_container(|x| x.text_len())
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -609,5 +613,11 @@ impl ContainerWrapper for Text {
         let mut container_instance = w.try_lock().unwrap();
         let x = container_instance.as_text_mut().unwrap();
         Ok(f(x))
+    }
+
+    fn update_checker_length(&mut self) {
+        if self.is_instance() {
+            self.checker.current_length = self.instance_content_len().unwrap();
+        }
     }
 }
