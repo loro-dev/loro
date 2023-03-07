@@ -9,20 +9,19 @@ use smallvec::SmallVec;
 
 use crate::{
     container::{
+        checker::ListChecker,
         list::list_op::ListOp,
         pool,
         pool_mapping::{PoolMapping, StateContent},
         registry::{
             ContainerIdx, ContainerInner, ContainerInstance, ContainerRegistry, ContainerWrapper,
         },
-        temp::ContainerTemp,
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
         },
         ContainerID, ContainerTrait, ContainerType,
     },
-    context::Context,
     delta::{Delta, DeltaItem},
     event::{Diff, Index},
     hierarchy::Hierarchy,
@@ -62,14 +61,13 @@ impl ListContainer {
         }
     }
 
-    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &ListTxnOps) -> Vec<Op> {
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: ListTxnOps) -> Vec<Op> {
         let mut index = 0;
         let mut ops = Vec::new();
         let id = store.next_id();
         let mut offset = 0;
-        for item in op.items() {
-            // TODO avoid clone
-            let item = item.clone().into_event_format();
+        for item in op.inner() {
+            let item = item.into_event_format();
             match item {
                 DeltaItem::Retain { len, .. } => index += len,
                 DeltaItem::Insert { value, .. } => {
@@ -482,8 +480,8 @@ impl ContainerTrait for ListContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
-        let op = op.as_list().unwrap().1;
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op> {
+        let op = op.list_inner();
         self.apply_txn_op_impl(store, op)
     }
 }
@@ -493,6 +491,7 @@ pub struct List {
     container: ContainerInner,
     client_id: ClientID,
     container_idx: ContainerIdx,
+    checker: ListChecker,
 }
 
 impl List {
@@ -500,19 +499,25 @@ impl List {
         instance: Weak<Mutex<ContainerInstance>>,
         client_id: ClientID,
     ) -> Self {
-        let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
+        let (container_idx, current_length) = {
+            let list = instance.upgrade().unwrap();
+            let list = list.try_lock().unwrap();
+            (list.idx(), list.as_list().unwrap().values_len())
+        };
         Self {
             container: ContainerInner::from(instance),
             client_id,
             container_idx,
+            checker: ListChecker::new(container_idx, current_length),
         }
     }
 
     pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::List)),
+            container: ContainerInner::from(idx),
             client_id,
             container_idx: idx,
+            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -528,15 +533,14 @@ impl List {
         pos: usize,
         value: P,
     ) -> Result<Option<Container>, LoroError> {
+        self.checker.check_insert(pos, 1)?;
         self.with_transaction_checked(txn, |txn, _x| {
             let (value, maybe_container) = value.convert_value()?;
             if let Some(prelim) = maybe_container {
                 let type_ = value.into_container().unwrap();
                 let idx = txn.next_container_idx();
-                txn.push(
-                    TransactionOp::insert_list_container(self.idx(), pos, type_, idx),
-                    Some(idx),
-                )?;
+                let op = TransactionOp::insert_list_container(self.idx(), pos, type_, idx);
+                txn.push(op, Some(idx))?;
                 prelim.integrate(txn, idx)?;
                 let container = match type_ {
                     ContainerType::List => Container::from(List::from_idx(idx, self.client_id)),
@@ -562,6 +566,7 @@ impl List {
         pos: usize,
         values: Vec<LoroValue>,
     ) -> Result<(), LoroError> {
+        self.checker.check_insert(pos, values.len())?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(
                 TransactionOp::insert_list_batch_value(self.idx(), pos, values),
@@ -608,6 +613,7 @@ impl List {
         pos: usize,
         len: usize,
     ) -> Result<(), LoroError> {
+        self.checker.check_delete(pos, len)?;
         self.with_transaction_checked(txn, |txn, _x| {
             txn.push(TransactionOp::delete_list(self.idx(), pos, len), None)
         })?
@@ -631,10 +637,7 @@ impl List {
     }
 
     pub fn len(&self) -> usize {
-        match &self.container {
-            ContainerInner::Instance(_) => self.with_container(|x| x.values_len()).unwrap(),
-            ContainerInner::Temp(temp) => temp.as_list().unwrap().len(),
-        }
+        self.checker.current_length
     }
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {

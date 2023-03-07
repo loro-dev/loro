@@ -26,21 +26,21 @@ use crate::{
 };
 
 use super::{
-    list::ListContainer, map::MapContainer, pool_mapping::StateContent, temp::ContainerTemp,
-    text::TextContainer, ContainerID, ContainerTrait, ContainerType,
+    list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
+    ContainerID, ContainerTrait, ContainerType,
 };
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum ContainerInner {
     Instance(Weak<Mutex<ContainerInstance>>),
-    Temp(ContainerTemp),
+    Temp(ContainerIdx),
 }
 
 impl ContainerInner {
     pub fn idx(&self) -> ContainerIdx {
         match self {
             ContainerInner::Instance(i) => i.upgrade().unwrap().try_lock().unwrap().idx(),
-            ContainerInner::Temp(t) => t.idx(),
+            ContainerInner::Temp(idx) => *idx,
         }
     }
 }
@@ -51,8 +51,8 @@ impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
     }
 }
 
-impl From<ContainerTemp> for ContainerInner {
-    fn from(value: ContainerTemp) -> Self {
+impl From<ContainerIdx> for ContainerInner {
+    fn from(value: ContainerIdx) -> Self {
         Self::Temp(value)
     }
 }
@@ -245,7 +245,7 @@ impl ContainerTrait for ContainerInstance {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op> {
         match self {
             ContainerInstance::List(x) => x.apply_txn_op(store, op),
             ContainerInstance::Map(x) => x.apply_txn_op(store, op),

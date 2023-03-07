@@ -29,7 +29,6 @@ use self::{pool_mapping::StateContent, registry::ContainerIdx};
 mod checker;
 pub mod pool_mapping;
 pub mod registry;
-pub mod temp;
 
 pub mod list;
 pub mod map;
@@ -199,7 +198,7 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
         hierarchy.unsubscribe(subscription);
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op>;
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op>;
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

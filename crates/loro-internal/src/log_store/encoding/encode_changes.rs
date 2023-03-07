@@ -379,7 +379,9 @@ pub(super) fn decode_changes_to_inner_format(
             }
         }
     }
-
+    if store.this_client_id == 0 && changes_ans.len()==1{
+        println!("################################");
+    }
     // TODO: using the one with fewer changes to import
     Ok(changes_ans)
 }

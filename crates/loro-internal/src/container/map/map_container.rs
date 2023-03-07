@@ -5,7 +5,6 @@ use crate::{
     container::{
         pool_mapping::{MapPoolMapping, StateContent},
         registry::{ContainerIdx, ContainerInner, ContainerRegistry},
-        temp::ContainerTemp,
     },
     delta::MapDiff,
     id::ID,
@@ -97,8 +96,7 @@ impl MapContainer {
         }
     }
 
-    fn apply_txn_op_impl(&mut self, store: &mut LogStore, ops: &MapTxnOps) -> Vec<Op> {
-        let ops = ops.clone();
+    fn apply_txn_op_impl(&mut self, store: &mut LogStore, ops: MapTxnOps) -> Vec<Op> {
         let mut store_ops = Vec::with_capacity(ops.added.len() + ops.deleted.len());
         let mut offset = 0;
         let id = store.next_id();
@@ -295,6 +293,7 @@ impl ContainerTrait for MapContainer {
                 },
             );
         }
+        println!("");
     }
 
     fn track_apply(&mut self, _: &mut Hierarchy, op: &RichOp, _: &mut ImportContext) {
@@ -392,8 +391,8 @@ impl ContainerTrait for MapContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
-        let op = op.as_map().unwrap().1;
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op> {
+        let op = op.map_inner();
         self.apply_txn_op_impl(store, op)
     }
 }
@@ -420,7 +419,7 @@ impl Map {
 
     pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::Map)),
+            container: ContainerInner::from(idx),
             client_id,
             container_idx: idx,
         }
@@ -486,7 +485,7 @@ impl Map {
     pub fn keys(&self) -> Vec<InternalString> {
         match &self.container {
             ContainerInner::Instance(_) => self.with_container(|x| x.keys()).unwrap(),
-            ContainerInner::Temp(temp) => temp.as_map().unwrap().keys(),
+            ContainerInner::Temp(idx) => unimplemented!(),
         }
     }
 
@@ -521,7 +520,7 @@ impl Map {
     pub fn len(&self) -> usize {
         match &self.container {
             ContainerInner::Instance(_) => self.with_container(|x| x.len()).unwrap(),
-            ContainerInner::Temp(temp) => temp.as_map().unwrap().len(),
+            ContainerInner::Temp(idx) => unimplemented!(),
         }
     }
 

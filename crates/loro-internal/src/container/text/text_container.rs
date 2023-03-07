@@ -7,10 +7,10 @@ use tracing::instrument;
 
 use crate::{
     container::{
+        checker::ListChecker,
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
         registry::{ContainerIdx, ContainerInner, ContainerInstance, ContainerWrapper},
-        temp::ContainerTemp,
         ContainerID, ContainerTrait, ContainerType,
     },
     delta::{Delta, DeltaItem},
@@ -54,26 +54,26 @@ impl TextContainer {
         }
     }
 
-    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: &TextTxnOps) -> Vec<Op> {
+    pub(crate) fn apply_txn_op_impl(&mut self, store: &mut LogStore, op: TextTxnOps) -> Vec<Op> {
         let mut index = 0;
         let mut ops = Vec::new();
         let mut offset = 0;
         let id = store.next_id();
-        for item in op.items() {
+        for item in op.inner() {
             match item {
                 DeltaItem::Retain { len, .. } => index += len,
                 DeltaItem::Insert { value, .. } => {
                     let len = value.len();
                     let id = id.inc(offset);
                     offset += len as i32;
-                    let op = self.apply_insert(index, value, id);
+                    let op = self.apply_insert(index, &value, id);
                     index += len;
                     ops.push(op);
                 }
                 DeltaItem::Delete(len) => {
                     let id = id.inc(offset);
-                    offset += *len as i32;
-                    let op = self.apply_delete(index, *len, id);
+                    offset += len as i32;
+                    let op = self.apply_delete(index, len, id);
                     ops.push(op);
                 }
             }
@@ -450,8 +450,8 @@ impl ContainerTrait for TextContainer {
         }
     }
 
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: &TransactionOp) -> Vec<Op> {
-        let op = op.as_text().unwrap().1;
+    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op> {
+        let op = op.text_inner();
         self.apply_txn_op_impl(store, op)
     }
 }
@@ -461,23 +461,31 @@ pub struct Text {
     container: ContainerInner,
     client_id: ClientID,
     container_idx: ContainerIdx,
+    // TODO: use text checker
+    checker: ListChecker,
 }
 
 impl Text {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
-        let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
+        let (container_idx, current_length) = {
+            let x = instance.upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            (x.idx(), x.as_text().unwrap().text_len())
+        };
         Self {
             container: ContainerInner::from(instance),
             client_id,
             container_idx,
+            checker: ListChecker::new(container_idx, current_length),
         }
     }
 
     pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(ContainerTemp::new(idx, ContainerType::Text)),
+            container: ContainerInner::from(idx),
             client_id,
             container_idx: idx,
+            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -502,6 +510,7 @@ impl Text {
         if text.is_empty() {
             return Ok(());
         }
+        self.checker.check_insert(pos, text.len())?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(TransactionOp::insert_text(self.idx(), pos, text), None)
         })?
@@ -522,10 +531,11 @@ impl Text {
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
+        if len == 0 {
+            return Ok(());
+        }
+        self.checker.check_delete(pos, len)?;
         self.with_transaction_checked(txn, |txn, _| {
-            if len == 0 {
-                return Ok(());
-            }
             txn.push(TransactionOp::delete_text(self.idx(), pos, len), None)
         })?
     }
@@ -555,7 +565,8 @@ impl Text {
 
     pub fn len(&self) -> usize {
         // TODO
-        self.with_container(|x| x.text_len()).unwrap()
+        // self.with_container(|x| x.text_len()).unwrap()
+        self.checker.current_length
     }
 
     #[must_use]

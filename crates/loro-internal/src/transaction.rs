@@ -121,60 +121,59 @@ impl Transaction {
             let mut events = Vec::with_capacity(compressed_op.len());
             for op in compressed_op {
                 let idx = op.container_idx();
+                let type_ = op.container_type();
+                // TODO: diff remove vec!
+                let diff = vec![match type_ {
+                    ContainerType::List => {
+                        Diff::List(op.as_list().unwrap().1.clone().into_event_format())
+                    }
+                    ContainerType::Map => {
+                        let container = store.reg.get_by_idx(&idx).unwrap();
+                        let map = Map::from_instance(container, store.this_client_id);
+                        Diff::Map(op.as_map().unwrap().1.clone().into_event_format(&map))
+                    }
+                    ContainerType::Text => Diff::Text(op.as_text().unwrap().1.clone()),
+                }];
                 let container = store.reg.get_by_idx(&idx).unwrap();
                 let container = container.upgrade().unwrap();
                 let mut container = container.try_lock().unwrap();
                 let container_id = container.id().clone();
-                let type_ = container_id.container_type();
-                let store_ops = container.apply_txn_op(store, &op);
+                let store_ops = container.apply_txn_op(store, op);
                 drop(container);
                 let (old_version, new_version) = store.append_local_ops(&store_ops);
                 let new_version = new_version.into();
                 let event = if hierarchy.should_notify(&container_id) {
                     match type_ {
-                        ContainerType::List => {
-                            let delta = op.into_list().unwrap().1.into_event_format();
-                            hierarchy
-                                .get_abs_path(&store.reg, &container_id)
-                                .map(|abs_path| RawEvent {
-                                    container_id,
-                                    old_version,
-                                    new_version,
-                                    diff: vec![Diff::List(delta)],
-                                    local: true,
-                                    abs_path,
-                                })
-                        }
-                        ContainerType::Text => {
-                            let delta = op.into_text().unwrap().1;
-                            hierarchy
-                                .get_abs_path(&store.reg, &container_id)
-                                .map(|abs_path| RawEvent {
-                                    container_id,
-                                    old_version,
-                                    new_version,
-                                    diff: vec![Diff::Text(delta)],
-                                    local: true,
-                                    abs_path,
-                                })
-                        }
-                        ContainerType::Map => {
-                            let delta = {
-                                let map = store.get_container(&container_id).unwrap();
-                                let map = Map::from_instance(map, store.this_client_id);
-                                op.into_map().unwrap().1.into_event_format(&map)
-                            };
-                            hierarchy
-                                .get_abs_path(&store.reg, &container_id)
-                                .map(|abs_path| RawEvent {
-                                    container_id,
-                                    old_version,
-                                    new_version,
-                                    diff: vec![Diff::Map(delta)],
-                                    local: true,
-                                    abs_path,
-                                })
-                        }
+                        ContainerType::List => hierarchy
+                            .get_abs_path(&store.reg, &container_id)
+                            .map(|abs_path| RawEvent {
+                                container_id,
+                                old_version,
+                                new_version,
+                                diff,
+                                local: true,
+                                abs_path,
+                            }),
+                        ContainerType::Text => hierarchy
+                            .get_abs_path(&store.reg, &container_id)
+                            .map(|abs_path| RawEvent {
+                                container_id,
+                                old_version,
+                                new_version,
+                                diff,
+                                local: true,
+                                abs_path,
+                            }),
+                        ContainerType::Map => hierarchy
+                            .get_abs_path(&store.reg, &container_id)
+                            .map(|abs_path| RawEvent {
+                                container_id,
+                                old_version,
+                                new_version,
+                                diff,
+                                local: true,
+                                abs_path,
+                            }),
                     }
                 } else {
                     None

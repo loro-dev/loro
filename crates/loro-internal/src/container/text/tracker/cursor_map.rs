@@ -8,7 +8,7 @@ use enum_as_inner::EnumAsInner;
 
 use rle::{
     range_map::RangeMap,
-    rle_tree::{node::LeafNode, BumpMode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
+    rle_tree::{node::LeafNode, HeapMode, Position, SafeCursor, SafeCursorMut, UnsafeCursor},
     HasLength, Mergable, RleVecWithLen, Sliceable, ZeroElement,
 };
 
@@ -195,10 +195,10 @@ impl Mergable for Marker {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct CursorMap(RangeMap<u128, Marker, BumpMode>);
+pub(super) struct CursorMap(RangeMap<u128, Marker, HeapMode>);
 
 impl Deref for CursorMap {
-    type Target = RangeMap<u128, Marker, BumpMode>;
+    type Target = RangeMap<u128, Marker, HeapMode>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

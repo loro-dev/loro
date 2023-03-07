@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
-    container::{registry::ContainerIdx, temp::ContainerTemp, ContainerID},
+    container::{registry::ContainerIdx, ContainerID},
     context::Context,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,

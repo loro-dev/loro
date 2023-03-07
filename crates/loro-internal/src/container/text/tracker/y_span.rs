@@ -7,12 +7,12 @@ use crate::{
     ContentType, InsertContentTrait, ID,
 };
 use rle::{
-    rle_tree::{tree_trait::CumulateTreeTrait, BumpMode},
+    rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     HasLength, Mergable, Sliceable,
 };
 
 const MAX_CHILDREN_SIZE: usize = 16;
-pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, MAX_CHILDREN_SIZE, BumpMode>;
+pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, MAX_CHILDREN_SIZE, HeapMode>;
 
 /// 80 bytes
 #[derive(Debug, Clone, PartialEq, Eq)]
