@@ -79,13 +79,7 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Box::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            if id == 0 {
-                println!("event {:?}\n\nvalue {:?}", event, root_value);
-            }
             root_value.apply(&event.relative_path, &event.diff);
-            if id == 0 {
-                println!("after value {:?}\n", root_value);
-            }
         }));
 
         let log_store = actor.loro.log_store.write().unwrap();

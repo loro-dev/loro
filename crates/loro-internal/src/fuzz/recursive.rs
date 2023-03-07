@@ -1307,20 +1307,25 @@ mod failed_tests {
             5,
             &mut [
                 Map {
-                    site: 1,
+                    site: 0,
                     container_idx: 0,
-                    key: 21,
-                    value: Container(C::List),
+                    key: 0,
+                    value: Container(C::Text),
                 },
                 Map {
-                    site: 1,
+                    site: 4,
                     container_idx: 0,
-                    key: 21,
+                    key: 0,
+                    value: I32(-2021161081),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
                     value: Container(C::List),
                 },
-                SyncAll,
                 List {
-                    site: 4,
+                    site: 0,
                     container_idx: 1,
                     key: 0,
                     value: I32(1),

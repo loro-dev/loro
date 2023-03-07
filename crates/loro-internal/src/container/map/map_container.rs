@@ -72,13 +72,9 @@ impl MapContainer {
         key: InternalString,
         value: LoroValue,
         id: ID,
-        store: &mut LogStore,
+        order: TotalOrderStamp,
     ) -> Op {
         let value_index = self.pool.alloc(value).start;
-        let order = TotalOrderStamp {
-            client_id: store.this_client_id,
-            lamport: store.next_lamport(),
-        };
         self.state.insert(
             key.clone(),
             ValueSlot {
@@ -100,15 +96,31 @@ impl MapContainer {
         let mut store_ops = Vec::with_capacity(ops.added.len() + ops.deleted.len());
         let mut offset = 0;
         let id = store.next_id();
+        let lamport = store.next_lamport();
+        let client_id = store.this_client_id;
         for (k, v) in ops.added.into_iter() {
-            let id = id.inc(offset);
+            store_ops.push(self.apply_insert(
+                k,
+                v.into_value().unwrap(),
+                id.inc(offset),
+                TotalOrderStamp {
+                    lamport: lamport + offset as u32,
+                    client_id,
+                },
+            ));
             offset += 1;
-            store_ops.push(self.apply_insert(k, v.into_value().unwrap(), id, store));
         }
         for k in ops.deleted {
-            let id = id.inc(offset);
+            store_ops.push(self.apply_insert(
+                k,
+                LoroValue::Null,
+                id.inc(offset),
+                TotalOrderStamp {
+                    lamport: lamport + offset as u32,
+                    client_id,
+                },
+            ));
             offset += 1;
-            store_ops.push(self.apply_insert(k, LoroValue::Null, id, store));
         }
         store_ops
     }
@@ -293,7 +305,6 @@ impl ContainerTrait for MapContainer {
                 },
             );
         }
-        println!("");
     }
 
     fn track_apply(&mut self, _: &mut Hierarchy, op: &RichOp, _: &mut ImportContext) {
