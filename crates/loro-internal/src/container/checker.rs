@@ -7,7 +7,7 @@ use crate::{container::registry::ContainerIdx, InternalString, LoroError};
 use crate::transaction::op::MapTxnOps;
 
 #[derive(Debug, Clone, EnumAsInner)]
-pub(crate) enum Checker {
+pub enum Checker {
     List(ListChecker),
     Map(MapChecker),
     // TODO:
@@ -34,19 +34,19 @@ impl Checker {
 /// [ListChecker] maintains the length of all list container during one transaction,
 /// when a op is be inserted, it will check whether the position or the length of deletion is valid.
 #[derive(Debug, Clone)]
-pub(crate) struct ListChecker {
+pub struct ListChecker {
     pub(crate) idx: ContainerIdx,
     pub(crate) current_length: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct MapChecker {
+pub struct MapChecker {
     pub(crate) idx: ContainerIdx,
     pub(crate) keys: FxHashSet<InternalString>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct TextChecker {
+pub struct TextChecker {
     pub(crate) idx: ContainerIdx,
     // TODO rope?
     pub(crate) current_length: usize,

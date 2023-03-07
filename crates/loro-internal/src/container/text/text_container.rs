@@ -40,6 +40,7 @@ pub struct TextContainer {
     raw_str: StringPool,
     tracker: Option<Tracker>,
     pool_mapping: Option<PoolMapping<u8>>,
+    checker: ListChecker,
 }
 
 impl TextContainer {
@@ -51,6 +52,7 @@ impl TextContainer {
             tracker: None,
             state: Default::default(),
             pool_mapping: None,
+            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -461,8 +463,6 @@ pub struct Text {
     container: ContainerInner,
     client_id: ClientID,
     container_idx: ContainerIdx,
-    // TODO: use text checker
-    checker: ListChecker,
 }
 
 impl Text {
@@ -476,16 +476,14 @@ impl Text {
             container: ContainerInner::from(instance),
             client_id,
             container_idx,
-            checker: ListChecker::new(container_idx, current_length),
         }
     }
 
     pub fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::new_temp(idx, ContainerType::Text),
             client_id,
             container_idx: idx,
-            checker: ListChecker::from_idx(idx),
         }
     }
 
@@ -510,7 +508,7 @@ impl Text {
         if text.is_empty() {
             return Ok(());
         }
-        self.checker.check_insert(pos, text.len())?;
+        self.with_checker_mut(|c| c.check_insert(pos, text.len()))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(TransactionOp::insert_text(self.idx(), pos, text), None)
         })?
@@ -534,7 +532,7 @@ impl Text {
         if len == 0 {
             return Ok(());
         }
-        self.checker.check_delete(pos, len)?;
+        self.with_checker_mut(|c| c.check_delete(pos, len))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(TransactionOp::delete_text(self.idx(), pos, len), None)
         })?
@@ -563,19 +561,42 @@ impl Text {
         self.try_get_value().unwrap()
     }
 
-    pub fn len(&self) -> usize {
-        // TODO
-        // self.with_container(|x| x.text_len()).unwrap()
-        self.checker.current_length
-    }
-
-    pub fn instance_content_len(&self) -> Result<usize, LoroError> {
+    pub fn len(&self) -> Result<usize, LoroError> {
         self.with_container(|x| x.text_len())
     }
 
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub fn committed_len(&self) -> usize {
+        self.with_checker(|c| c.current_length)
+    }
+
+    fn with_checker<F: FnOnce(&ListChecker) -> R, R>(&self, f: F) -> R {
+        match &self.container {
+            ContainerInner::Instance(_) => self
+                .with_container(|x| {
+                    let c = &x.checker;
+                    f(c)
+                })
+                .unwrap(),
+            ContainerInner::Temp(c) => {
+                let c = c.as_text().unwrap();
+                f(c)
+            }
+        }
+    }
+
+    fn with_checker_mut<F: FnOnce(&mut ListChecker) -> R, R>(&mut self, f: F) -> R {
+        match &mut self.container {
+            ContainerInner::Instance(_) => self
+                .with_container(|x| {
+                    let c = &mut x.checker;
+                    f(c)
+                })
+                .unwrap(),
+            ContainerInner::Temp(c) => {
+                let c = c.as_text_mut().unwrap();
+                f(c)
+            }
+        }
     }
 }
 
@@ -617,7 +638,8 @@ impl ContainerWrapper for Text {
 
     fn update_checker_length(&mut self) {
         if self.is_instance() {
-            self.checker.current_length = self.instance_content_len().unwrap();
+            let len = self.len().unwrap();
+            self.with_checker_mut(|c| c.current_length = len);
         }
     }
 }

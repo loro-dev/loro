@@ -532,7 +532,7 @@ impl List {
         pos: usize,
         value: P,
     ) -> Result<Option<Container>, LoroError> {
-        self.checker.check_insert(pos, 1)?;
+        self.with_checker_mut(|c| c.check_insert(pos, 1))?;
         self.with_transaction_checked(txn, |txn, _x| {
             let (value, maybe_container) = value.convert_value()?;
             if let Some(prelim) = maybe_container {
@@ -565,7 +565,7 @@ impl List {
         pos: usize,
         values: Vec<LoroValue>,
     ) -> Result<(), LoroError> {
-        self.checker.check_insert(pos, values.len())?;
+        self.with_checker_mut(|c| c.check_insert(pos, values.len()))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(
                 TransactionOp::insert_list_batch_value(self.idx(), pos, values),
@@ -580,7 +580,7 @@ impl List {
         txn: &T,
         value: P,
     ) -> Result<Option<Container>, LoroError> {
-        let pos = self.len();
+        let pos = self.committed_len();
         self.insert(txn, pos, value)
     }
 
@@ -595,15 +595,16 @@ impl List {
     }
 
     /// Removes the last element from the List and returns it, or None if it is empty.
-    pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
-        if self.is_empty() {
-            return Ok(None);
-        }
-        let pos = self.len() - 1;
-        let ans = self.get(pos);
-        self.delete(txn, pos, 1)?;
-        Ok(ans)
-    }
+    // TODO: only loro support pop
+    // pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
+    //     if self.is_empty() {
+    //         return Ok(None);
+    //     }
+    //     let pos = self.len() - 1;
+    //     let ans = self.get(pos);
+    //     self.delete(txn, pos, 1)?;
+    //     Ok(ans)
+    // }
 
     /// Removes the specified range (pos..pos+len) from the List
     pub fn delete<T: Transact>(
@@ -612,7 +613,7 @@ impl List {
         pos: usize,
         len: usize,
     ) -> Result<(), LoroError> {
-        self.checker.check_delete(pos, len)?;
+        self.with_checker_mut(|c| c.check_delete(pos, len))?;
         self.with_transaction_checked(txn, |txn, _x| {
             txn.push(TransactionOp::delete_list(self.idx(), pos, len), None)
         })?
@@ -639,7 +640,9 @@ impl List {
         self.with_container(|list| list.values_len())
     }
 
-    pub fn committed_len(&self) -> Result<usize, LoroError> {}
+    pub fn committed_len(&self) -> usize {
+        self.with_checker(|c| c.current_length)
+    }
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
     //     self.with_container(|list| list.iter().enumerate().for_each(f))
@@ -649,11 +652,6 @@ impl List {
     // pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
     //     self.with_container(|list| list.iter().enumerate().map(f).collect())
     // }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 
     pub fn id(&self) -> Result<ContainerID, LoroError> {
         self.with_container(|list| list.id.clone())
@@ -667,20 +665,34 @@ impl List {
         self.with_container(|list| list.get_value())
     }
 
-    fn with_checker<F: FnOnce(&mut ListChecker) -> R, R>(&self, f: F) -> R {
-        let checker = match &self.container {
-            ContainerInner::Instance(_) => self.with_container(|x| &mut x.checker).unwrap(),
-            ContainerInner::Temp(c) => c.as_list_mut().unwrap(),
-        };
-        f(checker)
+    fn with_checker<F: FnOnce(&ListChecker) -> R, R>(&self, f: F) -> R {
+        match &self.container {
+            ContainerInner::Instance(_) => self
+                .with_container(|x| {
+                    let c = &x.checker;
+                    f(c)
+                })
+                .unwrap(),
+            ContainerInner::Temp(c) => {
+                let c = c.as_list().unwrap();
+                f(c)
+            }
+        }
     }
 
     fn with_checker_mut<F: FnOnce(&mut ListChecker) -> R, R>(&mut self, f: F) -> R {
-        let checker = match &mut self.container {
-            ContainerInner::Instance(_) => self.with_container(|x| &mut x.checker).unwrap(),
-            ContainerInner::Temp(c) => c.as_list_mut().unwrap(),
-        };
-        f(checker)
+        match &mut self.container {
+            ContainerInner::Instance(_) => self
+                .with_container(|x| {
+                    let c = &mut x.checker;
+                    f(c)
+                })
+                .unwrap(),
+            ContainerInner::Temp(c) => {
+                let c = c.as_list_mut().unwrap();
+                f(c)
+            }
+        }
     }
 }
 
@@ -721,7 +733,8 @@ impl ContainerWrapper for List {
 
     fn update_checker_length(&mut self) {
         if self.is_instance() {
-            self.checker.current_length = self.instance_content_len().unwrap();
+            let len = self.len().unwrap();
+            self.with_checker_mut(|c| c.current_length = len);
         }
     }
 }
@@ -743,28 +756,28 @@ mod test {
         assert_eq!(list.get(1), Some(123.into()));
     }
 
-    #[test]
-    fn collection() {
-        let mut loro = LoroCore::default();
-        let mut list = loro.get_list("list");
-        list.insert(&loro, 0, "ab").unwrap();
-        assert_eq!(list.get_value().to_json(), "[\"ab\"]");
-        list.push(&loro, 12).unwrap();
-        assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
-        list.push_front(&loro, -3).unwrap();
-        assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
-        let last = list.pop(&loro).unwrap().unwrap();
-        assert_eq!(last.to_json(), "12");
-        assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
-        list.delete(&loro, 1, 1).unwrap();
-        assert_eq!(list.get_value().to_json(), "[-3]");
-        list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
-            .unwrap();
-        assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
-        list.delete(&loro, 0, 3).unwrap();
-        assert_eq!(list.get_value().to_json(), "[]");
-        assert_eq!(list.pop(&loro).unwrap(), None);
-    }
+    // #[test]
+    // fn collection() {
+    //     let mut loro = LoroCore::default();
+    //     let mut list = loro.get_list("list");
+    //     list.insert(&loro, 0, "ab").unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[\"ab\"]");
+    //     list.push(&loro, 12).unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
+    //     list.push_front(&loro, -3).unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
+    //     let last = list.pop(&loro).unwrap().unwrap();
+    //     assert_eq!(last.to_json(), "12");
+    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
+    //     list.delete(&loro, 1, 1).unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[-3]");
+    //     list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
+    //         .unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
+    //     list.delete(&loro, 0, 3).unwrap();
+    //     assert_eq!(list.get_value().to_json(), "[]");
+    //     assert_eq!(list.pop(&loro).unwrap(), None);
+    // }
 
     // #[test]
     // fn for_each() {

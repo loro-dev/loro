@@ -430,7 +430,7 @@ impl Map {
 
     pub(crate) fn from_idx(idx: ContainerIdx, client_id: ClientID) -> Self {
         Self {
-            container: ContainerInner::from(idx),
+            container: ContainerInner::new_temp(idx, ContainerType::Map),
             client_id,
             container_idx: idx,
         }
