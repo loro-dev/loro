@@ -26,8 +26,8 @@ use std::{
 
 use self::{pool_mapping::StateContent, registry::ContainerIdx};
 
-mod checker;
 pub mod pool_mapping;
+mod recorder;
 pub mod registry;
 
 pub mod list;
@@ -198,7 +198,12 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
         hierarchy.unsubscribe(subscription);
     }
 
+    /// Apply the op from the [crate::transaction::Transaction]
+    /// return the ops that will be applied to the store
     fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op>;
+
+    /// the length or keys of containers may be changed after the store decoded or imported, so we need update the recorder.
+    fn update_recorder_after_import(&mut self);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

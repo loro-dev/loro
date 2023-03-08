@@ -26,14 +26,14 @@ use crate::{
 };
 
 use super::{
-    checker::Checker, list::ListContainer, map::MapContainer, pool_mapping::StateContent,
+    list::ListContainer, map::MapContainer, pool_mapping::StateContent, recorder::Recorder,
     text::TextContainer, ContainerID, ContainerTrait, ContainerType,
 };
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum ContainerInner {
     Instance(Weak<Mutex<ContainerInstance>>),
-    Temp(Checker),
+    Temp(Recorder),
 }
 
 impl ContainerInner {
@@ -45,7 +45,7 @@ impl ContainerInner {
     }
 
     pub fn new_temp(idx: ContainerIdx, type_: ContainerType) -> Self {
-        Self::Temp(Checker::new(idx, type_))
+        Self::Temp(Recorder::new(idx, type_))
     }
 }
 
@@ -251,6 +251,15 @@ impl ContainerTrait for ContainerInstance {
             _ => unimplemented!(),
         }
     }
+
+    fn update_recorder_after_import(&mut self) {
+        match self {
+            ContainerInstance::List(x) => x.update_recorder_after_import(),
+            ContainerInstance::Map(x) => x.update_recorder_after_import(),
+            ContainerInstance::Text(x) => x.update_recorder_after_import(),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl ContainerInstance {
@@ -423,11 +432,12 @@ impl ContainerRegistry {
         LoroValue::Map(Box::new(map))
     }
 
-    pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
-        (
-            &self.container_to_idx,
-            self.containers.values().map(|x| x.id.clone()).collect(),
-        )
+    pub(crate) fn export_by_sorted_idx(&self) -> Vec<ContainerID> {
+        let mut keys: Vec<_> = self.containers.keys().collect();
+        keys.sort();
+        keys.into_iter()
+            .map(|idx| self.containers.get(idx).unwrap().id.clone())
+            .collect()
     }
 }
 
@@ -482,9 +492,6 @@ pub trait ContainerWrapper {
 
     /// If Container is temporary, convert it to ContainerInstance
     fn try_to_update(&mut self, loro: &LoroCore);
-
-    // TODO: remove this
-    fn update_checker_length(&mut self);
 
     fn container_inner(&self) -> &ContainerInner;
 

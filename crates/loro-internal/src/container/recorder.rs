@@ -7,52 +7,52 @@ use crate::{container::registry::ContainerIdx, InternalString, LoroError};
 use crate::transaction::op::MapTxnOps;
 
 #[derive(Debug, Clone, EnumAsInner)]
-pub enum Checker {
-    List(ListChecker),
-    Map(MapChecker),
+pub enum Recorder {
+    List(ListRecorder),
+    Map(MapRecorder),
     // TODO:
-    Text(ListChecker),
+    Text(ListRecorder),
 }
 
-impl Checker {
+impl Recorder {
     pub(crate) fn new(idx: ContainerIdx, type_: ContainerType) -> Self {
         match type_ {
-            ContainerType::List => Self::List(ListChecker::from_idx(idx)),
-            ContainerType::Text => Self::Text(ListChecker::from_idx(idx)),
-            ContainerType::Map => Self::Map(MapChecker::from_idx(idx)),
+            ContainerType::List => Self::List(ListRecorder::from_idx(idx)),
+            ContainerType::Text => Self::Text(ListRecorder::from_idx(idx)),
+            ContainerType::Map => Self::Map(MapRecorder::from_idx(idx)),
         }
     }
     pub(crate) fn idx(&self) -> ContainerIdx {
         match self {
-            Checker::List(c) => c.idx,
-            Checker::Map(c) => c.idx,
-            Checker::Text(c) => c.idx,
+            Recorder::List(c) => c.idx,
+            Recorder::Map(c) => c.idx,
+            Recorder::Text(c) => c.idx,
         }
     }
 }
 
-/// [ListChecker] maintains the length of all list container during one transaction,
+/// [ListRecorder] maintains the length of all list container during one transaction,
 /// when a op is be inserted, it will check whether the position or the length of deletion is valid.
 #[derive(Debug, Clone)]
-pub struct ListChecker {
+pub struct ListRecorder {
     pub(crate) idx: ContainerIdx,
     pub(crate) current_length: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct MapChecker {
+pub struct MapRecorder {
     pub(crate) idx: ContainerIdx,
     pub(crate) keys: FxHashSet<InternalString>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TextChecker {
+pub struct TextRecorder {
     pub(crate) idx: ContainerIdx,
     // TODO rope?
     pub(crate) current_length: usize,
 }
 
-impl ListChecker {
+impl ListRecorder {
     pub(crate) fn from_idx(idx: ContainerIdx) -> Self {
         Self {
             idx,
@@ -102,7 +102,7 @@ impl ListChecker {
 }
 
 // TODO
-impl MapChecker {
+impl MapRecorder {
     pub(crate) fn new(idx: ContainerIdx, keys: FxHashSet<InternalString>) -> Self {
         Self { idx, keys }
     }

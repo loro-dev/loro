@@ -203,7 +203,15 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
         change_num += changes.merged_len();
     }
 
-    let (_, containers) = store.reg.export();
+    let containers = store.reg.export_by_sorted_idx();
+    // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
+    // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
+    // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+    let container_to_new_idx: FxHashMap<_, _> = containers
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id, i as u32))
+        .collect();
     for container_id in containers.iter() {
         let container = store.reg.get(container_id).unwrap();
         container
@@ -238,12 +246,13 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                     .try_lock()
                     .unwrap()
                     .to_export_snapshot(&op.content, gc);
+                let new_idx = *container_to_new_idx.get(container_id).unwrap();
                 op_len += new_ops.len();
                 for op_content in new_ops {
                     let (prop, value, value2) =
                         convert_inner_content(&op_content, &mut key_to_idx, &mut keys);
                     ops.push(SnapshotOpEncoding {
-                        container: container_idx.to_u32(),
+                        container: new_idx,
                         prop,
                         value,
                         value2,
@@ -318,9 +327,12 @@ pub(super) fn decode_snapshot(
     let mut deps_iter = deps.into_iter();
     let mut container_idx2type = FxHashMap::default();
 
-    for container_id in containers.iter() {
-        let container_idx = store.reg.get_or_create_container_idx(container_id);
-        container_idx2type.insert(container_idx, container_id.container_type());
+    for (idx, container_id) in containers.iter().enumerate() {
+        // assert containers are sorted by container_idx
+        container_idx2type.insert(
+            ContainerIdx::from_u32(idx as u32),
+            container_id.container_type(),
+        );
     }
 
     for (_, this_change_encodings) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
@@ -393,7 +405,6 @@ pub(super) fn decode_snapshot(
                 delta += op.content_len() as i32;
                 ops.push(op);
             }
-
             let change = Change {
                 id: ID { client_id, counter },
                 // cal lamport after parsing all changes
@@ -453,15 +464,7 @@ pub(super) fn decode_snapshot(
 
     debug_log::debug_dbg!(&vv, &changes_dq);
 
-    let can_load = match vv.partial_cmp(&store.vv) {
-        Some(ord) => match ord {
-            std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => return Ok(vec![]),
-            std::cmp::Ordering::Greater => true,
-        },
-        None => false,
-    };
-
+    let can_load = store.get_vv().is_empty();
     if can_load {
         let mut import_context = load_snapshot(
             store,
@@ -532,6 +535,7 @@ fn load_snapshot(
         let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         container.to_import_snapshot(state, new_hierarchy, &mut import_context);
+        container.update_recorder_after_import();
     }
 
     new_store.latest_lamport = changes

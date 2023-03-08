@@ -406,6 +406,10 @@ impl ContainerTrait for MapContainer {
         let op = op.map_inner();
         self.apply_txn_op_impl(store, op)
     }
+
+    fn update_recorder_after_import(&mut self) {
+        // TODO:
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -575,6 +579,4 @@ impl ContainerWrapper for Map {
         let map = container_instance.as_map_mut().unwrap();
         Ok(f(map))
     }
-
-    fn update_checker_length(&mut self) {}
 }

@@ -336,6 +336,7 @@ where
 {
     std::panic::set_hook(Box::new(|_info| {
         // ignore panic output
+        // println!("{:?}", _info);
     }));
 
     let f_ref: *const _ = &f;

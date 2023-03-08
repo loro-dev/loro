@@ -218,6 +218,7 @@ impl LogStore {
                 for op in self.iter_ops_at_id_span(IdSpan::new(*client_id, span.start, span.end)) {
                     let container = container_map.get_mut(&op.op().container).unwrap();
                     container.update_state_directly(hierarchy, &op, context);
+                    container.update_recorder_after_import();
                 }
                 return;
             }
@@ -244,6 +245,7 @@ impl LogStore {
 
                             let container = container_map.get_mut(&op.container).unwrap();
                             container.update_state_directly(hierarchy, &rich_op, context);
+                            container.update_recorder_after_import();
                         }
                     }
                     true
@@ -313,6 +315,7 @@ impl LogStore {
             if container.id().is_root() || hierarchy.contains(container.id()) {
                 retries = 0;
                 container.apply_tracked_effects_from(hierarchy, context);
+                container.update_recorder_after_import();
             } else {
                 retries += 1;
                 queue.push_front(container);
@@ -327,6 +330,7 @@ impl LogStore {
 
         for mut container in queue {
             container.apply_tracked_effects_from(hierarchy, context);
+            container.update_recorder_after_import();
         }
 
         debug_log::group_end!();

@@ -210,9 +210,7 @@ fn two_client_text_sync() {
     let mut store_b = LoroCore::new(Default::default(), Some(11));
     let exported = store.export(Default::default());
     store_b.import(exported);
-    
     let mut text_container = store_b.get_text("haha");
-    text_container.update_checker_length();
     text_container.with_container(|x| x.check()).unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
@@ -227,7 +225,6 @@ fn two_client_text_sync() {
 
     store.import(store_b.export(store.vv_cloned()));
     let mut text_container = store.get_text("haha");
-    text_container.update_checker_length();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "63417892");

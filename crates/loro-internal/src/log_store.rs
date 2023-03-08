@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
 use smallvec::SmallVec;
@@ -23,7 +23,7 @@ use crate::{
     configure::Configure,
     container::{
         registry::{ContainerIdx, ContainerInstance, ContainerRegistry},
-        ContainerID,
+        ContainerID, ContainerTrait,
     },
     dag::Dag,
     id::{ClientID, Counter},

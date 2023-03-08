@@ -7,9 +7,9 @@ use tracing::instrument;
 
 use crate::{
     container::{
-        checker::ListChecker,
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
+        recorder::ListRecorder,
         registry::{ContainerIdx, ContainerInner, ContainerInstance, ContainerWrapper},
         ContainerID, ContainerTrait, ContainerType,
     },
@@ -40,7 +40,7 @@ pub struct TextContainer {
     raw_str: StringPool,
     tracker: Option<Tracker>,
     pool_mapping: Option<PoolMapping<u8>>,
-    checker: ListChecker,
+    recorder: ListRecorder,
 }
 
 impl TextContainer {
@@ -52,7 +52,7 @@ impl TextContainer {
             tracker: None,
             state: Default::default(),
             pool_mapping: None,
-            checker: ListChecker::from_idx(idx),
+            recorder: ListRecorder::from_idx(idx),
         }
     }
 
@@ -456,6 +456,10 @@ impl ContainerTrait for TextContainer {
         let op = op.text_inner();
         self.apply_txn_op_impl(store, op)
     }
+
+    fn update_recorder_after_import(&mut self) {
+        self.recorder.current_length = self.text_len();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -467,10 +471,10 @@ pub struct Text {
 
 impl Text {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
-        let (container_idx, current_length) = {
+        let container_idx = {
             let x = instance.upgrade().unwrap();
             let x = x.try_lock().unwrap();
-            (x.idx(), x.as_text().unwrap().text_len())
+            x.idx()
         };
         Self {
             container: ContainerInner::from(instance),
@@ -508,7 +512,7 @@ impl Text {
         if text.is_empty() {
             return Ok(());
         }
-        self.with_checker_mut(|c| c.check_insert(pos, text.len()))?;
+        self.with_recorder_mut(|c| c.check_insert(pos, text.len()))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(TransactionOp::insert_text(self.idx(), pos, text), None)
         })?
@@ -532,7 +536,7 @@ impl Text {
         if len == 0 {
             return Ok(());
         }
-        self.with_checker_mut(|c| c.check_delete(pos, len))?;
+        self.with_recorder_mut(|c| c.check_delete(pos, len))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(TransactionOp::delete_text(self.idx(), pos, len), None)
         })?
@@ -561,19 +565,20 @@ impl Text {
         self.try_get_value().unwrap()
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> Result<usize, LoroError> {
         self.with_container(|x| x.text_len())
     }
 
     pub fn committed_len(&self) -> usize {
-        self.with_checker(|c| c.current_length)
+        self.with_recorder(|c| c.current_length)
     }
 
-    fn with_checker<F: FnOnce(&ListChecker) -> R, R>(&self, f: F) -> R {
+    fn with_recorder<F: FnOnce(&ListRecorder) -> R, R>(&self, f: F) -> R {
         match &self.container {
             ContainerInner::Instance(_) => self
                 .with_container(|x| {
-                    let c = &x.checker;
+                    let c = &x.recorder;
                     f(c)
                 })
                 .unwrap(),
@@ -584,11 +589,11 @@ impl Text {
         }
     }
 
-    fn with_checker_mut<F: FnOnce(&mut ListChecker) -> R, R>(&mut self, f: F) -> R {
+    fn with_recorder_mut<F: FnOnce(&mut ListRecorder) -> R, R>(&mut self, f: F) -> R {
         match &mut self.container {
             ContainerInner::Instance(_) => self
                 .with_container(|x| {
-                    let c = &mut x.checker;
+                    let c = &mut x.recorder;
                     f(c)
                 })
                 .unwrap(),
@@ -634,12 +639,5 @@ impl ContainerWrapper for Text {
         let mut container_instance = w.try_lock().unwrap();
         let x = container_instance.as_text_mut().unwrap();
         Ok(f(x))
-    }
-
-    fn update_checker_length(&mut self) {
-        if self.is_instance() {
-            let len = self.len().unwrap();
-            self.with_checker_mut(|c| c.current_length = len);
-        }
     }
 }

@@ -9,10 +9,10 @@ use smallvec::SmallVec;
 
 use crate::{
     container::{
-        checker::ListChecker,
         list::list_op::ListOp,
         pool,
         pool_mapping::{PoolMapping, StateContent},
+        recorder::ListRecorder,
         registry::{
             ContainerIdx, ContainerInner, ContainerInstance, ContainerRegistry, ContainerWrapper,
         },
@@ -47,7 +47,7 @@ pub struct ListContainer {
     pub(crate) raw_data: pool::Pool,
     tracker: Option<Tracker>,
     pool_mapping: Option<PoolMapping<LoroValue>>,
-    checker: ListChecker,
+    recorder: ListRecorder,
 }
 
 impl ListContainer {
@@ -59,7 +59,7 @@ impl ListContainer {
             tracker: None,
             state: Default::default(),
             pool_mapping: None,
-            checker: ListChecker::from_idx(idx),
+            recorder: ListRecorder::from_idx(idx),
         }
     }
 
@@ -242,7 +242,9 @@ impl ContainerTrait for ListContainer {
                     smallvec::smallvec![RemoteContent::List(ListOp::Delete(del))]
                 }
             },
-            InnerContent::Map(_) => unreachable!(),
+            InnerContent::Map(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -486,6 +488,10 @@ impl ContainerTrait for ListContainer {
         let op = op.list_inner();
         self.apply_txn_op_impl(store, op)
     }
+
+    fn update_recorder_after_import(&mut self) {
+        self.recorder.current_length = self.values_len();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -500,10 +506,10 @@ impl List {
         instance: Weak<Mutex<ContainerInstance>>,
         client_id: ClientID,
     ) -> Self {
-        let (container_idx, current_length) = {
+        let container_idx = {
             let list = instance.upgrade().unwrap();
             let list = list.try_lock().unwrap();
-            (list.idx(), list.as_list().unwrap().values_len())
+            list.idx()
         };
         Self {
             container: ContainerInner::from(instance),
@@ -532,7 +538,7 @@ impl List {
         pos: usize,
         value: P,
     ) -> Result<Option<Container>, LoroError> {
-        self.with_checker_mut(|c| c.check_insert(pos, 1))?;
+        self.with_recorder_mut(|c| c.check_insert(pos, 1))?;
         self.with_transaction_checked(txn, |txn, _x| {
             let (value, maybe_container) = value.convert_value()?;
             if let Some(prelim) = maybe_container {
@@ -565,7 +571,7 @@ impl List {
         pos: usize,
         values: Vec<LoroValue>,
     ) -> Result<(), LoroError> {
-        self.with_checker_mut(|c| c.check_insert(pos, values.len()))?;
+        self.with_recorder_mut(|c| c.check_insert(pos, values.len()))?;
         self.with_transaction_checked(txn, |txn, _| {
             txn.push(
                 TransactionOp::insert_list_batch_value(self.idx(), pos, values),
@@ -613,7 +619,7 @@ impl List {
         pos: usize,
         len: usize,
     ) -> Result<(), LoroError> {
-        self.with_checker_mut(|c| c.check_delete(pos, len))?;
+        self.with_recorder_mut(|c| c.check_delete(pos, len))?;
         self.with_transaction_checked(txn, |txn, _x| {
             txn.push(TransactionOp::delete_list(self.idx(), pos, len), None)
         })?
@@ -636,12 +642,13 @@ impl List {
         self.with_container(|list| list.get(pos)).unwrap()
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> Result<usize, LoroError> {
         self.with_container(|list| list.values_len())
     }
 
     pub fn committed_len(&self) -> usize {
-        self.with_checker(|c| c.current_length)
+        self.with_recorder(|c| c.current_length)
     }
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
@@ -665,11 +672,11 @@ impl List {
         self.with_container(|list| list.get_value())
     }
 
-    fn with_checker<F: FnOnce(&ListChecker) -> R, R>(&self, f: F) -> R {
+    fn with_recorder<F: FnOnce(&ListRecorder) -> R, R>(&self, f: F) -> R {
         match &self.container {
             ContainerInner::Instance(_) => self
                 .with_container(|x| {
-                    let c = &x.checker;
+                    let c = &x.recorder;
                     f(c)
                 })
                 .unwrap(),
@@ -680,11 +687,11 @@ impl List {
         }
     }
 
-    fn with_checker_mut<F: FnOnce(&mut ListChecker) -> R, R>(&mut self, f: F) -> R {
+    fn with_recorder_mut<F: FnOnce(&mut ListRecorder) -> R, R>(&mut self, f: F) -> R {
         match &mut self.container {
             ContainerInner::Instance(_) => self
                 .with_container(|x| {
-                    let c = &mut x.checker;
+                    let c = &mut x.recorder;
                     f(c)
                 })
                 .unwrap(),
@@ -728,13 +735,6 @@ impl ContainerWrapper for List {
             let idx = self.idx();
             let new = loro.get_list_by_idx(&idx).unwrap();
             *self = new;
-        }
-    }
-
-    fn update_checker_length(&mut self) {
-        if self.is_instance() {
-            let len = self.len().unwrap();
-            self.with_checker_mut(|c| c.current_length = len);
         }
     }
 }

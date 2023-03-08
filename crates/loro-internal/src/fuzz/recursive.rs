@@ -662,10 +662,12 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             a_doc
-                .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                // .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                .decode(&b_doc.encode_with_cfg(EncodeConfig::snapshot()))
                 .unwrap();
             b_doc
-                .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
+                // .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
+                .decode(&a_doc.encode_with_cfg(EncodeConfig::snapshot()))
                 .unwrap();
             check_eq(a, b);
             debug_log::group_end!();
@@ -1310,33 +1312,14 @@ mod failed_tests {
                     site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: I32(1),
+                    value: Container(C::List),
                 },
                 SyncAll,
-                List {
-                    site: 3,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                List {
-                    site: 3,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1),
-                },
-                List {
-                    site: 3,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                SyncAll,
-                List {
+                Map {
                     site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: Null,
+                    value: Container(C::Map),
                 },
             ],
         )
