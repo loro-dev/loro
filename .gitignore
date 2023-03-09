@@ -4,3 +4,4 @@
 flamegraph.svg
 target
 dhat-heap.json
+.DS_Store

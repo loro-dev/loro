@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -17,13 +17,13 @@ use crate::{
         registry::ContainerIdx,
         ContainerID, ContainerTrait,
     },
-    dag::remove_included_frontiers,
+    dag::{remove_included_frontiers, Dag},
     event::RawEvent,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
     op::{InnerContent, Op},
-    span::{HasIdSpan, HasLamportSpan},
+    span::HasLamportSpan,
     version::TotalOrderStamp,
     ContainerType, InternalString, LogStore, LoroCore, LoroError, LoroValue, VersionVector,
 };
@@ -122,13 +122,13 @@ impl EncodedStateContent {
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SnapshotOpEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
-    container: u32,
+    #[columnar(strategy = "Rle", original_type = "usize")]
+    container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // list range start or del len or map value index
-    value: u64,
+    // list range start or del len or map value index, maybe negative
+    value: i64,
     // List: the length of content when inserting, -2 when the inserted content is unknown, and -1 when deleting.
     // Map: always -1
     #[columnar(strategy = "Rle")]
@@ -158,22 +158,22 @@ fn convert_inner_content(
     op_content: &InnerContent,
     key_to_idx: &mut FxHashMap<InternalString, usize>,
     keys: &mut Vec<InternalString>,
-) -> (usize, u64, i64) {
+) -> (usize, i64, i64) {
     let (prop, value, is_del) = match &op_content {
         InnerContent::List(list_op) => match list_op {
             InnerListOp::Insert { slice, pos } => {
                 if slice.is_unknown() {
-                    (*pos, slice.content_len() as u64, ENCODED_UNKNOWN_SLICE)
+                    (*pos, slice.content_len() as i64, ENCODED_UNKNOWN_SLICE)
                 } else {
                     (
                         *pos,
-                        slice.0.start as u64,
+                        slice.0.start as i64,
                         (slice.0.end - slice.0.start) as i64,
                     )
                 }
             }
             InnerListOp::Delete(span) => {
-                (span.pos as usize, span.len as u64, ENCODED_DELETED_CONTENT)
+                (span.pos as usize, span.len as i64, ENCODED_DELETED_CONTENT)
             }
         },
         InnerContent::Map(map_set) => {
@@ -183,7 +183,7 @@ fn convert_inner_content(
                     keys.push(key.clone());
                     keys.len() - 1
                 }),
-                *value as u64,
+                *value as i64,
                 ENCODED_PLACEHOLDER,
             )
         }
@@ -195,6 +195,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     debug_log::debug_dbg!(&store.vv);
     debug_log::debug_dbg!(&store.changes);
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
+    let mut container_id_to_idx: FxHashMap<ContainerID, usize> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
     for (key, changes) in store.changes.iter() {
@@ -220,6 +221,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
             .try_lock()
             .unwrap()
             .initialize_pool_mapping();
+        container_id_to_idx.insert(container_id.clone(), idx);
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -229,16 +231,26 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
+            let client_id = change.id.client_id;
             let mut op_len = 0;
+            let mut deps_len = 0;
+            let mut dep_on_self = false;
             for dep in change.deps.iter() {
-                deps.push(DepsEncoding::new(
-                    *client_id_to_idx.get(&dep.client_id).unwrap(),
-                    dep.counter,
-                ));
+                // the first change will encode the self-client deps
+                if dep.client_id == client_id {
+                    dep_on_self = true;
+                } else {
+                    deps.push(DepsEncoding::new(
+                        *client_id_to_idx.get(&dep.client_id).unwrap(),
+                        dep.counter,
+                    ));
+                    deps_len += 1;
+                }
             }
             for op in change.ops.iter() {
                 let container_idx = op.container;
                 let container_id = store.reg.get_id(container_idx).unwrap();
+                let container_idx = container_id_to_idx.get(container_id).unwrap();
                 let container = store.reg.get(container_id).unwrap();
                 let new_ops = container
                     .upgrade()
@@ -263,7 +275,8 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
             changes.push(ChangeEncoding {
                 client_idx: client_idx as ClientIdx,
                 timestamp: change.timestamp,
-                deps_len: change.deps.len() as u32,
+                deps_len,
+                dep_on_self,
                 op_len: op_len as u32,
             });
         }
@@ -281,8 +294,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                 .encode_and_release_pool_mapping()
                 .into_encoded(&key_to_idx, &client_id_to_idx)
         })
-        .collect();
-
+        .collect::<Vec<_>>();
     let encoded = SnapshotEncoded {
         changes,
         ops,
@@ -321,11 +333,39 @@ pub(super) fn decode_snapshot(
         }
         return Ok(vec![]);
     }
+    let mut idx_to_container_type = FxHashMap::default();
+    for (idx, container_id) in containers.iter().enumerate() {
+        idx_to_container_type.insert(idx, container_id.container_type());
+    }
+
+    // calc vv
+    let vv = calc_vv(&change_encodings, &ops, &clients, &idx_to_container_type);
+    let can_load = match vv.partial_cmp(&store.vv) {
+        Some(ord) => match ord {
+            std::cmp::Ordering::Less => {
+                // TODO warning
+                debug_log::debug_log!("[Warning] the vv of encoded snapshot is smaller than self, no change is applied");
+                return Ok(vec![]);
+            }
+            std::cmp::Ordering::Equal => {
+                debug_log::debug_log!("vv is equal, no change is applied");
+                return Ok(vec![]);
+            }
+            std::cmp::Ordering::Greater => store.vv.is_empty(),
+        },
+        None => false,
+    };
 
     let mut op_iter = ops.into_iter();
     let mut changes_dq = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
-    let mut container_idx2type = FxHashMap::default();
+    let mut idx_to_container_idx = FxHashMap::default();
+
+    // the container_idx needs to be calculated first
+    // because the op needs the corresponding container (in new or old store)
+    let new_loro = LoroCore::default();
+    let mut new_store = new_loro.log_store.try_write().unwrap();
+    let mut new_hierarchy = new_loro.hierarchy.try_lock().unwrap();
 
     for (idx, container_id) in containers.iter().enumerate() {
         // assert containers are sorted by container_idx
@@ -335,25 +375,19 @@ pub(super) fn decode_snapshot(
         );
     }
 
-    for (_, this_change_encodings) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
+    for (_, this_changes_encoding) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
         let mut counter = 0;
-        for change_encoding in this_change_encodings {
+        for change_encoding in this_changes_encoding {
             let ChangeEncoding {
                 client_idx,
                 timestamp,
                 op_len,
                 deps_len,
+                dep_on_self,
             } = change_encoding;
 
             let client_id = clients[client_idx as usize];
             let mut ops = RleVec::<[Op; 2]>::new();
-            let deps = (0..deps_len)
-                .map(|_| {
-                    let raw = deps_iter.next().unwrap();
-                    ID::new(clients[raw.client_idx as usize], raw.counter)
-                })
-                .collect();
-
             let mut delta = 0;
             for op in op_iter.by_ref().take(op_len as usize) {
                 let SnapshotOpEncoding {
@@ -363,8 +397,7 @@ pub(super) fn decode_snapshot(
                     value2,
                 } = op;
 
-                let container_idx = ContainerIdx::from_u32(container_idx);
-                let container_type = container_idx2type[&container_idx];
+                let container_type = idx_to_container_type[&container_idx];
                 let content = match container_type {
                     ContainerType::Map => {
                         let key = keys[prop].clone();
@@ -389,7 +422,7 @@ pub(super) fn decode_snapshot(
                                 }
                             } else {
                                 InnerListOp::Insert {
-                                    slice: (value as u32..(value as i64 + value2) as u32).into(),
+                                    slice: (value as u32..(value + value2) as u32).into(),
                                     pos: prop,
                                 }
                             }
@@ -399,11 +432,22 @@ pub(super) fn decode_snapshot(
                 };
                 let op = Op {
                     counter: counter + delta,
-                    container: container_idx,
+                    container: idx_to_container_idx[&container_idx],
                     content,
                 };
                 delta += op.content_len() as i32;
                 ops.push(op);
+            }
+
+            let mut deps = (0..deps_len)
+                .map(|_| {
+                    let raw = deps_iter.next().unwrap();
+                    ID::new(clients[raw.client_idx as usize], raw.counter)
+                })
+                .collect::<SmallVec<_>>();
+
+            if dep_on_self {
+                deps.push(ID::new(client_id, counter - 1));
             }
             let change = Change {
                 id: ID { client_id, counter },
@@ -473,15 +517,11 @@ pub(super) fn decode_snapshot(
             changes,
             containers,
             container_states,
-            container_idx2type,
             &keys,
             &clients,
         );
         Ok(store.get_events(hierarchy, &mut import_context))
     } else {
-        let new_loro = LoroCore::default();
-        let mut new_store = new_loro.log_store.try_write().unwrap();
-        let mut new_hierarchy = new_loro.hierarchy.try_lock().unwrap();
         load_snapshot(
             &mut new_store,
             &mut new_hierarchy,
@@ -489,11 +529,11 @@ pub(super) fn decode_snapshot(
             changes,
             containers,
             container_states,
-            container_idx2type,
             &keys,
             &clients,
         );
         let diff_changes = new_store.export(&store.vv);
+        // println!("diff change {:?}", diff_changes);
         Ok(store.import(hierarchy, diff_changes))
     }
 }
@@ -506,7 +546,6 @@ fn load_snapshot(
     changes: FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
     containers: Vec<ContainerID>,
     container_states: Vec<EncodedStateContent>,
-    mut container_idx2type: FxHashMap<ContainerIdx, ContainerType>,
     keys: &[InternalString],
     clients: &[u64],
 ) -> ImportContext {
@@ -521,15 +560,13 @@ fn load_snapshot(
     let mut import_context = ImportContext {
         old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
-        old_vv: VersionVector::new(),
+        old_vv: new_store.vv(),
         spans: vv.diff(&new_store.vv).left,
         new_vv: vv.clone(),
         diff: Default::default(),
         patched_old_vv: None,
     };
     for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
-        let container_idx = new_store.reg.get_or_create_container_idx(&container_id);
-        container_idx2type.insert(container_idx, container_id.container_type());
         let state = pool_mapping.into_state(keys, clients);
         let container = new_store.reg.get_by_idx(&container_idx).unwrap();
         let container = container.upgrade().unwrap();
@@ -554,4 +591,67 @@ fn load_snapshot(
     new_store.vv = vv;
     new_store.frontiers = frontiers.get_frontiers();
     import_context
+}
+
+fn calc_vv(
+    changes_encoding: &[ChangeEncoding],
+    ops_encoding: &[SnapshotOpEncoding],
+    clients: &[ClientID],
+    idx_to_container_type: &FxHashMap<usize, ContainerType>,
+) -> VersionVector {
+    let mut vv = FxHashMap::default();
+    let mut op_iter = ops_encoding.iter();
+    for (client_idx, this_changes_encoding) in &changes_encoding.iter().group_by(|c| c.client_idx) {
+        let client_id = clients[client_idx as usize];
+        let mut counter = 0;
+        for change_encoding in this_changes_encoding {
+            let op_len = change_encoding.op_len;
+            let mut delta = 0;
+            for op in op_iter.by_ref().take(op_len as usize) {
+                let SnapshotOpEncoding {
+                    container: container_idx,
+                    prop: _,
+                    value,
+                    value2,
+                } = *op;
+                let container_type = idx_to_container_type[&container_idx];
+                let op_content_len = match container_type {
+                    ContainerType::Map => 1,
+                    _ => {
+                        let is_del = value2 == ENCODED_DELETED_CONTENT;
+                        if is_del {
+                            value.unsigned_abs()
+                        } else {
+                            let is_unknown = value2 == ENCODED_UNKNOWN_SLICE;
+                            if is_unknown {
+                                value as u64
+                            } else {
+                                value2 as u64
+                            }
+                        }
+                    }
+                };
+                delta += op_content_len as i32;
+            }
+            counter += delta;
+        }
+        vv.insert(client_id, counter);
+    }
+    vv.into()
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{ContainerType, LoroCore};
+
+    #[test]
+    fn cannot_load() {
+        let mut loro = LoroCore::new(Default::default(), Some(1));
+        let mut map = loro.get_map("map");
+        map.insert(&loro, "0", ContainerType::List).unwrap();
+        map.delete(&loro, "0").unwrap();
+        let mut loro2 = LoroCore::new(Default::default(), Some(2));
+        loro.decode(&loro2.encode_all()).unwrap();
+        loro2.decode(&loro.encode_all()).unwrap();
+    }
 }

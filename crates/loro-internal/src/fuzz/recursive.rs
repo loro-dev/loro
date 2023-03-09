@@ -9,6 +9,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
+#[allow(unused_imports)]
 use crate::{
     array_mut_ref,
     container::ContainerID,
@@ -650,6 +651,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         for (la, lb) in ca.iter().zip(cb.iter()) {
             assert_eq!(la.lamport, lb.lamport);
             assert_eq!(la.id, lb.id);
+            assert!(!la.deps.iter().any(|u| !lb.deps.contains(u)))
         }
     }
 }
@@ -661,14 +663,18 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc
-                // .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
-                .decode(&b_doc.encode_with_cfg(EncodeConfig::snapshot()))
-                .unwrap();
-            b_doc
-                // .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
-                .decode(&a_doc.encode_with_cfg(EncodeConfig::snapshot()))
-                .unwrap();
+            if i % 2 == 0 {
+                a_doc
+                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .unwrap();
+                b_doc
+                    .decode(&a_doc.encode_with_cfg(EncodeConfig::update(b_doc.vv_cloned())))
+                    .unwrap();
+            } else {
+                a_doc.decode(&b_doc.encode_all()).unwrap();
+                b_doc.decode(&a_doc.encode_all()).unwrap();
+            }
+
             check_eq(a, b);
             debug_log::group_end!();
         }
@@ -703,7 +709,6 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 }
 
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
-    // println!("{:?}", actions);
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor::new(i as u64));
@@ -717,7 +722,6 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.apply_action(action);
     }
 
-    // println!("{}", actions.table());
     debug_log::group!("check synced");
     check_synced(&mut sites);
     debug_log::group_end!();
@@ -1006,7 +1010,7 @@ mod failed_tests {
     #[test]
     fn list_unknown() {
         test_multi_sites(
-            3,
+            5,
             &mut [
                 List {
                     site: 139,
@@ -1040,7 +1044,7 @@ mod failed_tests {
     #[test]
     fn path_issue() {
         test_multi_sites(
-            2,
+            5,
             &mut [
                 List {
                     site: 1,
@@ -1309,17 +1313,29 @@ mod failed_tests {
             5,
             &mut [
                 List {
-                    site: 0,
+                    site: 4,
                     container_idx: 0,
                     key: 0,
-                    value: Container(C::List),
+                    value: I32(1),
                 },
                 SyncAll,
-                Map {
+                List {
                     site: 0,
                     container_idx: 0,
                     key: 0,
                     value: Container(C::Map),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 1,
+                    value: I32(2105376125),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 1,
+                    value: Null,
                 },
             ],
         )
@@ -1339,11 +1355,12 @@ mod failed_tests {
                 SyncAll,
                 SyncAll,
                 SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
                 SyncAll,
                 Map {
                     site: 21,
@@ -1353,145 +1370,145 @@ mod failed_tests {
                 },
                 Map {
                     site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                    container_idx: 125,
+                    key: 125,
+                    value: I32(2105376125),
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Container(C::List),
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
                 },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
                 SyncAll,
                 SyncAll,
                 Map {
                     site: 0,
+                    container_idx: 255,
+                    key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 70,
+                    container_idx: 255,
+                    key: 255,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 21,
+                    container_idx: 21,
+                    key: 21,
+                    value: Null,
+                },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Map {
+                    site: 21,
+                    container_idx: 21,
+                    key: 21,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 3,
+                    key: 3,
+                    value: I32(353703189),
+                },
+                Map {
+                    site: 1,
                     container_idx: 0,
                     key: 0,
-                    value: Null,
+                    value: I32(2105376125),
                 },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 242,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Sync { from: 155, to: 155 },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
                 },
                 List {
                     site: 64,
                     container_idx: 64,
                     key: 64,
                     value: Null,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 125,
+                    pos: 125,
+                    value: 32125,
+                    is_del: true,
+                },
+                Text {
+                    site: 125,
+                    container_idx: 64,
+                    pos: 70,
+                    value: 17990,
+                    is_del: false,
                 },
                 List {
                     site: 64,
@@ -1503,6 +1520,84 @@ mod failed_tests {
                     site: 21,
                     container_idx: 255,
                     key: 64,
+                    value: Null,
+                },
+                List {
+                    site: 125,
+                    container_idx: 125,
+                    key: 125,
+                    value: I32(2105376125),
+                },
+                List {
+                    site: 70,
+                    container_idx: 70,
+                    key: 70,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
                     value: Null,
                 },
                 Map {

@@ -58,15 +58,15 @@ impl From<Weak<Mutex<ContainerInstance>>> for ContainerInner {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
 pub struct ContainerIdx(u32);
 
-impl ContainerIdx {
-    pub(crate) fn to_u32(self) -> u32 {
-        self.0
-    }
+// impl ContainerIdx {
+//     pub(crate) fn to_u32(self) -> u32 {
+//         self.0
+//     }
 
-    pub(crate) fn from_u32(idx: u32) -> Self {
-        Self(idx)
-    }
-}
+//     pub(crate) fn from_u32(idx: u32) -> Self {
+//         Self(idx)
+//     }
+// }
 
 // TODO: replace this with a fat pointer?
 #[derive(Debug, EnumAsInner)]

@@ -337,7 +337,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
                                 notify,
                                 true,
                             )
-                            .map(|x| ())
+                            .map(|_x| ())
                             .map_err(|(_, new)| new)
                             .unwrap();
                             Err((x + update, new))

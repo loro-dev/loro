@@ -1,7 +1,6 @@
 use std::{
     collections::HashSet,
     fmt::{Debug, Error, Formatter},
-    mem::transmute,
     ops::DerefMut,
 };
 
@@ -498,7 +497,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
         if result.is_err() && self.is_root() {
             #[allow(clippy::unnecessary_unwrap)]
-            let (update, new_vec) = result.unwrap_err();
+            let (_update, new_vec) = result.unwrap_err();
             {
                 // create level
                 let mut origin_root = self.bump.allocate(Node::Internal(InternalNode::new(

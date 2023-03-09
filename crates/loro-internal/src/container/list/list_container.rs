@@ -127,6 +127,10 @@ impl ListContainer {
 
         for state in self.state.iter_range(pos, Some(pos + len)) {
             let range = &state.get_sliced().0;
+
+            if SliceRange::from(range.start..range.end).is_unknown() {
+                continue;
+            }
             for value in self.raw_data.slice(range).iter() {
                 if let LoroValue::Unresolved(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);
@@ -280,12 +284,24 @@ impl ContainerTrait for ListContainer {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
-                        let delta_vec = self.raw_data.slice(&slice.0).to_vec();
-                        let delta = Delta::new().retain(*pos).insert(delta_vec);
+                        let mut delta = Delta::new();
+                        // unknown
+                        let delta_vec = if slice.is_unknown() {
+                            let mut ans = Vec::with_capacity(slice.atom_len());
+                            for _ in 0..slice.content_len() {
+                                ans.push(LoroValue::Null);
+                            }
+                            ans
+                        } else {
+                            self.raw_data.slice(&slice.0).to_vec()
+                        };
+                        delta.retain(*pos);
+                        delta.insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
-
-                    self.update_hierarchy_on_insert(hierarchy, slice);
+                    if !slice.is_unknown() {
+                        self.update_hierarchy_on_insert(hierarchy, slice);
+                    }
                     self.state.insert(*pos, slice.clone());
                 }
                 InnerListOp::Delete(span) => {
