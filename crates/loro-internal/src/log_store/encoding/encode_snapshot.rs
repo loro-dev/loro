@@ -195,7 +195,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     debug_log::debug_dbg!(&store.vv);
     debug_log::debug_dbg!(&store.changes);
     let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
-    let mut container_id_to_idx: FxHashMap<ContainerID, usize> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
     for (key, changes) in store.changes.iter() {
@@ -211,7 +210,7 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let container_to_new_idx: FxHashMap<_, _> = containers
         .iter()
         .enumerate()
-        .map(|(i, id)| (id, i as u32))
+        .map(|(i, id)| (id, i))
         .collect();
     for container_id in containers.iter() {
         let container = store.reg.get(container_id).unwrap();
@@ -221,7 +220,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
             .try_lock()
             .unwrap()
             .initialize_pool_mapping();
-        container_id_to_idx.insert(container_id.clone(), idx);
     }
 
     let mut changes = Vec::with_capacity(change_num);
@@ -250,7 +248,6 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
             for op in change.ops.iter() {
                 let container_idx = op.container;
                 let container_id = store.reg.get_id(container_idx).unwrap();
-                let container_idx = container_id_to_idx.get(container_id).unwrap();
                 let container = store.reg.get(container_id).unwrap();
                 let new_ops = container
                     .upgrade()
@@ -333,13 +330,18 @@ pub(super) fn decode_snapshot(
         }
         return Ok(vec![]);
     }
-    let mut idx_to_container_type = FxHashMap::default();
+    // let mut idx_to_container_type = FxHashMap::default();
+    // for (idx, container_id) in containers.iter().enumerate() {
+    //     idx_to_container_type.insert(idx, container_id.container_type());
+    // }
+    let mut container_idx2type = FxHashMap::default();
     for (idx, container_id) in containers.iter().enumerate() {
-        idx_to_container_type.insert(idx, container_id.container_type());
+        // assert containers are sorted by container_idx
+        container_idx2type.insert(idx, container_id.container_type());
     }
 
     // calc vv
-    let vv = calc_vv(&change_encodings, &ops, &clients, &idx_to_container_type);
+    let vv = calc_vv(&change_encodings, &ops, &clients, &container_idx2type);
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {
             std::cmp::Ordering::Less => {
@@ -359,21 +361,12 @@ pub(super) fn decode_snapshot(
     let mut op_iter = ops.into_iter();
     let mut changes_dq = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
-    let mut idx_to_container_idx = FxHashMap::default();
 
     // the container_idx needs to be calculated first
     // because the op needs the corresponding container (in new or old store)
     let new_loro = LoroCore::default();
     let mut new_store = new_loro.log_store.try_write().unwrap();
     let mut new_hierarchy = new_loro.hierarchy.try_lock().unwrap();
-
-    for (idx, container_id) in containers.iter().enumerate() {
-        // assert containers are sorted by container_idx
-        container_idx2type.insert(
-            ContainerIdx::from_u32(idx as u32),
-            container_id.container_type(),
-        );
-    }
 
     for (_, this_changes_encoding) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
         let mut counter = 0;
@@ -396,8 +389,8 @@ pub(super) fn decode_snapshot(
                     value,
                     value2,
                 } = op;
-
-                let container_type = idx_to_container_type[&container_idx];
+                let container_type = container_idx2type[&container_idx];
+                let container_idx = ContainerIdx::from_u32(container_idx as u32);
                 let content = match container_type {
                     ContainerType::Map => {
                         let key = keys[prop].clone();
@@ -432,7 +425,7 @@ pub(super) fn decode_snapshot(
                 };
                 let op = Op {
                     counter: counter + delta,
-                    container: idx_to_container_idx[&container_idx],
+                    container: container_idx,
                     content,
                 };
                 delta += op.content_len() as i32;
@@ -501,14 +494,6 @@ pub(super) fn decode_snapshot(
         }
     }
 
-    let vv: VersionVector = changes
-        .values()
-        .map(|changes| changes.last().unwrap().id_last())
-        .collect();
-
-    debug_log::debug_dbg!(&vv, &changes_dq);
-
-    let can_load = store.get_vv().is_empty();
     if can_load {
         let mut import_context = load_snapshot(
             store,
@@ -568,7 +553,7 @@ fn load_snapshot(
     };
     for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
         let state = pool_mapping.into_state(keys, clients);
-        let container = new_store.reg.get_by_idx(&container_idx).unwrap();
+        let container = new_store.reg.get_or_create(&container_id);
         let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         container.to_import_snapshot(state, new_hierarchy, &mut import_context);

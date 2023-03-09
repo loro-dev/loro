@@ -284,7 +284,7 @@ impl ContainerTrait for ListContainer {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
-                        let mut delta = Delta::new();
+                        let delta = Delta::new();
                         // unknown
                         let delta_vec = if slice.is_unknown() {
                             let mut ans = Vec::with_capacity(slice.atom_len());
@@ -295,8 +295,7 @@ impl ContainerTrait for ListContainer {
                         } else {
                             self.raw_data.slice(&slice.0).to_vec()
                         };
-                        delta.retain(*pos);
-                        delta.insert(delta_vec);
+                        let delta = delta.retain(*pos).insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
                     if !slice.is_unknown() {
