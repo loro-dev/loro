@@ -671,14 +671,19 @@ fn check_synced(sites: &mut [Actor]) {
             b.commit();
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            a_doc
-                // .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
-                .decode(&b_doc.encode_with_cfg(EncodeConfig::snapshot()))
-                .unwrap();
-            b_doc
-                .decode(&a_doc.encode_with_cfg(EncodeConfig::rle_update(b_doc.vv_cloned())))
-                // .decode(&a_doc.encode_with_cfg(EncodeConfig::snapshot()))
-                .unwrap();
+            if i % 2 == 0 {
+                a_doc
+                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .unwrap();
+                b_doc
+                    .decode(&a_doc.encode_with_cfg(EncodeConfig::update(b_doc.vv_cloned())))
+                    .unwrap();
+            } else {
+                a_doc
+                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .unwrap();
+                b_doc.decode(&a_doc.encode_all()).unwrap();
+            }
             check_eq(a, b);
             debug_log::group_end!();
         }

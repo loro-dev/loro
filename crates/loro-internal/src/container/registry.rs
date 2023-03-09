@@ -20,7 +20,7 @@ use crate::{
     id::ClientID,
     log_store::ImportContext,
     op::{Op, RemoteContent, RichOp},
-    transaction::{op::TransactionOp, Transaction},
+    transaction::{op::TransactionOp, DeferredTransaction, Transaction, TransactionWrap},
     version::PatchedVersionVector,
     LogStore, LoroCore, LoroError, LoroValue, Transact,
 };
@@ -510,17 +510,29 @@ pub trait ContainerWrapper {
     where
         F: FnOnce(&mut Transaction, &ContainerInner) -> R,
     {
-        let txn = txn.transact();
-        let mut txn = txn.0.try_lock().unwrap();
-        let txn = txn.as_mut();
-
-        if txn.client_id() != self.client_id() {
-            return Err(LoroError::UnmatchedContext {
-                expected: self.client_id(),
-                found: txn.client_id(),
-            });
+        let mut txn = txn.transact();
+        match &mut txn {
+            TransactionWrap::AutoCommit(txn) => {
+                if txn.client_id() != self.client_id() {
+                    return Err(LoroError::UnmatchedContext {
+                        expected: self.client_id(),
+                        found: txn.client_id(),
+                    });
+                }
+                Ok(self.with_transaction_container(txn, f))
+            }
+            TransactionWrap::Deferred(DeferredTransaction(txn)) => {
+                let mut txn = txn.try_lock().unwrap();
+                let txn = txn.as_mut();
+                if txn.client_id() != self.client_id() {
+                    return Err(LoroError::UnmatchedContext {
+                        expected: self.client_id(),
+                        found: txn.client_id(),
+                    });
+                }
+                Ok(self.with_transaction_container(txn, f))
+            }
         }
-        Ok(self.with_transaction_container(txn, f))
     }
 
     fn client_id(&self) -> ClientID;

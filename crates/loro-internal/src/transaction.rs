@@ -24,16 +24,24 @@ pub trait Transact {
 
 impl Transact for LoroCore {
     fn transact(&self) -> TransactionWrap {
-        TransactionWrap(Arc::new(Mutex::new(Transaction::new(
+        TransactionWrap::AutoCommit(Transaction::new(
             Arc::downgrade(&self.log_store),
             Arc::downgrade(&self.hierarchy),
-        ))))
+        ))
     }
 }
 
 impl Transact for TransactionWrap {
     fn transact(&self) -> TransactionWrap {
-        Self(Arc::clone(&self.0))
+        let txn = match &self {
+            TransactionWrap::AutoCommit(txn) => {
+                let store = Weak::clone(&txn.store);
+                let hierarchy = Weak::clone(&txn.hierarchy);
+                DeferredTransaction(Arc::new(Mutex::new(Transaction::new(store, hierarchy))))
+            }
+            TransactionWrap::Deferred(txn) => txn.clone(),
+        };
+        TransactionWrap::Deferred(txn)
     }
 }
 
@@ -43,7 +51,17 @@ impl AsMut<Transaction> for Transaction {
     }
 }
 
-pub struct TransactionWrap(pub(crate) Arc<Mutex<Transaction>>);
+pub enum TransactionWrap {
+    AutoCommit(Transaction),
+    Deferred(DeferredTransaction),
+}
+
+pub struct DeferredTransaction(pub(crate) Arc<Mutex<Transaction>>);
+impl Clone for DeferredTransaction {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
 
 pub struct Transaction {
     client_id: ClientID,
