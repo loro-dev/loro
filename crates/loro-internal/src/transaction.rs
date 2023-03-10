@@ -1,5 +1,7 @@
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
+    rc::Rc,
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
@@ -30,24 +32,16 @@ pub trait Transact {
 
 impl Transact for LoroCore {
     fn transact(&self) -> TransactionWrap {
-        TransactionWrap::AutoCommit(Transaction::new(
+        TransactionWrap(Rc::new(RefCell::new(Transaction::new(
             Arc::downgrade(&self.log_store),
             Arc::downgrade(&self.hierarchy),
-        ))
+        ))))
     }
 }
 
 impl Transact for TransactionWrap {
     fn transact(&self) -> TransactionWrap {
-        let txn = match &self {
-            TransactionWrap::AutoCommit(txn) => {
-                let store = Weak::clone(&txn.store);
-                let hierarchy = Weak::clone(&txn.hierarchy);
-                DeferredTransaction(Arc::new(Mutex::new(Transaction::new(store, hierarchy))))
-            }
-            TransactionWrap::Deferred(txn) => txn.clone(),
-        };
-        TransactionWrap::Deferred(txn)
+        TransactionWrap(Rc::clone(&self.0))
     }
 }
 
@@ -57,17 +51,7 @@ impl AsMut<Transaction> for Transaction {
     }
 }
 
-pub enum TransactionWrap {
-    AutoCommit(Transaction),
-    Deferred(DeferredTransaction),
-}
-
-pub struct DeferredTransaction(pub(crate) Arc<Mutex<Transaction>>);
-impl Clone for DeferredTransaction {
-    fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0))
-    }
-}
+pub struct TransactionWrap(pub(crate) Rc<RefCell<Transaction>>);
 
 pub struct Transaction {
     pub(crate) client_id: ClientID,
@@ -190,7 +174,7 @@ impl Transaction {
     fn append_event(&mut self, event: RawEvent) {
         // cache events
         let container_id = &event.container_id;
-        if let Some(old) = self.pending_events.get_mut(&container_id) {
+        if let Some(old) = self.pending_events.get_mut(container_id) {
             compose_two_events(old, event);
         } else {
             self.pending_events.insert(container_id.clone(), event);

@@ -186,16 +186,15 @@ impl Actor {
         {
             // TODO
             let new_txn = self.loro.transact();
-            if let TransactionWrap::AutoCommit(mut txn) = new_txn {
-                for x in self.text_containers.iter_mut() {
-                    x.try_to_update(&mut txn);
-                }
-                for x in self.list_containers.iter_mut() {
-                    x.try_to_update(&mut txn);
-                }
-                for x in self.map_containers.iter_mut() {
-                    x.try_to_update(&mut txn);
-                }
+            let mut txn = new_txn.0.borrow_mut();
+            for x in self.text_containers.iter_mut() {
+                x.try_to_update(&mut txn);
+            }
+            for x in self.list_containers.iter_mut() {
+                x.try_to_update(&mut txn);
+            }
+            for x in self.map_containers.iter_mut() {
+                x.try_to_update(&mut txn);
             }
         }
     }
