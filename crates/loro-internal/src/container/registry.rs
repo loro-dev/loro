@@ -491,19 +491,49 @@ pub trait ContainerWrapper {
     fn is_instance(&self) -> bool;
 
     /// If Container is temporary, convert it to ContainerInstance
-    fn try_to_update(&mut self, loro: &LoroCore);
+    fn try_to_update(&mut self, txn: &mut Transaction) {
+        if !self.is_instance() {
+            let idx = &self.idx();
+            *self.container_inner_mut() = txn.get_container_inner(idx);
+        }
+    }
 
     fn container_inner(&self) -> &ContainerInner;
+    fn container_inner_mut(&mut self) -> &mut ContainerInner;
 
     fn with_container<F, R>(&self, f: F) -> Result<R, LoroError>
     where
         F: FnOnce(&mut Self::Container) -> R;
 
-    fn with_transaction_container<F, R>(&self, txn: &mut Transaction, f: F) -> R
+    fn with_commit_container<T: Transact, F, R>(&mut self, txn: &T, f: F) -> Result<R, LoroError>
     where
-        F: FnOnce(&mut Transaction, &ContainerInner) -> R,
+        F: FnOnce(&mut Self::Container) -> R,
     {
-        f(txn, self.container_inner())
+        // TODO: opti
+        let mut txn = txn.transact();
+        match &mut txn {
+            TransactionWrap::AutoCommit(txn) => {
+                if txn.client_id != self.client_id() {
+                    return Err(LoroError::UnmatchedContext {
+                        expected: self.client_id(),
+                        found: txn.client_id,
+                    });
+                }
+                txn.implicit_commit();
+                self.try_to_update(txn);
+            }
+            TransactionWrap::Deferred(DeferredTransaction(txn)) => {
+                let mut txn = txn.try_lock().unwrap();
+                let txn = txn.as_mut();
+                if txn.client_id != self.client_id() {
+                    return Err(LoroError::UnmatchedContext {
+                        expected: self.client_id(),
+                        found: txn.client_id,
+                    });
+                }
+            }
+        }
+        self.with_container(f)
     }
 
     fn with_transaction_checked<T: Transact, F, R>(&self, txn: &T, f: F) -> Result<R, LoroError>
@@ -519,7 +549,7 @@ pub trait ContainerWrapper {
                         found: txn.client_id,
                     });
                 }
-                Ok(self.with_transaction_container(txn, f))
+                Ok(f(txn, self.container_inner()))
             }
             TransactionWrap::Deferred(DeferredTransaction(txn)) => {
                 let mut txn = txn.try_lock().unwrap();
@@ -530,7 +560,7 @@ pub trait ContainerWrapper {
                         found: txn.client_id,
                     });
                 }
-                Ok(self.with_transaction_container(txn, f))
+                Ok(f(txn, self.container_inner()))
             }
         }
     }
@@ -540,6 +570,8 @@ pub trait ContainerWrapper {
     fn id(&self) -> ContainerID {
         self.with_container(|x| x.id().clone()).unwrap()
     }
+
+    fn idx(&self) -> ContainerIdx;
 
     fn get_value(&self) -> LoroValue {
         self.with_container(|x| x.get_value()).unwrap()

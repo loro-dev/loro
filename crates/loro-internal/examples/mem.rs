@@ -58,8 +58,8 @@ fn realtime_sync(actor_num: usize, action_num: usize) {
             bench_utils::Action::Text { client, action } => {
                 let mut text = actors[client].get_text("text");
                 let bench_utils::TextAction { pos, ins, del } = action;
-                let pos = pos % (text.committed_len() + 1);
-                let del = del.min(text.committed_len() - pos);
+                let pos = pos % (text.len() + 1);
+                let del = del.min(text.len() - pos);
                 text.delete(&actors[client], pos, del).unwrap();
                 text.insert(&actors[client], pos, &ins).unwrap();
             }

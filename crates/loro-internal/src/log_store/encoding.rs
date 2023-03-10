@@ -11,7 +11,8 @@ use num::Zero;
 use rle::HasLength;
 
 use crate::{
-    dag::Dag, event::RawEvent, hierarchy::Hierarchy, LogStore, LoroCore, LoroError, VersionVector,
+    context::Context, dag::Dag, event::RawEvent, hierarchy::Hierarchy, LogStore, LoroError,
+    VersionVector,
 };
 
 use super::RemoteClientChanges;
@@ -128,12 +129,35 @@ impl EncodeConfig {
 pub struct LoroEncoder;
 
 impl LoroEncoder {
-    pub(crate) fn encode(loro: &LoroCore, config: EncodeConfig) -> Vec<u8> {
-        let store = loro
-            .log_store
-            .try_read()
-            .map_err(|_| LoroError::LockError)
-            .unwrap();
+    pub(crate) fn encode_context<C: Context>(ctx: &C, config: EncodeConfig) -> Vec<u8> {
+        let store = ctx.log_store();
+        let store = store.try_read().unwrap();
+        Self::encode(&store, config)
+    }
+
+    pub(crate) fn decode_context<C: Context>(
+        ctx: &C,
+        input: &[u8],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        let store = ctx.log_store();
+        let mut store = store.try_write().unwrap();
+        let hierarchy = ctx.hierarchy();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        Self::decode(&mut store, &mut hierarchy, input)
+    }
+
+    pub(crate) fn decode_batch_context<C: Context>(
+        ctx: &C,
+        input: &[Vec<u8>],
+    ) -> Result<Vec<RawEvent>, LoroError> {
+        let store = ctx.log_store();
+        let mut store = store.try_write().unwrap();
+        let hierarchy = ctx.hierarchy();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        Self::decode_batch(&mut store, &mut hierarchy, input)
+    }
+
+    pub(crate) fn encode(store: &LogStore, config: EncodeConfig) -> Vec<u8> {
         let version = ENCODE_SCHEMA_VERSION;
         let EncodeConfig { mode, compress } = config;
         let mut ans = Vec::from(MAGIC_BYTES);
@@ -160,9 +184,9 @@ impl LoroEncoder {
             mode => mode,
         };
         let encoded = match &mode {
-            EncodeMode::Updates(vv) => Self::encode_updates(&store, vv),
-            EncodeMode::RleUpdates(vv) => Self::encode_changes(&store, vv),
-            EncodeMode::Snapshot => Self::encode_snapshot(&store),
+            EncodeMode::Updates(vv) => Self::encode_updates(store, vv),
+            EncodeMode::RleUpdates(vv) => Self::encode_changes(store, vv),
+            EncodeMode::Snapshot => Self::encode_snapshot(store),
             _ => unreachable!(),
         }
         .unwrap();
@@ -177,7 +201,11 @@ impl LoroEncoder {
         ans
     }
 
-    pub fn decode(loro: &mut LoroCore, input: &[u8]) -> Result<Vec<RawEvent>, LoroError> {
+    pub fn decode(
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
+        input: &[u8],
+    ) -> Result<Vec<RawEvent>, LoroError> {
         let (magic_bytes, input) = input.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -195,35 +223,18 @@ impl LoroEncoder {
             c.read_to_end(&mut decoded).unwrap();
             &decoded
         };
-        let mut store = loro
-            .log_store
-            .try_write()
-            .map_err(|_| LoroError::LockError)?;
-        let mut hierarchy = loro
-            .hierarchy
-            .try_lock()
-            .map_err(|_| LoroError::LockError)?;
         match mode {
-            ConcreteEncodeMode::Updates => {
-                Self::decode_updates(&mut store, &mut hierarchy, decoded)
-            }
-            ConcreteEncodeMode::RleUpdates => {
-                Self::decode_changes(&mut store, &mut hierarchy, decoded)
-            }
-            ConcreteEncodeMode::Snapshot => {
-                Self::decode_snapshot(&mut store, &mut hierarchy, decoded)
-            }
+            ConcreteEncodeMode::Updates => Self::decode_updates(store, hierarchy, decoded),
+            ConcreteEncodeMode::RleUpdates => Self::decode_changes(store, hierarchy, decoded),
+            ConcreteEncodeMode::Snapshot => Self::decode_snapshot(store, hierarchy, decoded),
         }
     }
 
     pub fn decode_batch(
-        loro: &mut LoroCore,
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
         batch: &[Vec<u8>],
     ) -> Result<Vec<RawEvent>, LoroError> {
-        let mut store = loro
-            .log_store
-            .try_write()
-            .map_err(|_| LoroError::LockError)?;
         let mut changes: RemoteClientChanges = FxHashMap::default();
         for input in batch {
             let (magic_bytes, input) = input.split_at(4);
@@ -249,7 +260,7 @@ impl LoroEncoder {
                     encode_updates::decode_updates_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::RleUpdates => {
-                    encode_changes::decode_changes_to_inner_format(decoded, &store)?
+                    encode_changes::decode_changes_to_inner_format(decoded, store)?
                 }
                 _ => unreachable!("snapshot should not be batched"),
             };
@@ -260,7 +271,7 @@ impl LoroEncoder {
             }
         }
 
-        Ok(store.import(&mut loro.hierarchy.lock().unwrap(), changes))
+        Ok(store.import(hierarchy, changes))
     }
 }
 

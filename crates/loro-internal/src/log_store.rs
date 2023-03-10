@@ -16,14 +16,13 @@ use std::{
 use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
-use smallvec::SmallVec;
 
 use crate::{
     change::{Change, ChangeMergeCfg},
     configure::Configure,
     container::{
         registry::{ContainerIdx, ContainerInstance, ContainerRegistry},
-        ContainerID, ContainerTrait,
+        ContainerID,
     },
     dag::Dag,
     id::{ClientID, Counter},
@@ -384,10 +383,6 @@ impl LogStore {
         container: &ContainerIdx,
     ) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.reg.get_by_idx(container)
-    }
-
-    pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
-        self.reg.get_or_create_container_idx(container)
     }
 
     pub fn to_json(&self) -> LoroValue {

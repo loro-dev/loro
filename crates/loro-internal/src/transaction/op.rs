@@ -15,14 +15,18 @@ impl MapTxnOps {
         let mut ans = MapDiff::default();
         for (k, v) in self.added.into_iter() {
             let v = v.into_value().unwrap();
-            if let Some(old) = map_container.get(&k) {
+            if let Some(old) = map_container.try_get(&k).unwrap() {
                 ans.updated.insert(k, (old, v).into());
             } else {
                 ans.added.insert(k, v);
             }
         }
-        for (k, v) in self.deleted {
-            ans.deleted.insert(k, v.into_value().unwrap());
+        for (k, _) in self.deleted {
+            let deleted = map_container
+                .try_get(&k)
+                .unwrap()
+                .unwrap_or(LoroValue::Null);
+            ans.deleted.insert(k, deleted);
         }
         ans
     }
@@ -164,14 +168,10 @@ impl TransactionOp {
         }
     }
 
-    pub(crate) fn delete_map(
-        container: ContainerIdx,
-        key: &InternalString,
-        value: LoroValue,
-    ) -> Self {
+    pub(crate) fn delete_map(container: ContainerIdx, key: &InternalString) -> Self {
         TransactionOp::Map {
             container,
-            ops: MapTxnOps::new().delete(key, Value::from(value)),
+            ops: MapTxnOps::new().delete(key, Value::from(LoroValue::Null)),
         }
     }
 

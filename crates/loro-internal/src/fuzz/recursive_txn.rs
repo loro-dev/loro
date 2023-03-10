@@ -183,14 +183,20 @@ impl Actor {
         let new_txn = self.loro.transact();
         let txn = std::mem::replace(&mut self.txn, new_txn);
         drop(txn);
-        for x in self.text_containers.iter_mut() {
-            x.try_to_update(&self.loro);
-        }
-        for x in self.list_containers.iter_mut() {
-            x.try_to_update(&self.loro);
-        }
-        for x in self.map_containers.iter_mut() {
-            x.try_to_update(&self.loro);
+        {
+            // TODO
+            let new_txn = self.loro.transact();
+            if let TransactionWrap::AutoCommit(mut txn) = new_txn {
+                for x in self.text_containers.iter_mut() {
+                    x.try_to_update(&mut txn);
+                }
+                for x in self.list_containers.iter_mut() {
+                    x.try_to_update(&mut txn);
+                }
+                for x in self.map_containers.iter_mut() {
+                    x.try_to_update(&mut txn);
+                }
+            }
         }
     }
 }
@@ -325,8 +331,8 @@ impl Actionable for Vec<Actor> {
                     .list_containers
                     .get(*container_idx as usize)
                 {
-                    *key %= (list.committed_len() as u8).max(1);
-                    if *value == FuzzValue::Null && list.committed_len() == 0 {
+                    *key %= (list.len() as u8).max(1);
+                    if *value == FuzzValue::Null && list.len() == 0 {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -350,10 +356,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.committed_len() as u8).max(1);
+                    *pos %= (text.len() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.committed_len() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;

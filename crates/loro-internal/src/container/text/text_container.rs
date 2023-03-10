@@ -22,7 +22,7 @@ use crate::{
     transaction::op::{TextTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
-    LogStore, LoroCore, LoroError, Transact,
+    LogStore, LoroError, Transact,
 };
 
 use super::{
@@ -565,13 +565,13 @@ impl Text {
         self.try_get_value().unwrap()
     }
 
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> Result<usize, LoroError> {
+    pub fn try_len(&self) -> Result<usize, LoroError> {
         self.with_container(|x| x.text_len())
     }
 
-    pub fn committed_len(&self) -> usize {
-        self.with_recorder(|c| c.current_length)
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.with_recorder(|x| x.current_length)
     }
 
     fn with_recorder<F: FnOnce(&ListRecorder) -> R, R>(&self, f: F) -> R {
@@ -616,14 +616,6 @@ impl ContainerWrapper for Text {
         matches!(self.container, ContainerInner::Instance(_))
     }
 
-    fn try_to_update(&mut self, loro: &LoroCore) {
-        if !self.is_instance() {
-            let idx = self.idx();
-            let new = loro.get_text_by_idx(&idx).unwrap();
-            *self = new;
-        }
-    }
-
     fn container_inner(&self) -> &ContainerInner {
         &self.container
     }
@@ -639,5 +631,13 @@ impl ContainerWrapper for Text {
         let mut container_instance = w.try_lock().unwrap();
         let x = container_instance.as_text_mut().unwrap();
         Ok(f(x))
+    }
+
+    fn container_inner_mut(&mut self) -> &mut ContainerInner {
+        &mut self.container
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        self.container_idx
     }
 }

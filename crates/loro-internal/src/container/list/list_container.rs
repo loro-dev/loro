@@ -32,7 +32,7 @@ use crate::{
     transaction::op::{ListTxnOps, TransactionOp},
     value::LoroValue,
     version::PatchedVersionVector,
-    Container, LogStore, LoroCore, LoroError, Map, Text, Transact,
+    Container, LogStore, LoroError, Map, Text, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -601,7 +601,7 @@ impl List {
         txn: &T,
         value: P,
     ) -> Result<Option<Container>, LoroError> {
-        let pos = self.committed_len();
+        let pos = self.len();
         self.insert(txn, pos, value)
     }
 
@@ -616,16 +616,16 @@ impl List {
     }
 
     /// Removes the last element from the List and returns it, or None if it is empty.
-    // TODO: only loro support pop
-    // pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
-    //     if self.is_empty() {
-    //         return Ok(None);
-    //     }
-    //     let pos = self.len() - 1;
-    //     let ans = self.get(pos);
-    //     self.delete(txn, pos, 1)?;
-    //     Ok(ans)
-    // }
+    pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
+        let len = self.len();
+        if len == 0 {
+            return Ok(None);
+        }
+        let pos = len - 1;
+        let ans = self.try_get(pos)?;
+        self.delete(txn, pos, 1)?;
+        Ok(ans)
+    }
 
     /// Removes the specified range (pos..pos+len) from the List
     pub fn delete<T: Transact>(
@@ -647,23 +647,19 @@ impl List {
         self.with_container(|list| list.get(pos))
     }
 
-    /// Return the value of the element at that position or None if out of bounds.
-    ///
-    /// This is an ergonomics version of [`Self::try_get()`] if you assert the container is a [ContainerInstance].
-    ///
-    /// # Panic
-    /// This function will panic if the container is [ContainerTemp].
-    pub fn get(&self, pos: usize) -> Option<LoroValue> {
-        self.with_container(|list| list.get(pos)).unwrap()
+    /// return the value of the element at that position or None if out of bounds.
+    pub fn get<T: Transact>(&mut self, txn: &T, pos: usize) -> Option<LoroValue> {
+        self.with_commit_container(txn, |x| x.get(pos)).unwrap()
     }
 
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> Result<usize, LoroError> {
+    pub fn try_len(&self) -> Result<usize, LoroError> {
         self.with_container(|list| list.values_len())
     }
 
-    pub fn committed_len(&self) -> usize {
-        self.with_recorder(|c| c.current_length)
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        // self.with_commit_container(txn, |x| x.values_len()).unwrap()
+        self.with_recorder(|x| x.current_length)
     }
 
     // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
@@ -745,12 +741,12 @@ impl ContainerWrapper for List {
         &self.container
     }
 
-    fn try_to_update(&mut self, loro: &LoroCore) {
-        if !self.is_instance() {
-            let idx = self.idx();
-            let new = loro.get_list_by_idx(&idx).unwrap();
-            *self = new;
-        }
+    fn container_inner_mut(&mut self) -> &mut ContainerInner {
+        &mut self.container
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        self.container_idx
     }
 }
 
@@ -767,8 +763,8 @@ mod test {
             list.insert(&txn, 0, 123).unwrap();
             list.insert(&txn, 1, 123).unwrap();
         }
-        assert_eq!(list.get(0), Some(123.into()));
-        assert_eq!(list.get(1), Some(123.into()));
+        assert_eq!(list.try_get(0).unwrap(), Some(123.into()));
+        assert_eq!(list.try_get(1).unwrap(), Some(123.into()));
     }
 
     // #[test]

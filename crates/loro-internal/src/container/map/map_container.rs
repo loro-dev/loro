@@ -10,7 +10,7 @@ use crate::{
     id::ID,
     op::OwnedRichOp,
     transaction::op::{MapTxnOps, TransactionOp},
-    Container, List, LogStore, LoroCore, LoroError, Text, Transact,
+    Container, List, LogStore, LoroError, Text, Transact,
 };
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
@@ -480,16 +480,15 @@ impl Map {
 
     pub fn delete<T: Transact>(&mut self, txn: &T, key: &str) -> Result<(), LoroError> {
         self.with_transaction_checked(txn, |txn, _| {
-            let deleted = self.get(key).unwrap_or(LoroValue::Null);
             txn.push(
-                TransactionOp::delete_map(self.idx(), &key.to_string().into(), deleted),
+                TransactionOp::delete_map(self.idx(), &key.to_string().into()),
                 None,
             )
         })?
     }
 
-    pub fn get(&self, key: &str) -> Option<LoroValue> {
-        self.with_container(|map| map.get(&key.into()).cloned())
+    pub fn get<T: Transact>(&mut self, txn: &T, key: &str) -> Option<LoroValue> {
+        self.with_commit_container(txn, |map| map.get(&key.into()).cloned())
             .unwrap()
     }
 
@@ -557,14 +556,6 @@ impl ContainerWrapper for Map {
         matches!(self.container, ContainerInner::Instance(_))
     }
 
-    fn try_to_update(&mut self, loro: &LoroCore) {
-        if !self.is_instance() {
-            let idx = self.idx();
-            let new = loro.get_map_by_idx(&idx).unwrap();
-            *self = new;
-        }
-    }
-
     fn container_inner(&self) -> &ContainerInner {
         &self.container
     }
@@ -579,5 +570,13 @@ impl ContainerWrapper for Map {
         let mut container_instance = w.try_lock().unwrap();
         let map = container_instance.as_map_mut().unwrap();
         Ok(f(map))
+    }
+
+    fn container_inner_mut(&mut self) -> &mut ContainerInner {
+        &mut self.container
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        self.container_idx
     }
 }

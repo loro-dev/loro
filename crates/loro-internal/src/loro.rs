@@ -129,30 +129,30 @@ impl LoroCore {
 
     /// this method will always compress
     pub fn encode_all(&self) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::snapshot())
+        LoroEncoder::encode_context(self, EncodeConfig::snapshot())
     }
 
     /// encode without compress
     pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::from_vv(from).without_compress())
+        LoroEncoder::encode_context(self, EncodeConfig::from_vv(from).without_compress())
     }
 
     pub fn encode_from_compress(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::from_vv(from).with_default_compress())
+        LoroEncoder::encode_context(self, EncodeConfig::from_vv(from).with_default_compress())
     }
 
     pub fn encode_with_cfg(&self, config: EncodeConfig) -> Vec<u8> {
-        LoroEncoder::encode(self, config)
+        LoroEncoder::encode_context(self, config)
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode(self, input)?;
+        let events = LoroEncoder::decode_context(self, input)?;
         self.notify(events);
         Ok(())
     }
 
     pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode_batch(self, input)?;
+        let events = LoroEncoder::decode_batch_context(self, input)?;
         self.notify(events);
         Ok(())
     }

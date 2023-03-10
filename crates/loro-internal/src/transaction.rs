@@ -7,10 +7,14 @@ use fxhash::{FxHashMap, FxHashSet};
 use smallvec::smallvec;
 
 use crate::{
-    container::{registry::ContainerIdx, ContainerID, ContainerTrait},
+    container::{
+        registry::{ContainerIdx, ContainerInner},
+        ContainerID, ContainerTrait,
+    },
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
     id::ClientID,
+    log_store::LoroEncoder,
     transaction::op::Value,
     version::Frontiers,
     ContainerType, LogStore, LoroCore, LoroError, LoroValue, Map,
@@ -108,6 +112,17 @@ impl Transaction {
         store.next_container_idx()
     }
 
+    pub(crate) fn get_container_inner(&self, idx: &ContainerIdx) -> ContainerInner {
+        let store = self.store.upgrade().unwrap();
+        let store = store.try_read().unwrap();
+        let inner = store.get_container_by_idx(idx);
+        if let Some(inner) = inner {
+            ContainerInner::Instance(inner)
+        } else {
+            todo!()
+        }
+    }
+
     pub(crate) fn push(
         &mut self,
         op: TransactionOp,
@@ -124,17 +139,6 @@ impl Transaction {
             .or_insert_with(Vec::new)
             .push(op);
         Ok(())
-    }
-
-    fn with_store_hierarchy_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&Self, &mut LogStore, &mut Hierarchy) -> R,
-    {
-        let store = self.store.upgrade().unwrap();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        f(self, &mut store, &mut hierarchy)
     }
 
     fn apply_ops_queue_event(&mut self, store: &mut LogStore, hierarchy: &mut Hierarchy) {
@@ -160,11 +164,11 @@ impl Transaction {
             let container_id = container.id().clone();
             let store_ops = container.apply_txn_op(store, op);
             drop(container);
-            let (old_version, new_version) = store.append_local_ops(&store_ops);
+            let (_, new_version) = store.append_local_ops(&store_ops);
             let new_version = new_version.into();
             // update latest vv
             let _version = std::mem::replace(&mut self.latest_vv, new_version);
-            let event = if hierarchy.should_notify(&container_id) {
+            if let Some(event) = if hierarchy.should_notify(&container_id) {
                 hierarchy
                     .get_abs_path(&store.reg, &container_id)
                     .map(|abs_path| RawEvent {
@@ -177,21 +181,26 @@ impl Transaction {
                     })
             } else {
                 None
-            };
-            if let Some(event) = event {
-                // cache events
-                if let Some(old) = self.pending_events.get_mut(&container_id) {
-                    compose_two_events(old, event);
-                } else {
-                    self.pending_events.insert(container_id, event);
-                }
+            } {
+                self.append_event(event);
             }
+        }
+    }
+
+    fn append_event(&mut self, event: RawEvent) {
+        // cache events
+        let container_id = &event.container_id;
+        if let Some(old) = self.pending_events.get_mut(&container_id) {
+            compose_two_events(old, event);
+        } else {
+            self.pending_events.insert(container_id.clone(), event);
         }
     }
 
     fn emit_events(&mut self) {
         let pending_events = std::mem::take(&mut self.pending_events);
-        for (_, event) in pending_events {
+        for (_, mut event) in pending_events {
+            event.new_version = self.latest_vv.clone();
             let hierarchy = self.hierarchy.upgrade().unwrap();
             Hierarchy::notify_without_lock(hierarchy, event);
         }
@@ -313,7 +322,7 @@ impl Transaction {
 
     /// For now, when we get value or decode apply, we will incrementally commit the pending ops to store but will not emit events.
     ///
-    fn implicit_commit(&mut self) {
+    pub(crate) fn implicit_commit(&mut self) {
         // TODO: transaction commit
         // 1. compress op
         // 2. maybe rebase
@@ -328,6 +337,19 @@ impl Transaction {
             self.compress_ops(&mut store, &mut hierarchy);
             self.apply_ops_queue_event(&mut store, &mut hierarchy);
         }
+    }
+
+    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        self.implicit_commit();
+        let store = self.store.upgrade().unwrap();
+        let mut store = store.try_write().unwrap();
+        let hierarchy = self.hierarchy.upgrade().unwrap();
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
+        for event in events {
+            self.append_event(event)
+        }
+        Ok(())
     }
 
     pub fn commit(&mut self) {
