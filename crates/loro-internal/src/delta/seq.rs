@@ -270,47 +270,40 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     // If the new_op is merged, return true
     pub fn push(&mut self, new_op: DeltaItem<Value, M>) -> bool {
         let mut index = self.vec.len();
-        let last_op = self.vec.last_mut();
+        let last_op = self.vec.pop();
         if let Some(mut last_op) = last_op {
             if new_op.is_delete() && last_op.is_delete() {
-                self.vec[index - 1] =
-                    DeltaItem::Delete(last_op.content_len() + new_op.content_len());
+                *last_op.as_delete_mut().unwrap() += new_op.content_len();
+                self.vec.push(last_op);
                 return true;
             }
             // Since it does not matter if we insert before or after deleting at the same index,
             // always prefer to insert first
             if last_op.is_delete() && new_op.is_insert() {
                 index -= 1;
-                if index == 0 {
-                    self.vec.insert(0, new_op);
-                    return true;
-                }
-                let _last_op = self.vec.get_mut(index - 1);
+                let _last_op = self.vec.pop();
+                self.vec.push(last_op);
                 if let Some(_last_op_inner) = _last_op {
                     last_op = _last_op_inner;
                 } else {
                     self.vec.insert(0, new_op);
                     return true;
-                }
+                };
             }
             if new_op.meta() == last_op.meta() {
                 if new_op.is_insert() && last_op.is_insert() {
-                    // TODO avoid cloning
-                    let mut value = last_op.as_insert_mut().unwrap().0.clone();
-                    value.value_extend(new_op.as_insert().unwrap().0.clone());
-                    self.vec[index - 1] = DeltaItem::Insert {
-                        value,
-                        meta: new_op.meta().clone(),
-                    };
+                    let value = last_op.as_insert_mut().unwrap().0;
+                    value.value_extend(new_op.into_insert().unwrap().0);
+                    self.vec.push(last_op);
                     return true;
                 } else if new_op.is_retain() && last_op.is_retain() {
-                    self.vec[index - 1] = DeltaItem::Retain {
-                        len: last_op.content_len() + new_op.content_len(),
-                        meta: new_op.meta().clone(),
-                    };
+                    *last_op.as_retain_mut().unwrap().0 += new_op.content_len();
+                    self.vec.push(last_op);
                     return true;
                 }
             }
+
+            self.vec.push(last_op);
         }
         if index == self.vec.len() {
             self.vec.push(new_op);
