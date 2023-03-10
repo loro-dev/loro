@@ -46,6 +46,37 @@ mod run {
             b.iter(|| {
                 let mut loro = LoroCore::default();
                 let mut text = loro.get_text("text");
+
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&loro, *pos, *del).unwrap();
+                    text.insert(&loro, *pos, ins).unwrap();
+                }
+            })
+        });
+
+        b.bench_function("B4_Per100_Txn", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                let mut text = loro.get_text("text");
+                let mut n = 0;
+                let mut txn = loro.transact();
+                for TextAction { pos, ins, del } in actions.iter() {
+                    if n == 100 {
+                        n = 0;
+                        drop(txn);
+                        txn = loro.transact();
+                    }
+                    n += 1;
+                    text.delete(&txn, *pos, *del).unwrap();
+                    text.insert(&txn, *pos, ins).unwrap();
+                }
+            })
+        });
+
+        b.bench_function("B4_All_Txn", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                let mut text = loro.get_text("text");
                 {
                     let txn = loro.transact();
                     for TextAction { pos, ins, del } in actions.iter() {
