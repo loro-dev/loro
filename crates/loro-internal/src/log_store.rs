@@ -5,7 +5,7 @@ mod encoding;
 mod import;
 mod iter;
 
-use crate::LoroValue;
+use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
@@ -74,7 +74,7 @@ pub struct LogStore {
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
-    frontiers: SmallVec<[ID; 2]>,
+    frontiers: Frontiers,
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
@@ -228,7 +228,7 @@ impl LogStore {
     }
 
     /// this method would not get the container and apply op
-    pub fn append_local_ops(&mut self, ops: &[Op]) -> (SmallVec<[ID; 2]>, &[ID]) {
+    pub fn append_local_ops(&mut self, ops: &[Op]) -> (Frontiers, &[ID]) {
         let old_version = self.frontiers.clone();
         if ops.is_empty() {
             return (old_version, self.frontier());

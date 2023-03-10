@@ -120,7 +120,7 @@ impl Actor {
                             for (key, value) in map_diff.added.iter() {
                                 map.insert(key.to_string(), value.clone());
                             }
-                            for key in map_diff.deleted.iter() {
+                            for (key, _v) in map_diff.deleted.iter() {
                                 // map.remove(&key.to_string());
                                 map.insert(key.to_string(), LoroValue::Null);
                             }

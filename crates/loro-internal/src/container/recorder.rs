@@ -115,7 +115,7 @@ impl MapRecorder {
     }
     pub(crate) fn check_insert(&mut self, ops: &MapTxnOps) -> Result<(), LoroError> {
         self.keys.extend(ops.added.keys().cloned());
-        self.keys.retain(|k| !ops.deleted.contains(k));
+        self.keys.retain(|k| !ops.deleted.contains_key(k));
         Ok(())
     }
 }

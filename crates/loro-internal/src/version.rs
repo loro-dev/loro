@@ -300,7 +300,7 @@ impl VersionVector {
     }
 
     #[inline]
-    pub fn get_frontiers(&self) -> SmallVec<[ID; 2]> {
+    pub fn get_frontiers(&self) -> Frontiers {
         self.iter()
             .filter_map(|(client_id, &counter)| {
                 if counter > 0 {

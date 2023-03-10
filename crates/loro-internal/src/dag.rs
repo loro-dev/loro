@@ -24,7 +24,7 @@ use crate::{
     change::Lamport,
     id::{ClientID, Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
-    version::{IdSpanVector, VersionVector, VersionVectorDiff},
+    version::{Frontiers, IdSpanVector, VersionVector, VersionVectorDiff},
 };
 
 use self::{
@@ -55,7 +55,7 @@ pub(crate) trait Dag {
 }
 
 pub(crate) trait DagUtils: Dag {
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>;
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> Frontiers;
     /// Slow, should probably only use on dev
     fn get_vv(&self, id: ID) -> VersionVector;
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
@@ -76,7 +76,7 @@ pub(crate) trait DagUtils: Dag {
 
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]> {
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> Frontiers {
         // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
@@ -305,7 +305,7 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
-fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> SmallVec<[ID; 2]>
+fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> Frontiers
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
@@ -472,7 +472,7 @@ where
     ans
 }
 
-fn _find_common_ancestor_new<'a, F, D>(get: &'a F, left: &[ID], right: &[ID]) -> SmallVec<[ID; 2]>
+fn _find_common_ancestor_new<'a, F, D>(get: &'a F, left: &[ID], right: &[ID]) -> Frontiers
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
@@ -501,7 +501,7 @@ where
         }
     }
 
-    let mut ans: SmallVec<[ID; 2]> = Default::default();
+    let mut ans: Frontiers = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<&'a D>>(

@@ -1,5 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::{
     container::ContainerID,
@@ -14,7 +15,7 @@ pub struct RawEvent {
     pub old_version: Frontiers,
     pub new_version: Frontiers,
     pub local: bool,
-    pub diff: Vec<Diff>,
+    pub diff: SmallVec<[Diff; 1]>,
     pub abs_path: Path,
 }
 
@@ -27,7 +28,7 @@ pub struct Event {
     /// the relative path from current_target to target
     pub relative_path: Path,
     pub absolute_path: Path,
-    pub diff: Vec<Diff>,
+    pub diff: SmallVec<[Diff; 1]>,
     pub local: bool,
 }
 
@@ -55,7 +56,7 @@ pub enum Index {
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String>),
-    Map(MapDiff),
+    Map(MapDiff<LoroValue>),
 }
 
 // pub type Observer = Box<dyn FnMut(&Event) + Send>;

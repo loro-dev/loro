@@ -5,7 +5,7 @@ use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     HasLength, RleTree,
 };
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
@@ -355,7 +355,7 @@ impl ContainerTrait for ListContainer {
         import_context: &mut ImportContext,
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
-        let mut diff = vec![];
+        let mut diff = smallvec![];
         for effect in self.tracker.as_mut().unwrap().iter_effects(
             import_context.patched_old_vv.as_ref().unwrap(),
             &import_context.spans,

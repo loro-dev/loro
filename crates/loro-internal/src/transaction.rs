@@ -4,6 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
+use smallvec::smallvec;
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID, ContainerTrait},
@@ -11,6 +12,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::ClientID,
     transaction::op::Value,
+    version::Frontiers,
     ContainerType, LogStore, LoroCore, LoroError, LoroValue, Map,
 };
 
@@ -64,7 +66,7 @@ impl Clone for DeferredTransaction {
 }
 
 pub struct Transaction {
-    client_id: ClientID,
+    pub(crate) client_id: ClientID,
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     // sort by [ContainerIdx]
@@ -72,15 +74,18 @@ pub struct Transaction {
     compressed_op: Vec<TransactionOp>,
     created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
     deleted_container: FxHashSet<ContainerIdx>,
+    pending_events: FxHashMap<ContainerID, RawEvent>,
+    start_vv: Frontiers,
+    latest_vv: Frontiers,
     committed: bool,
 }
 
 impl Transaction {
     pub(crate) fn new(store: Weak<RwLock<LogStore>>, hierarchy: Weak<Mutex<Hierarchy>>) -> Self {
-        let client_id = {
+        let (client_id, start_vv): (u64, Frontiers) = {
             let store = store.upgrade().unwrap();
             let store = store.try_read().unwrap();
-            store.this_client_id
+            (store.this_client_id, store.frontiers().into())
         };
         Self {
             client_id,
@@ -90,6 +95,9 @@ impl Transaction {
             compressed_op: Default::default(),
             created_container: Default::default(),
             deleted_container: Default::default(),
+            pending_events: Default::default(),
+            latest_vv: start_vv.clone(),
+            start_vv,
             committed: false,
         }
     }
@@ -98,10 +106,6 @@ impl Transaction {
         let store = self.store.upgrade().unwrap();
         let store = store.try_read().unwrap();
         store.next_container_idx()
-    }
-
-    pub(crate) fn client_id(&self) -> ClientID {
-        self.client_id
     }
 
     pub(crate) fn push(
@@ -133,75 +137,63 @@ impl Transaction {
         f(self, &mut store, &mut hierarchy)
     }
 
-    fn apply_ops_emit_event(&mut self) {
+    fn apply_ops_queue_event(&mut self, store: &mut LogStore, hierarchy: &mut Hierarchy) {
         let compressed_op = std::mem::take(&mut self.compressed_op);
-        let events = self.with_store_hierarchy_mut(|_txn, store, hierarchy| {
-            let mut events = Vec::with_capacity(compressed_op.len());
-            for op in compressed_op {
-                let idx = op.container_idx();
-                let type_ = op.container_type();
-                // TODO: diff remove vec!
-                let diff = vec![match type_ {
-                    ContainerType::List => {
-                        Diff::List(op.as_list().unwrap().1.clone().into_event_format())
-                    }
-                    ContainerType::Map => {
-                        let container = store.reg.get_by_idx(&idx).unwrap();
-                        let map = Map::from_instance(container, store.this_client_id);
-                        Diff::Map(op.as_map().unwrap().1.clone().into_event_format(&map))
-                    }
-                    ContainerType::Text => Diff::Text(op.as_text().unwrap().1.clone()),
-                }];
-                let container = store.reg.get_by_idx(&idx).unwrap();
-                let container = container.upgrade().unwrap();
-                let mut container = container.try_lock().unwrap();
-                let container_id = container.id().clone();
-                let store_ops = container.apply_txn_op(store, op);
-                drop(container);
-                let (old_version, new_version) = store.append_local_ops(&store_ops);
-                let new_version = new_version.into();
-                let event = if hierarchy.should_notify(&container_id) {
-                    match type_ {
-                        ContainerType::List => hierarchy
-                            .get_abs_path(&store.reg, &container_id)
-                            .map(|abs_path| RawEvent {
-                                container_id,
-                                old_version,
-                                new_version,
-                                diff,
-                                local: true,
-                                abs_path,
-                            }),
-                        ContainerType::Text => hierarchy
-                            .get_abs_path(&store.reg, &container_id)
-                            .map(|abs_path| RawEvent {
-                                container_id,
-                                old_version,
-                                new_version,
-                                diff,
-                                local: true,
-                                abs_path,
-                            }),
-                        ContainerType::Map => hierarchy
-                            .get_abs_path(&store.reg, &container_id)
-                            .map(|abs_path| RawEvent {
-                                container_id,
-                                old_version,
-                                new_version,
-                                diff,
-                                local: true,
-                                abs_path,
-                            }),
-                    }
+        for op in compressed_op {
+            let idx = op.container_idx();
+            let type_ = op.container_type();
+            let diff = smallvec![match type_ {
+                ContainerType::List => {
+                    Diff::List(op.as_list().unwrap().1.clone().into_event_format())
+                }
+                ContainerType::Map => {
+                    let container = store.reg.get_by_idx(&idx).unwrap();
+                    let map = Map::from_instance(container, store.this_client_id);
+                    // we need lookup the container to know the diff is added or updated
+                    Diff::Map(op.as_map().unwrap().1.clone().into_event_format(&map))
+                }
+                ContainerType::Text => Diff::Text(op.as_text().unwrap().1.clone()),
+            }];
+            let container = store.reg.get_by_idx(&idx).unwrap();
+            let container = container.upgrade().unwrap();
+            let mut container = container.try_lock().unwrap();
+            let container_id = container.id().clone();
+            let store_ops = container.apply_txn_op(store, op);
+            drop(container);
+            let (old_version, new_version) = store.append_local_ops(&store_ops);
+            let new_version = new_version.into();
+            // update latest vv
+            let _version = std::mem::replace(&mut self.latest_vv, new_version);
+            let event = if hierarchy.should_notify(&container_id) {
+                hierarchy
+                    .get_abs_path(&store.reg, &container_id)
+                    .map(|abs_path| RawEvent {
+                        container_id: container_id.clone(),
+                        old_version: self.start_vv.clone(),
+                        new_version: _version,
+                        diff,
+                        local: true,
+                        abs_path,
+                    })
+            } else {
+                None
+            };
+            if let Some(event) = event {
+                // cache events
+                if let Some(old) = self.pending_events.get_mut(&container_id) {
+                    compose_two_events(old, event);
                 } else {
-                    None
-                };
-                events.push(event);
+                    self.pending_events.insert(container_id, event);
+                }
             }
-            events
-        });
-        for event in events.into_iter().flatten() {
-            Hierarchy::notify_without_lock(self.hierarchy.upgrade().unwrap(), event);
+        }
+    }
+
+    fn emit_events(&mut self) {
+        let pending_events = std::mem::take(&mut self.pending_events);
+        for (_, event) in pending_events {
+            let hierarchy = self.hierarchy.upgrade().unwrap();
+            Hierarchy::notify_without_lock(hierarchy, event);
         }
     }
 
@@ -210,26 +202,26 @@ impl Transaction {
         idx: ContainerIdx,
         type_: ContainerType,
         parent_idx: ContainerIdx,
+        s: &mut LogStore,
+        h: &mut Hierarchy,
     ) -> ContainerID {
-        self.with_store_hierarchy_mut(|_txn, s, h| {
-            let id = s.next_id();
-            let mut container_id = ContainerID::new_normal(id, type_);
+        let id = s.next_id();
+        let mut container_id = ContainerID::new_normal(id, type_);
 
-            while s.reg.contains(&container_id) {
-                if let ContainerID::Normal { id, .. } = &mut container_id {
-                    id.counter += 1;
-                }
+        while s.reg.contains(&container_id) {
+            if let ContainerID::Normal { id, .. } = &mut container_id {
+                id.counter += 1;
             }
+        }
 
-            let parent_id = s.reg.get_id(parent_idx).unwrap();
-            h.add_child(parent_id, &container_id);
+        let parent_id = s.reg.get_id(parent_idx).unwrap();
+        h.add_child(parent_id, &container_id);
 
-            s.reg.register_txn(idx, container_id.clone());
-            container_id
-        })
+        s.reg.register_txn(idx, container_id.clone());
+        container_id
     }
 
-    fn compress_ops(&mut self) {
+    fn compress_ops(&mut self, store: &mut LogStore, hierarchy: &mut Hierarchy) {
         let pending_ops = std::mem::take(&mut self.pending_ops);
         for (idx, ops) in pending_ops {
             if self.deleted_container.remove(&idx) {
@@ -239,7 +231,7 @@ impl Transaction {
             match type_ {
                 ContainerType::List => {
                     let new_op = ops.into_iter().fold(ListTxnOps::new(), |a, mut b| {
-                        self.convert_op_container(&mut b);
+                        self.convert_op_container(&mut b, store, hierarchy);
                         let b = b.list_inner();
                         a.compose(b)
                     });
@@ -260,7 +252,7 @@ impl Transaction {
                 }
                 ContainerType::Map => {
                     let new_op = ops.into_iter().fold(MapTxnOps::new(), |a, mut b| {
-                        self.convert_op_container(&mut b);
+                        self.convert_op_container(&mut b, store, hierarchy);
                         let b = b.map_inner();
                         a.compose(b)
                     });
@@ -277,7 +269,12 @@ impl Transaction {
         }
     }
 
-    fn convert_op_container(&mut self, op: &mut TransactionOp) {
+    fn convert_op_container(
+        &mut self,
+        op: &mut TransactionOp,
+        store: &mut LogStore,
+        hierarchy: &mut Hierarchy,
+    ) {
         match op {
             TransactionOp::List { container, ops } => {
                 // TODO: cache the containers?
@@ -289,7 +286,8 @@ impl Transaction {
                                     .get_mut(container)
                                     .unwrap()
                                     .remove(idx);
-                                let id = self.register_container(*idx, *type_, *container);
+                                let id = self
+                                    .register_container(*idx, *type_, *container, store, hierarchy);
                                 *v = Value::Value(LoroValue::Unresolved(id.into()));
                             }
                         }
@@ -303,7 +301,8 @@ impl Transaction {
                             .get_mut(container)
                             .unwrap()
                             .remove(idx);
-                        let id = self.register_container(*idx, *type_, *container);
+                        let id =
+                            self.register_container(*idx, *type_, *container, store, hierarchy);
                         *v = Value::Value(LoroValue::Unresolved(id.into()));
                     }
                 }
@@ -312,18 +311,32 @@ impl Transaction {
         };
     }
 
-    pub fn commit(&mut self) {
-        if self.committed {
-            return;
-        }
-        self.committed = true;
+    /// For now, when we get value or decode apply, we will incrementally commit the pending ops to store but will not emit events.
+    ///
+    fn implicit_commit(&mut self) {
         // TODO: transaction commit
         // 1. compress op
         // 2. maybe rebase
         // 3. batch apply op
         // 4. aggregate event
-        self.compress_ops();
-        self.apply_ops_emit_event();
+        {
+            let store = self.store.upgrade().unwrap();
+            let mut store = store.try_write().unwrap();
+            let hierarchy = self.hierarchy.upgrade().unwrap();
+            let mut hierarchy = hierarchy.try_lock().unwrap();
+
+            self.compress_ops(&mut store, &mut hierarchy);
+            self.apply_ops_queue_event(&mut store, &mut hierarchy);
+        }
+    }
+
+    pub fn commit(&mut self) {
+        if self.committed {
+            return;
+        }
+        self.committed = true;
+        self.implicit_commit();
+        self.emit_events();
     }
 }
 
@@ -331,4 +344,15 @@ impl Drop for Transaction {
     fn drop(&mut self) {
         self.commit()
     }
+}
+
+fn compose_two_events(a: &mut RawEvent, mut b: RawEvent) {
+    let this_diff = std::mem::take(&mut a.diff).pop().unwrap();
+    let other_diff = std::mem::take(&mut b.diff).pop().unwrap();
+    let diff = match other_diff {
+        Diff::List(x) => Diff::List(this_diff.into_list().unwrap().compose(x)),
+        Diff::Map(x) => Diff::Map(this_diff.into_map().unwrap().compose(x)),
+        Diff::Text(x) => Diff::Text(this_diff.into_text().unwrap().compose(x)),
+    };
+    a.diff.push(diff);
 }

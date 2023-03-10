@@ -2,7 +2,7 @@ use std::sync::{Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use tracing::instrument;
 
 use crate::{
@@ -329,7 +329,7 @@ impl ContainerTrait for TextContainer {
         import_context: &mut ImportContext,
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
-        let mut diff = vec![];
+        let mut diff = smallvec![];
         for effect in self.tracker.as_mut().unwrap().iter_effects(
             import_context.patched_old_vv.as_ref().unwrap(),
             &import_context.spans,

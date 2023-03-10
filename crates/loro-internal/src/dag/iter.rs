@@ -6,7 +6,7 @@ use std::{
     ops::{Range, RangeBounds},
 };
 
-use crate::version::IdSpanVector;
+use crate::version::{Frontiers, IdSpanVector};
 
 use super::*;
 
@@ -193,10 +193,10 @@ impl RangeBounds<ID> for (ID, ID) {
 /// When visiting a span, we will checkout to the version where the span was created
 pub(crate) struct DagCausalIter<'a, Dag> {
     dag: &'a Dag,
-    frontier: SmallVec<[ID; 2]>,
+    frontier: Frontiers,
     target: IdSpanVector,
     in_degrees: FxHashMap<ID, usize>,
-    succ: BTreeMap<ID, SmallVec<[ID; 2]>>,
+    succ: BTreeMap<ID, Frontiers>,
     stack: Vec<ID>,
 }
 
@@ -211,7 +211,7 @@ pub(crate) struct IterReturn<'a, T> {
 }
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
-    pub fn new(dag: &'a D, from: SmallVec<[ID; 2]>, target: IdSpanVector) -> Self {
+    pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
         let mut in_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ = BTreeMap::default();
         let mut stack = Vec::new();

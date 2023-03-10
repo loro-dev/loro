@@ -24,6 +24,7 @@ use crate::{
     op::{RemoteContent, RemoteOp},
     smstring::SmString,
     span::HasIdSpan,
+    version::Frontiers,
     InternalString, LogStore, LoroError, LoroValue, VersionVector,
 };
 
@@ -318,7 +319,7 @@ pub(super) fn decode_changes_to_inner_format(
                 ops.push(remote_op);
             }
 
-            let mut deps: SmallVec<[ID; 2]> = (0..deps_len)
+            let mut deps: Frontiers = (0..deps_len)
                 .map(|_| {
                     let raw = deps_iter.next().unwrap();
                     ID::new(clients[raw.client_idx as usize], raw.counter)
@@ -401,7 +402,7 @@ pub(super) fn decode_changes_to_inner_format(
 }
 
 pub(crate) fn get_lamport_by_deps(
-    deps: &SmallVec<[ID; 2]>,
+    deps: &Frontiers,
     lamport_map: &FxHashMap<ClientID, Vec<(Range<Counter>, Lamport)>>,
     store: Option<&LogStore>,
 ) -> Result<Lamport, ClientID> {

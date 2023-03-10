@@ -7,6 +7,7 @@ use crate::{
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
+use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::{collections::VecDeque, sync::MutexGuard};
 use tracing::instrument;
@@ -34,7 +35,7 @@ pub struct ImportContext {
     pub patched_old_vv: Option<PatchedVersionVector>,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
-    pub diff: Vec<(ContainerID, Vec<Diff>)>,
+    pub diff: Vec<(ContainerID, SmallVec<[Diff; 1]>)>,
 }
 
 impl ImportContext {
@@ -46,10 +47,10 @@ impl ImportContext {
             }
         }
 
-        self.diff.push((id.clone(), vec![diff]));
+        self.diff.push((id.clone(), smallvec![diff]));
     }
 
-    pub fn push_diff_vec(&mut self, id: &ContainerID, mut diff: Vec<Diff>) {
+    pub fn push_diff_vec(&mut self, id: &ContainerID, mut diff: SmallVec<[Diff; 1]>) {
         if let Some((last_id, vec)) = self.diff.last_mut() {
             if last_id == id {
                 vec.append(&mut diff);

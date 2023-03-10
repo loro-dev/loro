@@ -2,16 +2,16 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     container::registry::ContainerIdx,
-    delta::{Delta, DeltaItem, MapDiff, MapDiffRaw, Meta},
+    delta::{Delta, DeltaItem, MapDiff, Meta},
     ContainerType, InternalString, LoroValue, Map,
 };
 
 pub(crate) type ListTxnOps = Delta<Vec<Value>>;
 pub(crate) type TextTxnOps = Delta<String>;
-pub(crate) type MapTxnOps = MapDiffRaw<Value>;
+pub(crate) type MapTxnOps = MapDiff<Value>;
 
 impl MapTxnOps {
-    pub(super) fn into_event_format(self, map_container: &Map) -> MapDiff {
+    pub(super) fn into_event_format(self, map_container: &Map) -> MapDiff<LoroValue> {
         let mut ans = MapDiff::default();
         for (k, v) in self.added.into_iter() {
             let v = v.into_value().unwrap();
@@ -21,8 +21,8 @@ impl MapTxnOps {
                 ans.added.insert(k, v);
             }
         }
-        for k in self.deleted {
-            ans.deleted.insert(k);
+        for (k, v) in self.deleted {
+            ans.deleted.insert(k, v.into_value().unwrap());
         }
         ans
     }
@@ -164,10 +164,14 @@ impl TransactionOp {
         }
     }
 
-    pub(crate) fn delete_map(container: ContainerIdx, key: &InternalString) -> Self {
+    pub(crate) fn delete_map(
+        container: ContainerIdx,
+        key: &InternalString,
+        value: LoroValue,
+    ) -> Self {
         TransactionOp::Map {
             container,
-            ops: MapTxnOps::new().delete(key),
+            ops: MapTxnOps::new().delete(key, Value::from(value)),
         }
     }
 

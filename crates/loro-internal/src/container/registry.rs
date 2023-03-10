@@ -513,10 +513,10 @@ pub trait ContainerWrapper {
         let mut txn = txn.transact();
         match &mut txn {
             TransactionWrap::AutoCommit(txn) => {
-                if txn.client_id() != self.client_id() {
+                if txn.client_id != self.client_id() {
                     return Err(LoroError::UnmatchedContext {
                         expected: self.client_id(),
-                        found: txn.client_id(),
+                        found: txn.client_id,
                     });
                 }
                 Ok(self.with_transaction_container(txn, f))
@@ -524,10 +524,10 @@ pub trait ContainerWrapper {
             TransactionWrap::Deferred(DeferredTransaction(txn)) => {
                 let mut txn = txn.try_lock().unwrap();
                 let txn = txn.as_mut();
-                if txn.client_id() != self.client_id() {
+                if txn.client_id != self.client_id() {
                     return Err(LoroError::UnmatchedContext {
                         expected: self.client_id(),
-                        found: txn.client_id(),
+                        found: txn.client_id,
                     });
                 }
                 Ok(self.with_transaction_container(txn, f))

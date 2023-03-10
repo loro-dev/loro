@@ -281,9 +281,9 @@ impl LoroValue {
                     for v in diff.added.iter() {
                         map.insert(v.0.to_string(), unresolved_to_collection(v.1));
                     }
-                    for v in diff.deleted.iter() {
+                    for (k, _) in diff.deleted.iter() {
                         // map.remove(v.as_ref());
-                        map.insert(v.to_string(), LoroValue::Null);
+                        map.insert(k.to_string(), LoroValue::Null);
                     }
                     for (key, value) in diff.updated.iter() {
                         map.insert(key.to_string(), unresolved_to_collection(&value.new));

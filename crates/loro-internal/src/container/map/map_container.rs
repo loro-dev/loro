@@ -110,7 +110,7 @@ impl MapContainer {
             ));
             offset += 1;
         }
-        for k in ops.deleted {
+        for (k, v) in ops.deleted {
             store_ops.push(self.apply_insert(
                 k,
                 LoroValue::Null,
@@ -480,8 +480,9 @@ impl Map {
 
     pub fn delete<T: Transact>(&mut self, txn: &T, key: &str) -> Result<(), LoroError> {
         self.with_transaction_checked(txn, |txn, _| {
+            let deleted = self.get(key).unwrap_or(LoroValue::Null);
             txn.push(
-                TransactionOp::delete_map(self.idx(), &key.to_string().into()),
+                TransactionOp::delete_map(self.idx(), &key.to_string().into(), deleted),
                 None,
             )
         })?
