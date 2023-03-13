@@ -216,45 +216,23 @@ impl Transaction {
 
     fn compress_ops(&mut self, store: &mut LogStore, hierarchy: &mut Hierarchy) {
         let pending_ops = std::mem::take(&mut self.pending_ops);
-        for (idx, ops) in pending_ops {
+        for (idx, mut ops) in pending_ops {
             if self.deleted_container.remove(&idx) {
                 continue;
             }
             let type_ = ops.first().unwrap().container_type();
             match type_ {
                 ContainerType::List => {
-                    let new_op = ops.into_iter().fold(ListTxnOps::new(), |a, mut b| {
-                        self.convert_op_container(&mut b, store, hierarchy);
-                        let b = b.list_inner();
-                        a.compose(b)
-                    });
-                    self.compressed_op.push(TransactionOp::List {
-                        container: idx,
-                        ops: new_op,
-                    })
-                }
-                ContainerType::Text => {
-                    let new_op = ops.into_iter().fold(TextTxnOps::new(), |a, b| {
-                        let b = b.text_inner();
-                        a.compose(b)
-                    });
-                    self.compressed_op.push(TransactionOp::Text {
-                        container: idx,
-                        ops: new_op,
-                    })
+                    ops.iter_mut()
+                        .for_each(|op| self.convert_op_container(op, store, hierarchy));
                 }
                 ContainerType::Map => {
-                    let new_op = ops.into_iter().fold(MapTxnOps::new(), |a, mut b| {
-                        self.convert_op_container(&mut b, store, hierarchy);
-                        let b = b.map_inner();
-                        a.compose(b)
-                    });
-                    self.compressed_op.push(TransactionOp::Map {
-                        container: idx,
-                        ops: new_op,
-                    })
+                    ops.iter_mut()
+                        .for_each(|op| self.convert_op_container(op, store, hierarchy));
                 }
+                ContainerType::Text => {}
             };
+            self.compressed_op.push(TransactionOp::compose(ops));
             // The rest containers that are still in `created_container` have been deleted.
             if let Some(deleted_containers) = self.created_container.remove(&idx) {
                 self.deleted_container.extend(deleted_containers);

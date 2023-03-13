@@ -215,4 +215,34 @@ impl TransactionOp {
             ops: Delta::new().retain(pos).delete(len),
         }
     }
+
+    pub(crate) fn compose<T: IntoIterator<Item = Self>>(ops: T) -> Self {
+        let mut iter = ops.into_iter().peekable();
+        let peek = iter.peek().unwrap();
+        let type_ = peek.container_type();
+        let idx = peek.container_idx();
+        match type_ {
+            ContainerType::List => TransactionOp::List {
+                container: idx,
+                ops: iter
+                    .map(|op| op.list_inner())
+                    .reduce(|a, b| a.compose(b))
+                    .unwrap(),
+            },
+            ContainerType::Map => TransactionOp::Map {
+                container: idx,
+                ops: iter
+                    .map(|op| op.map_inner())
+                    .reduce(|a, b| a.compose(b))
+                    .unwrap(),
+            },
+            ContainerType::Text => TransactionOp::Text {
+                container: idx,
+                ops: iter
+                    .map(|op| op.text_inner())
+                    .reduce(|a, b| a.compose(b))
+                    .unwrap(),
+            },
+        }
+    }
 }

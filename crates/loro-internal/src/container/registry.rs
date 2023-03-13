@@ -518,6 +518,7 @@ pub trait ContainerWrapper {
                 found: txn.client_id,
             });
         }
+        txn.implicit_commit();
         self.with_container(f)
     }
 
