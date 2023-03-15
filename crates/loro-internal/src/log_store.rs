@@ -227,10 +227,10 @@ impl LogStore {
     }
 
     /// this method would not get the container and apply op
-    pub fn append_local_ops(&mut self, ops: &[Op]) -> (Frontiers, &[ID]) {
-        let old_version = self.frontiers.clone();
+    pub fn append_local_ops(&mut self, ops: &[Op]) {
+        // let old_version = self.frontiers.clone();
         if ops.is_empty() {
-            return (old_version, self.frontier());
+            return;
         }
 
         let lamport = self.next_lamport();
@@ -258,7 +258,6 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
-        (old_version, self.frontier())
     }
 
     #[inline]
@@ -277,11 +276,6 @@ impl LogStore {
             .get(&id.client_id)
             .map_or(0, |changes| changes.atom_len())
             > id.counter as usize
-    }
-
-    #[inline]
-    pub(crate) fn next_container_idx(&self) -> ContainerIdx {
-        self.reg.next_idx_and_add_1()
     }
 
     #[inline]

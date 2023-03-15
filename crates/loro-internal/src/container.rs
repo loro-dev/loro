@@ -5,14 +5,12 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
-    container::registry::ContainerWrapper,
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
-    op::{InnerContent, Op, RemoteContent, RichOp},
-    transaction::op::TransactionOp,
+    op::{InnerContent, RemoteContent, RichOp},
     version::PatchedVersionVector,
-    InternalString, List, LogStore, LoroCore, LoroError, LoroValue, Map, Text, ID,
+    InternalString, List, LoroError, LoroValue, Map, Text, ID,
 };
 
 use enum_as_inner::EnumAsInner;
@@ -27,7 +25,6 @@ use std::{
 use self::{pool_mapping::StateContent, registry::ContainerIdx};
 
 pub mod pool_mapping;
-mod recorder;
 pub mod registry;
 
 pub mod list;
@@ -197,13 +194,6 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
         hierarchy.unsubscribe(subscription);
     }
-
-    /// Apply the op from the [crate::transaction::Transaction]
-    /// return the ops that will be applied to the store
-    fn apply_txn_op(&mut self, store: &mut LogStore, op: TransactionOp) -> Vec<Op>;
-
-    /// the length or keys of containers may be changed after the store decoded or imported, so we need update the recorder.
-    fn update_recorder_after_import(&mut self);
 }
 
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have

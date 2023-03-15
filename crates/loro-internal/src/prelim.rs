@@ -2,9 +2,9 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
 use crate::{
-    container::registry::ContainerIdx,
-    transaction::{op::TransactionOp, Transaction},
-    ContainerType, LoroError, LoroValue,
+    container::registry::{ContainerIdx, ContainerWrapper},
+    transaction::Transaction,
+    ContainerType, List, LoroError, LoroValue, Map, Text,
 };
 
 /// Prelim is a value that is not yet integrated into the Loro.
@@ -91,8 +91,11 @@ impl Prelim for PrelimText {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        txn.push(TransactionOp::insert_text(container_idx, 0, self.0), None)?;
-
+        let text = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            Text::from_instance(container, s.this_client_id)
+        });
+        text.with_container(|x| x.insert(txn, 0, &self.0));
         Ok(())
     }
 }
@@ -110,11 +113,11 @@ impl Prelim for PrelimList {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        txn.push(
-            TransactionOp::insert_list_batch_value(container_idx, 0, self.0),
-            None,
-        )?;
-
+        let list = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            List::from_instance(container, s.this_client_id)
+        });
+        list.with_container(|x| x.insert_batch(txn, 0, self.0));
         Ok(())
     }
 }
@@ -132,11 +135,12 @@ impl Prelim for PrelimMap {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
+        let map = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            Map::from_instance(container, s.this_client_id)
+        });
         for (k, value) in self.0.into_iter() {
-            txn.push(
-                TransactionOp::insert_map_value(container_idx, k.into(), value),
-                None,
-            )?;
+            map.with_container(|x| x.insert(txn, k.into(), value));
         }
         Ok(())
     }

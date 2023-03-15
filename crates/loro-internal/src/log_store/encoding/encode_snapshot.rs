@@ -557,7 +557,6 @@ fn load_snapshot(
         let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         container.to_import_snapshot(state, new_hierarchy, &mut import_context);
-        container.update_recorder_after_import();
     }
 
     new_store.latest_lamport = changes

@@ -47,17 +47,12 @@ fn example() {
     let mut doc = LoroCore::default();
     let mut list = doc.get_list("list");
     list.insert(&doc, 0, 123).unwrap();
-    let map_id = list
-        .insert(&doc, 1, ContainerType::Map)
-        .unwrap()
-        .unwrap()
-        .idx();
+    let map_id = list.insert(&doc, 1, ContainerType::Map).unwrap().unwrap();
     let mut map = doc.get_map_by_idx(&map_id).unwrap();
     let text = map
         .insert(&doc, "map_b", ContainerType::Text)
         .unwrap()
-        .unwrap()
-        .idx();
+        .unwrap();
     let mut text = doc.get_text_by_idx(&text).unwrap();
     text.insert(&doc, 0, "world!").unwrap();
     text.insert(&doc, 0, "hello ").unwrap();
@@ -96,14 +91,9 @@ fn text_observe() {
     let list = map
         .insert(&doc, "to-dos", ContainerType::List)
         .unwrap()
-        .unwrap()
-        .idx();
+        .unwrap();
     let mut list = doc.get_list_by_idx(&list).unwrap();
-    let todo_item = list
-        .insert(&doc, 0, ContainerType::Map)
-        .unwrap()
-        .unwrap()
-        .idx();
+    let todo_item = list.insert(&doc, 0, ContainerType::Map).unwrap().unwrap();
     let mut todo_item = doc.get_map_by_idx(&todo_item).unwrap();
     todo_item.insert(&doc, "todo", "coding").unwrap();
     assert_eq!(&doc.to_json(), &*track_value.lock().unwrap());
@@ -133,8 +123,7 @@ fn list() {
     let map_id = list_b
         .insert(&loro_b, 1, loro_internal::ContainerType::Map)
         .unwrap()
-        .unwrap()
-        .idx();
+        .unwrap();
     let mut map = loro_b.get_map_by_idx(&map_id).unwrap();
     map.insert(&loro_b, "map_b", 123).unwrap();
     println!("{}", list_a.get_value().to_json());
@@ -149,7 +138,7 @@ fn list() {
 #[test]
 #[cfg(feature = "json")]
 fn map() {
-    use loro_internal::{LoroValue, Map};
+    use loro_internal::LoroValue;
 
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");
@@ -171,7 +160,7 @@ fn map() {
         .unwrap()
         .unwrap();
     drop(root);
-    let mut sub_map = loro.get_map_by_idx(&map_id.idx()).unwrap();
+    let mut sub_map = loro.get_map_by_idx(&map_id).unwrap();
     sub_map.insert(&loro, "sub", false).unwrap();
     drop(sub_map);
     let root = loro.get_map("root");
@@ -211,7 +200,7 @@ fn two_client_text_sync() {
     let exported = store.export(Default::default());
     store_b.import(exported);
     let mut text_container = store_b.get_text("haha");
-    text_container.with_container(|x| x.check()).unwrap();
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
@@ -236,7 +225,7 @@ fn two_client_text_sync() {
 
     store_b.import(store.export(Default::default()));
     let text_container = store_b.get_text("haha");
-    text_container.with_container(|x| x.check()).unwrap();
+    text_container.with_container(|x| x.check());
     let value = text_container.get_value();
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "abc");
@@ -293,17 +282,9 @@ fn encode_hierarchy() {
 
     let mut c1 = LoroCore::default();
     let mut map = c1.get_map("map");
-    let list_id = map
-        .insert(&c1, "a", ContainerType::List)
-        .unwrap()
-        .unwrap()
-        .idx();
+    let list_id = map.insert(&c1, "a", ContainerType::List).unwrap().unwrap();
     let mut list = c1.get_list_by_idx(&list_id).unwrap();
-    let idx = list
-        .insert(&c1, 0, ContainerType::Text)
-        .unwrap()
-        .unwrap()
-        .idx();
+    let idx = list.insert(&c1, 0, ContainerType::Text).unwrap().unwrap();
     let text = c1.get_container_by_idx(&idx).unwrap();
     let mut text = Text::from_instance(text, c1.client_id());
     text.insert(&c1, 0, "text_text").unwrap();

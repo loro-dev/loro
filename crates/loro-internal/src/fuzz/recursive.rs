@@ -9,6 +9,7 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
+use crate::container::registry::ContainerIdx;
 #[allow(unused_imports)]
 use crate::{
     array_mut_ref,
@@ -263,12 +264,10 @@ trait Actionable {
 }
 
 impl Actor {
-    fn add_new_container(&mut self, container: Container) {
-        let new = container.idx();
-        let type_ = container.type_();
+    fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
         let store = self.loro.log_store.try_read().unwrap();
         let client_id = store.this_client_id;
-        let instance = store.get_container_by_idx(&new).unwrap();
+        let instance = store.get_container_by_idx(&idx).unwrap();
         match type_ {
             ContainerType::Text => self
                 .text_containers
@@ -315,8 +314,8 @@ impl Actionable for Vec<Actor> {
                     .list_containers
                     .get(*container_idx as usize)
                 {
-                    *key %= (list.try_len().unwrap() as u8).max(1);
-                    if *value == FuzzValue::Null && list.try_len().unwrap() == 0 {
+                    *key %= (list.len() as u8).max(1);
+                    if *value == FuzzValue::Null && list.len() == 0 {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -340,10 +339,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.try_len().unwrap() as u8).max(1);
+                    *pos %= (text.len() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.try_len().unwrap() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;
@@ -359,34 +358,34 @@ impl Actionable for Vec<Actor> {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
                 let mut visited = HashSet::new();
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
 
                 a.loro.import(b.loro.export(a.loro.vv_cloned()));
                 b.loro.import(a.loro.export(b.loro.vv_cloned()));
 
                 b.map_containers.iter().for_each(|x| {
-                    let id = x.id().unwrap();
+                    let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.map_containers.push(a.loro.get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
-                    let id = x.id().unwrap();
+                    let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.list_containers.push(a.loro.get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
-                    let id = x.id().unwrap();
+                    let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
                         a.text_containers.push(a.loro.get_text(id))
@@ -396,51 +395,51 @@ impl Actionable for Vec<Actor> {
                 b.map_containers = a
                     .map_containers
                     .iter()
-                    .map(|x| b.loro.get_map(x.id().unwrap()))
+                    .map(|x| b.loro.get_map(x.id()))
                     .collect();
                 b.list_containers = a
                     .list_containers
                     .iter()
-                    .map(|x| b.loro.get_list(x.id().unwrap()))
+                    .map(|x| b.loro.get_list(x.id()))
                     .collect();
                 b.text_containers = a
                     .text_containers
                     .iter()
-                    .map(|x| b.loro.get_text(x.id().unwrap()))
+                    .map(|x| b.loro.get_text(x.id()))
                     .collect();
             }
             Action::SyncAll => {
                 let mut visited = HashSet::new();
                 let a = &mut self[0];
                 a.map_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
                 a.list_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id().unwrap());
+                    visited.insert(x.id());
                 });
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
                     a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
-                        let id = x.id().unwrap();
+                        let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
-                        let id = x.id().unwrap();
+                        let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
-                        let id = x.id().unwrap();
+                        let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
                             a.text_containers.push(a.loro.get_text(id))
@@ -454,17 +453,17 @@ impl Actionable for Vec<Actor> {
                     b.map_containers = a
                         .map_containers
                         .iter()
-                        .map(|x| b.loro.get_map(x.id().unwrap()))
+                        .map(|x| b.loro.get_map(x.id()))
                         .collect();
                     b.list_containers = a
                         .list_containers
                         .iter()
-                        .map(|x| b.loro.get_list(x.id().unwrap()))
+                        .map(|x| b.loro.get_list(x.id()))
                         .collect();
                     b.text_containers = a
                         .text_containers
                         .iter()
-                        .map(|x| b.loro.get_text(x.id().unwrap()))
+                        .map(|x| b.loro.get_text(x.id()))
                         .collect();
                 }
             }
@@ -483,27 +482,20 @@ impl Actionable for Vec<Actor> {
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
                 };
-                let txn = actor.loro.transact();
-                let container = match value {
+                match value {
                     FuzzValue::Null => {
-                        container.delete(&txn, &key.to_string()).unwrap();
-                        None
+                        container.delete(&actor.loro, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&txn, &key.to_string(), *i).unwrap();
-                        None
+                        container.insert(&actor.loro, &key.to_string(), *i).unwrap();
                     }
-                    FuzzValue::Container(c) => Some(
-                        container
-                            .insert(&txn, &key.to_string(), *c)
-                            .unwrap()
-                            .unwrap(),
-                    ),
+                    FuzzValue::Container(c) => {
+                        let idx = container.insert(&actor.loro, &key.to_string(), *c).unwrap();
+                        if let Some(idx) = idx {
+                            actor.add_new_container(idx, *c);
+                        }
+                    }
                 };
-                drop(txn);
-                if let Some(container) = container {
-                    actor.add_new_container(container);
-                }
             }
             Action::List {
                 site,
@@ -521,24 +513,20 @@ impl Actionable for Vec<Actor> {
                     #[allow(clippy::unnecessary_unwrap)]
                     container.unwrap()
                 };
-                let txn = actor.loro.transact();
-                let container = match value {
+                match value {
                     FuzzValue::Null => {
-                        container.delete(&txn, *key as usize, 1).unwrap();
-                        None
+                        container.delete(&actor.loro, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&txn, *key as usize, *i).unwrap();
-                        None
+                        container.insert(&actor.loro, *key as usize, *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        Some(container.insert(&txn, *key as usize, *c).unwrap().unwrap())
+                        let idx = container.insert(&actor.loro, *key as usize, *c).unwrap();
+                        if let Some(container) = idx {
+                            actor.add_new_container(container, *c);
+                        }
                     }
                 };
-                drop(txn);
-                if let Some(container) = container {
-                    actor.add_new_container(container);
-                }
             }
             Action::Text {
                 site,
@@ -1312,29 +1300,23 @@ mod failed_tests {
         test_multi_sites(
             5,
             &mut [
-                List {
-                    site: 4,
+                Map {
+                    site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: I32(1),
+                    value: Container(C::List),
                 },
-                SyncAll,
-                List {
+                Map {
                     site: 0,
                     container_idx: 0,
                     key: 0,
                     value: Container(C::Map),
                 },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 1,
-                    value: I32(2105376125),
-                },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 1,
+                SyncAll,
+                Map {
+                    site: 1,
+                    container_idx: 1,
+                    key: 37,
                     value: Null,
                 },
             ],
