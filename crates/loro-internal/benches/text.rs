@@ -102,6 +102,41 @@ mod run {
             })
         });
 
+        b.bench_function("B4 Observed_Per100_Txn", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                loro.subscribe_deep(Box::new(|_| {}));
+                let mut text = loro.get_text("text");
+                let mut n = 0;
+                let mut txn = loro.transact();
+                for TextAction { pos, ins, del } in actions.iter() {
+                    if n == 100 {
+                        n = 0;
+                        drop(txn);
+                        txn = loro.transact();
+                    }
+                    n += 1;
+                    text.delete(&txn, *pos, *del).unwrap();
+                    text.insert(&txn, *pos, ins).unwrap();
+                }
+            })
+        });
+
+        b.bench_function("B4 Observed_All_Txn", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                loro.subscribe_deep(Box::new(|_| {}));
+                let mut text = loro.get_text("text");
+                {
+                    let txn = loro.transact();
+                    for TextAction { pos, ins, del } in actions.iter() {
+                        text.delete(&txn, *pos, *del).unwrap();
+                        text.insert(&txn, *pos, ins).unwrap();
+                    }
+                }
+            })
+        });
+
         // b.sample_size(10);
         b.bench_function("B4DirectSync", |b| {
             b.iter(|| {
