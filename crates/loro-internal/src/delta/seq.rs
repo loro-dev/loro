@@ -294,16 +294,19 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 if new_op.is_insert() && last_op.is_insert() {
                     let value = last_op.as_insert_mut().unwrap().0;
                     value.value_extend(new_op.into_insert().unwrap().0);
-                    self.vec.push(last_op);
+                    // self.vec.push(last_op);
+                    self.vec.insert(index - 1, last_op);
                     return true;
                 } else if new_op.is_retain() && last_op.is_retain() {
                     *last_op.as_retain_mut().unwrap().0 += new_op.content_len();
-                    self.vec.push(last_op);
+                    // self.vec.push(last_op);
+                    self.vec.insert(index - 1, last_op);
                     return true;
                 }
             }
 
-            self.vec.push(last_op);
+            // self.vec.push(last_op);
+            self.vec.insert(index - 1, last_op);
         }
         if index == self.vec.len() {
             self.vec.push(new_op);
@@ -509,6 +512,29 @@ mod test {
         let a: Delta<String, ()> = Delta::new().insert("123".to_string());
         let b = Delta::new().retain(1).insert("123".to_string());
         assert_eq!(a.compose(b), Delta::new().insert("112323".to_string()));
+    }
+
+    #[test]
+    fn delete_failed() {
+        let a: Delta<String, ()> = Delta::new()
+            .retain(2)
+            .insert("[31354]")
+            .retain(1)
+            .insert("[31354]")
+            .retain(12)
+            .insert("[31354]");
+        let b: Delta<String, ()> = Delta::new().retain(27).delete(3);
+        assert_eq!(
+            a.compose(b),
+            Delta::new()
+                .retain(2)
+                .insert("[31354]")
+                .retain(1)
+                .insert("[31354]")
+                .retain(10)
+                .insert("31354]")
+                .delete(2)
+        );
     }
 
     #[test]

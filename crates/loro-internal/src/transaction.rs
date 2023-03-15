@@ -140,7 +140,10 @@ impl Transaction {
     pub(crate) fn append_event(&mut self, idx: ContainerIdx, event: RawEvent) {
         // cache events
         if let Some(old) = self.pending_events.get_mut(&idx) {
+            // println!("old event {:?}", old.diff);
+            // println!("new event {:?}", event.diff);
             compose_two_events(old, event);
+            // println!("res {:?}\n", old.diff)
         } else {
             self.pending_events.insert(idx, event);
         }
