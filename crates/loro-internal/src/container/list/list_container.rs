@@ -29,7 +29,7 @@ use crate::{
     transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError, Transact,
+    LogStore, LoroError, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -163,7 +163,7 @@ impl ListContainer {
         if len == 0 {
             return;
         }
-        self.state.delete_range(Some(pos), Some(pos + len));
+
         txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let id = store.next_id();
             let op = Op::new(
@@ -175,7 +175,14 @@ impl ListContainer {
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 
-            self.update_hierarchy_on_delete(hierarchy, pos, len);
+            if let Some(deleted_containers) = self.update_hierarchy_on_delete(hierarchy, pos, len) {
+                deleted_containers.into_iter().for_each(|id| {
+                    let idx = store.get_container_idx(&id).unwrap();
+                    txn.delete_container(idx);
+                })
+            }
+
+            self.state.delete_range(Some(pos), Some(pos + len));
             if hierarchy.should_notify(&self.id) {
                 let delta = Delta::new().retain(pos).delete(len);
                 if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
@@ -200,11 +207,16 @@ impl ListContainer {
             .and_then(|slice| slice.first().cloned())
     }
 
-    fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
+    fn update_hierarchy_on_delete(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        pos: usize,
+        len: usize,
+    ) -> Option<Vec<ContainerID>> {
         if !hierarchy.has_children(&self.id) {
-            return;
+            return None;
         }
-
+        let mut ans = Vec::new();
         for state in self.state.iter_range(pos, Some(pos + len)) {
             let range = &state.get_sliced().0;
 
@@ -215,9 +227,11 @@ impl ListContainer {
                 if let LoroValue::Unresolved(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);
                     hierarchy.remove_child(&self.id, container_id);
+                    ans.push(container_id.as_ref().clone());
                 }
             }
         }
+        Some(ans)
     }
 
     pub fn values_len(&self) -> usize {

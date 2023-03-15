@@ -52,13 +52,14 @@ impl<T> MapDiff<T> {
             }
         }
 
-        for (k, _v) in other.deleted.into_iter() {
+        for (k, v) in other.deleted.into_iter() {
             if let Some(av) = self.added.remove(&k) {
                 self.deleted.insert(k, av);
             } else if let Some(ValuePair { old, .. }) = self.updated.remove(&k) {
                 self.deleted.insert(k, old);
             } else {
                 // delete old value
+                self.deleted.insert(k, v);
             }
         }
 

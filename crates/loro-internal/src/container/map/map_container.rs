@@ -130,7 +130,10 @@ impl MapContainer {
             }
             let value_index = self.pool.alloc(value).start;
 
-            self.update_hierarchy_if_container_is_overwritten(&key, h);
+            if let Some(deleted_id) = self.update_hierarchy_if_container_is_overwritten(&key, h) {
+                let idx = store.get_container_idx(&deleted_id).unwrap();
+                txn.delete_container(idx);
+            }
             self.state.insert(
                 key.clone(),
                 ValueSlot {
@@ -160,13 +163,15 @@ impl MapContainer {
         &mut self,
         key: &InternalString,
         h: &mut Hierarchy,
-    ) {
+    ) -> Option<ContainerID> {
         if let Some(old_value) = self.state.get(key) {
             let v = &self.pool[old_value.value];
             if let Some(container) = v.as_unresolved() {
                 h.remove_child(&self.id, container);
+                return Some(container.as_ref().clone());
             }
         }
+        None
     }
 
     pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {

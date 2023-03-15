@@ -164,16 +164,20 @@ impl Transaction {
         parent_id: &ContainerID,
         type_: ContainerType,
     ) -> (ContainerID, ContainerIdx) {
-        self.with_store_hierarchy_mut(|txn, s, h| {
+        self.with_store_hierarchy_mut(|_txn, s, h| {
             let (container_id, idx) = s.create_container(type_);
-            let parent_idx = s.reg.get_idx(parent_id).unwrap();
-            txn.created_container
-                .entry(parent_idx)
-                .or_insert_with(FxHashSet::default)
-                .insert(idx);
+            // let parent_idx = s.reg.get_idx(parent_id).unwrap();
+            // txn.created_container
+            //     .entry(parent_idx)
+            //     .or_insert_with(FxHashSet::default)
+            //     .insert(idx);
             h.add_child(parent_id, &container_id);
             (container_id, idx)
         })
+    }
+
+    pub(crate) fn delete_container(&mut self, idx: ContainerIdx) {
+        self.pending_events.remove(&idx);
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {

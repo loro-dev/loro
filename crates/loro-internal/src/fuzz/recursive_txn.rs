@@ -119,6 +119,7 @@ impl Actor {
             Box::new(move |event| {
                 let mut map = map.lock().unwrap();
                 for diff in event.diff.iter() {
+                    // println!("{} diff {:?}", id, diff);
                     match diff {
                         Diff::Map(map_diff) => {
                             for (key, value) in map_diff.added.iter() {
@@ -135,6 +136,7 @@ impl Actor {
                         _ => unreachable!(),
                     }
                 }
+                // println!("");
             }),
             ContainerID::new_root("map", ContainerType::Map),
         ));
@@ -144,6 +146,7 @@ impl Actor {
             Box::new(move |event| {
                 let mut list = list.lock().unwrap();
                 for diff in event.diff.iter() {
+                    // println!("{}-{} diff {:?}", id, event.local, diff);
                     match diff {
                         Diff::List(delta) => {
                             let mut index = 0;
@@ -167,6 +170,7 @@ impl Actor {
                         _ => unreachable!(),
                     }
                 }
+                // println!("");
             }),
             ContainerID::new_root("list", ContainerType::List),
         ));
@@ -1319,7 +1323,7 @@ mod failed_tests {
     }
 
     #[test]
-    fn failed() {
+    fn delta_compose() {
         test_multi_sites(
             2,
             &mut [
@@ -1377,6 +1381,34 @@ mod failed_tests {
         )
     }
 
+    #[test]
+    fn failed() {
+        test_multi_sites(
+            2,
+            &mut [
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
     use super::ContainerType as C;
     #[test]
     fn to_minify() {
@@ -1385,10 +1417,22 @@ mod failed_tests {
             vec![
                 SyncAll,
                 SyncAll,
-                Map {
-                    site: 0,
-                    container_idx: 255,
-                    key: 255,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 67,
+                    container_idx: 1,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 67,
+                    container_idx: 67,
+                    key: 67,
                     value: Container(C::List),
                 },
                 SyncAll,
@@ -1412,23 +1456,12 @@ mod failed_tests {
                 SyncAll,
                 SyncAll,
                 SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
+                List {
+                    site: 73,
+                    container_idx: 73,
+                    key: 73,
+                    value: Container(C::List),
+                },
                 SyncAll,
                 SyncAll,
                 SyncAll,
@@ -1442,91 +1475,144 @@ mod failed_tests {
                     site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: I32(-1650614981),
+                    value: Null,
                 },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
+                List {
+                    site: 73,
+                    container_idx: 73,
+                    key: 73,
+                    value: Null,
                 },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
+                List {
+                    site: 73,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
                 },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
                 },
+                SyncAll,
+                List {
+                    site: 86,
+                    container_idx: 86,
+                    key: 86,
+                    value: I32(1448498774),
+                },
+                List {
+                    site: 86,
+                    container_idx: 86,
+                    key: 86,
+                    value: I32(1448498774),
+                },
+                List {
+                    site: 86,
+                    container_idx: 86,
+                    key: 86,
+                    value: I32(1448498774),
+                },
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
                 Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
+                    site: 10,
+                    container_idx: 10,
+                    pos: 255,
                     value: 65535,
                     is_del: true,
                 },
                 SyncAll,
                 SyncAll,
                 SyncAll,
+                List {
+                    site: 85,
+                    container_idx: 85,
+                    key: 85,
+                    value: I32(-1650614883),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: Null,
+                },
+                Map {
+                    site: 5,
+                    container_idx: 255,
+                    key: 255,
+                    value: Container(C::List),
+                },
                 SyncAll,
                 SyncAll,
                 SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
-                SyncAll,
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
                 Map {
                     site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: I32(-1650614981),
-                },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
-                },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
-                },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
-                },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 255,
-                    value: 65283,
-                    is_del: true,
+                    value: Null,
                 },
                 Map {
-                    site: 255,
-                    container_idx: 255,
-                    key: 255,
-                    value: Container(C::List),
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
                 },
                 Map {
                     site: 0,
