@@ -81,7 +81,7 @@ impl TextContainer {
                         container_id: self.id.clone(),
                         abs_path,
                     };
-                    txn.append_event(event);
+                    txn.append_event(self.idx, event);
                 }
             }
         });
@@ -111,7 +111,7 @@ impl TextContainer {
                         container_id: self.id.clone(),
                         abs_path,
                     };
-                    txn.append_event(event);
+                    txn.append_event(self.idx, event);
                 }
             }
         });

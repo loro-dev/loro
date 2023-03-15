@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
     rc::Rc,
     sync::{Arc, Mutex, RwLock, Weak},
 };
@@ -51,7 +52,7 @@ pub struct Transaction {
     pending_ops: FxHashMap<ContainerIdx, Vec<ID>>,
     created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
     deleted_container: FxHashSet<ContainerIdx>,
-    pending_events: FxHashMap<ContainerID, RawEvent>,
+    pending_events: BTreeMap<ContainerIdx, RawEvent>,
     start_vv: Frontiers,
     latest_vv: Frontiers,
     committed: bool,
@@ -136,19 +137,19 @@ impl Transaction {
             .push(op_id);
     }
 
-    pub(crate) fn append_event(&mut self, event: RawEvent) {
+    pub(crate) fn append_event(&mut self, idx: ContainerIdx, event: RawEvent) {
         // cache events
-        let container_id = &event.container_id;
-        if let Some(old) = self.pending_events.get_mut(container_id) {
+        if let Some(old) = self.pending_events.get_mut(&idx) {
             compose_two_events(old, event);
         } else {
-            self.pending_events.insert(container_id.clone(), event);
+            self.pending_events.insert(idx, event);
         }
     }
 
     fn emit_events(&mut self) {
         let pending_events = std::mem::take(&mut self.pending_events);
-        for (_, mut event) in pending_events {
+        for (_, mut event) in pending_events.into_iter() {
+            event.old_version = self.start_vv.clone();
             event.new_version = self.latest_vv.clone();
             let hierarchy = self.hierarchy.upgrade().unwrap();
             Hierarchy::notify_without_lock(hierarchy, event);
@@ -179,7 +180,8 @@ impl Transaction {
         let mut hierarchy = hierarchy.try_lock().unwrap();
         let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
         for event in events {
-            self.append_event(event)
+            let idx = store.get_container_idx(&event.container_id).unwrap();
+            self.append_event(idx, event)
         }
         Ok(())
     }

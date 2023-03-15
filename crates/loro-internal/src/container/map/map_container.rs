@@ -68,6 +68,9 @@ impl MapContainer {
     }
 
     pub(crate) fn delete(&mut self, txn: &mut Transaction, key: InternalString) {
+        if self.get(&key).is_none() {
+            return;
+        }
         self.insert_value(txn, key, LoroValue::Null);
     }
 
@@ -96,13 +99,17 @@ impl MapContainer {
             if h.should_notify(self.id()) {
                 let mut diff = MapDiff::new();
                 if let Some(old_value) = self.get(&key).cloned() {
-                    diff.updated.insert(
-                        key.clone(),
-                        ValuePair {
-                            old: old_value,
-                            new: value.clone(),
-                        },
-                    );
+                    if value.is_null() {
+                        diff.deleted.insert(key.clone(), old_value);
+                    } else {
+                        diff.updated.insert(
+                            key.clone(),
+                            ValuePair {
+                                old: old_value,
+                                new: value.clone(),
+                            },
+                        );
+                    }
                 } else {
                     diff.added.insert(key.clone(), value.clone());
                 };
@@ -117,10 +124,13 @@ impl MapContainer {
                         local: true,
                         abs_path,
                     };
-                    txn.append_event(event);
+
+                    txn.append_event(self.idx, event);
                 }
             }
             let value_index = self.pool.alloc(value).start;
+
+            self.update_hierarchy_if_container_is_overwritten(&key, h);
             self.state.insert(
                 key.clone(),
                 ValueSlot {
@@ -131,7 +141,6 @@ impl MapContainer {
                     },
                 },
             );
-            self.update_hierarchy_if_container_is_overwritten(&key, h);
             let id = store.next_id();
             let op = Op {
                 counter: id.counter,
@@ -460,7 +469,10 @@ impl Map {
     }
 
     pub fn delete<T: Transact>(&mut self, txn: &T, key: &str) -> Result<(), LoroError> {
-        self.with_transaction(txn, |txn, x| Ok(x.delete(txn, key.into())))
+        self.with_transaction(txn, |txn, x| {
+            x.delete(txn, key.into());
+            Ok(())
+        })
     }
 
     /// Need Clone

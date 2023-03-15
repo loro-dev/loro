@@ -53,7 +53,8 @@ impl<T> MapDiff<T> {
         }
 
         for (k, _v) in other.deleted.into_iter() {
-            if let Some(_av) = self.added.remove(&k) {
+            if let Some(av) = self.added.remove(&k) {
+                self.deleted.insert(k, av);
             } else if let Some(ValuePair { old, .. }) = self.updated.remove(&k) {
                 self.deleted.insert(k, old);
             } else {
@@ -66,7 +67,7 @@ impl<T> MapDiff<T> {
                 *av = new;
             } else if let Some(dv) = self.deleted.remove(&k) {
                 self.updated.insert(k, ValuePair { old: dv, new });
-            } else if let Some(ValuePair { old:_, new: n }) = self.updated.get_mut(&k) {
+            } else if let Some(ValuePair { old: _, new: n }) = self.updated.get_mut(&k) {
                 *n = new
             } else {
                 self.updated.insert(k, ValuePair { old, new });

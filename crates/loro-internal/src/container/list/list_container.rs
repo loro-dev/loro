@@ -68,7 +68,7 @@ impl ListContainer {
         if let Some(prelim) = maybe_container {
             let type_ = value.into_container().unwrap();
             let (id, idx) = txn.register_container(&self.id, type_);
-            let value = LoroValue::Unresolved(id.clone().into());
+            let value = LoroValue::Unresolved(id.into());
             self.insert_value(txn, pos, value);
             prelim.integrate(txn, idx)?;
             Ok(Some(idx))
@@ -110,7 +110,7 @@ impl ListContainer {
                         local: true,
                         abs_path,
                     };
-                    txn.append_event(event);
+                    txn.append_event(self.idx, event);
                 }
             }
         });
@@ -140,7 +140,7 @@ impl ListContainer {
                         local: true,
                         abs_path,
                     };
-                    txn.append_event(event);
+                    txn.append_event(self.idx, event);
                 }
             }
             self.state.insert(pos, slice.clone().into());
@@ -187,7 +187,7 @@ impl ListContainer {
                         container_id: self.id.clone(),
                         abs_path,
                     };
-                    txn.append_event(event);
+                    txn.append_event(self.idx, event);
                 }
             }
         });

@@ -140,7 +140,7 @@ impl Prelim for PrelimMap {
             Map::from_instance(container, s.this_client_id)
         });
         for (k, value) in self.0.into_iter() {
-            map.with_container(|x| x.insert(txn, k.into(), value));
+            map.with_container(|x| x.insert(txn, k.into(), value))?;
         }
         Ok(())
     }
