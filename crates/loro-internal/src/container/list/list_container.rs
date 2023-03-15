@@ -101,17 +101,7 @@ impl ListContainer {
             if hierarchy.should_notify(&self.id) {
                 let value = self.raw_data.slice(&slice)[0].clone();
                 let delta = Delta::new().retain(pos).insert(vec![value]);
-                if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
-                    let event = RawEvent {
-                        container_id: self.id.clone(),
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        diff: smallvec![Diff::List(delta)],
-                        local: true,
-                        abs_path,
-                    };
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
             }
         });
     }
@@ -131,17 +121,7 @@ impl ListContainer {
             if hierarchy.should_notify(&self.id) {
                 let values = self.raw_data.slice(&slice).to_vec();
                 let delta = Delta::new().retain(pos).insert(values);
-                if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
-                    let event = RawEvent {
-                        container_id: self.id.clone(),
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        diff: smallvec![Diff::List(delta)],
-                        local: true,
-                        abs_path,
-                    };
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
             }
             self.state.insert(pos, slice.clone().into());
             let id = store.next_id();
@@ -185,17 +165,7 @@ impl ListContainer {
             self.state.delete_range(Some(pos), Some(pos + len));
             if hierarchy.should_notify(&self.id) {
                 let delta = Delta::new().retain(pos).delete(len);
-                if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
-                    let event = RawEvent {
-                        diff: smallvec![Diff::List(delta)],
-                        local: true,
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        container_id: self.id.clone(),
-                        abs_path,
-                    };
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
             }
         });
     }

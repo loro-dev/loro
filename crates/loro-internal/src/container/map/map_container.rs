@@ -114,19 +114,7 @@ impl MapContainer {
                     diff.added.insert(key.clone(), value.clone());
                 };
 
-                let diff = smallvec![Diff::Map(diff)];
-                if let Some(abs_path) = h.get_abs_path(&store.reg, self.id()) {
-                    let event = RawEvent {
-                        diff,
-                        container_id: self.id.clone(),
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        local: true,
-                        abs_path,
-                    };
-
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::Map(diff), true);
             }
             let value_index = self.pool.alloc(value).start;
 

@@ -70,19 +70,10 @@ impl TextContainer {
             txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
+
             if hierarchy.should_notify(&self.id) {
                 let delta = Delta::new().retain(pos).insert(text.to_owned());
-                if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, self.id()) {
-                    let event = RawEvent {
-                        diff: smallvec![Diff::Text(delta)],
-                        local: true,
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        container_id: self.id.clone(),
-                        abs_path,
-                    };
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
     }
@@ -102,17 +93,7 @@ impl TextContainer {
 
             if hierarchy.should_notify(&self.id) {
                 let delta = Delta::new().retain(pos).delete(len);
-                if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, self.id()) {
-                    let event = RawEvent {
-                        diff: smallvec![Diff::Text(delta)],
-                        local: true,
-                        old_version: Default::default(),
-                        new_version: Default::default(),
-                        container_id: self.id.clone(),
-                        abs_path,
-                    };
-                    txn.append_event(self.idx, event);
-                }
+                txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
     }

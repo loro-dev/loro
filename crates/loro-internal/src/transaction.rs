@@ -5,8 +5,6 @@ use std::{
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
-
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
     event::{Diff, RawEvent},
@@ -16,6 +14,8 @@ use crate::{
     version::Frontiers,
     ContainerType, LogStore, LoroCore, LoroError,
 };
+use fxhash::FxHashMap;
+use smallvec::smallvec;
 
 pub trait Transact {
     fn transact(&self) -> TransactionWrap;
@@ -48,11 +48,10 @@ pub struct Transaction {
     pub(crate) client_id: ClientID,
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
-    // sort by [ContainerIdx]
     pending_ops: FxHashMap<ContainerIdx, Vec<ID>>,
-    created_container: FxHashMap<ContainerIdx, FxHashSet<ContainerIdx>>,
-    deleted_container: FxHashSet<ContainerIdx>,
-    pending_events: BTreeMap<ContainerIdx, RawEvent>,
+    // sort by [ContainerIdx]
+    // TODO Origin, now use local bool
+    pending_event_diff: BTreeMap<ContainerIdx, FxHashMap<bool, Diff>>,
     start_vv: Frontiers,
     latest_vv: Frontiers,
     committed: bool,
@@ -70,9 +69,7 @@ impl Transaction {
             store,
             hierarchy,
             pending_ops: Default::default(),
-            created_container: Default::default(),
-            deleted_container: Default::default(),
-            pending_events: Default::default(),
+            pending_event_diff: Default::default(),
             latest_vv: start_vv.clone(),
             start_vv,
             committed: false,
@@ -137,23 +134,45 @@ impl Transaction {
             .push(op_id);
     }
 
-    pub(crate) fn append_event(&mut self, idx: ContainerIdx, event: RawEvent) {
+    pub(crate) fn append_event_diff(&mut self, idx: ContainerIdx, diff: Diff, local: bool) {
         // cache events
-        if let Some(old) = self.pending_events.get_mut(&idx) {
-            // println!("old event {:?}", old.diff);
-            // println!("new event {:?}", event.diff);
-            compose_two_events(old, event);
-            // println!("res {:?}\n", old.diff)
-        } else {
-            self.pending_events.insert(idx, event);
+        if let Some(old_diff) = self.pending_event_diff.get_mut(&idx) {
+            if let Some(old_diff) = old_diff.get_mut(&local) {
+                // println!("old event {:?}", old_diff);
+                // println!("new event {:?}", diff);
+                compose_two_event_diff(old_diff, diff);
+                // println!("res {:?}\n", old_diff)
+                return;
+            }
         }
+        self.pending_event_diff
+            .entry(idx)
+            .or_insert_with(FxHashMap::default)
+            .insert(local, diff);
     }
 
     fn emit_events(&mut self) {
-        let pending_events = std::mem::take(&mut self.pending_events);
-        for (_, mut event) in pending_events.into_iter() {
-            event.old_version = self.start_vv.clone();
-            event.new_version = self.latest_vv.clone();
+        let pending_events = std::mem::take(&mut self.pending_event_diff);
+        let mut events = Vec::with_capacity(pending_events.len() * 2);
+        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            for (idx, event) in pending_events {
+                let id = store.reg.get_id(idx).unwrap();
+                for (local, diff) in event {
+                    if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, id) {
+                        let event = RawEvent {
+                            diff: smallvec![diff],
+                            local,
+                            old_version: txn.start_vv.clone(),
+                            new_version: txn.latest_vv.clone(),
+                            container_id: id.clone(),
+                            abs_path,
+                        };
+                        events.push(event);
+                    }
+                }
+            }
+        });
+        for event in events {
             let hierarchy = self.hierarchy.upgrade().unwrap();
             Hierarchy::notify_without_lock(hierarchy, event);
         }
@@ -177,7 +196,7 @@ impl Transaction {
     }
 
     pub(crate) fn delete_container(&mut self, idx: ContainerIdx) {
-        self.pending_events.remove(&idx);
+        self.pending_event_diff.remove(&idx);
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
@@ -186,9 +205,13 @@ impl Transaction {
         let hierarchy = self.hierarchy.upgrade().unwrap();
         let mut hierarchy = hierarchy.try_lock().unwrap();
         let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
+        // TODO opti
         for event in events {
             let idx = store.get_container_idx(&event.container_id).unwrap();
-            self.append_event(idx, event)
+            let local = event.local;
+            for d in event.diff {
+                self.append_event_diff(idx, d, local);
+            }
         }
         Ok(())
     }
@@ -208,13 +231,23 @@ impl Drop for Transaction {
     }
 }
 
-fn compose_two_events(a: &mut RawEvent, mut b: RawEvent) {
-    let this_diff = std::mem::take(&mut a.diff).pop().unwrap();
-    let other_diff = std::mem::take(&mut b.diff).pop().unwrap();
+fn compose_two_event_diff(this_diff: &mut Diff, mut other_diff: Diff) {
     let diff = match other_diff {
-        Diff::List(x) => Diff::List(this_diff.into_list().unwrap().compose(x)),
-        Diff::Map(x) => Diff::Map(this_diff.into_map().unwrap().compose(x)),
-        Diff::Text(x) => Diff::Text(this_diff.into_text().unwrap().compose(x)),
+        Diff::List(x) => {
+            let inner = std::mem::take(this_diff.as_list_mut().unwrap());
+            let diff = inner.compose(x);
+            Diff::List(diff)
+        }
+        Diff::Map(x) => {
+            let inner = std::mem::take(this_diff.as_map_mut().unwrap());
+            let diff = inner.compose(x);
+            Diff::Map(diff)
+        }
+        Diff::Text(x) => {
+            let inner = std::mem::take(this_diff.as_text_mut().unwrap());
+            let diff = inner.compose(x);
+            Diff::Text(diff)
+        }
     };
-    a.diff.push(diff);
+    *this_diff = diff;
 }
