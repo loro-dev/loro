@@ -6,6 +6,7 @@ import init, {
   PrelimMap,
   PrelimText,
   setPanicHook,
+Transaction,
 } from "../web/loro_wasm.js";
 import {
   assertEquals,
@@ -78,8 +79,6 @@ Deno.test({ name: "sync" }, async (t) => {
     const aText = a.getText("text");
     const bText = b.getText("text");
     aText.insert(a, 0, "abc");
-    // aText.insert(a, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
-    // bText.insert(b, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
     assertEquals(aText.toString(), bText.toString());
   });
 
@@ -204,5 +203,23 @@ Deno.test("subscribe_lock2", () => {
   text.insert(loro, 0, "hello world");
   assertEquals(count, 1);
   text.insert(loro, 0, "hello world");
+  assertEquals(count, 1);
+});
+
+Deno.test("transaction", () => {
+  const loro = new Loro();
+  const text = loro.getText("text");
+  let count = 0;
+  const sub = loro.subscribe(() => {
+    count += 1;
+    loro.unsubscribe(sub);
+  });
+  loro.transaction((txn: Transaction)=>{
+    assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+  });
   assertEquals(count, 1);
 });

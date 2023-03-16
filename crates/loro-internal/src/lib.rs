@@ -26,12 +26,11 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 mod transaction;
-pub use transaction::Transact;
+pub use transaction::{Transact, Transaction, TransactionWrap};
 
 pub mod delta;
 pub mod event;
-mod prelim;
-pub use prelim::{Prelim, PrelimContainer, PrelimValue};
+pub mod prelim;
 mod value;
 
 pub use error::LoroError;
@@ -45,6 +44,7 @@ pub(crate) type InternalString = DefaultAtom;
 pub use container::{Container, ContainerTrait};
 
 pub use container::{list::List, map::Map, text::Text, ContainerType};
+pub use fxhash::FxHashMap;
 pub use log_store::LogStore;
 pub use loro::LoroCore;
 pub use value::LoroValue;

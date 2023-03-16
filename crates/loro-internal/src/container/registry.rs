@@ -563,7 +563,8 @@ pub trait ContainerWrapper {
         self.with_transaction(txn, |txn, x| {
             let h = txn.hierarchy.upgrade().unwrap();
             let mut h = h.try_lock().unwrap();
-            Ok(x.unsubscribe(&mut h, subscription))
+            x.unsubscribe(&mut h, subscription);
+            Ok(())
         })
     }
 }

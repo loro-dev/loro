@@ -435,10 +435,7 @@ pub struct Map {
 }
 
 impl Map {
-    pub(crate) fn from_instance(
-        instance: Weak<Mutex<ContainerInstance>>,
-        client_id: ClientID,
-    ) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
             container: instance,
@@ -469,7 +466,7 @@ impl Map {
     }
 
     /// Need Clone
-    pub fn get<T: Transact>(&mut self, key: &str) -> Option<LoroValue> {
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
         self.with_container(|x| x.get(&key.into()).cloned())
     }
 

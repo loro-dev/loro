@@ -12,7 +12,7 @@ use crate::{
     id::{ClientID, ID},
     log_store::LoroEncoder,
     version::Frontiers,
-    ContainerType, LogStore, LoroCore, LoroError,
+    ContainerType, List, LogStore, LoroCore, LoroError, Map, Text,
 };
 use fxhash::FxHashMap;
 use smallvec::smallvec;
@@ -43,6 +43,26 @@ impl AsMut<Transaction> for Transaction {
 }
 
 pub struct TransactionWrap(pub(crate) Rc<RefCell<Transaction>>);
+
+impl TransactionWrap {
+    pub fn get_text_by_idx(&self, idx: ContainerIdx) -> Option<Text> {
+        let txn = self.0.borrow();
+        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        instance.map(|i| Text::from_instance(i, txn.client_id))
+    }
+
+    pub fn get_list_by_idx(&self, idx: ContainerIdx) -> Option<List> {
+        let txn = self.0.borrow();
+        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        instance.map(|i| List::from_instance(i, txn.client_id))
+    }
+
+    pub fn get_map_by_idx(&self, idx: ContainerIdx) -> Option<Map> {
+        let txn = self.0.borrow();
+        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        instance.map(|i| Map::from_instance(i, txn.client_id))
+    }
+}
 
 pub struct Transaction {
     pub(crate) client_id: ClientID,
@@ -231,7 +251,7 @@ impl Drop for Transaction {
     }
 }
 
-fn compose_two_event_diff(this_diff: &mut Diff, mut other_diff: Diff) {
+fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
     let diff = match other_diff {
         Diff::List(x) => {
             let inner = std::mem::take(this_diff.as_list_mut().unwrap());

@@ -572,10 +572,7 @@ pub struct List {
 }
 
 impl List {
-    pub(crate) fn from_instance(
-        instance: Weak<Mutex<ContainerInstance>>,
-        client_id: ClientID,
-    ) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
         let container_idx = {
             let list = instance.upgrade().unwrap();
             let list = list.try_lock().unwrap();
@@ -633,7 +630,8 @@ impl List {
                     .into(),
                 ));
             }
-            Ok(x.insert_batch(txn, pos, values))
+            x.insert_batch(txn, pos, values);
+            Ok(())
         })
     }
 
@@ -701,7 +699,7 @@ impl List {
 
     /// return the value of the element at that position or None if out of bounds.
     pub fn get(
-        &mut self,
+        &self,
         // txn: &T,
         pos: usize,
     ) -> Option<LoroValue> {
