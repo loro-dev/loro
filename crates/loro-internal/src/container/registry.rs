@@ -9,7 +9,6 @@ use std::{
 use enum_as_inner::EnumAsInner;
 
 use fxhash::{FxHashMap, FxHashSet};
-use owning_ref::OwningRefMut;
 use smallvec::SmallVec;
 use tracing::instrument;
 
@@ -401,32 +400,6 @@ impl ContainerRegistry {
 impl Default for ContainerRegistry {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-pub struct ContainerRefMut<'a, T> {
-    value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>,
-}
-
-impl<'a, T> From<OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>>
-    for ContainerRefMut<'a, T>
-{
-    fn from(value: OwningRefMut<RwLockWriteGuard<'a, ContainerRegistry>, Box<T>>) -> Self {
-        ContainerRefMut { value }
-    }
-}
-
-impl<'a, T> Deref for ContainerRefMut<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.value.deref()
-    }
-}
-
-impl<'a, T> DerefMut for ContainerRefMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.value.deref_mut()
     }
 }
 
