@@ -2,7 +2,7 @@ use std::{
     ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, Mutex, RwLockWriteGuard, Weak,
+        Arc, Mutex, Weak,
     },
 };
 
@@ -332,25 +332,12 @@ impl ContainerRegistry {
         idx
     }
 
-    pub(crate) fn register_txn(&mut self, idx: ContainerIdx, id: ContainerID) {
-        let container = self.create(id.clone(), idx);
-        self.insert(id, idx, container);
-    }
-
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> Weak<Mutex<ContainerInstance>> {
         if !self.container_to_idx.contains_key(id) {
             self.register(id);
         }
 
         self.get(id).unwrap()
-    }
-
-    pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
-        if let Some(idx) = self.container_to_idx.get(id) {
-            *idx
-        } else {
-            self.register(id)
-        }
     }
 
     #[cfg(feature = "test_utils")]

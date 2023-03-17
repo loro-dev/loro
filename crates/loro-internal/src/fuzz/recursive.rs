@@ -18,7 +18,7 @@ use crate::{
     event::{Diff, Observer},
     id::ClientID,
     log_store::EncodeConfig,
-    Container, ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
+    ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]

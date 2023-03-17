@@ -460,65 +460,63 @@ impl Hierarchy {
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use std::sync::Mutex;
+#[cfg(test)]
+mod test {
+    use std::sync::Mutex;
 
-//     use fxhash::FxHashMap;
+    use fxhash::FxHashMap;
 
-//     use crate::{container::registry::ContainerWrapper, LoroCore, PrelimContainer};
+    use crate::{container::registry::ContainerWrapper, prelim::PrelimMap, LoroCore};
 
-//     #[test]
-//     fn children_parent() {
-//         let mut loro = LoroCore::default();
-//         let mut list = loro.get_list("list");
-//         let map_container_id = list
-//             .push(&loro, PrelimContainer::from(FxHashMap::default()))
-//             .unwrap()
-//             .unwrap();
-//         let list_container_id = list.id();
-//         assert_eq!(
-//             loro.children(&list_container_id)
-//                 .unwrap()
-//                 .into_iter()
-//                 .collect::<Vec<_>>(),
-//             vec![map_container_id.clone()]
-//         );
-//         assert_eq!(
-//             loro.parent(&map_container_id).unwrap().unwrap(),
-//             list_container_id
-//         )
-//     }
+    #[test]
+    fn children_parent() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        let map_container_id = list
+            .push(&loro, PrelimMap::from(FxHashMap::default()))
+            .unwrap()
+            .unwrap();
+        let map_id = loro.get_map_by_idx(&map_container_id).unwrap().id();
+        let list_container_id = list.id();
+        assert_eq!(
+            loro.children(&list_container_id)
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![map_id.clone()]
+        );
+        assert_eq!(loro.parent(&map_id).unwrap().unwrap(), list_container_id)
+    }
 
-//     #[test]
-//     fn event() {
-//         static COUNT: Mutex<u8> = Mutex::new(0);
-//         let mut loro = LoroCore::default();
-//         let mut list = loro.get_list("list");
-//         let id1 = list
-//             .subscribe(
-//                 &loro,
-//                 Box::new(|_| {
-//                     *COUNT.lock().unwrap() += 1;
-//                 }),
-//             )
-//             .unwrap();
+    #[test]
+    fn event() {
+        static COUNT: Mutex<u8> = Mutex::new(0);
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        let id1 = list
+            .subscribe(
+                &loro,
+                Box::new(|_| {
+                    *COUNT.lock().unwrap() += 1;
+                }),
+            )
+            .unwrap();
 
-//         let id2 = list
-//             .subscribe_once(
-//                 &loro,
-//                 Box::new(|_| {
-//                     *COUNT.lock().unwrap() += 100;
-//                 }),
-//             )
-//             .unwrap();
-//         list.push(&loro, "a").unwrap();
-//         assert!(COUNT.lock().unwrap().eq(&101));
-//         list.push(&loro, "b").unwrap();
-//         assert!(COUNT.lock().unwrap().eq(&102));
-//         list.unsubscribe(&loro, id1).unwrap();
-//         list.unsubscribe(&loro, id2).unwrap();
-//         list.push(&loro, "c").unwrap();
-//         assert!(COUNT.lock().unwrap().eq(&102));
-//     }
-// }
+        let id2 = list
+            .subscribe_once(
+                &loro,
+                Box::new(|_| {
+                    *COUNT.lock().unwrap() += 100;
+                }),
+            )
+            .unwrap();
+        list.push(&loro, "a").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&101));
+        list.push(&loro, "b").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&102));
+        list.unsubscribe(&loro, id1).unwrap();
+        list.unsubscribe(&loro, id2).unwrap();
+        list.push(&loro, "c").unwrap();
+        assert!(COUNT.lock().unwrap().eq(&102));
+    }
+}

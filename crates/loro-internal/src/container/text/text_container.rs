@@ -13,7 +13,7 @@ use crate::{
         ContainerID, ContainerTrait, ContainerType,
     },
     delta::Delta,
-    event::{Diff, RawEvent},
+    event::Diff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     log_store::ImportContext,

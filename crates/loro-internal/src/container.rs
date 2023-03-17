@@ -10,10 +10,9 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::PatchedVersionVector,
-    InternalString, List, LoroError, LoroValue, Map, Text, ID,
+    InternalString, LoroError, LoroValue, ID,
 };
 
-use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -42,49 +41,6 @@ pub enum ContainerType {
     List,
     // TODO: Users can define their own container types.
     // Custom(u16),
-}
-
-#[derive(Debug, EnumAsInner)]
-pub enum Container {
-    Text(Text),
-    Map(Map),
-    List(List),
-}
-
-impl Container {
-    pub fn idx(&self) -> ContainerIdx {
-        match self {
-            Container::List(x) => x.idx(),
-            Container::Map(x) => x.idx(),
-            Container::Text(x) => x.idx(),
-        }
-    }
-
-    pub fn type_(&self) -> ContainerType {
-        match self {
-            Container::List(_x) => ContainerType::List,
-            Container::Map(_x) => ContainerType::Map,
-            Container::Text(_x) => ContainerType::Text,
-        }
-    }
-}
-
-impl From<List> for Container {
-    fn from(value: List) -> Self {
-        Container::List(value)
-    }
-}
-
-impl From<Map> for Container {
-    fn from(value: Map) -> Self {
-        Container::Map(value)
-    }
-}
-
-impl From<Text> for Container {
-    fn from(value: Text) -> Self {
-        Container::Text(value)
-    }
 }
 
 impl Display for ContainerType {

@@ -7,7 +7,6 @@ use crate::{
         registry::{ContainerIdx, ContainerRegistry},
     },
     delta::{MapDiff, ValuePair},
-    event::RawEvent,
     op::OwnedRichOp,
     transaction::Transaction,
     LoroError, Transact,
@@ -478,17 +477,17 @@ impl Map {
         self.with_container(|map| map.values())
     }
 
-    // pub fn for_each<F>(&self, f: F)
-    // where
-    //     F: Fn(&InternalString, &LoroValue),
-    // {
-    //     self.with_container(|map| {
-    //         for (k, v) in map.state.iter() {
-    //             let value = &map.pool.slice(&(v.value..v.value + 1))[0];
-    //             f(k, value);
-    //         }
-    //     })
-    // }
+    pub fn for_each<F>(&self, f: F)
+    where
+        F: Fn(&InternalString, &LoroValue),
+    {
+        self.with_container(|map| {
+            for (k, v) in map.state.iter() {
+                let value = &map.pool.slice(&(v.value..v.value + 1))[0];
+                f(k, value);
+            }
+        })
+    }
 
     pub fn id(&self) -> ContainerID {
         self.with_container(|x| x.id.clone())

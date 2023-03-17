@@ -25,18 +25,17 @@ fn example_list() {
 }
 
 #[test]
-fn example_text() {
-    // TODO: utf-16
-    // let mut doc = LoroCore::default();
-    // let mut text = doc.get_text("text");
-    // text.insert_utf16(&doc, 0, "你好").unwrap();
-    // text.insert_utf16(&doc, 1, "我").unwrap();
-    // text.insert_utf16(&doc, 1, "abc").unwrap();
-    // assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你abc我好");
-    // text.delete_utf16(&doc, 1, 1).unwrap();
-    // assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你bc我好");
-    // text.delete_utf16(&doc, 0, 1).unwrap();
-    // assert_eq!(text.get_value().as_string().unwrap().as_ref(), "bc我好");
+fn text_utf16() {
+    let mut doc = LoroCore::default();
+    let mut text = doc.get_text("text");
+    text.insert_utf16(&doc, 0, "你好").unwrap();
+    text.insert_utf16(&doc, 1, "我").unwrap();
+    text.insert_utf16(&doc, 1, "abc").unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你abc我好");
+    text.delete_utf16(&doc, 1, 1).unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "你bc我好");
+    text.delete_utf16(&doc, 0, 1).unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_ref(), "bc我好");
 }
 
 #[test]

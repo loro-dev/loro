@@ -225,7 +225,7 @@ impl Transaction {
         let hierarchy = self.hierarchy.upgrade().unwrap();
         let mut hierarchy = hierarchy.try_lock().unwrap();
         let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
-        // TODO opti
+        // TODO decode just gets diff
         for event in events {
             let idx = store.get_container_idx(&event.container_id).unwrap();
             let local = event.local;

@@ -41,7 +41,7 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
 // TODO: rename as Key?
 pub(crate) type InternalString = DefaultAtom;
-pub use container::{Container, ContainerTrait};
+pub use container::ContainerTrait;
 
 pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use fxhash::FxHashMap;

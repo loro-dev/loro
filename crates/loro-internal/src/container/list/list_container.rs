@@ -20,7 +20,7 @@ use crate::{
         ContainerID, ContainerTrait, ContainerType,
     },
     delta::Delta,
-    event::{Diff, Index, RawEvent},
+    event::{Diff, Index},
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     log_store::ImportContext,
@@ -29,7 +29,7 @@ use crate::{
     transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
-    LogStore, LoroError, Transact,
+    LoroError, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -716,14 +716,14 @@ impl List {
         self.len() == 0
     }
 
-    // pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
-    //     self.with_container(|list| list.iter().enumerate().for_each(f))
-    // }
+    pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
+        self.with_container(|list| list.iter().enumerate().for_each(f))
+    }
 
     // TODO
-    // pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
-    //     self.with_container(|list| list.iter().enumerate().map(f).collect())
-    // }
+    pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
+        self.with_container(|list| list.iter().enumerate().map(f).collect())
+    }
 
     /// Need clone
     pub fn id(&self) -> ContainerID {
@@ -774,59 +774,59 @@ mod test {
         assert_eq!(list.get(1), Some(123.into()));
     }
 
-    // #[test]
-    // fn collection() {
-    //     let mut loro = LoroCore::default();
-    //     let mut list = loro.get_list("list");
-    //     list.insert(&loro, 0, "ab").unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[\"ab\"]");
-    //     list.push(&loro, 12).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
-    //     list.push_front(&loro, -3).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
-    //     let last = list.pop(&loro).unwrap().unwrap();
-    //     assert_eq!(last.to_json(), "12");
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
-    //     list.delete(&loro, 1, 1).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3]");
-    //     list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
-    //         .unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
-    //     list.delete(&loro, 0, 3).unwrap();
-    //     assert_eq!(list.get_value().to_json(), "[]");
-    //     assert_eq!(list.pop(&loro).unwrap(), None);
-    // }
+    #[test]
+    fn collection() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "ab").unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\"]");
+        list.push(&loro, 12).unwrap();
+        assert_eq!(list.get_value().to_json(), "[\"ab\",12]");
+        list.push_front(&loro, -3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\",12]");
+        let last = list.pop(&loro).unwrap().unwrap();
+        assert_eq!(last.to_json(), "12");
+        assert_eq!(list.get_value().to_json(), "[-3,\"ab\"]");
+        list.delete(&loro, 1, 1).unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3]");
+        list.insert_batch(&loro, 1, vec!["cd".into(), 123.into()])
+            .unwrap();
+        assert_eq!(list.get_value().to_json(), "[-3,\"cd\",123]");
+        list.delete(&loro, 0, 3).unwrap();
+        assert_eq!(list.get_value().to_json(), "[]");
+        assert_eq!(list.pop(&loro).unwrap(), None);
+    }
 
-    // #[test]
-    // fn for_each() {
-    //     let mut loro = LoroCore::default();
-    //     let mut list = loro.get_list("list");
-    //     list.insert(&loro, 0, "a").unwrap();
-    //     list.insert(&loro, 1, "b").unwrap();
-    //     list.insert(&loro, 2, "c").unwrap();
-    //     list.for_each(|(idx, v)| {
-    //         let c = match idx {
-    //             0 => "a",
-    //             1 => "b",
-    //             2 => "c",
-    //             _ => unreachable!(),
-    //         };
-    //         assert_eq!(format!("\"{c}\""), v.to_json())
-    //     })
-    // }
+    #[test]
+    fn for_each() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "a").unwrap();
+        list.insert(&loro, 1, "b").unwrap();
+        list.insert(&loro, 2, "c").unwrap();
+        list.for_each(|(idx, v)| {
+            let c = match idx {
+                0 => "a",
+                1 => "b",
+                2 => "c",
+                _ => unreachable!(),
+            };
+            assert_eq!(format!("\"{c}\""), v.to_json())
+        })
+    }
 
-    // #[test]
-    // fn map() {
-    //     let mut loro = LoroCore::default();
-    //     let mut list = loro.get_list("list");
-    //     list.insert(&loro, 0, "a").unwrap();
-    //     list.insert(&loro, 1, "b").unwrap();
-    //     list.insert(&loro, 2, "c").unwrap();
-    //     // list.insert(&loro, 3, PrelimContainer::from("hello".to_string()))
-    //     //     .unwrap();
-    //     assert_eq!(
-    //         list.map(|(_, v)| v.to_json()),
-    //         vec!["\"a\"", "\"b\"", "\"c\""]
-    //     );
-    // }
+    #[test]
+    fn map() {
+        let mut loro = LoroCore::default();
+        let mut list = loro.get_list("list");
+        list.insert(&loro, 0, "a").unwrap();
+        list.insert(&loro, 1, "b").unwrap();
+        list.insert(&loro, 2, "c").unwrap();
+        // list.insert(&loro, 3, PrelimContainer::from("hello".to_string()))
+        //     .unwrap();
+        assert_eq!(
+            list.map(|(_, v)| v.to_json()),
+            vec!["\"a\"", "\"b\"", "\"c\""]
+        );
+    }
 }

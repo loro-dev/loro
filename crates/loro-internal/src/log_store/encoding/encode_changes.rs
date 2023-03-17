@@ -5,7 +5,6 @@ use itertools::Itertools;
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
-use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{
