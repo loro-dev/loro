@@ -1,5 +1,4 @@
 use enum_as_inner::EnumAsInner;
-use rle::{HasLength, Mergable, Sliceable};
 use serde::Serialize;
 use std::fmt::Debug;
 
@@ -24,6 +23,8 @@ pub enum DeltaItem<Value, Meta> {
     Delete(usize),
 }
 
+/// The metadata of a DeltaItem
+/// If empty metadata is used to override the older one, we will remove the metadata into None
 pub trait Meta: Debug + Clone + PartialEq {
     fn empty() -> Self;
     fn is_empty(&self) -> bool;
@@ -36,9 +37,32 @@ impl Meta for () {
     }
 }
 
-pub trait DeltaValue: Debug + HasLength + Sliceable + Clone + PartialEq {
+/// The value of [DeltaItem::Insert]
+pub trait DeltaValue {
+    /// the other will be merged into self
     fn value_extend(&mut self, other: Self);
+    /// takes the first number of `length` elements
     fn take(&mut self, length: usize) -> Self;
+    /// the length of the value
+    fn length(&self) -> usize;
+}
+
+impl<V: DeltaValue, M> DeltaValue for DeltaItem<V, M> {
+    fn value_extend(&mut self, _other: Self) {
+        unreachable!()
+    }
+
+    fn take(&mut self, _length: usize) -> Self {
+        unreachable!()
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            DeltaItem::Retain { len, meta: _ } => *len,
+            DeltaItem::Insert { value, meta: _ } => value.length(),
+            DeltaItem::Delete(len) => *len,
+        }
+    }
 }
 
 impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
@@ -91,6 +115,13 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
         }
     }
 
+    fn insert_inner(self) -> Value {
+        match self {
+            DeltaItem::Insert { value, .. } => value,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn is_retain(&self) -> bool {
         matches!(self, Self::Retain { .. })
     }
@@ -104,32 +135,14 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     }
 }
 
-impl<Value: HasLength, Meta> HasLength for DeltaItem<Value, Meta> {
-    fn content_len(&self) -> usize {
-        match self {
-            DeltaItem::Retain { len, meta: _ } => *len,
-            DeltaItem::Insert { value, meta: _ } => value.atom_len(),
-            DeltaItem::Delete(len) => *len,
-        }
-    }
-}
-
-impl<Value, Meta> Mergable for DeltaItem<Value, Meta> {}
-
 pub struct DeltaIterator<V, M: Meta> {
     // The reversed Vec uses pop() to simulate getting the first element each time
     ops: Vec<DeltaItem<V, M>>,
-    // index: usize,
-    // offset: usize,
 }
 
 impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
     fn new(ops: Vec<DeltaItem<V, M>>) -> Self {
-        Self {
-            ops,
-            // index: 0,
-            // offset: 0,
-        }
+        Self { ops }
     }
 
     fn next<L: Into<Option<usize>>>(&mut self, len: L) -> DeltaItem<V, M> {
@@ -150,7 +163,7 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
             };
         }
         let op = next_op.unwrap();
-        let op_length = op.content_len();
+        let op_length = op.length();
         if length < op_length {
             // a part of the peek op
             op.take(length)
@@ -182,20 +195,11 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
 
     fn peek_length(&self) -> usize {
         if let Some(op) = self.peek() {
-            op.content_len()
+            op.length()
         } else {
             usize::MAX
         }
     }
-
-    // fn peek_is_retain(&self) -> bool {
-    //     if let Some(op) = self.peek() {
-    //         op.is_retain()
-    //     } else {
-    //         // default
-    //         true
-    //     }
-    // }
 
     fn peek_is_insert(&self) -> bool {
         if let Some(op) = self.peek() {
@@ -273,7 +277,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         let last_op = self.vec.pop();
         if let Some(mut last_op) = last_op {
             if new_op.is_delete() && last_op.is_delete() {
-                *last_op.as_delete_mut().unwrap() += new_op.content_len();
+                *last_op.as_delete_mut().unwrap() += new_op.length();
                 self.vec.push(last_op);
                 return true;
             }
@@ -293,12 +297,12 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
             if new_op.meta() == last_op.meta() {
                 if new_op.is_insert() && last_op.is_insert() {
                     let value = last_op.as_insert_mut().unwrap().0;
-                    value.value_extend(new_op.into_insert().unwrap().0);
+                    value.value_extend(new_op.insert_inner());
                     // self.vec.push(last_op);
                     self.vec.insert(index - 1, last_op);
                     return true;
                 } else if new_op.is_retain() && last_op.is_retain() {
-                    *last_op.as_retain_mut().unwrap().0 += new_op.content_len();
+                    *last_op.as_retain_mut().unwrap().0 += new_op.length();
                     // self.vec.push(last_op);
                     self.vec.insert(index - 1, last_op);
                     return true;
@@ -345,20 +349,19 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         let first_other = other_iter.peek();
         if let Some(first_other) = first_other {
             if first_other.is_retain() && first_other.meta().is_none() {
-                let mut first_left = first_other.content_len();
+                let mut first_left = first_other.length();
                 let mut first_this = this_iter.peek();
                 while let Some(first_this_inner) = first_this {
-                    if first_this_inner.is_insert() && first_this_inner.content_len() <= first_left
-                    {
-                        first_left -= first_this_inner.content_len();
+                    if first_this_inner.is_insert() && first_this_inner.length() <= first_left {
+                        first_left -= first_this_inner.length();
                         ops.push(this_iter.next(None));
                         first_this = this_iter.peek();
                     } else {
                         break;
                     }
                 }
-                if first_other.content_len() - first_left > 0 {
-                    other_iter.next(first_other.content_len() - first_left);
+                if first_other.length() - first_left > 0 {
+                    other_iter.next(first_other.length() - first_left);
                 }
             }
         }
@@ -430,7 +433,7 @@ impl<Value: DeltaValue, M: Meta> Default for Delta<Value, M> {
     }
 }
 
-impl<T: Clone + PartialEq + Debug> DeltaValue for Vec<T> {
+impl<T> DeltaValue for Vec<T> {
     fn value_extend(&mut self, other: Self) {
         self.extend(other)
     }
@@ -439,6 +442,10 @@ impl<T: Clone + PartialEq + Debug> DeltaValue for Vec<T> {
         let mut new = self.split_off(length);
         std::mem::swap(self, &mut new);
         new
+    }
+
+    fn length(&self) -> usize {
+        self.len()
     }
 }
 
@@ -451,6 +458,9 @@ impl DeltaValue for String {
         let mut new = self.split_off(length);
         std::mem::swap(self, &mut new);
         new
+    }
+    fn length(&self) -> usize {
+        self.len()
     }
 }
 
