@@ -1,5 +1,5 @@
 use bench_utils::{get_automerge_actions, TextAction};
-use loro_internal::{log_store::EncodeConfig, LoroCore, VersionVector};
+use loro_internal::{EncodeMode, LoroCore, VersionVector};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn parallel() {
@@ -28,10 +28,9 @@ fn parallel() {
         loro_b.import(loro.export(loro_b.vv_cloned()));
         loro.import(loro_b.export(loro.vv_cloned()));
     }
-    let encoded =
-        loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let encoded = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
     println!("parallel doc size {} bytes", encoded.len());
-    let encoded = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
+    let encoded = loro.encode_all();
     println!("parallel doc size {} bytes", encoded.len());
 }
 
@@ -49,12 +48,12 @@ fn real_time() {
         if i % 2 == 0 {
             t1.delete(&c1, *pos, *del).unwrap();
             t1.insert(&c1, *pos, ins).unwrap();
-            let update = c1.encode_with_cfg(EncodeConfig::update(c2.vv_cloned()));
+            let update = c1.encode_with_cfg(EncodeMode::Updates(c2.vv_cloned()));
             c2.decode(&update).unwrap();
         } else {
             t2.delete(&c2, *pos, *del).unwrap();
             t2.insert(&c2, *pos, ins).unwrap();
-            let update = c2.encode_with_cfg(EncodeConfig::update(c1.vv_cloned()));
+            let update = c2.encode_with_cfg(EncodeMode::Updates(c1.vv_cloned()));
             c1.decode(&update).unwrap();
         }
     }

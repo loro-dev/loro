@@ -15,9 +15,8 @@ use crate::{
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
-    log_store::EncodeConfig,
     transaction::TransactionWrap,
-    ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
+    ContainerType, EncodeMode, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -676,14 +675,14 @@ fn check_synced(sites: &mut [Actor]) {
             let b_doc = &mut b.loro;
             if i % 2 == 0 {
                 a_doc
-                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .decode(&b_doc.encode_with_cfg(EncodeMode::RleUpdates(a_doc.vv_cloned())))
                     .unwrap();
                 b_doc
-                    .decode(&a_doc.encode_with_cfg(EncodeConfig::update(b_doc.vv_cloned())))
+                    .decode(&a_doc.encode_with_cfg(EncodeMode::Updates(b_doc.vv_cloned())))
                     .unwrap();
             } else {
                 a_doc
-                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .decode(&b_doc.encode_with_cfg(EncodeMode::RleUpdates(a_doc.vv_cloned())))
                     .unwrap();
                 b_doc.decode(&a_doc.encode_all()).unwrap();
             }

@@ -6,7 +6,7 @@ mod import;
 mod iter;
 
 use crate::{version::Frontiers, LoroValue};
-pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
+pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,

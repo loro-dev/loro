@@ -2,7 +2,7 @@ use std::{io::Write, time::Instant};
 
 use bench_utils::TextAction;
 use flate2::write::GzEncoder;
-use loro_internal::{log_store::EncodeConfig, LoroCore};
+use loro_internal::{EncodeMode, LoroCore};
 use loro_internal::{Transact, VersionVector};
 
 fn main() {
@@ -18,8 +18,7 @@ fn main() {
     drop(txn);
 
     let start = Instant::now();
-    let buf =
-        loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let buf = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
     println!(
         "encode changes {} bytes, used {}ms",
         buf.len(),
@@ -27,7 +26,7 @@ fn main() {
     );
     let json_ori = loro.to_json();
     let start = Instant::now();
-    let buf_snapshot = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
+    let buf_snapshot = loro.encode_all();
     let _json_snapshot = loro.to_json();
 
     println!(
@@ -40,8 +39,7 @@ fn main() {
     let start = Instant::now();
     loro.decode(&buf).unwrap();
     println!("decode rle_updates used {}ms", start.elapsed().as_millis());
-    let buf2 =
-        loro.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let buf2 = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
     assert_eq!(buf, buf2);
     let json2 = loro.to_json();
     assert_eq!(json_ori, json2);
@@ -54,8 +52,7 @@ fn main() {
     assert_eq!(json_snapshot, json3);
 
     let start = Instant::now();
-    let update_buf =
-        loro.encode_with_cfg(EncodeConfig::update(VersionVector::new()).without_compress());
+    let update_buf = loro.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
     println!(
         "encode updates {} bytes, used {}ms",
         update_buf.len(),

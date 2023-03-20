@@ -5,8 +5,7 @@ use loro_internal::container::ContainerID;
 use loro_internal::context::Context;
 use loro_internal::id::ID;
 
-use loro_internal::log_store::EncodeConfig;
-use loro_internal::{ContainerType, LoroCore, Text, VersionVector};
+use loro_internal::{ContainerType, EncodeMode, LoroCore, Text, VersionVector};
 
 #[test]
 fn send_sync() {
@@ -290,7 +289,7 @@ fn encode_hierarchy() {
 
     // updates
     println!("updates");
-    let input = c1.encode_with_cfg(EncodeConfig::update(VersionVector::new()).without_compress());
+    let input = c1.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
     let mut c2 = LoroCore::default();
     c2.subscribe_deep(Box::new(move |_event| {
         // println!("event: {:?}", _event);
@@ -300,8 +299,7 @@ fn encode_hierarchy() {
 
     // rle updates
     println!("rle updates");
-    let input =
-        c1.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let input = c1.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
     let mut c2 = LoroCore::default();
     c2.subscribe_deep(Box::new(move |_event| {
         // println!("event: {:?}", _event);

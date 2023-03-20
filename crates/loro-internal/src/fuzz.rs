@@ -6,9 +6,7 @@ use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 pub mod recursive_txn;
 
-use crate::{
-    array_mut_ref, id::ClientID, log_store::EncodeConfig, LoroCore, Transact, VersionVector,
-};
+use crate::{array_mut_ref, id::ClientID, LoroCore, Transact, VersionVector};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -147,15 +145,15 @@ impl Actionable for Vec<LoroCore> {
         match action {
             Action::Ins { content, pos, site } => {
                 let site = &mut self[*site as usize];
-                let mut txn = site.transact();
+                let txn = site.transact();
                 let mut text = site.get_text("text");
-                text.insert(&mut txn, *pos, &content.to_string()).unwrap();
+                text.insert(&txn, *pos, &content.to_string()).unwrap();
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
-                let mut txn = site.transact();
+                let txn = site.transact();
                 let mut text = site.get_text("text");
-                text.delete(&mut txn, *pos, *len).unwrap();
+                text.delete(&txn, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
                 let to_vv = self[*to as usize].vv_cloned();
@@ -185,7 +183,7 @@ impl Actionable for Vec<LoroCore> {
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
                 let text = self[*site as usize].get_text("text");
-                if text.len() == 0 {
+                if text.is_empty() {
                     *len = 0;
                     *pos = 0;
                     return;
@@ -251,7 +249,7 @@ pub fn test_single_client(mut actions: Vec<Action>) {
         .filter(|x| x.as_del().is_some() || x.as_ins().is_some())
     {
         {
-            let mut txn = store.transact();
+            let txn = store.transact();
             ground_truth.preprocess(action);
             applied.push(action.clone());
             // println!("{}", (&applied).table());
@@ -259,15 +257,15 @@ pub fn test_single_client(mut actions: Vec<Action>) {
             match action {
                 Action::Ins { content, pos, .. } => {
                     text_container
-                        .insert(&mut txn, *pos, &content.to_string())
+                        .insert(&txn, *pos, &content.to_string())
                         .unwrap();
                 }
                 Action::Del { pos, len, .. } => {
-                    if text_container.len() == 0 {
+                    if text_container.is_empty() {
                         return;
                     }
 
-                    text_container.delete(&mut txn, *pos, *len).unwrap();
+                    text_container.delete(&txn, *pos, *len).unwrap();
                 }
                 _ => {}
             }
@@ -287,7 +285,7 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
     let mut ground_truth = String::new();
     let mut applied = Vec::new();
 
-    let mut txn = store.transact();
+    let txn = store.transact();
     for action in actions
         .iter_mut()
         .filter(|x| x.as_del().is_some() || x.as_ins().is_some())
@@ -299,15 +297,15 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
         match action {
             Action::Ins { content, pos, .. } => {
                 text_container
-                    .insert(&mut txn, *pos, &content.to_string())
+                    .insert(&txn, *pos, &content.to_string())
                     .unwrap();
             }
             Action::Del { pos, len, .. } => {
-                if text_container.len() == 0 {
+                if text_container.is_empty() {
                     return;
                 }
 
-                text_container.delete(&mut txn, *pos, *len).unwrap();
+                text_container.delete(&txn, *pos, *len).unwrap();
             }
             _ => {}
         }
@@ -315,13 +313,11 @@ pub fn test_single_client_encode(mut actions: Vec<Action>) {
 
     drop(txn);
 
-    let encode_bytes =
-        store.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let encode_bytes = store.encode_from(VersionVector::new());
     let json1 = store.to_json();
     let mut store2 = LoroCore::new(Default::default(), None);
     store2.decode(&encode_bytes).unwrap();
-    let _encode_bytes2 =
-        store2.encode_with_cfg(EncodeConfig::rle_update(VersionVector::new()).without_compress());
+    let _encode_bytes2 = store2.encode_from(VersionVector::new());
     let json2 = store2.to_json();
     // state encode will change mergable range
     // assert_eq!(encode_bytes, encode_bytes2);

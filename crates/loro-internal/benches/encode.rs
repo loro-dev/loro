@@ -67,7 +67,7 @@ mod sync {
 mod run {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::log_store::{EncodeConfig, EncodeMode};
+    use loro_internal::log_store::EncodeMode;
     use loro_internal::{LoroCore, Transact, VersionVector};
 
     pub fn b4(c: &mut Criterion) {
@@ -84,15 +84,11 @@ mod run {
         let mut b = c.benchmark_group("encode");
         b.bench_function("B4_encode_updates", |b| {
             b.iter(|| {
-                let _ = loro.encode_with_cfg(
-                    EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
-                );
+                let _ = loro.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
             })
         });
         b.bench_function("B4_decode_updates", |b| {
-            let buf = loro.encode_with_cfg(
-                EncodeConfig::new(EncodeMode::Updates(VersionVector::new())).without_compress(),
-            );
+            let buf = loro.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
 
             b.iter(|| {
                 let mut store2 = LoroCore::default();
@@ -101,16 +97,11 @@ mod run {
         });
         b.bench_function("B4_encode_rle_updates", |b| {
             b.iter(|| {
-                let _ = loro.encode_with_cfg(
-                    EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new()))
-                        .without_compress(),
-                );
+                let _ = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
             })
         });
         b.bench_function("B4_decode_rle_updates", |b| {
-            let buf = loro.encode_with_cfg(
-                EncodeConfig::new(EncodeMode::RleUpdates(VersionVector::new())).without_compress(),
-            );
+            let buf = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
             b.iter(|| {
                 let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();
@@ -118,11 +109,11 @@ mod run {
         });
         b.bench_function("B4_encode_snapshot", |b| {
             b.iter(|| {
-                let _ = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
+                let _ = loro.encode_all();
             })
         });
         b.bench_function("B4_decode_snapshot", |b| {
-            let buf = loro.encode_with_cfg(EncodeConfig::snapshot().without_compress());
+            let buf = loro.encode_all();
             b.iter(|| {
                 let mut store2 = LoroCore::default();
                 store2.decode(&buf).unwrap();

@@ -1547,9 +1547,9 @@ dependencies = [
 
 [[package]]
 name = "serde-wasm-bindgen"
-version = "0.4.5"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3b4c031cd0d9014307d82b8abf653c0290fbdaeb4c02d00c63cf52f728628bf"
+checksum = "f3b143e2833c57ab9ad3ea280d21fd34e285a42837aeb0ee301f4f41890fa00e"
 dependencies = [
  "js-sys",
  "serde",
@@ -1558,9 +1558,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0ee0b00614e5c6aa133c162d63d75f14ef581856e3ca1e6e88e1374941f1452"
+checksum = "ccbcbdee14f8b34c983d900ef256e927d99ba3d0df9cbc7bc991797cac2a076f"
 dependencies = [
  "flate2",
  "itertools",
@@ -1572,9 +1572,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e234d18e1962ae8f30b17f861eb12bc455021a7db42fe60b6a0e4754055531a"
+checksum = "1228c2e3e91cbc589c3ac4f51a0e0dd7eed7fc62d62473524d7101e6fd37ecd2"
 dependencies = [
  "darling",
  "proc-macro2 1.0.49",

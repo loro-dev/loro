@@ -9,7 +9,6 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
-use crate::container::registry::ContainerIdx;
 #[allow(unused_imports)]
 use crate::{
     array_mut_ref,
@@ -17,9 +16,9 @@ use crate::{
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
-    log_store::EncodeConfig,
     ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
+use crate::{container::registry::ContainerIdx, EncodeMode};
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -315,7 +314,7 @@ impl Actionable for Vec<Actor> {
                     .get(*container_idx as usize)
                 {
                     *key %= (list.len() as u8).max(1);
-                    if *value == FuzzValue::Null && list.len() == 0 {
+                    if *value == FuzzValue::Null && list.is_empty() {
                         // no value, cannot delete
                         *value = FuzzValue::I32(1);
                     }
@@ -653,10 +652,10 @@ fn check_synced(sites: &mut [Actor]) {
             let b_doc = &mut b.loro;
             if i % 2 == 0 {
                 a_doc
-                    .decode(&b_doc.encode_with_cfg(EncodeConfig::rle_update(a_doc.vv_cloned())))
+                    .decode(&b_doc.encode_with_cfg(EncodeMode::RleUpdates(a_doc.vv_cloned())))
                     .unwrap();
                 b_doc
-                    .decode(&a_doc.encode_with_cfg(EncodeConfig::update(b_doc.vv_cloned())))
+                    .decode(&a_doc.encode_with_cfg(EncodeMode::Updates(b_doc.vv_cloned())))
                     .unwrap();
             } else {
                 a_doc.decode(&b_doc.encode_all()).unwrap();

@@ -2,12 +2,7 @@ mod encode_changes;
 mod encode_snapshot;
 mod encode_updates;
 
-use std::io::{Read, Write};
-
-pub use flate2::Compression;
-use flate2::{read::DeflateDecoder, write::DeflateEncoder};
 use fxhash::FxHashMap;
-use num::Zero;
 use rle::HasLength;
 
 use crate::{
@@ -56,83 +51,13 @@ impl From<u8> for ConcreteEncodeMode {
     }
 }
 
-pub struct EncodeConfig {
-    pub mode: EncodeMode,
-    pub compress: Compression,
-}
-
-impl EncodeConfig {
-    #[inline(always)]
-    pub fn new(mode: EncodeMode) -> Self {
-        Self {
-            mode,
-            compress: Compression::default(),
-        }
-    }
-
-    #[inline(always)]
-    pub fn snapshot() -> Self {
-        Self {
-            mode: EncodeMode::Snapshot,
-            compress: Compression::default(),
-        }
-    }
-
-    #[inline(always)]
-    pub fn auto(vv: VersionVector) -> Self {
-        Self {
-            mode: EncodeMode::Auto(vv),
-            compress: Compression::default(),
-        }
-    }
-
-    #[inline(always)]
-    pub fn update(vv: VersionVector) -> Self {
-        Self {
-            mode: EncodeMode::Updates(vv),
-            compress: Compression::default(),
-        }
-    }
-
-    #[inline(always)]
-    pub fn rle_update(vv: VersionVector) -> Self {
-        Self {
-            mode: EncodeMode::RleUpdates(vv),
-            compress: Compression::default(),
-        }
-    }
-
-    #[inline(always)]
-    pub fn from_vv(vv: VersionVector) -> Self {
-        // TODO: we can replace it with snapshot when vv is empty in the future version (when snapshot encoding is stable)
-        Self::auto(vv)
-    }
-
-    #[inline(always)]
-    pub fn with_default_compress(self) -> Self {
-        self.with_compress(6)
-    }
-
-    #[inline(always)]
-    pub fn with_compress(mut self, level: u32) -> Self {
-        self.compress = Compression::new(level);
-        self
-    }
-
-    #[inline(always)]
-    pub fn without_compress(mut self) -> Self {
-        self.compress = Compression::none();
-        self
-    }
-}
-
 pub struct LoroEncoder;
 
 impl LoroEncoder {
-    pub(crate) fn encode_context<C: Context>(ctx: &C, config: EncodeConfig) -> Vec<u8> {
+    pub(crate) fn encode_context<C: Context>(ctx: &C, mode: EncodeMode) -> Vec<u8> {
         let store = ctx.log_store();
         let store = store.try_read().unwrap();
-        Self::encode(&store, config)
+        Self::encode(&store, mode)
     }
 
     pub(crate) fn decode_context<C: Context>(
@@ -157,13 +82,11 @@ impl LoroEncoder {
         Self::decode_batch(&mut store, &mut hierarchy, input)
     }
 
-    pub(crate) fn encode(store: &LogStore, config: EncodeConfig) -> Vec<u8> {
+    pub(crate) fn encode(store: &LogStore, mode: EncodeMode) -> Vec<u8> {
         let version = ENCODE_SCHEMA_VERSION;
-        let EncodeConfig { mode, compress } = config;
         let mut ans = Vec::from(MAGIC_BYTES);
         // maybe u8 is enough
         ans.push(version);
-        ans.push((compress.level() != 0) as u8);
         let mode = match mode {
             EncodeMode::Auto(vv) => {
                 let self_vv = store.vv();
@@ -191,13 +114,7 @@ impl LoroEncoder {
         }
         .unwrap();
         ans.push(mode.to_byte());
-        if compress.level() != 0 {
-            let mut c = DeflateEncoder::new(&mut ans, compress);
-            c.write_all(&encoded).unwrap();
-            c.try_finish().unwrap();
-        } else {
-            ans.extend(encoded);
-        };
+        ans.extend(encoded);
         ans
     }
 
@@ -213,16 +130,8 @@ impl LoroEncoder {
         }
         let (_version, input) = input.split_at(1);
         // check version
-        let compress = input[0];
-        let mode: ConcreteEncodeMode = input[1].into();
-        let mut decoded = Vec::new();
-        let decoded = if compress.is_zero() {
-            &input[2..]
-        } else {
-            let mut c = DeflateDecoder::new(&input[2..]);
-            c.read_to_end(&mut decoded).unwrap();
-            &decoded
-        };
+        let mode: ConcreteEncodeMode = input[0].into();
+        let decoded = &input[1..];
         match mode {
             ConcreteEncodeMode::Updates => Self::decode_updates(store, hierarchy, decoded),
             ConcreteEncodeMode::RleUpdates => Self::decode_changes(store, hierarchy, decoded),
@@ -245,16 +154,8 @@ impl LoroEncoder {
             let (version_len, input) = input.split_at(1);
             // check version
             let (_version, input) = input.split_at(version_len[0] as usize);
-            let compress = input[0];
-            let mode: ConcreteEncodeMode = input[1].into();
-            let mut decoded = Vec::new();
-            let decoded = if compress.is_zero() {
-                &input[2..]
-            } else {
-                let mut c = DeflateDecoder::new(&input[2..]);
-                c.read_to_end(&mut decoded).unwrap();
-                &decoded
-            };
+            let mode: ConcreteEncodeMode = input[0].into();
+            let decoded = &input[1..];
             let decoded = match mode {
                 ConcreteEncodeMode::Updates => {
                     encode_updates::decode_updates_to_inner_format(decoded)?

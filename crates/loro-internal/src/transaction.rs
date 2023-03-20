@@ -105,6 +105,7 @@ impl Transaction {
         f(&store)
     }
 
+    #[allow(unused)]
     pub(crate) fn with_store_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut LogStore) -> R,
@@ -114,6 +115,7 @@ impl Transaction {
         f(&mut store)
     }
 
+    #[allow(unused)]
     pub(crate) fn with_hierarchy<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&Hierarchy) -> R,
@@ -123,6 +125,7 @@ impl Transaction {
         f(&hierarchy)
     }
 
+    #[allow(unused)]
     pub(crate) fn with_hierarchy_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Hierarchy) -> R,

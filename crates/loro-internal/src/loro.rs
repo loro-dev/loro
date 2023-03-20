@@ -5,8 +5,8 @@ use crate::{
     context::Context,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
-    log_store::{EncodeConfig, LoroEncoder},
-    LoroError, LoroValue,
+    log_store::LoroEncoder,
+    EncodeMode, LoroError, LoroValue,
 };
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -129,20 +129,16 @@ impl LoroCore {
 
     /// this method will always compress
     pub fn encode_all(&self) -> Vec<u8> {
-        LoroEncoder::encode_context(self, EncodeConfig::snapshot())
+        LoroEncoder::encode_context(self, EncodeMode::Snapshot)
     }
 
     /// encode without compress
     pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode_context(self, EncodeConfig::from_vv(from).without_compress())
+        LoroEncoder::encode_context(self, EncodeMode::Auto(from))
     }
 
-    pub fn encode_from_compress(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode_context(self, EncodeConfig::from_vv(from).with_default_compress())
-    }
-
-    pub fn encode_with_cfg(&self, config: EncodeConfig) -> Vec<u8> {
-        LoroEncoder::encode_context(self, config)
+    pub fn encode_with_cfg(&self, mode: EncodeMode) -> Vec<u8> {
+        LoroEncoder::encode_context(self, mode)
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {

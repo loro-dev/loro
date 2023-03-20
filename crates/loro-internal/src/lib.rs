@@ -45,7 +45,7 @@ pub use container::ContainerTrait;
 
 pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use fxhash::FxHashMap;
-pub use log_store::LogStore;
+pub use log_store::{EncodeMode, LogStore};
 pub use loro::LoroCore;
 pub use value::LoroValue;
 pub use version::VersionVector;

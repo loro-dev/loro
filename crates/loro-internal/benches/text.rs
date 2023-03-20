@@ -6,7 +6,6 @@ mod run {
     use super::*;
     use arbitrary::Unstructured;
     use bench_utils::TextAction;
-    use loro_internal::container::registry::ContainerWrapper;
     use loro_internal::fuzz::test_multi_sites;
     use loro_internal::fuzz::Action;
     use loro_internal::LoroCore;
