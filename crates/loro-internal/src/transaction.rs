@@ -12,13 +12,15 @@ use crate::{
     id::{ClientID, ID},
     log_store::LoroEncoder,
     version::Frontiers,
-    ContainerType, List, LogStore, LoroCore, LoroError, Map, Text,
+    ContainerType, InternalString, List, LogStore, LoroCore, LoroError, Map, Text,
 };
 use fxhash::FxHashMap;
+use serde::Serialize;
 use smallvec::smallvec;
 
 pub trait Transact {
     fn transact(&self) -> TransactionWrap;
+    fn transact_with(&self, origin: Option<Origin>) -> TransactionWrap;
 }
 
 impl Transact for LoroCore {
@@ -28,11 +30,25 @@ impl Transact for LoroCore {
             Arc::downgrade(&self.hierarchy),
         ))))
     }
+
+    fn transact_with(&self, origin: Option<Origin>) -> TransactionWrap {
+        TransactionWrap(Rc::new(RefCell::new(
+            Transaction::new(
+                Arc::downgrade(&self.log_store),
+                Arc::downgrade(&self.hierarchy),
+            )
+            .with_origin(origin),
+        )))
+    }
 }
 
 impl Transact for TransactionWrap {
     fn transact(&self) -> TransactionWrap {
         TransactionWrap(Rc::clone(&self.0))
+    }
+
+    fn transact_with(&self, _origin: Option<Origin>) -> TransactionWrap {
+        unreachable!()
     }
 }
 
@@ -64,10 +80,27 @@ impl TransactionWrap {
     }
 }
 
+// TODO: use String as Origin for now
+#[derive(Debug, Clone, Serialize)]
+pub struct Origin(InternalString);
+
+impl Origin {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<T: AsRef<str>> From<T> for Origin {
+    fn from(value: T) -> Self {
+        Self(value.as_ref().into())
+    }
+}
+
 pub struct Transaction {
     pub(crate) client_id: ClientID,
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
+    pub(crate) origin: Option<Origin>,
     pending_ops: FxHashMap<ContainerIdx, Vec<ID>>,
     // sort by [ContainerIdx]
     // TODO Origin, now use local bool
@@ -92,8 +125,14 @@ impl Transaction {
             pending_event_diff: Default::default(),
             latest_vv: start_vv.clone(),
             start_vv,
+            origin: None,
             committed: false,
         }
+    }
+
+    pub(crate) fn with_origin(mut self, origin: Option<Origin>) -> Self {
+        self.origin = origin;
+        self
     }
 
     pub(crate) fn with_store<F, R>(&self, f: F) -> R
@@ -189,6 +228,7 @@ impl Transaction {
                             new_version: txn.latest_vv.clone(),
                             container_id: id.clone(),
                             abs_path,
+                            origin: txn.origin.as_ref().cloned(),
                         };
                         events.push(event);
                     }
@@ -208,11 +248,6 @@ impl Transaction {
     ) -> (ContainerID, ContainerIdx) {
         self.with_store_hierarchy_mut(|_txn, s, h| {
             let (container_id, idx) = s.create_container(type_);
-            // let parent_idx = s.reg.get_idx(parent_id).unwrap();
-            // txn.created_container
-            //     .entry(parent_idx)
-            //     .or_insert_with(FxHashSet::default)
-            //     .insert(idx);
             h.add_child(parent_id, &container_id);
             (container_id, idx)
         })

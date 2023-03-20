@@ -143,6 +143,7 @@ impl LogStore {
                 old_version: context.old_frontiers.clone(),
                 new_version: context.new_frontiers.clone(),
                 local: false,
+                origin: None,
             };
             events.push(raw_event);
         }

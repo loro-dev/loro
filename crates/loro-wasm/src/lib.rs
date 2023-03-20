@@ -4,7 +4,7 @@ use loro_internal::{
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
     log_store::GcConfig,
-    ContainerType, List, LoroCore, Map, Text, Transact, TransactionWrap, VersionVector,
+    ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
 use std::{cell::RefCell, ops::Deref, sync::Arc};
 use wasm_bindgen::{__rt::RefMut, prelude::*};
@@ -46,6 +46,9 @@ extern "C" {
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "Transaction | Loro")]
     pub type JsTransaction;
+    #[wasm_bindgen(typescript_type = "String")]
+    pub type JsOrigin;
+
 }
 
 struct MathRandom;
@@ -221,7 +224,14 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            observer.call1(&JsValue::from_bool(e.local));
+            observer.call1(
+                // &JsValue::from_bool(e.local)
+                &Event {
+                    local: e.local,
+                    origin: e.origin.clone(),
+                }
+                .into(),
+            );
         }))
     }
 
@@ -229,8 +239,7 @@ impl Loro {
         self.0.borrow_mut().unsubscribe_deep(subscription)
     }
 
-    pub fn transaction(&self, f: js_sys::Function) -> JsResult<()> {
-        let txn = self.0.borrow().transact();
+    fn transaction_impl(&self, txn: TransactionWrap, f: js_sys::Function) -> JsResult<()> {
         let js_txn = JsValue::from(Transaction(txn));
         f.call1(&JsValue::NULL, &js_txn)?;
         // TODO: what is the best way to drop txn
@@ -241,11 +250,39 @@ impl Loro {
         drop(unsafe { Transaction::from_abi(ptr) });
         Ok(())
     }
+
+    pub fn transaction(&self, f: js_sys::Function) -> JsResult<()> {
+        let txn = self.0.borrow().transact();
+        self.transaction_impl(txn, f)
+    }
+
+    #[wasm_bindgen(js_name = "transactionWithOrigin")]
+    pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
+        let origin = origin.as_string().map(Origin::from);
+        let txn = self.0.borrow().transact_with(origin);
+        self.transaction_impl(txn, f)
+    }
 }
 
 impl Default for Loro {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[wasm_bindgen]
+pub struct Event {
+    pub local: bool,
+    origin: Option<Origin>,
+}
+
+#[wasm_bindgen]
+impl Event {
+    #[wasm_bindgen(js_name = "origin", method, getter)]
+    pub fn origin(&self) -> Option<JsOrigin> {
+        self.origin
+            .as_ref()
+            .map(|o| JsValue::from_str(o.as_str()).into())
     }
 }
 
@@ -476,5 +513,6 @@ interface Loro {
     exportUpdates(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
     transaction(callback: (txn: Transaction)=>void): void;
+    transactionWithOrigin(origin: string, callback: (txn: Transaction)=>void): void;
 }
 "#;

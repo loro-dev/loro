@@ -26,7 +26,7 @@ mod span;
 #[cfg(test)]
 pub mod tests;
 mod transaction;
-pub use transaction::{Transact, Transaction, TransactionWrap};
+pub use transaction::{Origin, Transact, Transaction, TransactionWrap};
 
 pub mod delta;
 pub mod event;

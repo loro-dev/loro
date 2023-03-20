@@ -261,6 +261,7 @@ impl Hierarchy {
                 target: target_id.clone(),
                 diff: raw_event.diff,
                 local: raw_event.local,
+                origin: raw_event.origin,
             };
             let mut dispatches = Vec::new();
             let mut hierarchy = hierarchy.try_lock().unwrap();

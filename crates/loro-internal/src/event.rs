@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     container::ContainerID,
     delta::{Delta, MapDiff},
+    transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,
 };
@@ -17,6 +18,7 @@ pub struct RawEvent {
     pub local: bool,
     pub diff: SmallVec<[Diff; 1]>,
     pub abs_path: Path,
+    pub origin: Option<Origin>,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,6 +32,7 @@ pub struct Event {
     pub absolute_path: Path,
     pub diff: SmallVec<[Diff; 1]>,
     pub local: bool,
+    pub origin: Option<Origin>,
 }
 
 #[derive(Debug)]
