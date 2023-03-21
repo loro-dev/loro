@@ -775,6 +775,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn collection() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
@@ -798,6 +799,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn for_each() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
@@ -816,6 +818,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn map() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");

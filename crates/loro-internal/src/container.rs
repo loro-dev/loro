@@ -21,7 +21,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use self::{pool_mapping::StateContent, registry::ContainerIdx};
+use self::pool_mapping::StateContent;
 
 pub mod pool_mapping;
 pub mod registry;
@@ -31,6 +31,7 @@ pub mod map;
 mod pool;
 pub mod text;
 
+pub use registry::ContainerIdx;
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]

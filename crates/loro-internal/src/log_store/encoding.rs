@@ -118,7 +118,7 @@ impl LoroEncoder {
         ans
     }
 
-    pub fn decode(
+    pub(crate) fn decode(
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         input: &[u8],
@@ -139,7 +139,7 @@ impl LoroEncoder {
         }
     }
 
-    pub fn decode_batch(
+    pub(crate) fn decode_batch(
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         batch: &[Vec<u8>],
