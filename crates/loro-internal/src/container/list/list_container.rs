@@ -5,31 +5,31 @@ use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
     HasLength, RleTree,
 };
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     container::{
         list::list_op::ListOp,
         pool,
         pool_mapping::{PoolMapping, StateContent},
-        registry::{ContainerInstance, ContainerRegistry, ContainerWrapper},
+        registry::{ContainerIdx, ContainerInstance, ContainerRegistry, ContainerWrapper},
         text::{
             text_content::{ListSlice, SliceRange},
             tracker::{Effect, Tracker},
         },
-        Container, ContainerID, ContainerType,
+        ContainerID, ContainerTrait, ContainerType,
     },
-    context::Context,
     delta::Delta,
-    event::{Diff, Index, RawEvent},
+    event::{Diff, Index},
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
+    transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError,
+    LoroError, Transact,
 };
 
 use super::list_op::InnerListOp;
@@ -39,6 +39,7 @@ pub(crate) type ListState = RleTree<SliceRange, CumulateTreeTrait<SliceRange, 8,
 #[derive(Debug)]
 pub struct ListContainer {
     id: ContainerID,
+    idx: ContainerIdx,
     pub(crate) state: ListState,
     pub(crate) raw_data: pool::Pool,
     tracker: Option<Tracker>,
@@ -46,9 +47,10 @@ pub struct ListContainer {
 }
 
 impl ListContainer {
-    pub(crate) fn new(id: ContainerID) -> Self {
+    pub(crate) fn new(id: ContainerID, idx: ContainerIdx) -> Self {
         Self {
             id,
+            idx,
             raw_data: pool::Pool::default(),
             tracker: None,
             state: Default::default(),
@@ -56,120 +58,116 @@ impl ListContainer {
         }
     }
 
-    pub fn insert_batch<C: Context>(&mut self, ctx: &C, pos: usize, values: Vec<LoroValue>) {
+    fn insert<P: Prelim>(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        value: P,
+    ) -> Result<Option<ContainerIdx>, LoroError> {
+        let (value, maybe_container) = value.convert_value()?;
+        if let Some(prelim) = maybe_container {
+            let type_ = value.into_container().unwrap();
+            let (id, idx) = txn.register_container(&self.id, type_);
+            let value = LoroValue::Unresolved(id.into());
+            self.insert_value(txn, pos, value);
+            prelim.integrate(txn, idx)?;
+            Ok(Some(idx))
+        } else {
+            let value = value.into_value().unwrap();
+            self.insert_value(txn, pos, value);
+            Ok(None)
+        }
+    }
+
+    fn insert_value(&mut self, txn: &mut Transaction, pos: usize, value: LoroValue) {
+        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let id = store.next_id();
+            let slice = self.raw_data.alloc(value);
+            self.state.insert(pos, slice.clone().into());
+            let op = Op::new(
+                id,
+                InnerContent::List(InnerListOp::Insert {
+                    slice: slice.clone().into(),
+                    pos,
+                }),
+                self.idx,
+            );
+            // record op id
+            txn.push(self.idx, id);
+            store.append_local_ops(&[op]);
+            txn.update_version(store.frontiers().into());
+            // cache event
+
+            if hierarchy.should_notify(&self.id) {
+                let value = self.raw_data.slice(&slice)[0].clone();
+                let delta = Delta::new().retain(pos).insert(vec![value]);
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
+            }
+        });
+    }
+
+    pub(crate) fn insert_batch(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        values: Vec<LoroValue>,
+    ) {
         if values.is_empty() {
             return;
         }
-        assert!(!values.iter().any(|x|x.as_unresolved().is_some()), "Cannot have containers in insert_batch method. If you want to create sub container, please use push or insert method");
-        let store = ctx.log_store();
-        let mut store = store.try_write().unwrap();
-
-        let id = store.next_id();
-
-        let slice = self.raw_data.alloc_arr(values);
-        self.state.insert(pos, slice.clone().into());
-        let op = Op::new(
-            id,
-            InnerContent::List(InnerListOp::Insert {
-                slice: slice.into(),
-                pos,
-            }),
-            store.get_or_create_container_idx(&self.id),
-        );
-        store.append_local_ops(&[op]);
-    }
-
-    pub fn insert<C: Context, P: Prelim>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        value: P,
-    ) -> Result<(Option<RawEvent>, Option<ContainerID>), LoroError> {
-        let (value, maybe_container) = value.convert_value()?;
-        if let Some(prelim) = maybe_container {
-            let (event, container_id) = self.insert_obj(ctx, pos, value.into_container().unwrap());
-            let m = ctx.log_store();
-            let store = m.read().unwrap();
-            let container = store.get_container(&container_id).unwrap();
-            drop(store);
-            prelim.integrate(ctx, container)?;
-            Ok((event, Some(container_id)))
-        } else {
-            let value = value.into_value().unwrap();
-            let event = self.insert_value(ctx, pos, value);
-            Ok((event, None))
-        }
-    }
-
-    fn insert_value<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        value: LoroValue,
-    ) -> Option<RawEvent> {
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
-        let slice = self.raw_data.alloc(value);
-        self.state.insert(pos, slice.clone().into());
-        let op = Op::new(
-            id,
-            InnerContent::List(InnerListOp::Insert {
-                slice: slice.clone().into(),
-                pos,
-            }),
-            store.get_or_create_container_idx(&self.id),
-        );
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-        let hierarchy = hierarchy.try_lock().unwrap();
-        if hierarchy.should_notify(&self.id) {
-            let value = self.raw_data.slice(&slice)[0].clone();
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.insert(vec![value]);
-            if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, self.id()) {
-                Some(RawEvent {
-                    container_id: self.id.clone(),
-                    old_version,
-                    new_version,
-                    diff: vec![Diff::List(delta)],
-                    local: true,
-                    abs_path,
-                })
-            } else {
-                None
+        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let slice = self.raw_data.alloc_arr(values);
+            // cache event
+            if hierarchy.should_notify(&self.id) {
+                let values = self.raw_data.slice(&slice).to_vec();
+                let delta = Delta::new().retain(pos).insert(values);
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
             }
-        } else {
-            None
-        }
+            self.state.insert(pos, slice.clone().into());
+            let id = store.next_id();
+            let op = Op::new(
+                id,
+                InnerContent::List(InnerListOp::Insert {
+                    slice: slice.into(),
+                    pos,
+                }),
+                self.idx,
+            );
+            txn.push(self.idx, id);
+            store.append_local_ops(&[op]);
+            txn.update_version(store.frontiers().into());
+        });
     }
 
-    fn insert_obj<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        obj: ContainerType,
-    ) -> (Option<RawEvent>, ContainerID) {
-        let m = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = m.write().unwrap();
-        let (container_id, _) = store.create_container(obj);
-        // Update hierarchy info
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        hierarchy.add_child(&self.id, &container_id);
+    fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
 
-        drop(hierarchy);
-        drop(store);
-        // TODO: we can avoid this lock
-        let event = self.insert_value(
-            ctx,
-            pos,
-            LoroValue::Unresolved(Box::new(container_id.clone())),
-        );
+        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let id = store.next_id();
+            let op = Op::new(
+                id,
+                InnerContent::List(InnerListOp::new_del(pos, len)),
+                self.idx,
+            );
+            txn.push(self.idx, id);
+            store.append_local_ops(&[op]);
+            txn.update_version(store.frontiers().into());
 
-        (event, container_id)
+            if let Some(deleted_containers) = self.update_hierarchy_on_delete(hierarchy, pos, len) {
+                deleted_containers.into_iter().for_each(|id| {
+                    let idx = store.get_container_idx(&id).unwrap();
+                    txn.delete_container(idx);
+                })
+            }
+
+            self.state.delete_range(Some(pos), Some(pos + len));
+            if hierarchy.should_notify(&self.id) {
+                let delta = Delta::new().retain(pos).delete(len);
+                txn.append_event_diff(self.idx, Diff::List(delta), true);
+            }
+        });
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {
@@ -179,69 +177,31 @@ impl ListContainer {
             .and_then(|slice| slice.first().cloned())
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
-        if len == 0 {
+    fn update_hierarchy_on_delete(
+        &mut self,
+        hierarchy: &mut Hierarchy,
+        pos: usize,
+        len: usize,
+    ) -> Option<Vec<ContainerID>> {
+        if !hierarchy.has_children(&self.id) {
             return None;
         }
-
-        if self.state.len() < pos + len {
-            panic!("deletion out of range");
-        }
-
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
-        let op = Op::new(
-            id,
-            InnerContent::List(InnerListOp::new_del(pos, len)),
-            store.get_or_create_container_idx(&self.id),
-        );
-
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-
-        // Update hierarchy info
-        self.update_hierarchy_on_delete(&mut hierarchy, pos, len);
-
-        self.state.delete_range(Some(pos), Some(pos + len));
-
-        if hierarchy.should_notify(&self.id) {
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.delete(len);
-            if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &self.id) {
-                Some(RawEvent {
-                    diff: vec![Diff::List(delta)],
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                    abs_path,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn update_hierarchy_on_delete(&mut self, hierarchy: &mut Hierarchy, pos: usize, len: usize) {
-        if !hierarchy.has_children(&self.id) {
-            return;
-        }
-
+        let mut ans = Vec::new();
         for state in self.state.iter_range(pos, Some(pos + len)) {
             let range = &state.get_sliced().0;
+
+            if SliceRange::from(range.start..range.end).is_unknown() {
+                continue;
+            }
             for value in self.raw_data.slice(range).iter() {
                 if let LoroValue::Unresolved(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);
                     hierarchy.remove_child(&self.id, container_id);
+                    ans.push(container_id.as_ref().clone());
                 }
             }
         }
+        Some(ans)
     }
 
     pub fn values_len(&self) -> usize {
@@ -300,11 +260,18 @@ impl ListContainer {
     }
 }
 
-impl Container for ListContainer {
+impl ContainerTrait for ListContainer {
+    #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
     }
 
+    #[inline(always)]
+    fn idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    #[inline(always)]
     fn type_(&self) -> ContainerType {
         ContainerType::Text
     }
@@ -343,7 +310,9 @@ impl Container for ListContainer {
                     smallvec::smallvec![RemoteContent::List(ListOp::Delete(del))]
                 }
             },
-            InnerContent::Map(_) => unreachable!(),
+            InnerContent::Map(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -379,21 +348,30 @@ impl Container for ListContainer {
             InnerContent::List(op) => match op {
                 InnerListOp::Insert { slice, pos } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        let delta_vec = self.raw_data.slice(&slice.0).to_vec();
-                        delta.retain(*pos);
-                        delta.insert(delta_vec);
+                        let delta = Delta::new();
+                        // unknown
+                        let delta_vec = if slice.is_unknown() {
+                            let mut ans = Vec::with_capacity(slice.atom_len());
+                            for _ in 0..slice.content_len() {
+                                ans.push(LoroValue::Null);
+                            }
+                            ans
+                        } else {
+                            self.raw_data.slice(&slice.0).to_vec()
+                        };
+                        let delta = delta.retain(*pos).insert(delta_vec);
                         context.push_diff(&self.id, Diff::List(delta));
                     }
-
-                    self.update_hierarchy_on_insert(hierarchy, slice);
+                    if !slice.is_unknown() {
+                        self.update_hierarchy_on_insert(hierarchy, slice);
+                    }
                     self.state.insert(*pos, slice.clone());
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(span.start() as usize);
-                        delta.delete(span.atom_len());
+                        let delta = Delta::new()
+                            .retain(span.start() as usize)
+                            .delete(span.atom_len());
                         context.push_diff(&self.id, Diff::List(delta));
                     }
 
@@ -441,7 +419,7 @@ impl Container for ListContainer {
         import_context: &mut ImportContext,
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
-        let mut diff = vec![];
+        let mut diff = smallvec![];
         for effect in self.tracker.as_mut().unwrap().iter_effects(
             import_context.patched_old_vv.as_ref().unwrap(),
             &import_context.spans,
@@ -449,9 +427,7 @@ impl Container for ListContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
-                        delta.delete(len);
+                        let delta = Delta::new().retain(pos).delete(len);
                         diff.push(Diff::List(delta));
                     }
 
@@ -474,15 +450,12 @@ impl Container for ListContainer {
                 }
                 Effect::Ins { pos, content } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
                         let s = if content.is_unknown() {
                             (0..content.atom_len()).map(|_| LoroValue::Null).collect()
                         } else {
                             self.raw_data.slice(&content.0).to_vec()
                         };
-
-                        delta.insert(s);
+                        let delta = Delta::new().retain(pos).insert(s);
                         diff.push(Diff::List(delta));
                     }
                     if !content.is_unknown() {
@@ -571,10 +544,9 @@ impl Container for ListContainer {
             // notify
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
-                let mut delta = Delta::new();
                 let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
-                delta.retain(0);
-                delta.insert(delta_vec);
+                let delta = Delta::new().retain(0).insert(delta_vec);
+
                 ctx.push_diff(&self.id, Diff::List(delta));
             }
         } else {
@@ -592,118 +564,174 @@ impl Container for ListContainer {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct List {
-    instance: Weak<Mutex<ContainerInstance>>,
+    container: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
-}
-
-impl Clone for List {
-    fn clone(&self) -> Self {
-        Self {
-            instance: Weak::clone(&self.instance),
-            client_id: self.client_id,
-        }
-    }
+    container_idx: ContainerIdx,
 }
 
 impl List {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+        let container_idx = {
+            let list = instance.upgrade().unwrap();
+            let list = list.try_lock().unwrap();
+            list.idx()
+        };
         Self {
-            instance,
+            container: instance,
             client_id,
+            container_idx,
         }
     }
 
-    pub fn insert_batch<C: Context>(
+    #[inline(always)]
+    pub fn idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
+
+    /// Inserts an element at position index within the List
+    pub fn insert<T: Transact, P: Prelim>(
         &mut self,
-        ctx: &C,
+        txn: &T,
+        pos: usize,
+        value: P,
+    ) -> Result<Option<ContainerIdx>, LoroError> {
+        self.with_transaction(txn, |txn, x| {
+            let len = x.values_len();
+            if len < pos{
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            x.insert(txn, pos, value)
+        })
+    }
+
+    /// Inserts some elements at position index within the List
+    pub fn insert_batch<T: Transact>(
+        &mut self,
+        txn: &T,
         pos: usize,
         values: Vec<LoroValue>,
     ) -> Result<(), LoroError> {
-        self.with_container_checked(ctx, |x| x.insert_batch(ctx, pos, values))
+        self.with_transaction(txn, |txn, x| {
+            let len = x.values_len();
+            if len < pos{
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            x.insert_batch(txn, pos, values);
+            Ok(())
+        })
     }
 
-    pub fn insert<C: Context, P: Prelim>(
+    /// Appends an element to the back
+    pub fn push<T: Transact, P: Prelim>(
         &mut self,
-        ctx: &C,
-        pos: usize,
+        txn: &T,
         value: P,
-    ) -> Result<Option<ContainerID>, LoroError> {
-        self.with_event(ctx, |x| x.insert(ctx, pos, value))
-    }
-
-    pub fn push<C: Context, P: Prelim>(
-        &mut self,
-        ctx: &C,
-        value: P,
-    ) -> Result<Option<ContainerID>, LoroError> {
-        self.with_event(ctx, |x| {
+    ) -> Result<Option<ContainerIdx>, LoroError> {
+        self.with_transaction(txn, |txn, x| {
             let pos = x.values_len();
-            x.insert(ctx, pos, value)
+            x.insert(txn, pos, value)
         })
     }
 
-    pub fn push_front<C: Context, P: Prelim>(
+    // Inserts an element to the front
+    pub fn push_front<T: Transact, P: Prelim>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         value: P,
-    ) -> Result<Option<ContainerID>, LoroError> {
-        self.with_event(ctx, |x| {
-            let pos = 0;
-            x.insert(ctx, pos, value)
-        })
+    ) -> Result<Option<ContainerIdx>, LoroError> {
+        self.with_transaction(txn, |txn, x| x.insert(txn, 0, value))
     }
 
-    pub fn pop<C: Context>(&mut self, ctx: &C) -> Result<Option<LoroValue>, LoroError> {
-        self.with_event(ctx, |x| {
+    /// Removes the last element from the List and returns it, or None if it is empty.
+    pub fn pop<T: Transact>(&mut self, txn: &T) -> Result<Option<LoroValue>, LoroError> {
+        self.with_transaction(txn, |txn, x| {
             let len = x.values_len();
             if len == 0 {
-                return Ok((None, None));
+                return Ok(None);
             }
             let value = x.get(len - 1);
-            Ok((x.delete(ctx, len - 1, 1), value))
+            x.delete(txn, len - 1, 1);
+            Ok(value)
         })
     }
 
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Result<(), LoroError> {
-        self.with_event(ctx, |list| Ok((list.delete(ctx, pos, len), ())))
+    /// Removes the specified range (pos..pos+len) from the List
+    pub fn delete<T: Transact>(
+        &mut self,
+        txn: &T,
+        pos: usize,
+        len: usize,
+    ) -> Result<(), LoroError> {
+        self.with_transaction(txn, |txn, x| {
+            let current_length = x.values_len();
+            if pos > current_length {
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            if pos + len > current_length {
+                return Err(LoroError::TransactionError(
+                    format!("`ContainerIdx-{:?}` can not apply delete op: the current len is {} but the delete range is {:?}", self.container_idx, current_length, pos..pos+len).into(),
+                ));
+            }
+            x.delete(txn, pos, len);
+            Ok(())
+        })
     }
 
-    pub fn get(&self, pos: usize) -> Option<LoroValue> {
-        self.with_container(|list| list.get(pos))
+    /// return the value of the element at that position or None if out of bounds.
+    pub fn get(
+        &self,
+        // txn: &T,
+        pos: usize,
+    ) -> Option<LoroValue> {
+        // self.with_transaction(txn, |txn, x| Ok(x.get(pos)))
+        self.with_container(|x| x.get(pos))
     }
 
     pub fn len(&self) -> usize {
-        self.with_container(|text| text.values_len())
+        // self.with_transaction(txn, |txn, x| Ok(x.values_len()))
+        self.with_container(|x| x.values_len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn for_each<F: FnMut((usize, &LoroValue))>(&self, f: F) {
         self.with_container(|list| list.iter().enumerate().for_each(f))
     }
 
+    // TODO
     pub fn map<F: FnMut((usize, &LoroValue)) -> R, R>(&self, f: F) -> Vec<R> {
         self.with_container(|list| list.iter().enumerate().map(f).collect())
     }
 
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
+    /// Need clone
     pub fn id(&self) -> ContainerID {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_list()
-            .unwrap()
-            .id
-            .clone()
+        self.with_container(|list| list.id.clone())
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.with_container(|list| list.get_value())
+        self.with_container(|x| x.get_value())
     }
 }
 
@@ -714,29 +742,34 @@ impl ContainerWrapper for List {
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let w = self.instance.upgrade().unwrap();
+        let w = self.container.upgrade().unwrap();
         let mut container_instance = w.try_lock().unwrap();
         let list = container_instance.as_list_mut().unwrap();
-        let ans = f(list);
-        drop(container_instance);
-        ans
+        f(list)
     }
 
     fn client_id(&self) -> ClientID {
         self.client_id
     }
+
+    fn idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroCore, LoroValue, PrelimContainer};
+    use crate::{LoroCore, Transact};
 
     #[test]
     fn test_list_get() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("id");
-        list.insert(&loro, 0, 123).unwrap();
-        list.insert(&loro, 1, 123).unwrap();
+        {
+            let txn = loro.transact();
+            list.insert(&txn, 0, 123).unwrap();
+            list.insert(&txn, 1, 123).unwrap();
+        }
         assert_eq!(list.get(0), Some(123.into()));
         assert_eq!(list.get(1), Some(123.into()));
     }

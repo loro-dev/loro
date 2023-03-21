@@ -2,25 +2,26 @@ use std::sync::{Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use tracing::instrument;
 
 use crate::{
     container::{
         list::list_op::{InnerListOp, ListOp},
         pool_mapping::{PoolMapping, StateContent},
-        registry::{ContainerInstance, ContainerWrapper},
-        Container, ContainerID, ContainerType,
+        registry::{ContainerIdx, ContainerInstance, ContainerWrapper},
+        ContainerID, ContainerTrait, ContainerType,
     },
-    context::Context,
     delta::Delta,
-    event::{Diff, RawEvent},
+    event::Diff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
+    transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
+    LoroError, Transact,
 };
 
 use super::{
@@ -33,6 +34,7 @@ use super::{
 #[derive(Debug)]
 pub struct TextContainer {
     id: ContainerID,
+    idx: ContainerIdx,
     state: Rope,
     raw_str: StringPool,
     tracker: Option<Tracker>,
@@ -40,9 +42,10 @@ pub struct TextContainer {
 }
 
 impl TextContainer {
-    pub(crate) fn new(id: ContainerID) -> Self {
+    pub(crate) fn new(id: ContainerID, idx: ContainerIdx) -> Self {
         Self {
             id,
+            idx,
             raw_str: StringPool::default(),
             tracker: None,
             state: Default::default(),
@@ -50,95 +53,49 @@ impl TextContainer {
         }
     }
 
-    #[instrument(skip_all)]
-    pub fn insert<C: Context>(&mut self, ctx: &C, pos: usize, text: &str) -> Option<RawEvent> {
-        if text.is_empty() {
-            return None;
-        }
-        if self.state.len() < pos {
-            panic!("insert index out of range");
-        }
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
+    pub(crate) fn insert(&mut self, txn: &mut Transaction, pos: usize, text: &str) {
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
         self.state.insert(pos, slice);
-        let op = Op::new(
-            id,
-            InnerContent::List(InnerListOp::Insert {
-                slice: op_slice,
-                pos,
-            }),
-            store.get_or_create_container_idx(&self.id),
-        );
+        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let id = store.next_id();
+            let op = Op::new(
+                id,
+                InnerContent::List(InnerListOp::Insert {
+                    slice: op_slice,
+                    pos,
+                }),
+                self.idx,
+            );
+            txn.push(self.idx, id);
+            store.append_local_ops(&[op]);
+            txn.update_version(store.frontiers().into());
 
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-
-        // notify
-        let h = hierarchy.try_lock().unwrap();
-        if h.should_notify(&self.id) {
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.insert(text.to_owned());
-            h.get_abs_path(&store.reg, self.id())
-                .map(|abs_path| RawEvent {
-                    diff: vec![Diff::Text(delta)],
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                    abs_path,
-                })
-        } else {
-            None
-        }
+            if hierarchy.should_notify(&self.id) {
+                let delta = Delta::new().retain(pos).insert(text.to_owned());
+                txn.append_event_diff(self.idx, Diff::Text(delta), true);
+            }
+        });
     }
 
-    #[instrument(skip_all)]
-    pub fn delete<C: Context>(&mut self, ctx: &C, pos: usize, len: usize) -> Option<RawEvent> {
-        if len == 0 {
-            return None;
-        }
-
-        if self.state.len() < pos + len {
-            panic!("deletion out of range");
-        }
-
-        let store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let mut store = store.write().unwrap();
-        let id = store.next_id();
-        let op = Op::new(
-            id,
-            InnerContent::List(InnerListOp::new_del(pos, len)),
-            store.get_or_create_container_idx(&self.id),
-        );
-
-        let (old_version, new_version) = store.append_local_ops(&[op]);
-        let new_version = new_version.into();
-
-        // notify
-        let h = hierarchy.try_lock().unwrap();
+    pub(crate) fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
         self.state.delete_range(Some(pos), Some(pos + len));
-        if h.should_notify(&self.id) {
-            let mut delta = Delta::new();
-            delta.retain(pos);
-            delta.delete(len);
-            h.get_abs_path(&store.reg, self.id())
-                .map(|abs_path| RawEvent {
-                    diff: vec![Diff::Text(delta)],
-                    local: true,
-                    old_version,
-                    new_version,
-                    container_id: self.id.clone(),
-                    abs_path,
-                })
-        } else {
-            None
-        }
+        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let id = store.next_id();
+            let op = Op::new(
+                id,
+                InnerContent::List(InnerListOp::new_del(pos, len)),
+                self.idx,
+            );
+            txn.push(self.idx, id);
+            store.append_local_ops(&[op]);
+            txn.update_version(store.frontiers().into());
+
+            if hierarchy.should_notify(&self.id) {
+                let delta = Delta::new().retain(pos).delete(len);
+                txn.append_event_diff(self.idx, Diff::Text(delta), true);
+            }
+        });
     }
 
     pub fn text_len(&self) -> usize {
@@ -167,11 +124,18 @@ impl TextContainer {
     }
 }
 
-impl Container for TextContainer {
+impl ContainerTrait for TextContainer {
+    #[inline(always)]
     fn id(&self) -> &ContainerID {
         &self.id
     }
 
+    #[inline(always)]
+    fn idx(&self) -> ContainerIdx {
+        self.idx
+    }
+
+    #[inline(always)]
     fn type_(&self) -> ContainerType {
         ContainerType::Text
     }
@@ -295,9 +259,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
-                        let mut delta = Delta::new();
-                        delta.retain(*pos);
-                        delta.insert(s);
+                        let delta = Delta::new().retain(*pos).insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(
@@ -307,9 +269,9 @@ impl Container for TextContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(span.start() as usize);
-                        delta.delete(span.atom_len());
+                        let delta = Delta::new()
+                            .retain(span.start() as usize)
+                            .delete(span.atom_len());
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
 
@@ -353,7 +315,7 @@ impl Container for TextContainer {
         import_context: &mut ImportContext,
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
-        let mut diff = vec![];
+        let mut diff = smallvec![];
         for effect in self.tracker.as_mut().unwrap().iter_effects(
             import_context.patched_old_vv.as_ref().unwrap(),
             &import_context.spans,
@@ -361,9 +323,7 @@ impl Container for TextContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
-                        delta.delete(len);
+                        let delta = Delta::new().retain(pos).delete(len);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -377,9 +337,7 @@ impl Container for TextContainer {
                         } else {
                             self.raw_str.slice(&content.0).to_owned()
                         };
-                        let mut delta = Delta::new();
-                        delta.retain(pos);
-                        delta.insert(s);
+                        let delta = Delta::new().retain(pos).insert(s);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -472,9 +430,7 @@ impl Container for TextContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let s = self.raw_str.slice(&(0..state_len)).to_owned();
-                let mut delta = Delta::new();
-                delta.retain(0);
-                delta.insert(s);
+                let delta = Delta::new().retain(0).insert(s);
                 ctx.push_diff(&self.id, Diff::Text(delta));
             }
         } else {
@@ -483,100 +439,154 @@ impl Container for TextContainer {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Text {
-    instance: Weak<Mutex<ContainerInstance>>,
+    container: Weak<Mutex<ContainerInstance>>,
     client_id: ClientID,
-}
-
-impl Clone for Text {
-    fn clone(&self) -> Self {
-        Self {
-            instance: Weak::clone(&self.instance),
-            client_id: self.client_id,
-        }
-    }
+    container_idx: ContainerIdx,
 }
 
 impl Text {
     pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+        let container_idx = {
+            let x = instance.upgrade().unwrap();
+            let x = x.try_lock().unwrap();
+            x.idx()
+        };
         Self {
-            instance,
+            container: instance,
             client_id,
+            container_idx,
         }
     }
 
+    #[inline(always)]
+    pub fn idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
+
+    #[inline(always)]
     pub fn id(&self) -> ContainerID {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_text()
-            .unwrap()
-            .id
-            .clone()
+        self.with_container(|x| x.id.clone())
     }
 
-    pub fn insert<C: Context>(
+    pub fn insert<T: Transact, S: AsRef<str>>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         pos: usize,
-        text: &str,
+        text: S,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |x| Ok((x.insert(ctx, pos, text), ())))
-    }
-
-    pub fn insert_utf16<C: Context>(
-        &mut self,
-        ctx: &C,
-        pos: usize,
-        text: &str,
-    ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |x| {
-            let pos = x.state.utf16_to_utf8(pos);
-            Ok((x.insert(ctx, pos, text), ()))
+        let text = text.as_ref();
+        if text.is_empty() {
+            return Ok(());
+        }
+        self.with_transaction(txn, |txn, x| {
+            let len = x.text_len();
+            if len < pos{
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            x.insert(txn, pos, text);
+            Ok(())
         })
     }
 
-    pub fn delete<C: Context>(
+    pub fn insert_utf16<T: Transact, S: AsRef<str>>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         pos: usize,
-        len: usize,
+        text: S,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |text| Ok((text.delete(ctx, pos, len), ())))
+        self.with_transaction(txn, |txn, x| {
+            let pos = x.state.utf16_to_utf8(pos);
+            let len = x.text_len();
+            if len < pos{
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            x.insert(txn, pos, text.as_ref());
+            Ok(())
+        })
     }
 
-    pub fn delete_utf16<C: Context>(
+    pub fn delete<T: Transact>(
         &mut self,
-        ctx: &C,
+        txn: &T,
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        self.with_event(ctx, |text| {
+        if len == 0 {
+            return Ok(());
+        }
+        self.with_transaction(txn, |txn, x| {
+            let current_length = x.text_len();
+            if pos > current_length {
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            if pos + len > current_length {
+                return Err(LoroError::TransactionError(
+                    format!("`ContainerIdx-{:?}` can not apply delete op: the current len is {} but the delete range is {:?}", self.container_idx, current_length, pos..pos+len).into(),
+                ));
+            }
+            x.delete(txn, pos, len);
+            Ok(())
+        })
+    }
+
+    pub fn delete_utf16<T: Transact>(
+        &mut self,
+        txn: &T,
+        pos: usize,
+        len: usize,
+    ) -> Result<(), crate::LoroError> {
+        self.with_transaction(txn, |txn, text| {
             let end = pos + len;
             let pos = text.state.utf16_to_utf8(pos);
             let len = text.state.utf16_to_utf8(end) - pos;
-            Ok((text.delete(ctx, pos, len), ()))
+            let current_length = text.text_len();
+            if pos > current_length {
+                return Err(LoroError::TransactionError(
+                    format!(
+                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
+                        self.container_idx, len, pos
+                    )
+                    .into(),
+                ));
+            }
+            if pos + len > current_length {
+                return Err(LoroError::TransactionError(
+                    format!("`ContainerIdx-{:?}` can not apply delete op: the current len is {} but the delete range is {:?}", self.container_idx, current_length, pos..pos+len).into(),
+                ));
+            }
+            text.delete(txn, pos, len);
+            Ok(())
         })
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.instance
-            .upgrade()
-            .unwrap()
-            .try_lock()
-            .unwrap()
-            .as_text()
-            .unwrap()
-            .get_value()
+        self.with_container(|x| x.get_value())
     }
 
     pub fn len(&self) -> usize {
-        self.with_container(|text| text.text_len())
+        self.with_container(|x| x.text_len())
     }
 
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -585,19 +595,22 @@ impl Text {
 impl ContainerWrapper for Text {
     type Container = TextContainer;
 
+    fn client_id(&self) -> crate::id::ClientID {
+        self.client_id
+    }
+
+    #[inline(always)]
     fn with_container<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Self::Container) -> R,
     {
-        let w = self.instance.upgrade().unwrap();
+        let w = self.container.upgrade().unwrap();
         let mut container_instance = w.try_lock().unwrap();
-        let text = container_instance.as_text_mut().unwrap();
-        let ans = f(text);
-        drop(container_instance);
-        ans
+        let x = container_instance.as_text_mut().unwrap();
+        f(x)
     }
 
-    fn client_id(&self) -> crate::id::ClientID {
-        self.client_id
+    fn idx(&self) -> ContainerIdx {
+        self.container_idx
     }
 }

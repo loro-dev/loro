@@ -1,10 +1,10 @@
-use std::sync::{Mutex, Weak};
-
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 
 use crate::{
-    container::registry::ContainerInstance, context::Context, ContainerType, LoroError, LoroValue,
+    container::registry::{ContainerIdx, ContainerWrapper},
+    transaction::Transaction,
+    ContainerType, List, LoroError, LoroValue, Map, Text,
 };
 
 /// Prelim is a value that is not yet integrated into the Loro.
@@ -17,11 +17,8 @@ pub trait Prelim: Sized {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError>;
 
     /// How to integrate the value into the Loro.
-    fn integrate<C: Context>(
-        self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
-    ) -> Result<(), LoroError>;
+    fn integrate(self, txn: &mut Transaction, container_idx: ContainerIdx)
+        -> Result<(), LoroError>;
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -42,11 +39,7 @@ where
         Ok((PrelimValue::Value(value), None))
     }
 
-    fn integrate<C: Context>(
-        self,
-        _ctx: &C,
-        _container: Weak<Mutex<ContainerInstance>>,
-    ) -> Result<(), LoroError> {
+    fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -56,11 +49,7 @@ impl Prelim for ContainerType {
         Ok((PrelimValue::Container(self), Some(self)))
     }
 
-    fn integrate<C: Context>(
-        self,
-        _ctx: &C,
-        _container: Weak<Mutex<ContainerInstance>>,
-    ) -> Result<(), LoroError> {
+    fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
         Ok(())
     }
 }
@@ -97,15 +86,16 @@ impl Prelim for PrelimText {
         Ok((PrelimValue::Container(ContainerType::Text), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let text = container.upgrade().unwrap();
-        let mut text = text.try_lock().unwrap();
-        let text = text.as_text_mut().unwrap();
-        text.insert(ctx, 0, &self.0);
+        let text = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            Text::from_instance(container, s.this_client_id)
+        });
+        text.with_container(|x| x.insert(txn, 0, &self.0));
         Ok(())
     }
 }
@@ -118,15 +108,16 @@ impl Prelim for PrelimList {
         Ok((PrelimValue::Container(ContainerType::List), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let list = container.upgrade().unwrap();
-        let mut list = list.try_lock().unwrap();
-        let list = list.as_list_mut().unwrap();
-        list.insert_batch(ctx, 0, self.0);
+        let list = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            List::from_instance(container, s.this_client_id)
+        });
+        list.with_container(|x| x.insert_batch(txn, 0, self.0));
         Ok(())
     }
 }
@@ -139,70 +130,36 @@ impl Prelim for PrelimMap {
         Ok((PrelimValue::Container(ContainerType::Map), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let map = container.upgrade().unwrap();
-        let mut map = map.try_lock().unwrap();
-        let map = map.as_map_mut().unwrap();
-        for (key, value) in self.0.into_iter() {
-            map.insert(ctx, key.into(), value)?;
+        let map = txn.with_store(|s| {
+            let container = s.get_container_by_idx(&container_idx).unwrap();
+            Map::from_instance(container, s.this_client_id)
+        });
+        for (k, value) in self.0.into_iter() {
+            map.with_container(|x| x.insert(txn, k.into(), value))?;
         }
         Ok(())
     }
 }
 
-#[derive(Debug)]
-pub enum PrelimContainer {
-    Text(PrelimText),
-    Map(PrelimMap),
-    List(PrelimList),
-}
-
-impl Prelim for PrelimContainer {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        match self {
-            PrelimContainer::List(p) => p
-                .convert_value()
-                .map(|(v, s)| (v, s.map(PrelimContainer::List))),
-            PrelimContainer::Text(p) => p
-                .convert_value()
-                .map(|(v, s)| (v, s.map(PrelimContainer::Text))),
-            PrelimContainer::Map(p) => p
-                .convert_value()
-                .map(|(v, s)| (v, s.map(PrelimContainer::Map))),
-        }
-    }
-
-    fn integrate<C: Context>(
-        self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
-    ) -> Result<(), LoroError> {
-        match self {
-            PrelimContainer::List(p) => p.integrate(ctx, container),
-            PrelimContainer::Text(p) => p.integrate(ctx, container),
-            PrelimContainer::Map(p) => p.integrate(ctx, container),
-        }
-    }
-}
-
-impl From<String> for PrelimContainer {
+impl From<String> for PrelimText {
     fn from(value: String) -> Self {
-        PrelimContainer::Text(PrelimText(value))
+        Self(value)
     }
 }
 
-impl From<Vec<LoroValue>> for PrelimContainer {
-    fn from(value: Vec<LoroValue>) -> Self {
-        PrelimContainer::List(PrelimList(value))
+impl From<Vec<LoroValue>> for PrelimList {
+    fn from(values: Vec<LoroValue>) -> Self {
+        Self(values)
     }
 }
 
-impl From<FxHashMap<String, LoroValue>> for PrelimContainer {
+impl From<FxHashMap<String, LoroValue>> for PrelimMap {
     fn from(value: FxHashMap<String, LoroValue>) -> Self {
-        PrelimContainer::Map(PrelimMap(value))
+        Self(value)
     }
 }

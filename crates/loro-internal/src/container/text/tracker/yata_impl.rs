@@ -8,7 +8,7 @@ use crdt_list::{
 use fxhash::FxHashSet;
 use rle::{
     range_map::{RangeMap, WithStartEnd},
-    rle_tree::{iter::IterMut, node::LeafNode, BumpMode, SafeCursorMut},
+    rle_tree::{iter::IterMut, node::LeafNode, HeapMode, SafeCursorMut},
     HasLength,
 };
 

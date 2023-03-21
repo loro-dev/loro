@@ -185,8 +185,7 @@ impl Hierarchy {
                     .unwrap()
                     .try_lock()
                     .unwrap()
-                    .index_of_child(node_id)
-                    .unwrap();
+                    .index_of_child(node_id)?;
                 path.push(index);
             } else {
                 match node_id {
@@ -258,6 +257,7 @@ impl Hierarchy {
                 target: target_id.clone(),
                 diff: raw_event.diff,
                 local: raw_event.local,
+                origin: raw_event.origin,
             };
             let mut dispatches = Vec::new();
             let mut hierarchy = hierarchy.try_lock().unwrap();
@@ -463,28 +463,26 @@ mod test {
 
     use fxhash::FxHashMap;
 
-    use crate::{container::registry::ContainerWrapper, LoroCore, PrelimContainer};
+    use crate::{container::registry::ContainerWrapper, prelim::PrelimMap, LoroCore};
 
     #[test]
     fn children_parent() {
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
         let map_container_id = list
-            .push(&loro, PrelimContainer::from(FxHashMap::default()))
+            .push(&loro, PrelimMap::from(FxHashMap::default()))
             .unwrap()
             .unwrap();
+        let map_id = loro.get_map_by_idx(&map_container_id).unwrap().id();
         let list_container_id = list.id();
         assert_eq!(
             loro.children(&list_container_id)
                 .unwrap()
                 .into_iter()
                 .collect::<Vec<_>>(),
-            vec![map_container_id.clone()]
+            vec![map_id.clone()]
         );
-        assert_eq!(
-            loro.parent(&map_container_id).unwrap().unwrap(),
-            list_container_id
-        )
+        assert_eq!(loro.parent(&map_id).unwrap().unwrap(), list_container_id)
     }
 
     #[test]

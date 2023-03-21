@@ -1,15 +1,15 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::{
-    container::ContainerID,
-    dag::Dag,
+    container::{registry::ContainerIdx, ContainerID},
+    context::Context,
     event::{ObserverHandler, RawEvent},
     hierarchy::Hierarchy,
-    log_store::{EncodeConfig, LoroEncoder},
-    LoroError, LoroValue,
+    log_store::LoroEncoder,
+    EncodeMode, LoroError, LoroValue,
 };
 use fxhash::{FxHashMap, FxHashSet};
-use rle::HasLength;
+
 use tracing::instrument;
 
 use crate::{
@@ -76,6 +76,24 @@ impl LoroCore {
         Text::from_instance(instance, cid)
     }
 
+    pub fn get_list_by_idx(&self, idx: &ContainerIdx) -> Option<List> {
+        let cid = self.client_id();
+        self.get_container_by_idx(idx)
+            .map(|i| List::from_instance(i, cid))
+    }
+
+    pub fn get_map_by_idx(&self, idx: &ContainerIdx) -> Option<Map> {
+        let cid = self.client_id();
+        self.get_container_by_idx(idx)
+            .map(|i| Map::from_instance(i, cid))
+    }
+
+    pub fn get_text_by_idx(&self, idx: &ContainerIdx) -> Option<Text> {
+        let cid = self.client_id();
+        self.get_container_by_idx(idx)
+            .map(|i| Text::from_instance(i, cid))
+    }
+
     pub fn contains(&self, id: &ContainerID) -> bool {
         let store = self.log_store.try_read().unwrap();
         store.contains_container(id)
@@ -111,30 +129,26 @@ impl LoroCore {
 
     /// this method will always compress
     pub fn encode_all(&self) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::snapshot())
+        LoroEncoder::encode_context(self, EncodeMode::Snapshot)
     }
 
     /// encode without compress
     pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::from_vv(from).without_compress())
+        LoroEncoder::encode_context(self, EncodeMode::Auto(from))
     }
 
-    pub fn encode_from_compress(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode(self, EncodeConfig::from_vv(from).with_default_compress())
-    }
-
-    pub fn encode_with_cfg(&self, config: EncodeConfig) -> Vec<u8> {
-        LoroEncoder::encode(self, config)
+    pub fn encode_with_cfg(&self, mode: EncodeMode) -> Vec<u8> {
+        LoroEncoder::encode_context(self, mode)
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode(self, input)?;
+        let events = LoroEncoder::decode_context(self, input)?;
         self.notify(events);
         Ok(())
     }
 
     pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode_batch(self, input)?;
+        let events = LoroEncoder::decode_batch_context(self, input)?;
         self.notify(events);
         Ok(())
     }

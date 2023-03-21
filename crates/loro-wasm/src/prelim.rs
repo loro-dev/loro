@@ -1,11 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::{Mutex, Weak},
-};
-
 use loro_internal::{
-    container::registry::ContainerInstance, context::Context, ContainerType, LoroError, LoroValue,
-    Prelim, PrelimValue,
+    container::registry::ContainerIdx,
+    prelim::{Prelim, PrelimList as PList, PrelimMap as PMap, PrelimText as PText, PrelimValue},
+    ContainerType, FxHashMap, LoroError, LoroValue, Transaction,
 };
 use wasm_bindgen::prelude::*;
 
@@ -35,15 +31,15 @@ impl Prelim for PrelimType {
         }
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
         match self {
-            PrelimType::Text(t) => t.integrate(ctx, container),
-            PrelimType::Map(m) => m.integrate(ctx, container),
-            PrelimType::List(l) => l.integrate(ctx, container),
+            PrelimType::Text(t) => t.integrate(txn, container_idx),
+            PrelimType::Map(m) => m.integrate(txn, container_idx),
+            PrelimType::List(l) => l.integrate(txn, container_idx),
         }
     }
 }
@@ -97,14 +93,14 @@ impl PrelimList {
 }
 
 #[wasm_bindgen]
-pub struct PrelimMap(HashMap<String, JsValue>);
+pub struct PrelimMap(FxHashMap<String, JsValue>);
 
 #[wasm_bindgen]
 impl PrelimMap {
     #[wasm_bindgen(constructor)]
     pub fn new(obj: Option<js_sys::Object>) -> Self {
         let map = if let Some(object) = obj {
-            let mut map = HashMap::new();
+            let mut map = FxHashMap::default();
             let entries = js_sys::Object::entries(&object);
             for tuple in entries.iter() {
                 let tuple = js_sys::Array::from(&tuple);
@@ -114,7 +110,7 @@ impl PrelimMap {
             }
             map
         } else {
-            HashMap::new()
+            FxHashMap::default()
         };
         Self(map)
     }
@@ -152,16 +148,12 @@ impl Prelim for PrelimText {
         Ok((PrelimValue::Container(ContainerType::Text), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let text = container.upgrade().unwrap();
-        let mut text = text.try_lock().unwrap();
-        let text = text.as_text_mut().unwrap();
-        text.insert(ctx, 0, &self.0);
-        Ok(())
+        PText::from(self.0).integrate(txn, container_idx)
     }
 }
 
@@ -170,17 +162,13 @@ impl Prelim for PrelimList {
         Ok((PrelimValue::Container(ContainerType::List), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let list = container.upgrade().unwrap();
-        let mut list = list.try_lock().unwrap();
-        let list = list.as_list_mut().unwrap();
         let values: Vec<LoroValue> = self.0.into_iter().map(|v| v.into()).collect();
-        list.insert_batch(ctx, 0, values);
-        Ok(())
+        PList::from(values).integrate(txn, container_idx)
     }
 }
 
@@ -189,19 +177,14 @@ impl Prelim for PrelimMap {
         Ok((PrelimValue::Container(ContainerType::Map), Some(self)))
     }
 
-    fn integrate<C: Context>(
+    fn integrate(
         self,
-        ctx: &C,
-        container: Weak<Mutex<ContainerInstance>>,
+        txn: &mut Transaction,
+        container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let map = container.upgrade().unwrap();
-        let mut map = map.try_lock().unwrap();
-        let map = map.as_map_mut().unwrap();
-        for (key, value) in self.0.into_iter() {
-            let value: LoroValue = value.into();
-            map.insert(ctx, key.into(), value)?;
-        }
-        Ok(())
+        let values: FxHashMap<String, LoroValue> =
+            self.0.into_iter().map(|(k, v)| (k, v.into())).collect();
+        PMap::from(values).integrate(txn, container_idx)
     }
 }
 

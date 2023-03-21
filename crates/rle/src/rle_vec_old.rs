@@ -357,12 +357,6 @@ mod test {
             }
         }
 
-        impl Sliceable for String {
-            fn slice(&self, start: usize, end: usize) -> Self {
-                self[start..end].to_string()
-            }
-        }
-
         #[test]
         fn get_at_atom_index() {
             let mut vec: RleVecWithIndex<String> = RleVecWithIndex::new();

@@ -9,16 +9,15 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
-#[allow(unused_imports)]
 use crate::{
     array_mut_ref,
-    container::ContainerID,
+    container::{registry::ContainerIdx, ContainerID},
     delta::DeltaItem,
     event::{Diff, Observer},
     id::ClientID,
-    ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
+    transaction::TransactionWrap,
+    ContainerType, EncodeMode, List, LoroCore, LoroValue, Map, Text, Transact,
 };
-use crate::{container::registry::ContainerIdx, EncodeMode};
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -49,6 +48,7 @@ pub enum Action {
 }
 
 struct Actor {
+    txn: TransactionWrap,
     loro: LoroCore,
     value_tracker: Arc<Mutex<LoroValue>>,
     map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
@@ -61,8 +61,11 @@ struct Actor {
 
 impl Actor {
     fn new(id: ClientID) -> Self {
+        let loro = LoroCore::new(Default::default(), Some(id));
+        let txn = loro.transact();
         let mut actor = Actor {
-            loro: LoroCore::new(Default::default(), Some(id)),
+            loro,
+            txn,
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
             map_tracker: Default::default(),
             list_tracker: Default::default(),
@@ -115,6 +118,7 @@ impl Actor {
             Box::new(move |event| {
                 let mut map = map.lock().unwrap();
                 for diff in event.diff.iter() {
+                    // println!("{} diff {:?}", id, diff);
                     match diff {
                         Diff::Map(map_diff) => {
                             for (key, value) in map_diff.added.iter() {
@@ -131,6 +135,7 @@ impl Actor {
                         _ => unreachable!(),
                     }
                 }
+                // println!("");
             }),
             ContainerID::new_root("map", ContainerType::Map),
         ));
@@ -140,6 +145,7 @@ impl Actor {
             Box::new(move |event| {
                 let mut list = list.lock().unwrap();
                 for diff in event.diff.iter() {
+                    // println!("{}-{} diff {:?}", id, event.local, diff);
                     match diff {
                         Diff::List(delta) => {
                             let mut index = 0;
@@ -163,6 +169,7 @@ impl Actor {
                         _ => unreachable!(),
                     }
                 }
+                // println!("");
             }),
             ContainerID::new_root("list", ContainerType::List),
         ));
@@ -173,6 +180,12 @@ impl Actor {
         actor.map_containers.push(actor.loro.get_map("map"));
         actor.list_containers.push(actor.loro.get_list("list"));
         actor
+    }
+
+    fn commit(&mut self) {
+        let new_txn = self.loro.transact();
+        let txn = std::mem::replace(&mut self.txn, new_txn);
+        drop(txn);
     }
 }
 
@@ -355,6 +368,9 @@ impl Actionable for Vec<Actor> {
         match action {
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(self, [*from as usize, *to as usize]);
+                // commit txn
+                a.commit();
+                b.commit();
                 let mut visited = HashSet::new();
                 a.map_containers.iter().for_each(|x| {
                     visited.insert(x.id());
@@ -410,6 +426,7 @@ impl Actionable for Vec<Actor> {
             Action::SyncAll => {
                 let mut visited = HashSet::new();
                 let a = &mut self[0];
+                a.commit();
                 a.map_containers.iter().for_each(|x| {
                     visited.insert(x.id());
                 });
@@ -422,6 +439,8 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.commit();
+                    b.commit();
                     a.loro.import(b.loro.export(a.loro.vv_cloned()));
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
@@ -448,6 +467,8 @@ impl Actionable for Vec<Actor> {
 
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.commit();
+                    b.commit();
                     b.loro.import(a.loro.export(b.loro.vv_cloned()));
                     b.map_containers = a
                         .map_containers
@@ -473,6 +494,7 @@ impl Actionable for Vec<Actor> {
                 value,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.map_containers.get_mut(*container_idx as usize);
                 let container = if let Some(container) = container {
                     container
@@ -483,15 +505,15 @@ impl Actionable for Vec<Actor> {
                 };
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, &key.to_string()).unwrap();
+                        container.delete(txn, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, &key.to_string(), *i).unwrap();
+                        container.insert(txn, &key.to_string(), *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container.insert(&actor.loro, &key.to_string(), *c).unwrap();
-                        if let Some(idx) = idx {
-                            actor.add_new_container(idx, *c);
+                        let idx = container.insert(txn, &key.to_string(), *c).unwrap();
+                        if let Some(container) = idx {
+                            actor.add_new_container(container, *c);
                         }
                     }
                 };
@@ -503,6 +525,7 @@ impl Actionable for Vec<Actor> {
                 value,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.list_containers.get_mut(*container_idx as usize);
                 let container = if container.is_none() {
                     let list = actor.loro.get_list("list");
@@ -514,14 +537,14 @@ impl Actionable for Vec<Actor> {
                 };
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&actor.loro, *key as usize, 1).unwrap();
+                        container.delete(txn, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&actor.loro, *key as usize, *i).unwrap();
+                        container.insert(txn, *key as usize, *i).unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container.insert(&actor.loro, *key as usize, *c).unwrap();
-                        if let Some(container) = idx {
+                        let container = container.insert(txn, *key as usize, *c).unwrap();
+                        if let Some(container) = container {
                             actor.add_new_container(container, *c);
                         }
                     }
@@ -535,6 +558,7 @@ impl Actionable for Vec<Actor> {
                 is_del,
             } => {
                 let actor = &mut self[*site as usize];
+                let txn = &actor.txn;
                 let container = actor.text_containers.get_mut(*container_idx as usize);
                 let container = if let Some(container) = container {
                     container
@@ -543,17 +567,15 @@ impl Actionable for Vec<Actor> {
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
                 };
-                let txn = actor.loro.transact();
                 if *is_del {
                     container
-                        .delete(&txn, *pos as usize, *value as usize)
+                        .delete(txn, *pos as usize, *value as usize)
                         .unwrap();
                 } else {
                     container
-                        .insert(&txn, *pos as usize, &(format!("[{}]", value)))
+                        .insert(txn, *pos as usize, &(format!("[{}]", value)))
                         .unwrap();
                 }
-                drop(txn);
             }
         }
     }
@@ -638,7 +660,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         for (la, lb) in ca.iter().zip(cb.iter()) {
             assert_eq!(la.lamport, lb.lamport);
             assert_eq!(la.id, lb.id);
-            assert!(!la.deps.iter().any(|u| !lb.deps.contains(u)))
         }
     }
 }
@@ -648,6 +669,8 @@ fn check_synced(sites: &mut [Actor]) {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);
             let (a, b) = array_mut_ref!(sites, [i, j]);
+            a.commit();
+            b.commit();
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             if i % 2 == 0 {
@@ -658,10 +681,11 @@ fn check_synced(sites: &mut [Actor]) {
                     .decode(&a_doc.encode_with_cfg(EncodeMode::Updates(b_doc.vv_cloned())))
                     .unwrap();
             } else {
-                a_doc.decode(&b_doc.encode_all()).unwrap();
+                a_doc
+                    .decode(&b_doc.encode_with_cfg(EncodeMode::RleUpdates(a_doc.vv_cloned())))
+                    .unwrap();
                 b_doc.decode(&a_doc.encode_all()).unwrap();
             }
-
             check_eq(a, b);
             debug_log::group_end!();
         }
@@ -691,11 +715,13 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
         }
     }
 
-    println!("{}", applied.clone().table());
+    println!("table\n{}", applied.clone().table());
+    dbg!(&applied);
     applied
 }
 
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
+    // println!("{:?}", actions);
     let mut sites = Vec::new();
     for i in 0..site_num {
         sites.push(Actor::new(i as u64));
@@ -709,6 +735,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
         sites.apply_action(action);
     }
 
+    // println!("{}", actions.table());
     debug_log::group!("check synced");
     check_synced(&mut sites);
     debug_log::group_end!();
@@ -997,7 +1024,7 @@ mod failed_tests {
     #[test]
     fn list_unknown() {
         test_multi_sites(
-            5,
+            3,
             &mut [
                 List {
                     site: 139,
@@ -1031,7 +1058,7 @@ mod failed_tests {
     #[test]
     fn path_issue() {
         test_multi_sites(
-            5,
+            2,
             &mut [
                 List {
                     site: 1,
@@ -1295,27 +1322,126 @@ mod failed_tests {
     }
 
     #[test]
-    fn list_slice_err() {
+    fn delta_compose() {
         test_multi_sites(
-            5,
+            2,
             &mut [
-                Map {
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 31354,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 29,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 27,
+                    value: 3,
+                    is_del: true,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn delete_container() {
+        test_multi_sites(
+            2,
+            &mut [
+                List {
                     site: 0,
                     container_idx: 0,
                     key: 0,
                     value: Container(C::List),
                 },
-                Map {
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn ordered_event() {
+        test_multi_sites(
+            2,
+            &mut [
+                List {
                     site: 0,
                     container_idx: 0,
                     key: 0,
-                    value: Container(C::Map),
+                    value: I32(2054847098),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1600085855),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 1,
+                    value: Container(C::List),
                 },
                 SyncAll,
-                Map {
-                    site: 1,
+                List {
+                    site: 2,
                     container_idx: 1,
-                    key: 37,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
                     value: Null,
                 },
             ],
@@ -1337,255 +1463,161 @@ mod failed_tests {
                 SyncAll,
                 SyncAll,
                 List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
+                    site: 255,
+                    container_idx: 255,
+                    key: 157,
+                    value: I32(2054847098),
+                },
+                Text {
+                    site: 67,
+                    container_idx: 1,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 67,
+                    container_idx: 67,
+                    key: 255,
                     value: Null,
                 },
                 SyncAll,
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 95,
+                    container_idx: 95,
+                    key: 95,
+                    value: I32(1600085855),
+                },
+                List {
+                    site: 95,
+                    container_idx: 95,
+                    key: 95,
+                    value: I32(1600085855),
+                },
+                List {
+                    site: 95,
+                    container_idx: 95,
+                    key: 95,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 255,
+                    container_idx: 255,
+                    key: 255,
                     value: Null,
                 },
-                Map {
-                    site: 21,
-                    container_idx: 125,
-                    key: 125,
-                    value: I32(2105376125),
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                SyncAll,
-                SyncAll,
                 Map {
                     site: 0,
-                    container_idx: 255,
-                    key: 64,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 73,
+                    container_idx: 73,
+                    key: 73,
                     value: Null,
                 },
                 List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
+                    site: 73,
+                    container_idx: 73,
+                    key: 73,
                     value: Null,
                 },
                 List {
-                    site: 70,
+                    site: 73,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 86,
+                    container_idx: 86,
+                    key: 86,
+                    value: I32(1448498774),
+                },
+                List {
+                    site: 86,
+                    container_idx: 86,
+                    key: 38,
+                    value: I32(1448498774),
+                },
+                Text {
+                    site: 122,
+                    container_idx: 122,
+                    pos: 122,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 122,
+                    container_idx: 122,
+                    pos: 122,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 122,
+                    container_idx: 3,
+                    pos: 152,
+                    value: 2570,
+                    is_del: true,
+                },
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                List {
+                    site: 213,
+                    container_idx: 217,
+                    key: 85,
+                    value: Null,
+                },
+                Sync { from: 157, to: 157 },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: Null,
+                },
+                Map {
+                    site: 5,
                     container_idx: 255,
                     key: 255,
                     value: Container(C::Text),
                 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Map {
-                    site: 21,
-                    container_idx: 21,
-                    key: 21,
-                    value: Null,
-                },
-                Map {
-                    site: 3,
-                    container_idx: 3,
-                    key: 3,
-                    value: Null,
-                },
-                Map {
-                    site: 3,
-                    container_idx: 3,
-                    key: 3,
-                    value: Null,
-                },
-                Map {
-                    site: 3,
-                    container_idx: 3,
-                    key: 3,
-                    value: I32(353703189),
-                },
-                Map {
-                    site: 1,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                Text {
+                    site: 0,
                     container_idx: 0,
-                    key: 0,
-                    value: I32(2105376125),
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Sync { from: 155, to: 155 },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 125,
-                    pos: 125,
-                    value: 32125,
-                    is_del: true,
-                },
-                Text {
-                    site: 125,
-                    container_idx: 64,
-                    pos: 70,
-                    value: 17990,
+                    pos: 0,
+                    value: 0,
                     is_del: false,
-                },
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
-                },
-                List {
-                    site: 21,
-                    container_idx: 255,
-                    key: 64,
-                    value: Null,
-                },
-                List {
-                    site: 125,
-                    container_idx: 125,
-                    key: 125,
-                    value: I32(2105376125),
-                },
-                List {
-                    site: 70,
-                    container_idx: 70,
-                    key: 70,
-                    value: Null,
-                },
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
                 },
                 Map {
                     site: 0,

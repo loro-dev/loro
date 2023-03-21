@@ -6,6 +6,7 @@ import init, {
   PrelimMap,
   PrelimText,
   setPanicHook,
+Transaction,
 } from "../web/loro_wasm.js";
 import {
   assertEquals,
@@ -61,15 +62,15 @@ Deno.test({ name: "sync" }, async (t) => {
     const b = new Loro();
     let a_version: undefined | Uint8Array = undefined;
     let b_version: undefined | Uint8Array = undefined;
-    a.subscribe((local: boolean) => {
-      if (local) {
+    a.subscribe((e: {local: boolean}) => {
+      if (e.local) {
         const exported = a.exportUpdates(a_version);
         b.importUpdates(exported);
         a_version = a.version();
       }
     });
-    b.subscribe((local: boolean) => {
-      if (local) {
+    b.subscribe((e: {local: boolean}) => {
+      if (e.local) {
         const exported = b.exportUpdates(b_version);
         a.importUpdates(exported);
         b_version = b.version();
@@ -78,8 +79,6 @@ Deno.test({ name: "sync" }, async (t) => {
     const aText = a.getText("text");
     const bText = b.getText("text");
     aText.insert(a, 0, "abc");
-    // aText.insert(a, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
-    // bText.insert(b, 0, 'asdlkfjalsdjflksdajfldsajflkadsjflkdsajflksdjfkl');
     assertEquals(aText.toString(), bText.toString());
   });
 
@@ -204,5 +203,42 @@ Deno.test("subscribe_lock2", () => {
   text.insert(loro, 0, "hello world");
   assertEquals(count, 1);
   text.insert(loro, 0, "hello world");
+  assertEquals(count, 1);
+});
+
+Deno.test("transaction", () => {
+  const loro = new Loro();
+  const text = loro.getText("text");
+  let count = 0;
+  const sub = loro.subscribe(() => {
+    count += 1;
+    loro.unsubscribe(sub);
+  });
+  loro.transaction((txn: Transaction)=>{
+    assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+  });
+  assertEquals(count, 1);
+});
+
+Deno.test("transaction origin", () => {
+  const loro = new Loro();
+  const text = loro.getText("text");
+  let count = 0;
+  const sub = loro.subscribe((event:{origin: string}) => {
+    count += 1;
+    loro.unsubscribe(sub);
+    assertEquals(event.origin, "origin")
+  });
+  loro.transactionWithOrigin("origin", (txn: Transaction)=>{
+    assertEquals(count, 0); 
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
+  });
   assertEquals(count, 1);
 });

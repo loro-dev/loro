@@ -8,7 +8,7 @@ use crate::{
     container::{registry::ContainerRegistry, ContainerID},
     delta::DeltaItem,
     event::{Diff, Index, Path},
-    Container,
+    ContainerTrait,
 };
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
@@ -281,8 +281,9 @@ impl LoroValue {
                     for v in diff.added.iter() {
                         map.insert(v.0.to_string(), unresolved_to_collection(v.1));
                     }
-                    for v in diff.deleted.iter() {
-                        map.remove(v.as_ref());
+                    for (k, _) in diff.deleted.iter() {
+                        // map.remove(v.as_ref());
+                        map.insert(k.to_string(), LoroValue::Null);
                     }
                     for (key, value) in diff.updated.iter() {
                         map.insert(key.to_string(), unresolved_to_collection(&value.new));

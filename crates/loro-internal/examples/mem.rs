@@ -4,7 +4,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 use std::time::Instant;
 
 use bench_utils::TextAction;
-use loro_internal::{log_store::EncodeConfig, LoroCore};
+use loro_internal::LoroCore;
 
 fn apply_automerge(times: usize) {
     let actions = bench_utils::get_automerge_actions();

@@ -96,3 +96,15 @@ impl<T> HasLength for Vec<T> {
         self.len()
     }
 }
+
+impl<T: Clone> Sliceable for Vec<T> {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        self[from..to].to_vec()
+    }
+}
+
+impl Sliceable for String {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        self[from..to].to_string()
+    }
+}

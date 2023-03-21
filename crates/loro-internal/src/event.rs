@@ -1,8 +1,14 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
-use crate::{container::ContainerID, delta::Delta, version::Frontiers, InternalString, LoroValue};
+use crate::{
+    container::ContainerID,
+    delta::{Delta, MapDiff},
+    transaction::Origin,
+    version::Frontiers,
+    InternalString, LoroValue,
+};
 
 #[derive(Debug)]
 pub struct RawEvent {
@@ -10,8 +16,9 @@ pub struct RawEvent {
     pub old_version: Frontiers,
     pub new_version: Frontiers,
     pub local: bool,
-    pub diff: Vec<Diff>,
+    pub diff: SmallVec<[Diff; 1]>,
     pub abs_path: Path,
+    pub origin: Option<Origin>,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,8 +30,9 @@ pub struct Event {
     /// the relative path from current_target to target
     pub relative_path: Path,
     pub absolute_path: Path,
-    pub diff: Vec<Diff>,
+    pub diff: SmallVec<[Diff; 1]>,
     pub local: bool,
+    pub origin: Option<Origin>,
 }
 
 #[derive(Debug)]
@@ -51,26 +59,7 @@ pub enum Index {
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String>),
-    Map(MapDiff),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ValuePair {
-    pub old: LoroValue,
-    pub new: LoroValue,
-}
-
-impl From<(LoroValue, LoroValue)> for ValuePair {
-    fn from((old, new): (LoroValue, LoroValue)) -> Self {
-        ValuePair { old, new }
-    }
-}
-
-#[derive(Default, Clone, Debug, Serialize)]
-pub struct MapDiff {
-    pub added: FxHashMap<InternalString, LoroValue>,
-    pub updated: FxHashMap<InternalString, ValuePair>,
-    pub deleted: FxHashSet<InternalString>,
+    Map(MapDiff<LoroValue>),
 }
 
 // pub type Observer = Box<dyn FnMut(&Event) + Send>;

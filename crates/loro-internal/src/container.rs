@@ -21,7 +21,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use self::pool_mapping::StateContent;
+use self::{pool_mapping::StateContent, registry::ContainerIdx};
 
 pub mod pool_mapping;
 pub mod registry;
@@ -68,8 +68,9 @@ impl TryFrom<&str> for ContainerType {
     }
 }
 
-pub trait Container: Debug + Any + Unpin + Send + Sync {
+pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     fn id(&self) -> &ContainerID;
+    fn idx(&self) -> ContainerIdx;
     fn type_(&self) -> ContainerType;
     fn get_value(&self) -> LoroValue;
 

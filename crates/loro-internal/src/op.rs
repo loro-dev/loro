@@ -2,7 +2,7 @@ use crate::{
     change::{Change, Lamport, Timestamp},
     container::{
         registry::{ContainerIdx, ContainerInstance},
-        Container, ContainerID,
+        ContainerID, ContainerTrait,
     },
     id::{ClientID, Counter, ID},
     span::{HasCounter, HasId, HasLamport},

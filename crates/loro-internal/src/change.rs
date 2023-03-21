@@ -10,10 +10,10 @@ use crate::{
     id::{Counter, ID},
     op::Op,
     span::{HasId, HasIdSpan, HasLamport},
+    version::Frontiers,
 };
 use num::traits::AsPrimitive;
 use rle::{HasIndex, HasLength, Mergable, Rle, RleVec, Sliceable};
-use smallvec::SmallVec;
 
 pub type Timestamp = i64;
 pub type Lamport = u32;
@@ -22,7 +22,7 @@ pub type Lamport = u32;
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 2]>,
-    pub(crate) deps: SmallVec<[ID; 2]>,
+    pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
@@ -35,7 +35,7 @@ pub struct Change<O = Op> {
 impl<O> Change<O> {
     pub fn new(
         ops: RleVec<[O; 2]>,
-        deps: SmallVec<[ID; 2]>,
+        deps: Frontiers,
         id: ID,
         lamport: Lamport,
         timestamp: Timestamp,

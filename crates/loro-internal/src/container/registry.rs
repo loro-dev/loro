@@ -1,34 +1,42 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, Weak,
+    },
 };
 
 use enum_as_inner::EnumAsInner;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{
     context::Context,
-    event::{Index, ObserverHandler, RawEvent, SubscriptionID},
+    event::{Index, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     id::ClientID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
+    transaction::Transaction,
     version::PatchedVersionVector,
-    LoroError, LoroValue,
+    LoroError, LoroValue, Transact,
 };
 
 use super::{
     list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
-    Container, ContainerID, ContainerType,
+    ContainerID, ContainerTrait, ContainerType,
 };
 
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
-pub(crate) struct ContainerIdx(u32);
+/// During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
+/// So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
+/// An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
+pub struct ContainerIdx(u32);
 
 impl ContainerIdx {
+    #[allow(unused)]
     pub(crate) fn to_u32(self) -> u32 {
         self.0
     }
@@ -44,16 +52,25 @@ pub enum ContainerInstance {
     List(Box<ListContainer>),
     Text(Box<TextContainer>),
     Map(Box<MapContainer>),
-    Dyn(Box<dyn Container>),
+    Dyn(Box<dyn ContainerTrait>),
 }
 
-impl Container for ContainerInstance {
+impl ContainerTrait for ContainerInstance {
     fn id(&self) -> &ContainerID {
         match self {
             ContainerInstance::Map(x) => x.id(),
             ContainerInstance::Text(x) => x.id(),
-            ContainerInstance::Dyn(x) => x.id(),
             ContainerInstance::List(x) => x.id(),
+            ContainerInstance::Dyn(x) => x.id(),
+        }
+    }
+
+    fn idx(&self) -> ContainerIdx {
+        match self {
+            ContainerInstance::Map(x) => x.idx(),
+            ContainerInstance::Text(x) => x.idx(),
+            ContainerInstance::List(x) => x.idx(),
+            ContainerInstance::Dyn(x) => x.idx(),
         }
     }
 
@@ -71,8 +88,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.tracker_init(vv),
             ContainerInstance::Text(x) => x.tracker_init(vv),
-            ContainerInstance::Dyn(x) => x.tracker_init(vv),
             ContainerInstance::List(x) => x.tracker_init(vv),
+            ContainerInstance::Dyn(x) => x.tracker_init(vv),
         }
     }
 
@@ -81,8 +98,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
             ContainerInstance::Text(x) => x.tracker_checkout(vv),
-            ContainerInstance::Dyn(x) => x.tracker_checkout(vv),
             ContainerInstance::List(x) => x.tracker_checkout(vv),
+            ContainerInstance::Dyn(x) => x.tracker_checkout(vv),
         }
     }
 
@@ -91,8 +108,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.get_value(),
             ContainerInstance::Text(x) => x.get_value(),
-            ContainerInstance::Dyn(x) => x.get_value(),
             ContainerInstance::List(x) => x.get_value(),
+            ContainerInstance::Dyn(x) => x.get_value(),
         }
     }
 
@@ -106,8 +123,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.update_state_directly(hierarchy, op, context),
             ContainerInstance::Text(x) => x.update_state_directly(hierarchy, op, context),
-            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op, context),
             ContainerInstance::List(x) => x.update_state_directly(hierarchy, op, context),
+            ContainerInstance::Dyn(x) => x.update_state_directly(hierarchy, op, context),
         }
     }
 
@@ -116,8 +133,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.track_apply(hierarchy, op, ctx),
             ContainerInstance::Text(x) => x.track_apply(hierarchy, op, ctx),
-            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op, ctx),
             ContainerInstance::List(x) => x.track_apply(hierarchy, op, ctx),
+            ContainerInstance::Dyn(x) => x.track_apply(hierarchy, op, ctx),
         }
     }
 
@@ -130,8 +147,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.apply_tracked_effects_from(h, import_context),
             ContainerInstance::Text(x) => x.apply_tracked_effects_from(h, import_context),
-            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(h, import_context),
             ContainerInstance::List(x) => x.apply_tracked_effects_from(h, import_context),
+            ContainerInstance::Dyn(x) => x.apply_tracked_effects_from(h, import_context),
         }
     }
 
@@ -144,8 +161,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.to_export(content, gc),
             ContainerInstance::Text(x) => x.to_export(content, gc),
-            ContainerInstance::Dyn(x) => x.to_export(content, gc),
             ContainerInstance::List(x) => x.to_export(content, gc),
+            ContainerInstance::Dyn(x) => x.to_export(content, gc),
         }
     }
 
@@ -154,8 +171,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.to_import(content),
             ContainerInstance::Text(x) => x.to_import(content),
-            ContainerInstance::Dyn(x) => x.to_import(content),
             ContainerInstance::List(x) => x.to_import(content),
+            ContainerInstance::Dyn(x) => x.to_import(content),
         }
     }
 
@@ -167,8 +184,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.to_export_snapshot(content, gc),
             ContainerInstance::Text(x) => x.to_export_snapshot(content, gc),
-            ContainerInstance::Dyn(x) => x.to_export_snapshot(content, gc),
             ContainerInstance::List(x) => x.to_export_snapshot(content, gc),
+            ContainerInstance::Dyn(x) => x.to_export_snapshot(content, gc),
         }
     }
 
@@ -176,8 +193,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.initialize_pool_mapping(),
             ContainerInstance::Text(x) => x.initialize_pool_mapping(),
-            ContainerInstance::Dyn(x) => x.initialize_pool_mapping(),
             ContainerInstance::List(x) => x.initialize_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.initialize_pool_mapping(),
         }
     }
 
@@ -185,8 +202,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.encode_and_release_pool_mapping(),
             ContainerInstance::Text(x) => x.encode_and_release_pool_mapping(),
-            ContainerInstance::Dyn(x) => x.encode_and_release_pool_mapping(),
             ContainerInstance::List(x) => x.encode_and_release_pool_mapping(),
+            ContainerInstance::Dyn(x) => x.encode_and_release_pool_mapping(),
         }
     }
 
@@ -199,8 +216,8 @@ impl Container for ContainerInstance {
         match self {
             ContainerInstance::Map(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
             ContainerInstance::Text(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
-            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
             ContainerInstance::List(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
+            ContainerInstance::Dyn(x) => x.to_import_snapshot(state_content, hierarchy, ctx),
         }
     }
 }
@@ -220,7 +237,8 @@ impl ContainerInstance {
 #[derive(Debug)]
 pub struct ContainerRegistry {
     container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
-    containers: Vec<ContainerAndId>,
+    containers: FxHashMap<ContainerIdx, ContainerAndId>,
+    next_container_idx: Arc<AtomicU32>,
 }
 
 #[derive(Debug)]
@@ -233,16 +251,17 @@ impl ContainerRegistry {
     pub fn new() -> Self {
         ContainerRegistry {
             container_to_idx: FxHashMap::default(),
-            containers: Vec::new(),
+            containers: FxHashMap::default(),
+            next_container_idx: Arc::new(AtomicU32::new(0)),
         }
     }
 
     #[inline]
-    fn create(&mut self, id: ContainerID) -> ContainerInstance {
+    fn create(&mut self, id: ContainerID, idx: ContainerIdx) -> ContainerInstance {
         match id.container_type() {
-            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id))),
-            ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id))),
-            ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id))),
+            ContainerType::Map => ContainerInstance::Map(Box::new(MapContainer::new(id, idx))),
+            ContainerType::Text => ContainerInstance::Text(Box::new(TextContainer::new(id, idx))),
+            ContainerType::List => ContainerInstance::List(Box::new(ListContainer::new(id, idx))),
         }
     }
 
@@ -250,7 +269,8 @@ impl ContainerRegistry {
     pub fn get(&self, id: &ContainerID) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.container_to_idx
             .get(id)
-            .map(|x| Arc::downgrade(&self.containers[x.0 as usize].container))
+            .and_then(|x| self.containers.get(x))
+            .map(|x| Arc::downgrade(&x.container))
     }
 
     #[inline(always)]
@@ -259,8 +279,20 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub(crate) fn get_by_idx(&self, idx: ContainerIdx) -> Option<&Arc<Mutex<ContainerInstance>>> {
-        self.containers.get(idx.0 as usize).map(|x| &x.container)
+    pub fn contains_idx(&self, idx: &ContainerIdx) -> bool {
+        self.containers.contains_key(idx)
+    }
+
+    #[inline(always)]
+    pub fn all_container_idx(&self) -> FxHashSet<ContainerIdx> {
+        self.containers.keys().copied().collect()
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_by_idx(&self, idx: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.containers
+            .get(idx)
+            .map(|x| Arc::downgrade(&x.container))
     }
 
     #[inline(always)]
@@ -269,52 +301,52 @@ impl ContainerRegistry {
     }
 
     pub(crate) fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
-        self.containers.get(idx.0 as usize).map(|x| &x.id)
+        self.containers.get(&idx).map(|x| &x.id)
     }
 
     #[inline(always)]
-    pub(crate) fn insert(&mut self, id: ContainerID, container: ContainerInstance) -> ContainerIdx {
-        let idx = self.next_idx();
+    pub(crate) fn insert(
+        &mut self,
+        id: ContainerID,
+        idx: ContainerIdx,
+        container: ContainerInstance,
+    ) -> ContainerIdx {
         self.container_to_idx.insert(id.clone(), idx);
-        self.containers.push(ContainerAndId {
-            container: Arc::new(Mutex::new(container)),
-            id,
-        });
+        self.containers.insert(
+            idx,
+            ContainerAndId {
+                container: Arc::new(Mutex::new(container)),
+                id,
+            },
+        );
 
         idx
     }
 
     #[inline(always)]
-    fn next_idx(&self) -> ContainerIdx {
-        ContainerIdx(self.containers.len() as u32)
+    pub(crate) fn next_idx_and_add_1(&self) -> ContainerIdx {
+        let idx = self.next_container_idx.fetch_add(1, Ordering::SeqCst);
+        ContainerIdx::from_u32(idx)
     }
 
     pub(crate) fn register(&mut self, id: &ContainerID) -> ContainerIdx {
-        let container = self.create(id.clone());
-        self.insert(id.clone(), container)
+        let idx = self.next_idx_and_add_1();
+        let container = self.create(id.clone(), idx);
+        self.insert(id.clone(), idx, container);
+        idx
     }
 
     pub(crate) fn get_or_create(&mut self, id: &ContainerID) -> Weak<Mutex<ContainerInstance>> {
         if !self.container_to_idx.contains_key(id) {
-            let container = self.create(id.clone());
-            self.insert(id.clone(), container);
+            self.register(id);
         }
 
         self.get(id).unwrap()
     }
 
-    pub(crate) fn get_or_create_container_idx(&mut self, id: &ContainerID) -> ContainerIdx {
-        if let Some(idx) = self.container_to_idx.get(id) {
-            *idx
-        } else {
-            let container = self.create(id.clone());
-            self.insert(id.clone(), container)
-        }
-    }
-
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
-        for ContainerAndId { container, id: _ } in self.containers.iter_mut() {
+        for (_, ContainerAndId { container, id: _ }) in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.try_lock().unwrap().deref_mut() {
                 x.debug_inspect()
             }
@@ -323,7 +355,7 @@ impl ContainerRegistry {
 
     pub fn to_json(&self) -> LoroValue {
         let mut map = FxHashMap::default();
-        for ContainerAndId { container, id } in self.containers.iter() {
+        for (_, ContainerAndId { container, id }) in self.containers.iter() {
             if let ContainerID::Root {
                 name,
                 container_type,
@@ -347,11 +379,12 @@ impl ContainerRegistry {
         LoroValue::Map(Box::new(map))
     }
 
-    pub(crate) fn export(&self) -> (&FxHashMap<ContainerID, ContainerIdx>, Vec<ContainerID>) {
-        (
-            &self.container_to_idx,
-            self.containers.iter().map(|x| x.id.clone()).collect(),
-        )
+    pub(crate) fn export_by_sorted_idx(&self) -> Vec<ContainerID> {
+        let mut keys: Vec<_> = self.containers.keys().collect();
+        keys.sort();
+        keys.into_iter()
+            .map(|idx| self.containers.get(idx).unwrap().id.clone())
+            .collect()
     }
 }
 
@@ -374,51 +407,29 @@ pub trait LockContainer {
 }
 
 pub trait ContainerWrapper {
-    type Container: Container;
+    type Container: ContainerTrait;
 
     fn with_container<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Self::Container) -> R;
 
-    fn with_container_checked<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
+    fn with_transaction<T: Transact, F, R>(&self, txn: &T, f: F) -> Result<R, LoroError>
     where
-        F: FnOnce(&mut Self::Container) -> R,
+        F: FnOnce(&mut Transaction, &mut Self::Container) -> Result<R, LoroError>,
     {
-        let store_client_id = ctx.log_store().read().unwrap().this_client_id();
-        if store_client_id != self.client_id() {
+        let txn = txn.transact();
+        let mut txn = txn.0.borrow_mut();
+        let txn = txn.as_mut();
+        if txn.client_id != self.client_id() {
             return Err(LoroError::UnmatchedContext {
                 expected: self.client_id(),
-                found: store_client_id,
+                found: txn.client_id,
             });
         }
-        Ok(self.with_container(f))
-    }
-
-    fn with_event<C: Context, F, R>(&self, ctx: &C, f: F) -> Result<R, LoroError>
-    where
-        F: FnOnce(&mut Self::Container) -> Result<(Option<RawEvent>, R), LoroError>,
-    {
-        let log_store = ctx.log_store();
-        let hierarchy = ctx.hierarchy();
-        let log_store = log_store.write().unwrap();
-        let store_client_id = log_store.this_client_id();
-        if store_client_id != self.client_id() {
-            return Err(LoroError::UnmatchedContext {
-                expected: self.client_id(),
-                found: store_client_id,
-            });
+        let ans = self.with_container(|x| f(txn, x));
+        if ans.is_err() {
+            // TODO: Transaction rollback
         }
-        drop(log_store);
-        let (event, ans) = self.with_container(f)?;
-        let ans = match event {
-            Some(event) => {
-                debug_log::debug_log!("get event");
-                Hierarchy::notify_without_lock(hierarchy, event);
-                Ok(ans)
-            }
-            None => Ok(ans),
-        };
-
         ans
     }
 
@@ -427,6 +438,8 @@ pub trait ContainerWrapper {
     fn id(&self) -> ContainerID {
         self.with_container(|x| x.id().clone())
     }
+
+    fn idx(&self) -> ContainerIdx;
 
     fn get_value(&self) -> LoroValue {
         self.with_container(|x| x.get_value())
@@ -458,73 +471,64 @@ pub trait ContainerWrapper {
         value
     }
 
-    fn subscribe<C: Context>(
+    fn subscribe<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                false,
-                false,
-            )
+        self.with_transaction(txn, |txn, x| {
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            Ok(x.subscribe(&mut h, handler, false, false))
         })
     }
 
-    fn subscribe_deep<C: Context>(
+    fn subscribe_deep<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                true,
-                false,
-            )
+        self.with_transaction(txn, |txn, x| {
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            Ok(x.subscribe(&mut h, handler, true, false))
         })
     }
 
-    fn subscribe_once<C: Context>(
+    fn subscribe_once<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                false,
-                true,
-            )
+        self.with_transaction(txn, |txn, x| {
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            Ok(x.subscribe(&mut h, handler, false, true))
         })
     }
 
-    fn subscribe_deep_once<C: Context>(
+    fn subscribe_deep_once<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.subscribe(
-                &mut ctx.hierarchy().try_lock().unwrap(),
-                handler,
-                true,
-                true,
-            )
+        self.with_transaction(txn, |txn, x| {
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            Ok(x.subscribe(&mut h, handler, true, true))
         })
     }
 
-    fn unsubscribe<C: Context>(
+    fn unsubscribe<T: Transact>(
         &self,
-        ctx: &C,
+        txn: &T,
         subscription: SubscriptionID,
     ) -> Result<(), LoroError> {
-        self.with_container_checked(ctx, |x| {
-            x.unsubscribe(&mut ctx.hierarchy().try_lock().unwrap(), subscription)
+        self.with_transaction(txn, |txn, x| {
+            let h = txn.hierarchy.upgrade().unwrap();
+            let mut h = h.try_lock().unwrap();
+            x.unsubscribe(&mut h, subscription);
+            Ok(())
         })
     }
 }

@@ -6,7 +6,7 @@ fn main() {
     use std::time::Instant;
 
     use bench_utils::{get_automerge_actions, TextAction};
-    use loro_internal::LoroCore;
+    use loro_internal::{LoroCore, Transact};
 
     let actions = get_automerge_actions();
     let mut loro = LoroCore::default();
@@ -15,12 +15,18 @@ fn main() {
     let start = Instant::now();
     for (i, TextAction { pos, ins, del }) in actions.iter().enumerate() {
         let mut text = loro.get_text("text");
-        text.delete(&loro, *pos, *del).unwrap();
-        text.insert(&loro, *pos, ins).unwrap();
-
+        {
+            let txn = loro.transact();
+            text.delete(&txn, *pos, *del).unwrap();
+            text.insert(&txn, *pos, ins).unwrap();
+        }
         let mut text = loro_b.get_text("text");
-        text.delete(&loro_b, *pos, *del).unwrap();
-        text.insert(&loro_b, *pos, ins).unwrap();
+        {
+            let txn = loro_b.transact();
+            text.delete(&txn, *pos, *del).unwrap();
+            text.insert(&txn, *pos, ins).unwrap();
+        }
+
         if i % 10 == 0 {
             loro.import(loro_b.export(loro.vv_cloned()));
             loro_b.import(loro.export(loro_b.vv_cloned()));

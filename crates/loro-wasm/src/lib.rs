@@ -1,13 +1,13 @@
-use js_sys::{Array, Uint8Array};
+use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
     log_store::GcConfig,
-    ContainerType, List, LoroCore, Map, Text, VersionVector,
+    ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
 use std::{cell::RefCell, ops::Deref, sync::Arc};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{__rt::RefMut, prelude::*};
 mod log;
 mod prelim;
 pub use prelim::{PrelimList, PrelimMap, PrelimText};
@@ -44,6 +44,11 @@ impl Deref for Loro {
 extern "C" {
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
+    #[wasm_bindgen(typescript_type = "Transaction | Loro")]
+    pub type JsTransaction;
+    #[wasm_bindgen(typescript_type = "String")]
+    pub type JsOrigin;
+
 }
 
 struct MathRandom;
@@ -219,12 +224,43 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            observer.call1(&JsValue::from_bool(e.local));
+            observer.call1(
+                // &JsValue::from_bool(e.local)
+                &Event {
+                    local: e.local,
+                    origin: e.origin.clone(),
+                }
+                .into(),
+            );
         }))
     }
 
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.borrow_mut().unsubscribe_deep(subscription)
+    }
+
+    fn transaction_impl(&self, txn: TransactionWrap, f: js_sys::Function) -> JsResult<()> {
+        let js_txn = JsValue::from(Transaction(txn));
+        f.call1(&JsValue::NULL, &js_txn)?;
+        // TODO: what is the best way to drop txn
+        // Or Reference Y-crdt: https://github.com/y-crdt/y-crdt/blob/3e7450114ab3d5d4cba93eeb0710f92371e57c74/tests-wasm/testHelper.js#L6
+        let ptr = Reflect::get(&js_txn, &JsValue::from_str("ptr"))?;
+        let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
+        use wasm_bindgen::convert::FromWasmAbi;
+        drop(unsafe { Transaction::from_abi(ptr) });
+        Ok(())
+    }
+
+    pub fn transaction(&self, f: js_sys::Function) -> JsResult<()> {
+        let txn = self.0.borrow().transact();
+        self.transaction_impl(txn, f)
+    }
+
+    #[wasm_bindgen(js_name = "transactionWithOrigin")]
+    pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
+        let origin = origin.as_string().map(Origin::from);
+        let txn = self.0.borrow().transact_with(origin);
+        self.transaction_impl(txn, f)
     }
 }
 
@@ -235,17 +271,62 @@ impl Default for Loro {
 }
 
 #[wasm_bindgen]
+pub struct Event {
+    pub local: bool,
+    origin: Option<Origin>,
+}
+
+#[wasm_bindgen]
+impl Event {
+    #[wasm_bindgen(js_name = "origin", method, getter)]
+    pub fn origin(&self) -> Option<JsOrigin> {
+        self.origin
+            .as_ref()
+            .map(|o| JsValue::from_str(o.as_str()).into())
+    }
+}
+
+#[wasm_bindgen]
+pub struct Transaction(TransactionWrap);
+
+fn get_transaction_mut(txn: &JsTransaction) -> TransactionWrap {
+    use wasm_bindgen::convert::RefMutFromWasmAbi;
+    let js: &JsValue = txn.as_ref();
+    if js.is_undefined() || js.is_null() {
+        panic!("you should input Transaction");
+    } else {
+        let ctor_name = Object::get_prototype_of(js).constructor().name();
+        if ctor_name == "Transaction" {
+            let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
+            let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
+            let txn: RefMut<Transaction> = unsafe { Transaction::ref_mut_from_abi(ptr) };
+            txn.0.transact()
+        } else if ctor_name == "Loro" {
+            let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
+            let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
+            let loro: RefMut<Loro> = unsafe { Loro::ref_mut_from_abi(ptr) };
+            let loro = loro.0.borrow();
+            loro.transact()
+        } else {
+            panic!("you should input Transaction");
+        }
+    }
+}
+
+#[wasm_bindgen]
 pub struct LoroText(Text);
 
 #[wasm_bindgen]
 impl LoroText {
-    pub fn insert(&mut self, ctx: &Loro, index: usize, content: &str) -> JsResult<()> {
-        self.0.insert(ctx.deref(), index, content)?;
+    pub fn insert(&mut self, txn: &JsTransaction, index: usize, content: &str) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.insert(&txn, index, content)?;
         Ok(())
     }
 
-    pub fn delete(&mut self, ctx: &Loro, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete(ctx.deref(), index, len)?;
+    pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.delete(&txn, index, len)?;
         Ok(())
     }
 
@@ -268,17 +349,19 @@ pub struct LoroMap(Map);
 #[wasm_bindgen]
 impl LoroMap {
     #[wasm_bindgen(js_name = "set")]
-    pub fn insert(&mut self, ctx: &Loro, key: &str, value: JsValue) -> JsResult<()> {
+    pub fn insert(&mut self, txn: &JsTransaction, key: &str, value: JsValue) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
         if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(ctx.deref(), key, v)?;
+            self.0.insert(&txn, key, v)?;
         } else {
-            self.0.insert(ctx.deref(), key, value)?;
+            self.0.insert(&txn, key, value)?;
         };
         Ok(())
     }
 
-    pub fn delete(&mut self, ctx: &Loro, key: &str) -> JsResult<()> {
-        self.0.delete(ctx.deref(), key)?;
+    pub fn delete(&mut self, txn: &JsTransaction, key: &str) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.delete(&txn, key)?;
         Ok(())
     }
 
@@ -306,10 +389,11 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,
-        ctx: &mut Loro,
+        txn: &JsTransaction,
         key: &str,
         container_type: &str,
     ) -> JsResult<JsValue> {
+        let txn = get_transaction_mut(txn);
         let _type = match container_type {
             "text" => ContainerType::Text,
             "map" => ContainerType::Map,
@@ -320,17 +404,20 @@ impl LoroMap {
                 ))
             }
         };
-        let id = self.0.insert(&ctx.0, key, _type)?.unwrap();
-        let instance = ctx.deref().get_container(&id).unwrap();
+        let idx = self.0.insert(&txn, key, _type)?.unwrap();
+
         let container = match _type {
             ContainerType::Text => {
-                LoroText(Text::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_text_by_idx(idx).unwrap();
+                LoroText(x).into()
             }
             ContainerType::Map => {
-                LoroMap(Map::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_map_by_idx(idx).unwrap();
+                LoroMap(x).into()
             }
             ContainerType::List => {
-                LoroList(List::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_list_by_idx(idx).unwrap();
+                LoroList(x).into()
             }
         };
         Ok(container)
@@ -342,17 +429,19 @@ pub struct LoroList(List);
 
 #[wasm_bindgen]
 impl LoroList {
-    pub fn insert(&mut self, ctx: &Loro, index: usize, value: JsValue) -> JsResult<()> {
+    pub fn insert(&mut self, txn: &JsTransaction, index: usize, value: JsValue) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
         if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(ctx.deref(), index, v)?;
+            self.0.insert(&txn, index, v)?;
         } else {
-            self.0.insert(ctx.deref(), index, value)?;
+            self.0.insert(&txn, index, value)?;
         };
         Ok(())
     }
 
-    pub fn delete(&mut self, ctx: &Loro, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete(ctx.deref(), index, len)?;
+    pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.delete(&txn, index, len)?;
         Ok(())
     }
 
@@ -382,27 +471,30 @@ impl LoroList {
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,
-        ctx: &mut Loro,
+        txn: &JsTransaction,
         pos: usize,
         container: &str,
     ) -> JsResult<JsValue> {
+        let txn = get_transaction_mut(txn);
         let _type = match container {
             "text" => ContainerType::Text,
             "map" => ContainerType::Map,
             "list" => ContainerType::List,
             _ => return Err(JsValue::from_str("Invalid container type")),
         };
-        let id = self.0.insert(&ctx.0, pos, _type)?.unwrap();
-        let instance = ctx.deref().get_container(&id).unwrap();
+        let idx = self.0.insert(&txn, pos, _type)?.unwrap();
         let container = match _type {
             ContainerType::Text => {
-                LoroText(Text::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_text_by_idx(idx).unwrap();
+                LoroText(x).into()
             }
             ContainerType::Map => {
-                LoroMap(Map::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_map_by_idx(idx).unwrap();
+                LoroMap(x).into()
             }
             ContainerType::List => {
-                LoroList(List::from_instance(instance, ctx.deref().client_id())).into()
+                let x = txn.get_list_by_idx(idx).unwrap();
+                LoroList(x).into()
             }
         };
         Ok(container)
@@ -420,5 +512,7 @@ export type ContainerID = { id: string; type: ContainerType } | {
 interface Loro {
     exportUpdates(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
+    transaction(callback: (txn: Transaction)=>void): void;
+    transactionWithOrigin(origin: string, callback: (txn: Transaction)=>void): void;
 }
 "#;

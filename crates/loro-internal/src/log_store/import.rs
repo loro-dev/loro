@@ -7,6 +7,7 @@ use crate::{
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
+use smallvec::{smallvec, SmallVec};
 use std::sync::Arc;
 use std::{collections::VecDeque, sync::MutexGuard};
 use tracing::instrument;
@@ -16,7 +17,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use rle::{slice_vec_by, HasLength, RleVecWithIndex};
 
 use crate::{
-    container::{registry::ContainerInstance, Container, ContainerID},
+    container::{registry::ContainerInstance, ContainerID, ContainerTrait},
     dag::{remove_included_frontiers, DagUtils},
     op::RichOp,
     span::{HasCounter, HasIdSpan, HasLamportSpan, IdSpan},
@@ -34,7 +35,7 @@ pub struct ImportContext {
     pub patched_old_vv: Option<PatchedVersionVector>,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
-    pub diff: Vec<(ContainerID, Vec<Diff>)>,
+    pub diff: Vec<(ContainerID, SmallVec<[Diff; 1]>)>,
 }
 
 impl ImportContext {
@@ -46,10 +47,10 @@ impl ImportContext {
             }
         }
 
-        self.diff.push((id.clone(), vec![diff]));
+        self.diff.push((id.clone(), smallvec![diff]));
     }
 
-    pub fn push_diff_vec(&mut self, id: &ContainerID, mut diff: Vec<Diff>) {
+    pub fn push_diff_vec(&mut self, id: &ContainerID, mut diff: SmallVec<[Diff; 1]>) {
         if let Some((last_id, vec)) = self.diff.last_mut() {
             if last_id == id {
                 vec.append(&mut diff);
@@ -142,6 +143,7 @@ impl LogStore {
                 old_version: context.old_frontiers.clone(),
                 new_version: context.new_frontiers.clone(),
                 local: false,
+                origin: None,
             };
             events.push(raw_event);
         }

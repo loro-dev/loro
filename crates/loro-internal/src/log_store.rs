@@ -5,8 +5,8 @@ mod encoding;
 mod import;
 mod iter;
 
-use crate::LoroValue;
-pub use encoding::{EncodeConfig, EncodeMode, LoroEncoder};
+use crate::{version::Frontiers, LoroValue};
+pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
     marker::PhantomPinned,
@@ -16,7 +16,6 @@ use std::{
 use fxhash::FxHashMap;
 
 use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
-use smallvec::SmallVec;
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -74,7 +73,7 @@ pub struct LogStore {
     cfg: Configure,
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
-    frontiers: SmallVec<[ID; 2]>,
+    frontiers: Frontiers,
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
@@ -180,7 +179,8 @@ impl LogStore {
     }
 
     fn to_remote_op(&self, op: &Op) -> RemoteOp {
-        let container = self.reg.get_by_idx(op.container).unwrap();
+        let container = self.reg.get_by_idx(&op.container).unwrap();
+        let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
         op.clone().convert(&mut container, self.cfg.gc.gc)
     }
@@ -227,10 +227,9 @@ impl LogStore {
     }
 
     /// this method would not get the container and apply op
-    pub fn append_local_ops(&mut self, ops: &[Op]) -> (SmallVec<[ID; 2]>, &[ID]) {
-        let old_version = self.frontiers.clone();
+    pub fn append_local_ops(&mut self, ops: &[Op]) {
         if ops.is_empty() {
-            return (old_version, self.frontier());
+            return;
         }
 
         let lamport = self.next_lamport();
@@ -258,12 +257,16 @@ impl LogStore {
             .entry(self.this_client_id)
             .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
             .push(change);
-        (old_version, self.frontier())
     }
 
     #[inline]
     pub fn contains_container(&self, id: &ContainerID) -> bool {
         self.reg.contains(id)
+    }
+
+    #[inline]
+    pub fn contains_container_idx(&self, id: &ContainerIdx) -> bool {
+        self.reg.contains_idx(id)
     }
 
     #[inline]
@@ -367,8 +370,12 @@ impl LogStore {
         self.reg.get(container)
     }
 
-    pub(crate) fn get_or_create_container_idx(&mut self, container: &ContainerID) -> ContainerIdx {
-        self.reg.get_or_create_container_idx(container)
+    #[inline(always)]
+    pub fn get_container_by_idx(
+        &self,
+        container: &ContainerIdx,
+    ) -> Option<Weak<Mutex<ContainerInstance>>> {
+        self.reg.get_by_idx(container)
     }
 
     pub fn to_json(&self) -> LoroValue {

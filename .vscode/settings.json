@@ -10,6 +10,7 @@
     "LOGSTORE",
     "napi",
     "nextest",
+    "peekable",
     "Peritext",
     "RUSTFLAGS",
     "smstring",

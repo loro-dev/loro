@@ -55,6 +55,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "recursive_txn"
+path = "fuzz_targets/recursive_txn.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "encode"
 path = "fuzz_targets/encode.rs"
 test = false
