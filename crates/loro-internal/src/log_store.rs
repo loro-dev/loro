@@ -228,7 +228,6 @@ impl LogStore {
 
     /// this method would not get the container and apply op
     pub fn append_local_ops(&mut self, ops: &[Op]) {
-        // let old_version = self.frontiers.clone();
         if ops.is_empty() {
             return;
         }

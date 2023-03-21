@@ -228,7 +228,7 @@ Deno.test("transaction origin", () => {
   const loro = new Loro();
   const text = loro.getText("text");
   let count = 0;
-  const sub = loro.subscribe((event:any) => {
+  const sub = loro.subscribe((event:{origin: string}) => {
     count += 1;
     loro.unsubscribe(sub);
     assertEquals(event.origin, "origin")

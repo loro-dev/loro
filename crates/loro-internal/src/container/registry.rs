@@ -29,10 +29,14 @@ use super::{
     ContainerID, ContainerTrait, ContainerType,
 };
 
+/// During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
+/// So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
+/// An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
 pub struct ContainerIdx(u32);
 
 impl ContainerIdx {
+    #[allow(unused)]
     pub(crate) fn to_u32(self) -> u32 {
         self.0
     }

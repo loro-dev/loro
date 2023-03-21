@@ -330,10 +330,6 @@ pub(super) fn decode_snapshot(
         }
         return Ok(vec![]);
     }
-    // let mut idx_to_container_type = FxHashMap::default();
-    // for (idx, container_id) in containers.iter().enumerate() {
-    //     idx_to_container_type.insert(idx, container_id.container_type());
-    // }
     let mut container_idx2type = FxHashMap::default();
     for (idx, container_id) in containers.iter().enumerate() {
         // assert containers are sorted by container_idx
@@ -361,12 +357,6 @@ pub(super) fn decode_snapshot(
     let mut op_iter = ops.into_iter();
     let mut changes_dq = FxHashMap::default();
     let mut deps_iter = deps.into_iter();
-
-    // the container_idx needs to be calculated first
-    // because the op needs the corresponding container (in new or old store)
-    let new_loro = LoroCore::default();
-    let mut new_store = new_loro.log_store.try_write().unwrap();
-    let mut new_hierarchy = new_loro.hierarchy.try_lock().unwrap();
 
     for (_, this_changes_encoding) in &change_encodings.into_iter().group_by(|c| c.client_idx) {
         let mut counter = 0;
@@ -507,6 +497,9 @@ pub(super) fn decode_snapshot(
         );
         Ok(store.get_events(hierarchy, &mut import_context))
     } else {
+        let new_loro = LoroCore::default();
+        let mut new_store = new_loro.log_store.try_write().unwrap();
+        let mut new_hierarchy = new_loro.hierarchy.try_lock().unwrap();
         load_snapshot(
             &mut new_store,
             &mut new_hierarchy,
@@ -518,7 +511,6 @@ pub(super) fn decode_snapshot(
             &clients,
         );
         let diff_changes = new_store.export(&store.vv);
-        // println!("diff change {:?}", diff_changes);
         Ok(store.import(hierarchy, diff_changes))
     }
 }
