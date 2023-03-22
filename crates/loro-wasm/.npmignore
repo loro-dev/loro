@@ -1,0 +1,13 @@
+/target
+*.log
+*.ipynb
+flamegraph.svg
+target
+dhat-heap.json
+.DS_Store
+node_modules/
+deno_test/
+src/
+wasm-size/
+web-test/
+pkg/

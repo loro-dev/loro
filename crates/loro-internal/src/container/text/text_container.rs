@@ -587,6 +587,10 @@ impl Text {
         self.with_container(|x| x.text_len())
     }
 
+    pub fn len_utf16(&self) -> usize {
+        self.with_container(|x| x.state.utf8_to_utf16(x.text_len()))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

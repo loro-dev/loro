@@ -320,13 +320,13 @@ pub struct LoroText(Text);
 impl LoroText {
     pub fn insert(&mut self, txn: &JsTransaction, index: usize, content: &str) -> JsResult<()> {
         let txn = get_transaction_mut(txn);
-        self.0.insert(&txn, index, content)?;
+        self.0.insert_utf16(&txn, index, content)?;
         Ok(())
     }
 
     pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
         let txn = get_transaction_mut(txn);
-        self.0.delete(&txn, index, len)?;
+        self.0.delete_utf16(&txn, index, len)?;
         Ok(())
     }
 
@@ -340,6 +340,11 @@ impl LoroText {
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
+    }
+
+    #[wasm_bindgen(js_name = "length", method, getter)]
+    pub fn length(&self) -> usize {
+        self.0.len()
     }
 }
 
