@@ -1,3 +1,4 @@
+use gloo_timers::callback::Timeout;
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
@@ -76,6 +77,7 @@ mod observer {
 
     /// We need to wrap the observer function in a struct so that we can implement Send for it.
     /// But it's not Send essentially, so we need to check it manually in runtime.
+    #[derive(Clone)]
     pub(crate) struct Observer {
         f: js_sys::Function,
         thread: ThreadId,
@@ -173,14 +175,8 @@ impl Loro {
         Ok(self.0.borrow().encode_all())
     }
 
-    #[wasm_bindgen(js_name = "importSnapshot")]
-    pub fn import_snapshot(&self, input: Vec<u8>) -> JsResult<()> {
-        self.0.borrow_mut().decode(&input)?;
-        Ok(())
-    }
-
-    #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
-    pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
+    #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
+    pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
             None
         } else {
@@ -196,9 +192,9 @@ impl Loro {
         Ok(self.0.borrow().encode_from(vv))
     }
 
-    #[wasm_bindgen(js_name = "importUpdates")]
-    pub fn import_updates(&self, data: Vec<u8>) -> JsResult<()> {
-        self.0.borrow_mut().decode(&data)?;
+    #[wasm_bindgen(js_name = "import")]
+    pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<()> {
+        self.0.borrow_mut().decode(&update_or_snapshot)?;
         Ok(())
     }
 
@@ -211,6 +207,9 @@ impl Loro {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
+        if data.is_empty() {
+            return Ok(());
+        }
         Ok(self.0.borrow_mut().decode_batch(&data)?)
     }
 
@@ -224,14 +223,17 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            observer.call1(
-                // &JsValue::from_bool(e.local)
-                &Event {
-                    local: e.local,
-                    origin: e.origin.clone(),
-                }
-                .into(),
-            );
+            let ob = observer.clone();
+            let timeout = Timeout::new(0, move || {
+                ob.call1(
+                    &Event {
+                        local: e.local,
+                        origin: e.origin.clone(),
+                    }
+                    .into(),
+                );
+            });
+            timeout.forget(); // not going to cancel the timeout
         }))
     }
 

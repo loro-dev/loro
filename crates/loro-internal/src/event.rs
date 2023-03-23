@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -21,7 +23,7 @@ pub struct RawEvent {
     pub origin: Option<Origin>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Event {
     pub old_version: Frontiers,
     pub new_version: Frontiers,
@@ -77,7 +79,7 @@ impl ObserverOptions {
     }
 }
 
-pub type ObserverHandler = Box<dyn FnMut(&Event) + Send>;
+pub type ObserverHandler = Box<dyn FnMut(Arc<Event>) + Send>;
 
 pub struct Observer {
     handler: ObserverHandler,
@@ -139,8 +141,8 @@ impl Observer {
         self.options.once
     }
 
-    pub fn call(&mut self, event: &Event) {
-        (self.handler)(event)
+    pub fn call(&mut self, event: &Arc<Event>) {
+        (self.handler)(event.clone())
     }
 }
 

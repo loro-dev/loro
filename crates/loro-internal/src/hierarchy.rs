@@ -345,6 +345,7 @@ impl Hierarchy {
                 event.relative_path = relative_path;
                 event.current_target = target;
             };
+            let event = Arc::new(event.clone());
             for sub_id in dispatch.sub_ids.iter() {
                 if let Some(observer) = observers.get_mut(sub_id) {
                     observer.call(&event);
