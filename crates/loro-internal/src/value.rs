@@ -351,17 +351,7 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(container_id) => {
-                let id = *container_id;
-                let map = Object::new();
-                js_sys::Reflect::set(
-                    &map,
-                    &JsValue::from_str("UnresolvedContainer"),
-                    &JsValue::from(id),
-                )
-                .unwrap();
-                map.into_js_result().unwrap()
-            }
+            LoroValue::Unresolved(container_id) => JsValue::from(*container_id),
         }
     }
 
