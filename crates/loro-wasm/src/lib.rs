@@ -6,7 +6,7 @@ use loro_internal::{
     log_store::GcConfig,
     ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
-use std::{cell::RefCell, ops::Deref, sync::Arc};
+use std::{cell::RefCell, ops::Deref, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::RefMut, prelude::*};
 mod log;
 mod prelim;
@@ -223,7 +223,10 @@ impl Loro {
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
             let promise = Promise::resolve(&JsValue::NULL);
             let ob = observer.clone();
-            let closure = Closure::new(move |_: JsValue| {
+            type C = Closure<dyn FnMut(JsValue)>;
+            let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
+            let copy = drop_handler.clone();
+            let closure = Closure::once(move |_: JsValue| {
                 ob.call1(
                     &Event {
                         local: e.local,
@@ -231,9 +234,11 @@ impl Loro {
                     }
                     .into(),
                 );
+
+                drop(copy);
             });
             let _ = promise.then(&closure);
-            closure.forget();
+            drop_handler.borrow_mut().replace(closure);
         }))
     }
 

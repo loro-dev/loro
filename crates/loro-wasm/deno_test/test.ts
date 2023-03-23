@@ -1,5 +1,4 @@
 import init, {
-  enableDebug,
   Loro,
   LoroMap,
   PrelimList,
@@ -15,7 +14,6 @@ import {
 
 await init();
 setPanicHook();
-enableDebug();
 
 Deno.test({
   name: "loro_wasm",
