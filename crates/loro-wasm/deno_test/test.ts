@@ -6,7 +6,7 @@ import init, {
   PrelimMap,
   PrelimText,
   setPanicHook,
-Transaction,
+  Transaction,
 } from "../web/loro_wasm.js";
 import {
   assertEquals,
@@ -57,28 +57,29 @@ Deno.test({
 });
 
 Deno.test({ name: "sync" }, async (t) => {
-  await t.step("two insert at beginning", () => {
+  await t.step("two insert at beginning", async () => {
     const a = new Loro();
     const b = new Loro();
     let a_version: undefined | Uint8Array = undefined;
     let b_version: undefined | Uint8Array = undefined;
-    a.subscribe((e: {local: boolean}) => {
+    a.subscribe((e: { local: boolean }) => {
       if (e.local) {
-        const exported = a.exportUpdates(a_version);
-        b.importUpdates(exported);
+        const exported = a.exportFrom(a_version);
+        b.import(exported);
         a_version = a.version();
       }
     });
-    b.subscribe((e: {local: boolean}) => {
+    b.subscribe((e: { local: boolean }) => {
       if (e.local) {
-        const exported = b.exportUpdates(b_version);
-        a.importUpdates(exported);
+        const exported = b.exportFrom(b_version);
+        a.import(exported);
         b_version = b.version();
       }
     });
     const aText = a.getText("text");
     const bText = b.getText("text");
     aText.insert(a, 0, "abc");
+    await one_ms();
     assertEquals(aText.toString(), bText.toString());
   });
 
@@ -87,19 +88,19 @@ Deno.test({ name: "sync" }, async (t) => {
     const text = loro.getText("text");
     text.insert(loro, 0, "hello world");
     const loro_bk = new Loro();
-    loro_bk.importUpdates(loro.exportUpdates(undefined));
+    loro_bk.import(loro.exportFrom(undefined));
     assertEquals(loro_bk.toJson(), loro.toJson());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.toString(), "hello world");
     text_bk.insert(loro_bk, 0, "a ");
-    loro.importUpdates(loro_bk.exportUpdates(undefined));
+    loro.import(loro_bk.exportFrom(undefined));
     assertEquals(text.toString(), "a hello world");
     const map = loro.getMap("map");
     map.set(loro, "key", "value");
   });
 });
 
-Deno.test("subscribe", () => {
+Deno.test("subscribe", async () => {
   const loro = new Loro();
   const text = loro.getText("text");
   let count = 0;
@@ -107,11 +108,14 @@ Deno.test("subscribe", () => {
     count += 1;
   });
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 1);
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 2);
   loro.unsubscribe(sub);
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 2);
 });
 
@@ -169,29 +173,32 @@ Deno.test({ name: "test prelim" }, async (t) => {
   });
 });
 
-Deno.test("subscribe_lock", () => {
+Deno.test("subscribe_lock", async () => {
   const loro = new Loro();
   const text = loro.getText("text");
   const list = loro.getList("list");
   let count = 0;
   let i = 1;
   const sub = loro.subscribe(() => {
-    if (i >0){
+    if (i > 0) {
       list.insert(loro, 0, i);
       i--;
     }
     count += 1;
   });
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 2);
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 3);
   loro.unsubscribe(sub);
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 3);
 });
 
-Deno.test("subscribe_lock2", () => {
+Deno.test("subscribe_lock2", async () => {
   const loro = new Loro();
   const text = loro.getText("text");
   let count = 0;
@@ -201,12 +208,13 @@ Deno.test("subscribe_lock2", () => {
   });
   assertEquals(count, 0);
   text.insert(loro, 0, "hello world");
+  await one_ms();
   assertEquals(count, 1);
   text.insert(loro, 0, "hello world");
   assertEquals(count, 1);
 });
 
-Deno.test("transaction", () => {
+Deno.test("transaction", async () => {
   const loro = new Loro();
   const text = loro.getText("text");
   let count = 0;
@@ -214,31 +222,37 @@ Deno.test("transaction", () => {
     count += 1;
     loro.unsubscribe(sub);
   });
-  loro.transaction((txn: Transaction)=>{
+  loro.transaction((txn: Transaction) => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
   });
+  await one_ms();
   assertEquals(count, 1);
 });
 
-Deno.test("transaction origin", () => {
+Deno.test("transaction origin", async () => {
   const loro = new Loro();
   const text = loro.getText("text");
   let count = 0;
-  const sub = loro.subscribe((event:{origin: string}) => {
+  const sub = loro.subscribe((event: { origin: string }) => {
     count += 1;
     loro.unsubscribe(sub);
-    assertEquals(event.origin, "origin")
+    assertEquals(event.origin, "origin");
   });
-  loro.transactionWithOrigin("origin", (txn: Transaction)=>{
-    assertEquals(count, 0); 
-    text.insert(txn, 0, "hello world");
+  loro.transactionWithOrigin("origin", (txn: Transaction) => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
+    text.insert(txn, 0, "hello world");
+    assertEquals(count, 0);
   });
+  await one_ms();
   assertEquals(count, 1);
 });
+
+function one_ms(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 1));
+}

@@ -1,5 +1,4 @@
-use gloo_timers::callback::Timeout;
-use js_sys::{Array, Object, Reflect, Uint8Array};
+use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
@@ -192,7 +191,6 @@ impl Loro {
         Ok(self.0.borrow().encode_from(vv))
     }
 
-    #[wasm_bindgen(js_name = "import")]
     pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<()> {
         self.0.borrow_mut().decode(&update_or_snapshot)?;
         Ok(())
@@ -223,8 +221,9 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
+            let promise = Promise::resolve(&JsValue::NULL);
             let ob = observer.clone();
-            let timeout = Timeout::new(0, move || {
+            let closure = Closure::new(move |_: JsValue| {
                 ob.call1(
                     &Event {
                         local: e.local,
@@ -233,7 +232,8 @@ impl Loro {
                     .into(),
                 );
             });
-            timeout.forget(); // not going to cancel the timeout
+            let _ = promise.then(&closure);
+            closure.forget();
         }))
     }
 

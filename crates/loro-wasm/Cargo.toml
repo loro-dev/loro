@@ -14,7 +14,6 @@ serde-wasm-bindgen = { version = "0.5.0" }
 console_error_panic_hook = { version = "0.1.6", optional = true }
 tracing-wasm = "0.2.1"
 tracing = "0.1.37"
-gloo-timers = "0.2.6"
 
 [features]
 default = ["console_error_panic_hook"]
