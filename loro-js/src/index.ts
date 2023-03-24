@@ -50,25 +50,34 @@ export type Delta<T> = {
   len: number;
 };
 
-export type Diff = {
+export type ListDiff = {
   type: "list";
-  diff: Delta<Value[]>;
-} | {
-  type: "list";
-  diff: Delta<string>;
-} | {
+  diff: Delta<Value[]>[];
+};
+
+export type TextDiff = {
+  type: "text";
+  diff: Delta<string>[];
+};
+
+export type MapDIff = {
   type: "map";
   diff: {
     added: Record<string, Value>;
     deleted: Record<string, Value>;
-    updated: Record<string, { old: Value; new: Value }>;
+    updated: Record<string, {
+      old: Value;
+      new: Value;
+    }>;
   };
 };
+
+export type Diff = ListDiff | TextDiff | MapDIff;
 
 export interface LoroEvent {
   local: boolean;
   origin?: string;
-  diff: Diff;
+  diff: Diff[];
   target: ContainerID;
   path: Path;
 }
