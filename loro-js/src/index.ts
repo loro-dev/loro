@@ -34,7 +34,7 @@ interface Listener {
 
 declare module "loro-wasm" {
   interface Loro {
-    subscribe(listener: Listener): void;
+    subscribe(listener: Listener): number;
     transact(f: (tx: Transaction) => void, origin?: string): void;
   }
 }
