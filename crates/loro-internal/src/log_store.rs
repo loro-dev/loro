@@ -9,6 +9,7 @@ use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
+    collections::BinaryHeap,
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
@@ -30,6 +31,8 @@ use crate::{
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
+
+use self::import::ChangesWithNegStartCounter;
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
@@ -77,6 +80,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
+    pending_changes: FxHashMap<ClientID, BinaryHeap<ChangesWithNegStartCounter>>,
     _pin: PhantomPinned,
 }
 
@@ -94,6 +98,7 @@ impl LogStore {
             frontiers: Default::default(),
             vv: Default::default(),
             reg: ContainerRegistry::new(),
+            pending_changes: Default::default(),
             _pin: PhantomPinned,
         }))
     }
