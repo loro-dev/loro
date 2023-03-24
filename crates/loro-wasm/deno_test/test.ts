@@ -226,6 +226,8 @@ Deno.test("transaction", async () => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
+    txn.commit();
+    txn.free();
   });
   await one_ms();
   assertEquals(count, 1);
@@ -246,6 +248,8 @@ Deno.test("transaction origin", async () => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
+    txn.commit();
+    txn.free();
   });
   await one_ms();
   assertEquals(count, 1);
