@@ -3,11 +3,15 @@ use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
     context::Context,
+    event::{Diff, Path},
     log_store::GcConfig,
     ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
 use std::{cell::RefCell, ops::Deref, rc::Rc, sync::Arc};
-use wasm_bindgen::{__rt::RefMut, prelude::*};
+use wasm_bindgen::{
+    __rt::{IntoJsResult, RefMut},
+    prelude::*,
+};
 mod log;
 mod prelim;
 pub use prelim::{PrelimList, PrelimMap, PrelimText};
@@ -231,6 +235,9 @@ impl Loro {
                     &Event {
                         local: e.local,
                         origin: e.origin.clone(),
+                        target: e.target.clone(),
+                        diff: Either::A(e.diff.to_vec()),
+                        path: Either::A(e.absolute_path.clone()),
                     }
                     .into(),
                 );
@@ -263,10 +270,18 @@ impl Default for Loro {
     }
 }
 
+enum Either<A, B> {
+    A(A),
+    B(B),
+}
+
 #[wasm_bindgen]
 pub struct Event {
     pub local: bool,
     origin: Option<Origin>,
+    target: ContainerID,
+    diff: Either<Vec<Diff>, JsValue>,
+    path: Either<Path, JsValue>,
 }
 
 #[wasm_bindgen]
@@ -276,6 +291,43 @@ impl Event {
         self.origin
             .as_ref()
             .map(|o| JsValue::from_str(o.as_str()).into())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn target(&self) -> JsContainerID {
+        JsValue::from_str(&self.target.to_string()).into()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn path(&mut self) -> JsValue {
+        match &mut self.path {
+            Either::A(path) => {
+                let arr = Array::new_with_length(path.len() as u32);
+                for (i, p) in path.iter().enumerate() {
+                    arr.set(i as u32, p.clone().into());
+                }
+                let inner: JsValue = arr.into_js_result().unwrap();
+                self.path = Either::B(inner.clone());
+                inner
+            }
+            Either::B(new) => new.clone(),
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn diff(&mut self) -> JsValue {
+        match &self.diff {
+            Either::A(diff) => {
+                let arr = Array::new_with_length(diff.len() as u32);
+                for (i, p) in diff.iter().enumerate() {
+                    arr.set(i as u32, p.clone().into());
+                }
+                let value = arr.into_js_result().unwrap();
+                self.diff = Either::B(value.clone());
+                value
+            }
+            Either::B(ans) => ans.clone(),
+        }
     }
 }
 
@@ -351,6 +403,7 @@ impl LoroText {
 
 #[wasm_bindgen]
 pub struct LoroMap(Map);
+const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List";
 
 #[wasm_bindgen]
 impl LoroMap {
@@ -400,19 +453,15 @@ impl LoroMap {
         container_type: &str,
     ) -> JsResult<JsValue> {
         let txn = get_transaction_mut(txn);
-        let _type = match container_type {
-            "text" => ContainerType::Text,
-            "map" => ContainerType::Map,
-            "list" => ContainerType::List,
-            _ => {
-                return Err(JsValue::from_str(
-                    "Invalid container type, only supports text, map, list",
-                ))
-            }
+        let type_ = match container_type {
+            "text" | "Text" => ContainerType::Text,
+            "map" | "Map" => ContainerType::Map,
+            "list" | "List" => ContainerType::List,
+            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let idx = self.0.insert(&txn, key, _type)?.unwrap();
+        let idx = self.0.insert(&txn, key, type_)?.unwrap();
 
-        let container = match _type {
+        let container = match type_ {
             ContainerType::Text => {
                 let x = txn.get_text_by_idx(idx).unwrap();
                 LoroText(x).into()
@@ -483,10 +532,10 @@ impl LoroList {
     ) -> JsResult<JsValue> {
         let txn = get_transaction_mut(txn);
         let _type = match container {
-            "text" => ContainerType::Text,
-            "map" => ContainerType::Map,
-            "list" => ContainerType::List,
-            _ => return Err(JsValue::from_str("Invalid container type")),
+            "text" | "Text" => ContainerType::Text,
+            "map" | "Map" => ContainerType::Map,
+            "list" | "List" => ContainerType::List,
+            _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
         let idx = self.0.insert(&txn, pos, _type)?.unwrap();
         let container = match _type {
@@ -510,10 +559,9 @@ impl LoroList {
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List";
-export type ContainerID = { id: string; type: ContainerType } | {
-  root: string;
-  type: ContainerType;
-};
+export type ContainerID =
+  | `/${string}:${ContainerType}`
+  | `${number}@${number}:${ContainerType}`;
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
