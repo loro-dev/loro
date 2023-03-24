@@ -46,7 +46,7 @@ extern "C" {
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "Transaction | Loro")]
     pub type JsTransaction;
-    #[wasm_bindgen(typescript_type = "String")]
+    #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
 
 }
@@ -246,28 +246,14 @@ impl Loro {
         self.0.borrow_mut().unsubscribe_deep(subscription)
     }
 
-    fn transaction_impl(&self, txn: TransactionWrap, f: js_sys::Function) -> JsResult<()> {
-        let js_txn = JsValue::from(Transaction(txn));
-        f.call1(&JsValue::NULL, &js_txn)?;
-        // TODO: what is the best way to drop txn
-        // Or Reference Y-crdt: https://github.com/y-crdt/y-crdt/blob/3e7450114ab3d5d4cba93eeb0710f92371e57c74/tests-wasm/testHelper.js#L6
-        let ptr = Reflect::get(&js_txn, &JsValue::from_str("ptr"))?;
-        let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
-        use wasm_bindgen::convert::FromWasmAbi;
-        drop(unsafe { Transaction::from_abi(ptr) });
-        Ok(())
-    }
-
-    pub fn transaction(&self, f: js_sys::Function) -> JsResult<()> {
-        let txn = self.0.borrow().transact();
-        self.transaction_impl(txn, f)
-    }
-
-    #[wasm_bindgen(js_name = "transactionWithOrigin")]
+    /// It's the caller's responsibility to commit and free the transaction
+    #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
     pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
         let origin = origin.as_string().map(Origin::from);
         let txn = self.0.borrow().transact_with(origin);
-        self.transaction_impl(txn, f)
+        let js_txn = JsValue::from(Transaction(txn));
+        f.call1(&JsValue::NULL, &js_txn)?;
+        Ok(())
     }
 }
 
@@ -295,6 +281,14 @@ impl Event {
 
 #[wasm_bindgen]
 pub struct Transaction(TransactionWrap);
+
+#[wasm_bindgen]
+impl Transaction {
+    pub fn commit(&self) -> JsResult<()> {
+        self.0.commit()?;
+        Ok(())
+    }
+}
 
 fn get_transaction_mut(txn: &JsTransaction) -> TransactionWrap {
     use wasm_bindgen::convert::RefMutFromWasmAbi;
@@ -524,7 +518,5 @@ export type ContainerID = { id: string; type: ContainerType } | {
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
-    transaction(callback: (txn: Transaction)=>void): void;
-    transactionWithOrigin(origin: string, callback: (txn: Transaction)=>void): void;
 }
 "#;

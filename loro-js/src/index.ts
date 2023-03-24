@@ -1,5 +1,4 @@
 export {
-  Loro,
   LoroList,
   LoroMap,
   LoroText,
@@ -9,8 +8,20 @@ export {
   setPanicHook,
   Transaction,
 } from "loro-wasm";
+import { Loro, Transaction } from "loro-wasm";
 
 export type { ContainerID, ContainerType } from "loro-wasm";
+
+Loro.prototype.transact = function (cb, origin) {
+  this.__raw__transactionWithOrigin(origin, (txn: Transaction) => {
+    try {
+      cb(txn);
+    } finally {
+      txn.commit();
+      txn.free();
+    }
+  });
+};
 
 interface Event {
   local: boolean;
@@ -24,5 +35,8 @@ interface Listener {
 declare module "loro-wasm" {
   interface Loro {
     subscribe(listener: Listener): void;
+    transact(f: (tx: Transaction) => void, origin?: string): void;
   }
 }
+
+export { Loro };

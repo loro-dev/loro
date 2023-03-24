@@ -3,14 +3,14 @@ lockfileVersion: 5.4
 specifiers:
   '@rollup/plugin-node-resolve': ^15.0.1
   esbuild: ^0.17.12
-  loro-wasm: '*'
+  loro-wasm: ^0.2.1
   rollup: ^3.20.1
   rollup-plugin-dts: ^5.3.0
   rollup-plugin-esbuild: ^5.0.0
   typescript: ^5.0.2
 
 dependencies:
-  loro-wasm: link:node_modules/loro-wasm
+  loro-wasm: registry.npmmirror.com/loro-wasm/0.2.1
 
 devDependencies:
   '@rollup/plugin-node-resolve': registry.npmmirror.com/@rollup/plugin-node-resolve/15.0.1_rollup@3.20.1
@@ -545,6 +545,12 @@ packages:
     name: jsonc-parser
     version: 3.2.0
     dev: true
+
+  registry.npmmirror.com/loro-wasm/0.2.1:
+    resolution: {integrity: sha512-kswaRi9RUeMW3MAdZq1kBob2AkSrihPE18FaiOEOzjpvlNHN0X2GClR5dbtouGXccEMDWlASpgVdhQPu5kO5IA==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/loro-wasm/-/loro-wasm-0.2.1.tgz}
+    name: loro-wasm
+    version: 0.2.1
+    dev: false
 
   registry.npmmirror.com/magic-string/0.30.0:
     resolution: {integrity: sha512-LA+31JYDJLs82r2ScLrlz1GjSgu66ZV518eyWT+S8VhyQn/JL0u9MeBOvQMGYiPk1DBiSN9DDMOcXvigJZaViQ==, registry: https://registry.npm.taobao.org/, tarball: https://registry.npmmirror.com/magic-string/-/magic-string-0.30.0.tgz}
