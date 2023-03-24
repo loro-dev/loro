@@ -8,14 +8,7 @@ export {
   setPanicHook,
   Transaction,
 } from "loro-wasm";
-import {
-  ContainerID,
-  ContainerType,
-  Loro,
-  LoroList,
-  LoroMap,
-  Transaction,
-} from "loro-wasm";
+import { ContainerID, Loro, Transaction } from "loro-wasm";
 
 export type { ContainerID, ContainerType } from "loro-wasm";
 
@@ -141,6 +134,8 @@ declare module "loro-wasm" {
       pos: number,
       container: string,
     ): never;
+
+    get(index: number): Value;
   }
 
   interface LoroMap {
@@ -164,5 +159,7 @@ declare module "loro-wasm" {
       key: string,
       container_type: string,
     ): never;
+
+    get(key: string): Value;
   }
 }
