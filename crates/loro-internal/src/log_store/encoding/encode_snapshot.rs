@@ -495,7 +495,15 @@ pub(super) fn decode_snapshot(
             &keys,
             &clients,
         );
-        Ok(store.get_events(hierarchy, &mut import_context))
+        let mut changes = FxHashMap::default();
+        for client_id in import_context.new_vv.keys() {
+            changes.insert(*client_id, Vec::new());
+        }
+        let pending_events = store.import(hierarchy, changes);
+        // TODO: events new vv need to be changed
+        let mut snapshot_events = store.get_events(hierarchy, &mut import_context);
+        snapshot_events.extend(pending_events);
+        Ok(snapshot_events)
     } else {
         let new_loro = LoroCore::default();
         let mut new_store = new_loro.log_store.try_write().unwrap();

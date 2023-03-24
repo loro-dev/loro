@@ -359,7 +359,8 @@ impl LogStore {
     }
 
     fn tailor_changes(&mut self, mut changes: RemoteClientChanges) -> RemoteClientChanges {
-        changes.retain(|_, v| !v.is_empty());
+        // cancel filter empty changes, snapshot can use empty changes to check pending changes
+        // changes.retain(|_, v| !v.is_empty());
         for (client_id, changes) in changes.iter_mut() {
             self.filter_changes(client_id, changes);
         }
@@ -369,26 +370,28 @@ impl LogStore {
 
     fn filter_changes(&mut self, client_id: &ClientID, changes: &mut Vec<Change<RemoteOp>>) {
         let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
-        let other_start_ctr = changes.first().unwrap().ctr_start();
-        match other_start_ctr.cmp(&self_end_ctr) {
-            std::cmp::Ordering::Less => {
-                *changes = slice_vec_by(
-                    changes,
-                    |x| x.id.counter as usize,
-                    self_end_ctr as usize,
-                    usize::MAX,
-                );
-            }
-            std::cmp::Ordering::Equal => {}
-            std::cmp::Ordering::Greater => {
-                let pending_changes = std::mem::take(changes);
-                self.pending_changes
-                    .entry(*client_id)
-                    .or_insert_with(BinaryHeap::new)
-                    .push(ChangesWithNegStartCounter {
-                        start_ctr: pending_changes.first().unwrap().ctr_start(),
-                        changes: pending_changes,
-                    })
+        if let Some(first_change) = changes.first() {
+            let other_start_ctr = first_change.ctr_start();
+            match other_start_ctr.cmp(&self_end_ctr) {
+                std::cmp::Ordering::Less => {
+                    *changes = slice_vec_by(
+                        changes,
+                        |x| x.id.counter as usize,
+                        self_end_ctr as usize,
+                        usize::MAX,
+                    );
+                }
+                std::cmp::Ordering::Equal => {}
+                std::cmp::Ordering::Greater => {
+                    let pending_changes = std::mem::take(changes);
+                    self.pending_changes
+                        .entry(*client_id)
+                        .or_insert_with(BinaryHeap::new)
+                        .push(ChangesWithNegStartCounter {
+                            start_ctr: pending_changes.first().unwrap().ctr_start(),
+                            changes: pending_changes,
+                        })
+                }
             }
         }
 
@@ -471,14 +474,14 @@ mod test {
         let update2 = a.encode_from(version1);
         let version2 = a.vv_cloned();
         text_a.insert(&a, 0, "c").unwrap();
-        let update3 = a.encode_from(version2);
+        let update3 = a.encode_from(version2.clone());
         let version3 = a.vv_cloned();
         text_a.insert(&a, 0, "d").unwrap();
         let update4 = a.encode_from(version3);
-        let version4 = a.vv_cloned();
+        // let version4 = a.vv_cloned();
         text_a.insert(&a, 0, "e").unwrap();
-        let update5 = a.encode_from(version4);
-        b.decode(&update5).unwrap();
+        let update3_5 = a.encode_from(version2);
+        b.decode(&update3_5).unwrap();
         b.decode(&update4).unwrap();
         b.decode(&update1).unwrap();
         b.decode(&update3).unwrap();
@@ -496,9 +499,8 @@ mod test {
         let update1 = a.encode_all();
         let version1 = a.vv_cloned();
         text_a.insert(&a, 1, "b").unwrap();
-        let update2 = a.encode_from(version1.clone());
+        let update2 = a.encode_from(version1);
         let _version2 = a.vv_cloned();
-        println!("{:?} {:?}", version1, _version2);
         b.decode(&update2).unwrap();
         b.decode(&update1).unwrap();
         assert_eq!(a.to_json(), b.to_json());
