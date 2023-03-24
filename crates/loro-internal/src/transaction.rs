@@ -78,6 +78,11 @@ impl TransactionWrap {
         let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
         instance.map(|i| Map::from_instance(i, txn.client_id))
     }
+
+    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        let mut txn = self.0.borrow_mut();
+        txn.decode(input)
+    }
 }
 
 // TODO: use String as Origin for now

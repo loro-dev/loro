@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct RawEvent {
+pub(crate) struct RawEvent {
     pub container_id: ContainerID,
     pub old_version: Frontiers,
     pub new_version: Frontiers,
@@ -79,7 +79,7 @@ impl ObserverOptions {
 
 pub type ObserverHandler = Box<dyn FnMut(&Event) + Send>;
 
-pub struct Observer {
+pub(crate) struct Observer {
     handler: ObserverHandler,
     options: ObserverOptions,
 }

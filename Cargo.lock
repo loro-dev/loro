@@ -747,6 +747,9 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.1.0"
+dependencies = [
+ "loro-internal",
+]
 
 [[package]]
 name = "loro-ffi"
