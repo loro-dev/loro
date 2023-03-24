@@ -220,7 +220,7 @@ Deno.test("transaction", async () => {
     count += 1;
     loro.unsubscribe(sub);
   });
-  loro.transaction((txn: Transaction) => {
+  loro.__raw__transactionWithOrigin(undefined, (txn: Transaction) => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
@@ -240,7 +240,7 @@ Deno.test("transaction origin", async () => {
     loro.unsubscribe(sub);
     assertEquals(event.origin, "origin");
   });
-  loro.transactionWithOrigin("origin", (txn: Transaction) => {
+  loro.__raw__transactionWithOrigin("origin", (txn: Transaction) => {
     assertEquals(count, 0);
     text.insert(txn, 0, "hello world");
     assertEquals(count, 0);
