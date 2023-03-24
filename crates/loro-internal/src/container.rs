@@ -156,9 +156,15 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
 /// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
 /// the same [ContainerID] with conflict [ContainerType].
 ///
-/// This structure is really cheap to clone
+/// This structure is really cheap to clone.
+///
+/// String representation:
+///
+/// - Root Container: `/<name>:<type>`
+/// - Normal Container: `<counter>@<client>:<type>`
+///
+/// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
-// Note: It will be encoded into binary format, so the order of its fields should not be changed.
 pub enum ContainerID {
     /// Root container does not need an op to create. It can be created implicitly.
     Root {
@@ -169,6 +175,49 @@ pub enum ContainerID {
         id: ID,
         container_type: ContainerType,
     },
+}
+
+impl Display for ContainerID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContainerID::Root {
+                name,
+                container_type,
+            } => f.write_fmt(format_args!("/{}:{}", name, container_type))?,
+            ContainerID::Normal { id, container_type } => {
+                f.write_fmt(format_args!("{}:{}", id, container_type))?
+            }
+        };
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for ContainerID {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let mut parts = value.split(':');
+        let id = parts.next().ok_or(())?;
+        let container_type = parts.next().ok_or(())?;
+        let container_type = ContainerType::try_from(container_type).map_err(|_| ())?;
+        if let Some(id) = id.strip_prefix('/') {
+            Ok(ContainerID::Root {
+                name: id.into(),
+                container_type,
+            })
+        } else {
+            let mut parts = id.split('@');
+            let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+            let client = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+            Ok(ContainerID::Normal {
+                id: ID {
+                    counter,
+                    client_id: client,
+                },
+                container_type,
+            })
+        }
+    }
 }
 
 pub enum ContainerIdRaw {
@@ -256,5 +305,31 @@ impl ContainerID {
             ContainerID::Root { container_type, .. } => *container_type,
             ContainerID::Normal { container_type, .. } => *container_type,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn container_id_convert() {
+        let container_id = ContainerID::new_normal(ID::new(12, 12), ContainerType::List);
+        let s = container_id.to_string();
+        assert_eq!(s, "12@12:List");
+        let actual = ContainerID::try_from(s.as_str()).unwrap();
+        assert_eq!(actual, container_id);
+
+        let container_id = ContainerID::new_root("123", ContainerType::Map);
+        let s = container_id.to_string();
+        assert_eq!(s, "/123:Map");
+        let actual = ContainerID::try_from(s.as_str()).unwrap();
+        assert_eq!(actual, container_id);
+
+        let container_id = ContainerID::new_root("kkk", ContainerType::Text);
+        let s = container_id.to_string();
+        assert_eq!(s, "/kkk:Text");
+        let actual = ContainerID::try_from(s.as_str()).unwrap();
+        assert_eq!(actual, container_id);
     }
 }
