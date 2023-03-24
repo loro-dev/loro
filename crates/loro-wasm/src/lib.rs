@@ -225,27 +225,7 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            let promise = Promise::resolve(&JsValue::NULL);
-            let ob = observer.clone();
-            type C = Closure<dyn FnMut(JsValue)>;
-            let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
-            let copy = drop_handler.clone();
-            let closure = Closure::once(move |_: JsValue| {
-                ob.call1(
-                    &Event {
-                        local: e.local,
-                        origin: e.origin.clone(),
-                        target: e.target.clone(),
-                        diff: Either::A(e.diff.to_vec()),
-                        path: Either::A(e.absolute_path.clone()),
-                    }
-                    .into(),
-                );
-
-                drop(copy);
-            });
-            let _ = promise.then(&closure);
-            drop_handler.borrow_mut().replace(closure);
+            call_after_micro_task(observer.clone(), e);
         }))
     }
 
@@ -262,6 +242,29 @@ impl Loro {
         f.call1(&JsValue::NULL, &js_txn)?;
         Ok(())
     }
+}
+
+fn call_after_micro_task(ob: observer::Observer, e: Arc<loro_internal::event::Event>) {
+    let promise = Promise::resolve(&JsValue::NULL);
+    type C = Closure<dyn FnMut(JsValue)>;
+    let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
+    let copy = drop_handler.clone();
+    let closure = Closure::once(move |_: JsValue| {
+        ob.call1(
+            &Event {
+                local: e.local,
+                origin: e.origin.clone(),
+                target: e.target.clone(),
+                diff: Either::A(e.diff.to_vec()),
+                path: Either::A(e.absolute_path.clone()),
+            }
+            .into(),
+        );
+
+        drop(copy);
+    });
+    let _ = promise.then(&closure);
+    drop_handler.borrow_mut().replace(closure);
 }
 
 impl Default for Loro {
@@ -399,6 +402,37 @@ impl LoroText {
     pub fn length(&self) -> usize {
         self.0.len()
     }
+
+    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    #[wasm_bindgen(js_name = "subscribeOnce")]
+    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe_once(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.unsubscribe(&txn, subscription)?;
+        Ok(())
+    }
 }
 
 #[wasm_bindgen]
@@ -477,6 +511,50 @@ impl LoroMap {
         };
         Ok(container)
     }
+
+    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    #[wasm_bindgen(js_name = "subscribeOnce")]
+    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe_once(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    #[wasm_bindgen(js_name = "subscribeDeep")]
+    pub fn subscribe_deep(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe_deep(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.unsubscribe(&txn, subscription)?;
+        Ok(())
+    }
 }
 
 #[wasm_bindgen]
@@ -553,6 +631,50 @@ impl LoroList {
             }
         };
         Ok(container)
+    }
+
+    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    #[wasm_bindgen(js_name = "subscribeOnce")]
+    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe_once(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    #[wasm_bindgen(js_name = "subscribeDeep")]
+    pub fn subscribe_deep(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let txn = get_transaction_mut(txn);
+        let ans = self.0.subscribe_deep(
+            &txn,
+            Box::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }),
+        )?;
+        Ok(ans)
+    }
+
+    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
+        let txn = get_transaction_mut(txn);
+        self.0.unsubscribe(&txn, subscription)?;
+        Ok(())
     }
 }
 

@@ -136,6 +136,9 @@ declare module "loro-wasm" {
     ): never;
 
     get(index: number): Value;
+    subscribe(txn: Transaction | Loro, listener: Listener): number;
+    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
+    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
   }
 
   interface LoroMap {
@@ -161,5 +164,14 @@ declare module "loro-wasm" {
     ): never;
 
     get(key: string): Value;
+    subscribe(txn: Transaction | Loro, listener: Listener): number;
+    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
+    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
+  }
+
+  interface LoroText {
+    subscribe(txn: Transaction | Loro, listener: Listener): number;
+    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
+    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
   }
 }

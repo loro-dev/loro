@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  Diff,
+  Delta,
   ListDiff,
   Loro,
   LoroEvent,
-  LoroMap,
   MapDIff as MapDiff,
   TextDiff,
 } from "../src";
@@ -130,6 +129,87 @@ describe("event", () => {
         },
       } as MapDiff],
     );
+  });
+
+  describe("subscribe container events", () => {
+    it("text", async () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let ran = 0;
+      let oneTimeRan = 0;
+      text.subscribeOnce(loro, (_) => {
+        oneTimeRan += 1;
+      });
+      const sub = text.subscribe(loro, (event) => {
+        if (!ran) {
+          expect(event.diff[0].diff).toStrictEqual(
+            [{ type: "insert", "value": "123" }] as Delta<string>[],
+          );
+        }
+        ran += 1;
+        expect(event.target).toBe(text.id);
+      });
+      text.insert(loro, 0, "123");
+      text.insert(loro, 1, "456");
+      await zeroMs();
+      expect(ran).toBeTruthy();
+      // subscribeOnce test
+      expect(oneTimeRan).toBe(1);
+      expect(text.toString()).toEqual("145623");
+
+      // unsubscribe
+      const oldRan = ran;
+      text.unsubscribe(loro, sub);
+      text.insert(loro, 0, "789");
+      expect(ran).toBe(oldRan);
+    });
+
+    it("map subscribe deep", async () => {
+      const loro = new Loro();
+      const map = loro.getMap("map");
+      let times = 0;
+      const sub = map.subscribeDeep(loro, (event) => {
+        times += 1;
+      });
+
+      const subMap = map.insertContainer(loro, "sub", "Map");
+      await zeroMs();
+      expect(times).toBe(1);
+      const text = subMap.insertContainer(loro, "k", "Text");
+      await zeroMs();
+      expect(times).toBe(2);
+      text.insert(loro, 0, "123");
+      await zeroMs();
+      expect(times).toBe(3);
+
+      // unsubscribe
+      map.unsubscribe(loro, sub);
+      text.insert(loro, 0, "123");
+      await zeroMs();
+      expect(times).toBe(3);
+    });
+
+    it("list subscribe deep", async () => {
+      const loro = new Loro();
+      const list = loro.getList("list");
+      let times = 0;
+      const sub = list.subscribeDeep(loro, (_) => {
+        times += 1;
+      });
+
+      const text = list.insertContainer(loro, 0, "Text");
+      await zeroMs();
+      expect(times).toBe(1);
+      text.insert(loro, 0, "123");
+      await zeroMs();
+      expect(times).toBe(2);
+
+      // unsubscribe
+      list.unsubscribe(loro, sub);
+      text.insert(loro, 0, "123");
+      await zeroMs();
+      expect(times).toBe(2);
+    });
   });
 });
 
