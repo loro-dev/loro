@@ -522,7 +522,7 @@ export type ContainerID = { id: string; type: ContainerType } | {
 };
 
 interface Loro {
-    exportUpdates(version?: Uint8Array): Uint8Array;
+    exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
     transaction(callback: (txn: Transaction)=>void): void;
     transactionWithOrigin(origin: string, callback: (txn: Transaction)=>void): void;

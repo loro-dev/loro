@@ -33,23 +33,12 @@ async function build() {
   }));
 
   if (profile !== "dev") {
-    let first = true;
-    let firstTarget = "";
-    for (const target of TARGETS) {
-      if (first) {
-        const cmd =
-          `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`;
-        console.log(">", cmd);
-        firstTarget = target;
-        await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
-        first = false;
-      } else {
-        const cmd =
-          `cp ${firstTarget}/loro_wasm_bg.wasm ${target}/loro_wasm_bg.wasm`;
-        console.log(">", cmd);
-        await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
-      }
-    }
+    await Promise.all(TARGETS.map(async (target) => {
+      const cmd =
+        `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`;
+      console.log(">", cmd);
+      await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
+    }));
   }
 
   console.log(
