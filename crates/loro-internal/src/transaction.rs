@@ -79,6 +79,10 @@ impl TransactionWrap {
         instance.map(|i| Map::from_instance(i, txn.client_id))
     }
 
+    pub fn commit(&self) -> Result<(), LoroError> {
+        self.0.borrow_mut().commit()
+    }
+
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
         let mut txn = self.0.borrow_mut();
         txn.decode(input)
@@ -279,18 +283,23 @@ impl Transaction {
         Ok(())
     }
 
-    pub fn commit(&mut self) {
+    pub fn commit(&mut self) -> Result<(), LoroError> {
         if self.committed {
-            return;
+            return Err(LoroError::TransactionError(
+                "Transaction already committed".into(),
+            ));
         }
         self.committed = true;
         self.emit_events();
+        Ok(())
     }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        self.commit()
+        if !self.committed {
+            self.commit();
+        }
     }
 }
 

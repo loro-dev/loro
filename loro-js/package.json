@@ -1,0 +1,26 @@
+{
+  "name": "loro-crdt",
+  "version": "1.0.4",
+  "description": "",
+  "main": "dist/loro.js",
+  "module": "dist/loro.mjs",
+  "typings": "dist/loro.d.ts",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "loro-wasm": "^0.2.1"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.0.1",
+    "esbuild": "^0.17.12",
+    "rollup": "^3.20.1",
+    "rollup-plugin-dts": "^5.3.0",
+    "rollup-plugin-esbuild": "^5.0.0",
+    "typescript": "^5.0.2"
+  }
+}

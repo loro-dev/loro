@@ -1,4 +1,4 @@
-use js_sys::{Array, Object, Reflect, Uint8Array};
+use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     configure::{Configure, SecureRandomGenerator},
     container::{registry::ContainerWrapper, ContainerID},
@@ -6,7 +6,7 @@ use loro_internal::{
     log_store::GcConfig,
     ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
-use std::{cell::RefCell, ops::Deref, sync::Arc};
+use std::{cell::RefCell, ops::Deref, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::RefMut, prelude::*};
 mod log;
 mod prelim;
@@ -46,7 +46,7 @@ extern "C" {
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "Transaction | Loro")]
     pub type JsTransaction;
-    #[wasm_bindgen(typescript_type = "String")]
+    #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
 
 }
@@ -76,6 +76,7 @@ mod observer {
 
     /// We need to wrap the observer function in a struct so that we can implement Send for it.
     /// But it's not Send essentially, so we need to check it manually in runtime.
+    #[derive(Clone)]
     pub(crate) struct Observer {
         f: js_sys::Function,
         thread: ThreadId,
@@ -173,14 +174,8 @@ impl Loro {
         Ok(self.0.borrow().encode_all())
     }
 
-    #[wasm_bindgen(js_name = "importSnapshot")]
-    pub fn import_snapshot(&self, input: Vec<u8>) -> JsResult<()> {
-        self.0.borrow_mut().decode(&input)?;
-        Ok(())
-    }
-
-    #[wasm_bindgen(skip_typescript, js_name = "exportUpdates")]
-    pub fn export_updates(&self, version: &JsValue) -> JsResult<Vec<u8>> {
+    #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
+    pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
             None
         } else {
@@ -196,9 +191,8 @@ impl Loro {
         Ok(self.0.borrow().encode_from(vv))
     }
 
-    #[wasm_bindgen(js_name = "importUpdates")]
-    pub fn import_updates(&self, data: Vec<u8>) -> JsResult<()> {
-        self.0.borrow_mut().decode(&data)?;
+    pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<()> {
+        self.0.borrow_mut().decode(&update_or_snapshot)?;
         Ok(())
     }
 
@@ -211,6 +205,9 @@ impl Loro {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
+        if data.is_empty() {
+            return Ok(());
+        }
         Ok(self.0.borrow_mut().decode_batch(&data)?)
     }
 
@@ -224,14 +221,24 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            observer.call1(
-                // &JsValue::from_bool(e.local)
-                &Event {
-                    local: e.local,
-                    origin: e.origin.clone(),
-                }
-                .into(),
-            );
+            let promise = Promise::resolve(&JsValue::NULL);
+            let ob = observer.clone();
+            type C = Closure<dyn FnMut(JsValue)>;
+            let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
+            let copy = drop_handler.clone();
+            let closure = Closure::once(move |_: JsValue| {
+                ob.call1(
+                    &Event {
+                        local: e.local,
+                        origin: e.origin.clone(),
+                    }
+                    .into(),
+                );
+
+                drop(copy);
+            });
+            let _ = promise.then(&closure);
+            drop_handler.borrow_mut().replace(closure);
         }))
     }
 
@@ -239,28 +246,14 @@ impl Loro {
         self.0.borrow_mut().unsubscribe_deep(subscription)
     }
 
-    fn transaction_impl(&self, txn: TransactionWrap, f: js_sys::Function) -> JsResult<()> {
-        let js_txn = JsValue::from(Transaction(txn));
-        f.call1(&JsValue::NULL, &js_txn)?;
-        // TODO: what is the best way to drop txn
-        // Or Reference Y-crdt: https://github.com/y-crdt/y-crdt/blob/3e7450114ab3d5d4cba93eeb0710f92371e57c74/tests-wasm/testHelper.js#L6
-        let ptr = Reflect::get(&js_txn, &JsValue::from_str("ptr"))?;
-        let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
-        use wasm_bindgen::convert::FromWasmAbi;
-        drop(unsafe { Transaction::from_abi(ptr) });
-        Ok(())
-    }
-
-    pub fn transaction(&self, f: js_sys::Function) -> JsResult<()> {
-        let txn = self.0.borrow().transact();
-        self.transaction_impl(txn, f)
-    }
-
-    #[wasm_bindgen(js_name = "transactionWithOrigin")]
+    /// It's the caller's responsibility to commit and free the transaction
+    #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
     pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
         let origin = origin.as_string().map(Origin::from);
         let txn = self.0.borrow().transact_with(origin);
-        self.transaction_impl(txn, f)
+        let js_txn = JsValue::from(Transaction(txn));
+        f.call1(&JsValue::NULL, &js_txn)?;
+        Ok(())
     }
 }
 
@@ -288,6 +281,14 @@ impl Event {
 
 #[wasm_bindgen]
 pub struct Transaction(TransactionWrap);
+
+#[wasm_bindgen]
+impl Transaction {
+    pub fn commit(&self) -> JsResult<()> {
+        self.0.commit()?;
+        Ok(())
+    }
+}
 
 fn get_transaction_mut(txn: &JsTransaction) -> TransactionWrap {
     use wasm_bindgen::convert::RefMutFromWasmAbi;
@@ -515,9 +516,7 @@ export type ContainerID = { id: string; type: ContainerType } | {
 };
 
 interface Loro {
-    exportUpdates(version?: Uint8Array): Uint8Array;
+    exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
-    transaction(callback: (txn: Transaction)=>void): void;
-    transactionWithOrigin(origin: string, callback: (txn: Transaction)=>void): void;
 }
 "#;

@@ -32,6 +32,15 @@ async function build() {
     return buildTarget(target);
   }));
 
+  if (profile !== "dev") {
+    await Promise.all(TARGETS.map(async (target) => {
+      const cmd =
+        `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`;
+      console.log(">", cmd);
+      await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
+    }));
+  }
+
   console.log(
     "✅",
     "Build complete in",
@@ -67,20 +76,11 @@ async function buildTarget(target: string) {
     console.log("Clear directory " + targetDirPath);
   } catch (e) {}
 
-  for (const cmd of genCommands(target)) {
-    console.log(">", cmd);
-    await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
-  }
+  const cmd =
+    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+  console.log(">", cmd);
+  await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
-}
-
-function genCommands(target: string): string[] {
-  return [
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`,
-    ...(profile == "dev" ? [] : [
-      `wasm-opt -O4 ${target}/loro_wasm_bg.wasm -o ${target}/loro_wasm_bg.wasm`,
-    ]),
-  ];
 }
 
 build();

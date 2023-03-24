@@ -1,6 +1,6 @@
 {
   "name": "loro-wasm",
-  "version": "0.1.2",
+  "version": "0.2.2",
   "description": "",
   "main": "nodejs/loro_wasm.js",
   "module": "bundler/loro_wasm.js",
