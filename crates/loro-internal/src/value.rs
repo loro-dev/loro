@@ -404,38 +404,7 @@ pub mod wasm {
 
     impl From<ContainerID> for JsValue {
         fn from(id: ContainerID) -> Self {
-            let map = Object::new();
-            match id {
-                ContainerID::Root {
-                    name,
-                    container_type,
-                } => {
-                    js_sys::Reflect::set(
-                        &map,
-                        &JsValue::from_str("root"),
-                        &name.to_string().into(),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &map,
-                        &JsValue::from_str("type"),
-                        &container_type.to_string().into(),
-                    )
-                    .unwrap();
-                }
-                ContainerID::Normal { id, container_type } => {
-                    js_sys::Reflect::set(&map, &JsValue::from_str("id"), &id.to_string().into())
-                        .unwrap();
-                    js_sys::Reflect::set(
-                        &map,
-                        &JsValue::from_str("type"),
-                        &container_type.to_string().into(),
-                    )
-                    .unwrap();
-                }
-            }
-
-            map.into_js_result().unwrap()
+            JsValue::from_str(id.to_string().as_str())
         }
     }
 
@@ -443,48 +412,18 @@ pub mod wasm {
         type Error = LoroError;
 
         fn try_from(value: JsValue) -> Result<Self, Self::Error> {
-            if !value.is_object() {
+            if !value.is_string() {
                 return Err(LoroError::DecodeError(
-                    "Given ContainerId is not an object".into(),
+                    "Given ContainerId is not string".into(),
                 ));
             }
 
-            let object = value.unchecked_into::<Object>();
-            if js_sys::Reflect::has(&object, &"id".into())? {
-                let Some(id) = js_sys::Reflect::get(&object, &"id".into())
-                        .unwrap()
-                        .as_string() else {
-                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
-                        };
-                let Ok(Some(Ok(container_type))) = js_sys::Reflect::get(&object, &"type".into())
-                        .map(|x| {
-                            x.as_string().map(|y| ContainerType::try_from(y.as_str()))
-                        }) else {
-                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
-                        };
-                Ok(ContainerID::Normal {
-                    id: ID::try_from(id.as_str())?,
-                    container_type,
-                })
-            } else if js_sys::Reflect::has(&object, &"root".into())? {
-                let Some(name) = js_sys::Reflect::get(&object, &"root".into())
-                        .unwrap()
-                        .as_string() else {
-                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
-                        };
-                let Ok(Some(Ok(container_type))) = js_sys::Reflect::get(&object, &"type".into())
-                        .map(|x| {
-                            x.as_string().map(|y| ContainerType::try_from(y.as_str()))
-                        }) else {
-                            return Err(LoroError::DecodeError("ContainerId is not valid".into()));
-                        };
-                Ok(ContainerID::Root {
-                    name: name.into(),
-                    container_type,
-                })
-            } else {
-                Err(LoroError::DecodeError("ContainerId is not valid".into()))
-            }
+            let s = value.as_string().unwrap();
+            ContainerID::try_from(s.as_str()).map_err(|_| {
+                LoroError::DecodeError(
+                    format!("Given ContainerId is not a valid ContainerID: {}", s).into(),
+                )
+            })
         }
     }
 }
