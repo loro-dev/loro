@@ -81,7 +81,7 @@ impl LogStore {
     /// - Update the rest of the log store state.
     ///
     #[instrument(skip_all)]
-    pub fn import(
+    pub(crate) fn import(
         &mut self,
         hierarchy: &mut Hierarchy,
         mut changes: RemoteClientChanges,

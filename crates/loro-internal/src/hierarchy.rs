@@ -147,12 +147,16 @@ impl Hierarchy {
     }
 
     #[inline(always)]
-    pub fn get_abs_path(&self, reg: &ContainerRegistry, descendant: &ContainerID) -> Option<Path> {
+    pub(crate) fn get_abs_path(
+        &self,
+        reg: &ContainerRegistry,
+        descendant: &ContainerID,
+    ) -> Option<Path> {
         let path = self.get_path(reg, descendant, None);
         path.and_then(|x| if x.is_empty() { None } else { Some(x) })
     }
 
-    pub fn get_path(
+    pub(crate) fn get_path(
         &self,
         reg: &ContainerRegistry,
         descendant: &ContainerID,
@@ -208,7 +212,7 @@ impl Hierarchy {
         Some(path)
     }
 
-    pub fn should_notify(&self, container_id: &ContainerID) -> bool {
+    pub(crate) fn should_notify(&self, container_id: &ContainerID) -> bool {
         if !self.root_observers.is_empty() {
             return true;
         }
@@ -377,7 +381,7 @@ impl Hierarchy {
         }
     }
 
-    pub fn subscribe(&mut self, observer: Observer) -> SubscriptionID {
+    pub(crate) fn subscribe(&mut self, observer: Observer) -> SubscriptionID {
         let id = self.next_id();
         if observer.root() {
             self.root_observers.insert(id);
@@ -434,7 +438,7 @@ impl Hierarchy {
 
     // Do we need return the information that the id does not exist ?
     // Considering if in calling, the delete operation is delayed.
-    pub fn unsubscribe(&mut self, id: SubscriptionID) {
+    pub(crate) fn unsubscribe(&mut self, id: SubscriptionID) {
         if self.calling {
             self.deleted_observers.insert(id);
         } else {
@@ -448,7 +452,7 @@ impl Hierarchy {
         }
     }
 
-    pub fn send_notifications_without_lock(
+    pub(crate) fn send_notifications_without_lock(
         hierarchy: Arc<Mutex<Hierarchy>>,
         events: Vec<RawEvent>,
     ) {

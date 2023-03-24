@@ -82,6 +82,11 @@ impl TransactionWrap {
     pub fn commit(&self) -> Result<(), LoroError> {
         self.0.borrow_mut().commit()
     }
+
+    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
+        let mut txn = self.0.borrow_mut();
+        txn.decode(input)
+    }
 }
 
 // TODO: use String as Origin for now

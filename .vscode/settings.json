@@ -21,7 +21,10 @@
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full"
   },
-  "rust-analyzer.cargo.features": ["test_utils", "wasm"],
+  "rust-analyzer.cargo.features": [
+    "loro-internal/test_utils",
+    "loro-internal/wasm"
+  ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "editor.formatOnSave": true,
   "todo-tree.general.tags": [
