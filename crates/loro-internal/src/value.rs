@@ -326,7 +326,12 @@ pub mod wasm {
     use js_sys::{Array, Object};
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
-    use crate::{container::ContainerID, id::ID, ContainerType, LoroError, LoroValue};
+    use crate::{
+        container::ContainerID,
+        delta::{Delta, DeltaItem, MapDiff},
+        event::{Diff, Index},
+        LoroError, LoroValue,
+    };
 
     pub fn convert(value: LoroValue) -> JsValue {
         match value {
@@ -424,6 +429,243 @@ pub mod wasm {
                     format!("Given ContainerId is not a valid ContainerID: {}", s).into(),
                 )
             })
+        }
+    }
+
+    impl From<Index> for JsValue {
+        fn from(value: Index) -> Self {
+            match value {
+                Index::Key(key) => JsValue::from_str(&key),
+                Index::Seq(num) => JsValue::from_f64(num as f64),
+            }
+        }
+    }
+
+    impl From<Diff> for JsValue {
+        fn from(value: Diff) -> Self {
+            // create a obj
+            let obj = Object::new();
+            match value {
+                Diff::List(list) => {
+                    // set type as "list"
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("list"),
+                    )
+                    .unwrap();
+                    // set diff as array
+                    let arr = Array::new_with_length(list.len() as u32);
+                    for (i, v) in list.iter().enumerate() {
+                        arr.set(i as u32, JsValue::from(v.clone()));
+                    }
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("diff"),
+                        &arr.into_js_result().unwrap(),
+                    )
+                    .unwrap();
+                }
+                Diff::Text(text) => {
+                    // set type as "text"
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("text"),
+                    )
+                    .unwrap();
+                    // set diff as array
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &text.into()).unwrap();
+                }
+                Diff::Map(map) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("map"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &map.into()).unwrap();
+                }
+            };
+
+            // convert object to js value
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<MapDiff<LoroValue>> for JsValue {
+        fn from(value: MapDiff<LoroValue>) -> Self {
+            let obj = Object::new();
+            {
+                let added = Object::new();
+                for (key, value) in value.added.iter() {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str(key),
+                        &JsValue::from(value.clone()),
+                    )
+                    .unwrap();
+                }
+
+                js_sys::Reflect::set(&obj, &JsValue::from_str("added"), &added).unwrap();
+            }
+
+            {
+                let deleted = Object::new();
+                for (key, value) in value.deleted.iter() {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str(key),
+                        &JsValue::from(value.clone()),
+                    )
+                    .unwrap();
+                }
+
+                js_sys::Reflect::set(&obj, &JsValue::from_str("deleted"), &deleted).unwrap();
+            }
+
+            {
+                let updated = Object::new();
+                for (key, pair) in value.updated.iter() {
+                    let pair_obj = Object::new();
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("old"), &pair.old.clone().into())
+                        .unwrap();
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("new"), &pair.new.clone().into())
+                        .unwrap();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str(key),
+                        &pair_obj.into_js_result().unwrap(),
+                    )
+                    .unwrap();
+                }
+
+                js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &updated).unwrap();
+            }
+
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<Delta<String>> for JsValue {
+        fn from(value: Delta<String>) -> Self {
+            let arr = Array::new_with_length(value.len() as u32);
+            for (i, v) in value.iter().enumerate() {
+                arr.set(i as u32, JsValue::from(v.clone()));
+            }
+            arr.into_js_result().unwrap()
+        }
+    }
+
+    impl From<DeltaItem<String, ()>> for JsValue {
+        fn from(value: DeltaItem<String, ()>) -> Self {
+            let obj = Object::new();
+            match value {
+                DeltaItem::Retain { len, .. } => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("retain"),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("len"),
+                        &JsValue::from_f64(len as f64),
+                    )
+                    .unwrap();
+                }
+                DeltaItem::Insert { value, .. } => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("insert"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("value"),
+                        &JsValue::from_str(value.as_str()),
+                    )
+                    .unwrap();
+                }
+                DeltaItem::Delete(len) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("delete"),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("len"),
+                        &JsValue::from_f64(len as f64),
+                    )
+                    .unwrap();
+                }
+            }
+
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<DeltaItem<Vec<LoroValue>, ()>> for JsValue {
+        fn from(value: DeltaItem<Vec<LoroValue>, ()>) -> Self {
+            let obj = Object::new();
+            match value {
+                DeltaItem::Retain { len, .. } => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("retain"),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("len"),
+                        &JsValue::from_f64(len as f64),
+                    )
+                    .unwrap();
+                }
+                DeltaItem::Insert { value, .. } => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("insert"),
+                    )
+                    .unwrap();
+
+                    let arr = Array::new_with_length(value.len() as u32);
+                    for (i, v) in value.into_iter().enumerate() {
+                        arr.set(i as u32, convert(v));
+                    }
+
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("value"),
+                        &arr.into_js_result().unwrap(),
+                    )
+                    .unwrap();
+                }
+                DeltaItem::Delete(len) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("delete"),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("len"),
+                        &JsValue::from_f64(len as f64),
+                    )
+                    .unwrap();
+                }
+            }
+
+            obj.into_js_result().unwrap()
         }
     }
 }
