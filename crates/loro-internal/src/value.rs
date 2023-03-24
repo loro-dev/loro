@@ -501,7 +501,7 @@ pub mod wasm {
                 let added = Object::new();
                 for (key, value) in value.added.iter() {
                     js_sys::Reflect::set(
-                        &obj,
+                        &added,
                         &JsValue::from_str(key),
                         &JsValue::from(value.clone()),
                     )
@@ -515,7 +515,7 @@ pub mod wasm {
                 let deleted = Object::new();
                 for (key, value) in value.deleted.iter() {
                     js_sys::Reflect::set(
-                        &obj,
+                        &deleted,
                         &JsValue::from_str(key),
                         &JsValue::from(value.clone()),
                     )
@@ -529,12 +529,20 @@ pub mod wasm {
                 let updated = Object::new();
                 for (key, pair) in value.updated.iter() {
                     let pair_obj = Object::new();
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("old"), &pair.old.clone().into())
-                        .unwrap();
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("new"), &pair.new.clone().into())
-                        .unwrap();
                     js_sys::Reflect::set(
-                        &obj,
+                        &pair_obj,
+                        &JsValue::from_str("old"),
+                        &pair.old.clone().into(),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &pair_obj,
+                        &JsValue::from_str("new"),
+                        &pair.new.clone().into(),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &updated,
                         &JsValue::from_str(key),
                         &pair_obj.into_js_result().unwrap(),
                     )
