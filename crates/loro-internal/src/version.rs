@@ -327,7 +327,7 @@ impl VersionVector {
     }
 
     #[inline]
-    pub fn get_last(&mut self, client_id: ClientID) -> Option<Counter> {
+    pub fn get_last(&self, client_id: ClientID) -> Option<Counter> {
         self.0
             .get(&client_id)
             .and_then(|&x| if x == 0 { None } else { Some(x - 1) })
