@@ -1,7 +1,8 @@
-use crate::change::Change;
+use crate::change::{Change, Lamport};
 use crate::hierarchy::Hierarchy;
 use crate::id::{ClientID, Counter, ID};
 use crate::op::RemoteOp;
+use crate::span::{CounterSpan, HasCounterSpan};
 use crate::version::PatchedVersionVector;
 use crate::LogStore;
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     event::{Diff, RawEvent},
     version::{Frontiers, IdSpanVector},
 };
+use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -358,71 +360,112 @@ impl LogStore {
         }
     }
 
-    fn tailor_changes(&mut self, mut changes: RemoteClientChanges) -> RemoteClientChanges {
+    fn tailor_changes(&mut self, changes: RemoteClientChanges) -> RemoteClientChanges {
+        let mut latest_vv = self.get_vv().clone();
+        println!("#####Decode 开始 changes: {:?}", changes);
+        println!("latest vv {:?}", latest_vv);
+        self.debug_pending();
+
+        let mut retain_changes = FxHashMap::default();
+        let mut client_to_pending_dep = FxHashMap::default();
+        changes
+            .into_values()
+            .flat_map(|c| c.into_iter())
+            .sorted_by(|a, b| Ord::cmp(&b.lamport, &a.lamport))
+            .for_each(|c| {
+                print!("当前 ");
+                debug_remote_change(&c);
+                println!("");
+                if let Some(pre_dep) = client_to_pending_dep.get(&c.id.client_id) {
+                    self.pending_changes.get_mut(pre_dep).unwrap().push(c);
+                    return;
+                }
+                match can_remote_change_be_applied(&latest_vv, &c) {
+                    ChangeApplyState::Directly => {
+                        println!("apply");
+                        latest_vv.set_end(c.id_end());
+                        let last_id = c.id_last();
+                        retain_changes
+                            .entry(c.id.client_id)
+                            .or_insert_with(Vec::new)
+                            .push(c);
+                        self.try_apply_pending(&last_id, &mut latest_vv, &mut retain_changes);
+                    }
+                    ChangeApplyState::Existing => {
+                        println!("exist")
+                    }
+                    ChangeApplyState::Future(dep) => {
+                        println!("future dep {:?}", dep);
+                        client_to_pending_dep.insert(c.id.client_id, dep);
+                        self.pending_changes
+                            .entry(dep)
+                            .or_insert_with(Vec::new)
+                            .push(c);
+                    }
+                }
+            });
+        self.debug_pending();
+        // retain_changes
+        //     .values_mut()
+        //     .for_each(|v| v.sort_by(|a, b| Ord::cmp(&a.lamport, &b.lamport)));
+        println!("!!!!!Decode 结束 \n{:?}", retain_changes);
+
+        retain_changes
         // cancel filter empty changes, snapshot can use empty changes to check pending changes
         // changes.retain(|_, v| !v.is_empty());
-        for (client_id, changes) in changes.iter_mut() {
-            self.filter_changes(client_id, changes);
-        }
-        changes.retain(|_, v| !v.is_empty());
-        changes
+        // for (client_id, changes) in changes.iter_mut() {
+        //     self.filter_changes(client_id, changes);
+        // }
+        // changes.retain(|_, v| !v.is_empty());
+        // changes
     }
 
-    fn filter_changes(&mut self, client_id: &ClientID, changes: &mut Vec<Change<RemoteOp>>) {
-        let self_end_ctr = self.vv.get(client_id).copied().unwrap_or(0);
-        if let Some(first_change) = changes.first() {
-            let other_start_ctr = first_change.ctr_start();
-            match other_start_ctr.cmp(&self_end_ctr) {
-                std::cmp::Ordering::Less => {
-                    *changes = slice_vec_by(
-                        changes,
-                        |x| x.id.counter as usize,
-                        self_end_ctr as usize,
-                        usize::MAX,
-                    );
-                }
-                std::cmp::Ordering::Equal => {}
-                std::cmp::Ordering::Greater => {
-                    let pending_changes = std::mem::take(changes);
-                    self.pending_changes
-                        .entry(*client_id)
-                        .or_insert_with(BinaryHeap::new)
-                        .push(ChangesWithNegStartCounter {
-                            start_ctr: pending_changes.first().unwrap().ctr_start(),
-                            changes: pending_changes,
-                        })
-                }
-            }
+    fn debug_pending(&self) {
+        println!("pending:");
+        for (k, v) in self.pending_changes.iter() {
+            print!("  {:?}: ", k);
+            v.iter().for_each(debug_remote_change);
+            println!("");
         }
+        println!("")
+    }
 
-        // check whether the pending changes can be imported
-        let mut latest_end_ctr = self_end_ctr + changes.content_len() as i32;
-        if let Some(pending_heap) = self.pending_changes.get_mut(client_id) {
-            while let Some(ChangesWithNegStartCounter {
-                start_ctr,
-                changes: pending_changes,
-            }) = pending_heap.pop()
-            {
-                match start_ctr.cmp(&latest_end_ctr) {
-                    std::cmp::Ordering::Less => {
-                        let rest_changes = slice_vec_by(
-                            &pending_changes,
-                            |x| x.id.counter as usize,
-                            latest_end_ctr as usize,
-                            usize::MAX,
-                        );
-                        latest_end_ctr += rest_changes.content_len() as i32;
-                        changes.extend(rest_changes);
+    fn try_apply_pending(
+        &mut self,
+        dep: &ID,
+        latest_vv: &mut VersionVector,
+        retain_changes: &mut RemoteClientChanges,
+    ) {
+        if let Some(may_apply_changes) = self.pending_changes.remove(dep) {
+            println!("    有此依赖 {:?} ", dep);
+            let mut may_apply_iter = may_apply_changes
+                .into_iter()
+                .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
+                .peekable();
+            while let Some(peek_c) = may_apply_iter.peek() {
+                match can_remote_change_be_applied(latest_vv, peek_c) {
+                    ChangeApplyState::Directly => {
+                        let c = may_apply_iter.next().unwrap();
+                        print!("apply ");
+                        debug_remote_change(&c);
+                        println!("");
+                        latest_vv.set_end(c.id_end());
+                        let last_id = c.id_last();
+                        // other pending
+                        retain_changes
+                            .entry(c.id.client_id)
+                            .or_insert_with(Vec::new)
+                            .push(c);
+                        self.try_apply_pending(&last_id, latest_vv, retain_changes);
                     }
-                    std::cmp::Ordering::Equal => {
-                        latest_end_ctr += pending_changes.content_len() as i32;
-                        changes.extend(pending_changes);
+                    ChangeApplyState::Existing => {
+                        may_apply_iter.next();
                     }
-                    std::cmp::Ordering::Greater => {
-                        pending_heap.push(ChangesWithNegStartCounter {
-                            start_ctr,
-                            changes: pending_changes,
-                        });
+                    ChangeApplyState::Future(this_dep) => {
+                        self.pending_changes
+                            .entry(this_dep)
+                            .or_insert_with(Vec::new)
+                            .extend(may_apply_iter);
                         break;
                     }
                 }
@@ -431,31 +474,46 @@ impl LogStore {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ChangesWithNegStartCounter {
-    start_ctr: i32,
-    changes: Vec<Change<RemoteOp>>,
+enum ChangeApplyState {
+    Existing,
+    Directly,
+    // The first dissatisfied deps: the previous change or it's deps
+    Future(ID),
 }
 
-impl PartialEq for ChangesWithNegStartCounter {
-    fn eq(&self, other: &Self) -> bool {
-        self.start_ctr.eq(&other.start_ctr)
+fn can_remote_change_be_applied(vv: &VersionVector, change: &Change<RemoteOp>) -> ChangeApplyState {
+    let change_client_id = change.id.client_id;
+    let CounterSpan { start, end } = change.ctr_span();
+    let vv_latest_ctr = vv.get(&change_client_id).copied().unwrap_or(0);
+    if vv_latest_ctr < start {
+        return ChangeApplyState::Future(change.id.inc(-1));
     }
-}
-
-impl Eq for ChangesWithNegStartCounter {}
-
-impl PartialOrd for ChangesWithNegStartCounter {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        (-self.start_ctr).partial_cmp(&-other.start_ctr)
+    if vv_latest_ctr >= end {
+        return ChangeApplyState::Existing;
     }
+    for dep in &change.deps {
+        let dep_vv_latest_ctr = vv.get(&dep.client_id).copied().unwrap_or(0);
+        if dep_vv_latest_ctr - 1 < dep.counter {
+            return ChangeApplyState::Future(*dep);
+        }
+    }
+    ChangeApplyState::Directly
 }
 
-impl Ord for ChangesWithNegStartCounter {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (-self.start_ctr).cmp(&-other.start_ctr)
-    }
+fn debug_remote_change(change: &Change<RemoteOp>) {
+    print!(
+        "Change: id_span: {:?} deps: {:?} lamport {}, ",
+        change.id_span(),
+        change.deps,
+        change.lamport
+    );
 }
+
+// #[derive(Debug)]
+// pub(crate) struct ChangeWithLamport {
+//     change: Change<RemoteOp>,
+//     lamport: Lamport,
+// }
 
 #[cfg(test)]
 mod test {
@@ -466,7 +524,6 @@ mod test {
         let mut a = LoroCore::new(Default::default(), Some(1));
         let mut b = LoroCore::new(Default::default(), Some(2));
         let mut text_a = a.get_text("text");
-
         text_a.insert(&a, 0, "a").unwrap();
         let update1 = a.encode_from(VersionVector::new());
         let version1 = a.vv_cloned();
@@ -483,9 +540,9 @@ mod test {
         let update3_5 = a.encode_from(version2);
         b.decode(&update3_5).unwrap();
         b.decode(&update4).unwrap();
-        b.decode(&update1).unwrap();
-        b.decode(&update3).unwrap();
         b.decode(&update2).unwrap();
+        b.decode(&update3).unwrap();
+        b.decode(&update1).unwrap();
         assert_eq!(a.to_json(), b.to_json());
     }
 
@@ -504,5 +561,41 @@ mod test {
         b.decode(&update2).unwrap();
         b.decode(&update1).unwrap();
         assert_eq!(a.to_json(), b.to_json());
+    }
+
+    #[test]
+    fn need_deps_pending_import() {
+        // a:   a1 <--- a2
+        //        \    /
+        // b:       b1
+        let mut a = LoroCore::new(Default::default(), Some(1));
+        let mut b = LoroCore::new(Default::default(), Some(2));
+        let mut c = LoroCore::new(Default::default(), Some(3));
+        let mut d = LoroCore::new(Default::default(), Some(4));
+        let mut text_a = a.get_text("text");
+        let mut text_b = b.get_text("text");
+        text_a.insert(&a, 0, "a").unwrap();
+        let version_a1 = a.vv_cloned();
+        let update_a1 = a.encode_from(VersionVector::new());
+        b.decode(&update_a1).unwrap();
+        text_b.insert(&b, 1, "b").unwrap();
+        let update_b1 = b.encode_from(version_a1);
+        a.decode(&update_b1).unwrap();
+        let version_a1b1 = a.vv_cloned();
+        text_a.insert(&a, 2, "c").unwrap();
+        let update_a2 = a.encode_from(version_a1b1);
+        // c.decode(&update_a2).unwrap();
+        // assert_eq!(c.to_json().to_json(), "{}");
+        // c.decode(&update_a1).unwrap();
+        // assert_eq!(c.to_json().to_json(), "{\"text\":\"a\"}");
+        // c.decode(&update_b1).unwrap();
+        // assert_eq!(a.to_json(), c.to_json());
+
+        d.decode(&update_a2).unwrap();
+        assert_eq!(d.to_json().to_json(), "{}");
+        d.decode(&update_b1).unwrap();
+        assert_eq!(d.to_json().to_json(), "{}");
+        d.decode(&update_a1).unwrap();
+        assert_eq!(a.to_json(), d.to_json());
     }
 }

@@ -158,7 +158,6 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
             });
             counter += len as Counter;
         }
-
         let change = Change {
             id: ID {
                 client_id: changes.meta.client,
