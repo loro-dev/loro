@@ -560,4 +560,26 @@ mod test {
         d.decode(&update_a1).unwrap();
         assert_eq!(a.to_json(), d.to_json());
     }
+
+    #[test]
+    fn should_activate_pending_change_when() {
+        // 0@a <- 0@b
+        // 0@a <- 1@a, where 0@a and 1@a will be merged
+        // In this case, c apply b's change first, then apply all the changes from a.
+        // C is expected to have the same content as a, after a imported b's change
+        let mut a = LoroCore::new(Default::default(), Some(1));
+        let mut b = LoroCore::new(Default::default(), Some(2));
+        let mut c = LoroCore::new(Default::default(), Some(3));
+        let mut text_a = a.get_text("text");
+        let mut text_b = b.get_text("text");
+        text_a.insert(&a, 0, "1").unwrap();
+        b.decode(&a.encode_all()).unwrap();
+        text_b.insert(&b, 0, "1").unwrap();
+        let b_change = b.encode_from(a.vv_cloned());
+        text_a.insert(&a, 0, "1").unwrap();
+        c.decode(&b_change).unwrap();
+        c.decode(&a.encode_all()).unwrap();
+        a.decode(&b_change).unwrap();
+        assert_eq!(c.to_json(), a.to_json());
+    }
 }
