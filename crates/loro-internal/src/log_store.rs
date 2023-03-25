@@ -32,7 +32,7 @@ use crate::{
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
 };
 
-use self::import::ChangesWithNegStartCounter;
+// use self::import::ChangeWithNegStartCounter;
 
 const _YEAR: u64 = 365 * 24 * 60 * 60;
 const MONTH: u64 = 30 * 24 * 60 * 60;
@@ -80,7 +80,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pending_changes: FxHashMap<ClientID, BinaryHeap<ChangesWithNegStartCounter>>,
+    pending_changes: FxHashMap<ID, Vec<Change<RemoteOp>>>,
     _pin: PhantomPinned,
 }
 
