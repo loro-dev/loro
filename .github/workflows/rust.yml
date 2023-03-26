@@ -36,5 +36,7 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose
-    - name: Run tests
-      run: deno task test & deno task test-wasm
+    - name: Run rust tests
+      run: deno task test 
+    - name: Run wasm tests
+      run: deno task test-wasm
