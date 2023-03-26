@@ -9,7 +9,6 @@ use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
-    collections::BinaryHeap,
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
@@ -80,7 +79,7 @@ pub struct LogStore {
     pub(crate) this_client_id: ClientID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pending_changes: FxHashMap<ID, Vec<Change<RemoteOp>>>,
+    pending_changes: RemoteClientChanges,
     _pin: PhantomPinned,
 }
 
