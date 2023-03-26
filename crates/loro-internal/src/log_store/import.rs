@@ -378,7 +378,7 @@ impl LogStore {
                 .into_values()
                 .flat_map(|c| c.into_iter())
                 // sort changes by lamport from small to large
-                .sorted_by(|a, b| Ord::cmp(&b.lamport, &a.lamport))
+                .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
                 .for_each(|c| {
                     let c_client_id = c.id.client_id;
                     if pending_clients.contains(&c_client_id) {
