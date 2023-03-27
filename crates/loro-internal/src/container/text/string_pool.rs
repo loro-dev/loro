@@ -297,9 +297,10 @@ impl PoolString {
         utf16_index_to_utf8(str, end)
     }
 
-    pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
-        let str = bytes_to_str(self.slice.as_ref().unwrap());
-        encode_utf16(&str[..end]).count()
+    pub fn utf8_index_to_utf16(&self, end: usize) -> Option<usize> {
+        let Some(slice) = &self.slice else { return None };
+        let str = bytes_to_str(slice);
+        Some(encode_utf16(&str[..end]).count())
     }
 }
 

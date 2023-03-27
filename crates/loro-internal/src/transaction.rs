@@ -298,7 +298,7 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         if !self.committed {
-            self.commit();
+            self.commit().unwrap_or(());
         }
     }
 }

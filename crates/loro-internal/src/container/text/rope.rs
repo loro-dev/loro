@@ -47,7 +47,19 @@ impl Rope {
             |x| x.atom_len(),
             |x| x.utf16 as usize,
             |x| x.utf16_length as usize,
-            |s, src_offset| s.utf8_index_to_utf16(src_offset),
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap(),
+        )
+    }
+
+    /// this method will downgrade to use utf8 length directly when the content is unknown
+    pub fn utf8_to_utf16_with_unknown(&self, index: usize) -> usize {
+        self.process_cursor_at(
+            index,
+            |x| x.utf8 as usize,
+            |x| x.atom_len(),
+            |x| x.utf16 as usize,
+            |x| x.utf16_length as usize,
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(src_offset),
         )
     }
 

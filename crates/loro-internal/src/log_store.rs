@@ -172,7 +172,6 @@ impl LogStore {
         for op in change.ops.iter() {
             ops.push(self.to_remote_op(op));
         }
-
         Change {
             ops,
             deps: change.deps.clone(),

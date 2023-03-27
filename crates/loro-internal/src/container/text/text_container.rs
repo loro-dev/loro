@@ -267,7 +267,10 @@ impl ContainerTrait for TextContainer {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
                         let delta = Delta::new()
-                            .retain_with_meta(*pos, Utf16Meta::new(self.state.utf8_to_utf16(*pos)))
+                            .retain_with_meta(
+                                *pos,
+                                Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(*pos)),
+                            )
                             .insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
@@ -278,8 +281,9 @@ impl ContainerTrait for TextContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
-                        let utf16_pos = self.state.utf8_to_utf16(span.start() as usize);
-                        let utf16_end = self.state.utf8_to_utf16(span.end() as usize);
+                        let utf16_pos =
+                            self.state.utf8_to_utf16_with_unknown(span.start() as usize);
+                        let utf16_end = self.state.utf8_to_utf16_with_unknown(span.end() as usize);
                         let delta = Delta::new()
                             .retain_with_meta(span.start() as usize, Utf16Meta::new(utf16_pos))
                             .delete_with_meta(
@@ -337,8 +341,8 @@ impl ContainerTrait for TextContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let utf16_pos = self.state.utf8_to_utf16(pos);
-                        let utf16_end = self.state.utf8_to_utf16(pos + len);
+                        let utf16_pos = self.state.utf8_to_utf16_with_unknown(pos);
+                        let utf16_end = self.state.utf8_to_utf16_with_unknown(pos + len);
                         let delta = Delta::new()
                             .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
                             .delete_with_meta(len, Utf16Meta::new(utf16_end - utf16_pos));
@@ -356,7 +360,10 @@ impl ContainerTrait for TextContainer {
                             self.raw_str.slice(&content.0).to_owned()
                         };
                         let delta = Delta::new()
-                            .retain_with_meta(pos, Utf16Meta::new(self.state.utf8_to_utf16(pos)))
+                            .retain_with_meta(
+                                pos,
+                                Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(pos)),
+                            )
                             .insert(s);
                         diff.push(Diff::Text(delta));
                     }
