@@ -59,7 +59,7 @@ impl Rope {
             |x| x.atom_len(),
             |x| x.utf16 as usize,
             |x| x.utf16_length as usize,
-            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(src_offset),
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(0),
         )
     }
 
