@@ -11,3 +11,4 @@ src/
 wasm-size/
 web-test/
 pkg/
+web/

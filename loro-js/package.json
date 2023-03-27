@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "",
   "main": "dist/loro.js",
   "module": "dist/loro.mjs",
@@ -13,7 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "loro-wasm": "^0.2.1"
+    "loro-wasm": "^0.2.3"
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.0.1",
