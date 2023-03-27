@@ -20,7 +20,7 @@ impl<V: Serialize, M: Serialize> Serialize for Delta<V, M> {
 pub enum DeltaItem<Value, Meta> {
     Retain { len: usize, meta: Option<Meta> },
     Insert { value: Value, meta: Option<Meta> },
-    Delete(usize),
+    Delete { len: usize, meta: Option<Meta> },
 }
 
 /// The metadata of a DeltaItem
@@ -60,7 +60,7 @@ impl<V: DeltaValue, M> DeltaValue for DeltaItem<V, M> {
         match self {
             DeltaItem::Retain { len, meta: _ } => *len,
             DeltaItem::Insert { value, meta: _ } => value.length(),
-            DeltaItem::Delete(len) => *len,
+            DeltaItem::Delete { len, meta: _ } => *len,
         }
     }
 }
@@ -108,9 +108,13 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
                     meta: meta.clone(),
                 }
             }
-            DeltaItem::Delete(len) => {
+            DeltaItem::Delete { len, meta: _ } => {
                 *len -= length;
-                Self::Delete(length)
+                Self::Delete {
+                    len: length,
+                    // meta may store utf16 length, this take will invalidate it
+                    meta: None,
+                }
             }
         }
     }
@@ -131,7 +135,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     }
 
     pub fn is_delete(&self) -> bool {
-        matches!(self, Self::Delete(_))
+        matches!(self, Self::Delete { .. })
     }
 }
 
@@ -232,6 +236,11 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     }
 
     pub fn retain_with_meta(mut self, len: usize, meta: M) -> Self {
+        if len == 0 {
+            // currently no meta for retain if len == 0
+            return self;
+        }
+
         self.push(DeltaItem::Retain {
             len,
             meta: Some(meta),
@@ -247,13 +256,22 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         self
     }
 
+    pub fn delete_with_meta(mut self, len: usize, meta: M) -> Self {
+        self.push(DeltaItem::Delete {
+            len,
+            meta: Some(meta),
+        });
+        self
+    }
+
     pub fn delete(mut self, len: usize) -> Self {
         if len == 0 {
             return self;
         }
-        self.push(DeltaItem::Delete(len));
+        self.push(DeltaItem::Delete { len, meta: None });
         self
     }
+
     pub fn retain(mut self, len: usize) -> Self {
         if len == 0 {
             return self;
@@ -277,7 +295,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         let last_op = self.vec.pop();
         if let Some(mut last_op) = last_op {
             if new_op.is_delete() && last_op.is_delete() {
-                *last_op.as_delete_mut().unwrap() += new_op.length();
+                *last_op.as_delete_mut().unwrap().0 += new_op.length();
                 self.vec.push(last_op);
                 return true;
             }

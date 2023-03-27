@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::ContainerID,
-    delta::{Delta, MapDiff},
+    delta::{Delta, MapDiff, Meta},
     transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,
@@ -57,10 +57,32 @@ pub enum Index {
     Seq(usize),
 }
 
+#[repr(transparent)]
+#[derive(Default, Clone, Copy, Debug, Serialize, PartialEq)]
+pub struct Utf16Meta {
+    pub utf16_len: usize,
+}
+
+impl Meta for Utf16Meta {
+    fn empty() -> Self {
+        Utf16Meta { utf16_len: 0 }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.utf16_len == 0
+    }
+}
+
+impl Utf16Meta {
+    pub(crate) fn new(utf16_len: usize) -> Self {
+        Utf16Meta { utf16_len }
+    }
+}
+
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
-    Text(Delta<String>),
+    Text(Delta<String, Utf16Meta>),
     Map(MapDiff<LoroValue>),
 }
 

@@ -545,7 +545,7 @@ impl ContainerTrait for ListContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let delta_vec = self.raw_data.slice(&(0..state_len)).to_vec();
-                let delta = Delta::new().retain(0).insert(delta_vec);
+                let delta = Delta::new().insert(delta_vec);
 
                 ctx.push_diff(&self.id, Diff::List(delta));
             }

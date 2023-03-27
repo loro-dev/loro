@@ -100,7 +100,7 @@ impl Actor {
                                         text.insert_str(index, value);
                                         index += value.len();
                                     }
-                                    DeltaItem::Delete(len) => {
+                                    DeltaItem::Delete { len, .. } => {
                                         text.drain(index..index + *len);
                                     }
                                 }
@@ -160,7 +160,7 @@ impl Actor {
                                             index += 1;
                                         }
                                     }
-                                    DeltaItem::Delete(len) => {
+                                    DeltaItem::Delete { len, .. } => {
                                         list.drain(index..index + *len);
                                     }
                                 }

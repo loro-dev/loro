@@ -13,7 +13,7 @@ use crate::{
         ContainerID, ContainerTrait, ContainerType,
     },
     delta::Delta,
-    event::Diff,
+    event::{Diff, Utf16Meta},
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
     log_store::ImportContext,
@@ -72,14 +72,16 @@ impl TextContainer {
             txn.update_version(store.frontiers().into());
 
             if hierarchy.should_notify(&self.id) {
-                let delta = Delta::new().retain(pos).insert(text.to_owned());
+                let utf16_pos = self.state.utf8_to_utf16(pos);
+                let delta = Delta::new()
+                    .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
+                    .insert(text.to_owned());
                 txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
     }
 
     pub(crate) fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
-        self.state.delete_range(Some(pos), Some(pos + len));
         txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let id = store.next_id();
             let op = Op::new(
@@ -92,10 +94,15 @@ impl TextContainer {
             txn.update_version(store.frontiers().into());
 
             if hierarchy.should_notify(&self.id) {
-                let delta = Delta::new().retain(pos).delete(len);
+                let utf16_pos = self.state.utf8_to_utf16(pos);
+                let utf16_end = self.state.utf8_to_utf16(pos + len);
+                let delta = Delta::new()
+                    .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
+                    .delete_with_meta(len, Utf16Meta::new(utf16_end - utf16_pos));
                 txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
+        self.state.delete_range(Some(pos), Some(pos + len));
     }
 
     pub fn text_len(&self) -> usize {
@@ -259,7 +266,9 @@ impl ContainerTrait for TextContainer {
                         } else {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
-                        let delta = Delta::new().retain(*pos).insert(s);
+                        let delta = Delta::new()
+                            .retain_with_meta(*pos, Utf16Meta::new(self.state.utf8_to_utf16(*pos)))
+                            .insert(s);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(
@@ -269,9 +278,14 @@ impl ContainerTrait for TextContainer {
                 }
                 InnerListOp::Delete(span) => {
                     if should_notify {
+                        let utf16_pos = self.state.utf8_to_utf16(span.start() as usize);
+                        let utf16_end = self.state.utf8_to_utf16(span.end() as usize);
                         let delta = Delta::new()
-                            .retain(span.start() as usize)
-                            .delete(span.atom_len());
+                            .retain_with_meta(span.start() as usize, Utf16Meta::new(utf16_pos))
+                            .delete_with_meta(
+                                span.atom_len(),
+                                Utf16Meta::new(utf16_end - utf16_pos),
+                            );
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
 
@@ -323,7 +337,11 @@ impl ContainerTrait for TextContainer {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {
-                        let delta = Delta::new().retain(pos).delete(len);
+                        let utf16_pos = self.state.utf8_to_utf16(pos);
+                        let utf16_end = self.state.utf8_to_utf16(pos + len);
+                        let delta = Delta::new()
+                            .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
+                            .delete_with_meta(len, Utf16Meta::new(utf16_end - utf16_pos));
                         diff.push(Diff::Text(delta));
                     }
 
@@ -337,7 +355,9 @@ impl ContainerTrait for TextContainer {
                         } else {
                             self.raw_str.slice(&content.0).to_owned()
                         };
-                        let delta = Delta::new().retain(pos).insert(s);
+                        let delta = Delta::new()
+                            .retain_with_meta(pos, Utf16Meta::new(self.state.utf8_to_utf16(pos)))
+                            .insert(s);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -430,7 +450,7 @@ impl ContainerTrait for TextContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let s = self.raw_str.slice(&(0..state_len)).to_owned();
-                let delta = Delta::new().retain(0).insert(s);
+                let delta = Delta::new().insert(s);
                 ctx.push_diff(&self.id, Diff::Text(delta));
             }
         } else {
