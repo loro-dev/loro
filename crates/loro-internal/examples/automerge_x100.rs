@@ -6,7 +6,7 @@ fn main() {
     let actions = bench_utils::get_automerge_actions();
     let mut loro = LoroCore::default();
     let start = Instant::now();
-    for _ in 0..100 {
+    for _ in 0..10 {
         let mut text = loro.get_text("text");
         for TextAction { del, ins, pos } in actions.iter() {
             text.delete(&loro, *pos, *del).unwrap();

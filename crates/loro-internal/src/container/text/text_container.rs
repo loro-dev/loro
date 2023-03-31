@@ -67,7 +67,6 @@ impl TextContainer {
                 }),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 
@@ -91,7 +90,6 @@ impl TextContainer {
                 InnerContent::List(InnerListOp::new_del(pos, len)),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 

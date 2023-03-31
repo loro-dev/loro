@@ -37,7 +37,7 @@ impl Transact for LoroCore {
                 Arc::downgrade(&self.log_store),
                 Arc::downgrade(&self.hierarchy),
             )
-            .with_origin(origin),
+            .set_origin(origin),
         )))
     }
 }
@@ -110,12 +110,11 @@ pub struct Transaction {
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     pub(crate) origin: Option<Origin>,
-    pending_ops: FxHashMap<ContainerIdx, Vec<ID>>,
     // sort by [ContainerIdx]
     // TODO Origin, now use local bool
     pending_event_diff: BTreeMap<ContainerIdx, FxHashMap<bool, Diff>>,
-    start_vv: Frontiers,
-    latest_vv: Frontiers,
+    start_frontier: Frontiers,
+    latest_frontier: Frontiers,
     committed: bool,
 }
 
@@ -130,16 +129,15 @@ impl Transaction {
             client_id,
             store,
             hierarchy,
-            pending_ops: Default::default(),
             pending_event_diff: Default::default(),
-            latest_vv: start_vv.clone(),
-            start_vv,
+            latest_frontier: start_vv.clone(),
+            start_frontier: start_vv,
             origin: None,
             committed: false,
         }
     }
 
-    pub(crate) fn with_origin(mut self, origin: Option<Origin>) -> Self {
+    pub(crate) fn set_origin(mut self, origin: Option<Origin>) -> Self {
         self.origin = origin;
         self
     }
@@ -195,14 +193,7 @@ impl Transaction {
     }
 
     pub(crate) fn update_version(&mut self, new_version: Frontiers) {
-        self.latest_vv = new_version;
-    }
-
-    pub(crate) fn push(&mut self, idx: ContainerIdx, op_id: ID) {
-        self.pending_ops
-            .entry(idx)
-            .or_insert_with(Vec::new)
-            .push(op_id);
+        self.latest_frontier = new_version;
     }
 
     pub(crate) fn append_event_diff(&mut self, idx: ContainerIdx, diff: Diff, local: bool) {
@@ -223,6 +214,10 @@ impl Transaction {
     }
 
     fn emit_events(&mut self) {
+        if self.pending_event_diff.is_empty() {
+            return;
+        }
+
         let pending_events = std::mem::take(&mut self.pending_event_diff);
         let mut events = Vec::with_capacity(pending_events.len() * 2);
         self.with_store_hierarchy_mut(|txn, store, hierarchy| {
@@ -233,8 +228,8 @@ impl Transaction {
                         let event = RawEvent {
                             diff: smallvec![diff],
                             local,
-                            old_version: txn.start_vv.clone(),
-                            new_version: txn.latest_vv.clone(),
+                            old_version: txn.start_frontier.clone(),
+                            new_version: txn.latest_frontier.clone(),
                             container_id: id.clone(),
                             abs_path,
                             origin: txn.origin.as_ref().cloned(),
