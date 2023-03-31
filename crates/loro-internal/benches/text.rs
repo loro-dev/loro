@@ -92,10 +92,9 @@ mod run {
                 loro.subscribe_deep(Box::new(|_| {}));
                 let mut text = loro.get_text("text");
                 {
-                    let txn = loro.transact();
                     for TextAction { pos, ins, del } in actions.iter() {
-                        text.delete(&txn, *pos, *del).unwrap();
-                        text.insert(&txn, *pos, ins).unwrap();
+                        text.delete(&loro, *pos, *del).unwrap();
+                        text.insert(&loro, *pos, ins).unwrap();
                     }
                 }
             })
