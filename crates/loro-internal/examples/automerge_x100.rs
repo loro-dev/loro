@@ -14,6 +14,6 @@ fn main() {
             text.insert_utf16(&loro, *pos, ins).unwrap();
         }
     }
-    loro.diagnose();
+    // loro.diagnose();
     println!("{}", start.elapsed().as_millis());
 }

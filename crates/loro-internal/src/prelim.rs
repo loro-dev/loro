@@ -95,8 +95,7 @@ impl Prelim for PrelimText {
             let container = s.get_container_by_idx(&container_idx).unwrap();
             Text::from_instance(container, s.this_client_id)
         });
-        text.with_container(|x| x.insert(txn, 0, &self.0));
-        Ok(())
+        text.with_container(|x| x.insert(txn, 0, &self.0))
     }
 }
 

@@ -106,6 +106,13 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         })
     }
 
+    pub fn root_cache(&self) -> A::Cache {
+        self.with_node(|node| match &**node {
+            Node::Internal(node) => node.cache,
+            Node::Leaf(node) => node.cache,
+        })
+    }
+
     /// return a cursor at the given index
     #[inline]
     pub fn get(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
