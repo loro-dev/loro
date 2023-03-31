@@ -53,6 +53,18 @@ mod run {
             })
         });
 
+        b.bench_function("B4 utf16", |b| {
+            b.iter(|| {
+                let mut loro = LoroCore::default();
+                let mut text = loro.get_text("text");
+
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete_utf16(&loro, *pos, *del).unwrap();
+                    text.insert_utf16(&loro, *pos, ins).unwrap();
+                }
+            })
+        });
+
         b.bench_function("B4_Per100_Txn", |b| {
             b.iter(|| {
                 let mut loro = LoroCore::default();
