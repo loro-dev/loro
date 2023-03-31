@@ -154,7 +154,7 @@ impl LoroCore {
     }
 
     #[cfg(feature = "test_utils")]
-    pub fn debug_inspect(&self) {
+    pub fn diagnose(&self) {
         self.log_store.try_write().unwrap().debug_inspect();
     }
 

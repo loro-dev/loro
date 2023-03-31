@@ -1,4 +1,3 @@
-// TODO: refactor, extract common code with text
 use std::sync::{Mutex, Weak};
 
 use rle::{

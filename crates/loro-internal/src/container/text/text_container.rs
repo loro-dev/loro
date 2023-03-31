@@ -114,7 +114,7 @@ impl TextContainer {
     pub fn debug_inspect(&mut self) {
         let pool = &self.raw_str;
         println!(
-            "Text Container {:?}, Raw String size={}, Tree=>\n",
+            "Text Container {:?}, Raw String size={}, Tree=>",
             self.id,
             pool.len(),
         );

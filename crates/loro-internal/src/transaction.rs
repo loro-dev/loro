@@ -9,7 +9,7 @@ use crate::{
     container::{registry::ContainerIdx, ContainerID},
     event::{Diff, RawEvent},
     hierarchy::Hierarchy,
-    id::{ClientID, ID},
+    id::ClientID,
     log_store::LoroEncoder,
     version::Frontiers,
     ContainerType, InternalString, List, LogStore, LoroCore, LoroError, Map, Text,
@@ -294,7 +294,7 @@ impl Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         if !self.committed {
-            self.commit();
+            self.commit().unwrap();
         }
     }
 }
