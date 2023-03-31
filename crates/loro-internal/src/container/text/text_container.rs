@@ -79,6 +79,10 @@ impl TextContainer {
     }
 
     pub(crate) fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         self.state.delete_range(Some(pos), Some(pos + len));
         txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let id = store.next_id();
