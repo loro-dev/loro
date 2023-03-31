@@ -567,6 +567,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn need_deps_pending_import() {
         // a:   a1 <--- a2
         //        \    /
@@ -625,6 +626,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn pending_changes_may_deps_merged_change() {
         // a:  (a1 <-- a2 <-- a3) <-- a4       a1~a3 is a merged change
         //                \         /

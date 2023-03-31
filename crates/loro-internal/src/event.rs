@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -49,7 +47,7 @@ pub(crate) struct EventDispatch {
     pub rewrite: Option<PathAndTarget>,
 }
 
-pub type Path = Vec<Index>;
+pub type Path = SmallVec<[Index; 4]>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Index {
@@ -79,7 +77,7 @@ impl ObserverOptions {
     }
 }
 
-pub type ObserverHandler = Box<dyn FnMut(Arc<Event>) + Send>;
+pub type ObserverHandler = Box<dyn FnMut(&Event) + Send>;
 
 pub(crate) struct Observer {
     handler: ObserverHandler,
@@ -141,8 +139,8 @@ impl Observer {
         self.options.once
     }
 
-    pub fn call(&mut self, event: &Arc<Event>) {
-        (self.handler)(event.clone())
+    pub fn call(&mut self, event: &Event) {
+        (self.handler)(event)
     }
 }
 

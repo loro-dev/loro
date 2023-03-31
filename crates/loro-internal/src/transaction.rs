@@ -16,7 +16,7 @@ use crate::{
 };
 use fxhash::FxHashMap;
 use serde::Serialize;
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 pub trait Transact {
     fn transact(&self) -> TransactionWrap;
@@ -219,7 +219,7 @@ impl Transaction {
         }
 
         let pending_events = std::mem::take(&mut self.pending_event_diff);
-        let mut events = Vec::with_capacity(pending_events.len() * 2);
+        let mut events: SmallVec<[_; 2]> = SmallVec::new();
         self.with_store_hierarchy_mut(|txn, store, hierarchy| {
             for (idx, event) in pending_events {
                 let id = store.reg.get_id(idx).unwrap();
@@ -239,9 +239,10 @@ impl Transaction {
                 }
             }
         });
+
+        let hierarchy = self.hierarchy.upgrade().unwrap();
         for event in events {
-            let hierarchy = self.hierarchy.upgrade().unwrap();
-            Hierarchy::notify_without_lock(hierarchy, event);
+            Hierarchy::notify_without_lock(&hierarchy, event);
         }
     }
 

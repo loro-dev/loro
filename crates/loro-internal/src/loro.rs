@@ -178,7 +178,7 @@ impl LoroCore {
 
     #[instrument(skip_all)]
     pub(crate) fn notify(&self, events: Vec<RawEvent>) {
-        Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
+        Hierarchy::send_notifications_without_lock(&self.hierarchy, events)
     }
 
     // config

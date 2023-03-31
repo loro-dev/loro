@@ -244,7 +244,8 @@ impl Loro {
     }
 }
 
-fn call_after_micro_task(ob: observer::Observer, e: Arc<loro_internal::event::Event>) {
+fn call_after_micro_task(ob: observer::Observer, e: &loro_internal::event::Event) {
+    let e = e.clone();
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
