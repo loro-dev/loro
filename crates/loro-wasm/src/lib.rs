@@ -375,15 +375,23 @@ pub struct LoroText(Text);
 
 #[wasm_bindgen]
 impl LoroText {
-    pub fn insert(&mut self, txn: &JsTransaction, index: usize, content: &str) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.insert_utf16(&txn, index, content)?;
+    pub fn __loro_insert(&mut self, txn: &Loro, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_utf16(&*txn.0.borrow(), index, content)?;
         Ok(())
     }
 
-    pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.delete_utf16(&txn, index, len)?;
+    pub fn __loro_delete(&mut self, txn: &Loro, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_utf16(&*txn.0.borrow(), index, len)?;
+        Ok(())
+    }
+
+    pub fn __txn_insert(&mut self, txn: &Transaction, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_utf16(&txn.0, index, content)?;
+        Ok(())
+    }
+
+    pub fn __txn_delete(&mut self, txn: &Transaction, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_utf16(&txn.0, index, len)?;
         Ok(())
     }
 

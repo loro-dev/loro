@@ -8,7 +8,7 @@ export {
   setPanicHook,
   Transaction,
 } from "loro-wasm";
-import { ContainerID, Loro, Transaction } from "loro-wasm";
+import { ContainerID, Loro, Transaction, LoroText } from "loro-wasm";
 
 export type { ContainerID, ContainerType } from "loro-wasm";
 
@@ -22,6 +22,23 @@ Loro.prototype.transact = function (cb, origin) {
     }
   });
 };
+
+LoroText.prototype.insert = function (txn, pos, text) {
+  if (txn instanceof Loro) {
+    this.__loro_insert(txn, pos, text);
+  } else {
+    this.__txn_insert(txn, pos, text);
+  }
+}
+
+LoroText.prototype.delete = function (txn, pos, len) {
+  if (txn instanceof Loro) {
+    this.__loro_delete(txn, pos, len);
+  } else {
+    this.__txn_delete(txn, pos, len);
+  }
+}
+
 
 export type Value =
   | ContainerID
@@ -170,6 +187,8 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
+    insert(txn: Transaction | Loro, pos: number, text: string): void;
+    delete(txn: Transaction | Loro, pos: number, len: number): void;
     subscribe(txn: Transaction | Loro, listener: Listener): number;
     subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
     subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
