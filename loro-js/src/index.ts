@@ -8,7 +8,17 @@ export {
   setPanicHook,
   Transaction,
 } from "loro-wasm";
-import { ContainerID, Loro, Transaction, LoroText } from "loro-wasm";
+import { PrelimMap } from "loro-wasm";
+import { PrelimText } from "loro-wasm";
+import { PrelimList } from "loro-wasm";
+import {
+  ContainerID,
+  Loro,
+  LoroList,
+  LoroMap,
+  LoroText,
+  Transaction,
+} from "loro-wasm";
 
 export type { ContainerID, ContainerType } from "loro-wasm";
 
@@ -29,7 +39,7 @@ LoroText.prototype.insert = function (txn, pos, text) {
   } else {
     this.__txn_insert(txn, pos, text);
   }
-}
+};
 
 LoroText.prototype.delete = function (txn, pos, len) {
   if (txn instanceof Loro) {
@@ -37,8 +47,39 @@ LoroText.prototype.delete = function (txn, pos, len) {
   } else {
     this.__txn_delete(txn, pos, len);
   }
-}
+};
 
+LoroList.prototype.insert = function (txn, pos, len) {
+  if (txn instanceof Loro) {
+    this.__loro_insert(txn, pos, len);
+  } else {
+    this.__txn_insert(txn, pos, len);
+  }
+};
+
+LoroList.prototype.delete = function (txn, pos, len) {
+  if (txn instanceof Loro) {
+    this.__loro_delete(txn, pos, len);
+  } else {
+    this.__txn_delete(txn, pos, len);
+  }
+};
+
+LoroMap.prototype.set = function (txn, key, value) {
+  if (txn instanceof Loro) {
+    this.__loro_insert(txn, key, value);
+  } else {
+    this.__txn_insert(txn, key, value);
+  }
+};
+
+LoroMap.prototype.delete = function (txn, key) {
+  if (txn instanceof Loro) {
+    this.__loro_delete(txn, key);
+  } else {
+    this.__txn_delete(txn, key);
+  }
+};
 
 export type Value =
   | ContainerID
@@ -47,6 +88,8 @@ export type Value =
   | null
   | { [key: string]: Value }
   | Value[];
+
+export type Prelim = PrelimList | PrelimMap | PrelimText;
 
 export type Path = (number | string)[];
 export type Delta<T> = {
@@ -153,6 +196,8 @@ declare module "loro-wasm" {
     ): never;
 
     get(index: number): Value;
+    insert(txn: Transaction | Loro, pos: number, value: Value | Prelim): void;
+    delete(txn: Transaction | Loro, pos: number, len: number): void;
     subscribe(txn: Transaction | Loro, listener: Listener): number;
     subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
     subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
@@ -181,6 +226,8 @@ declare module "loro-wasm" {
     ): never;
 
     get(key: string): Value;
+    set(txn: Transaction | Loro, key: string, value: Value | Prelim): void;
+    delete(txn: Transaction | Loro, key: string): void;
     subscribe(txn: Transaction | Loro, listener: Listener): number;
     subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
     subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
