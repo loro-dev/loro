@@ -32,8 +32,8 @@ fn main() {
             loro_b.import(loro.export(loro_b.vv_cloned()));
         }
     }
-    loro_b.debug_inspect();
-    loro.debug_inspect();
+    loro_b.diagnose();
+    loro.diagnose();
     println!("Elapsed {}ms", start.elapsed().as_millis());
     loro_c.import(loro.export(loro_c.vv_cloned()));
     println!("Elapsed {}ms", start.elapsed().as_millis());

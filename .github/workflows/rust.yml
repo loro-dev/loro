@@ -23,6 +23,12 @@ jobs:
     - uses: denoland/setup-deno@v1
       with:
         deno-version: v1.x
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 18
+    - uses: pnpm/action-setup@v2
+      with:
+        version: 7.30.0
     - name: Install nextest
       uses: taiki-e/install-action@v1
       with:

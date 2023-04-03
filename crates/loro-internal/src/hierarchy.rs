@@ -4,6 +4,7 @@ use std::{
 };
 
 use fxhash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 use crate::{
     container::{registry::ContainerRegistry, ContainerID},
@@ -20,7 +21,7 @@ pub struct Hierarchy {
     latest_deleted: FxHashSet<ContainerID>,
     event_counter: SubscriptionID,
     deleted_observers: FxHashSet<SubscriptionID>,
-    pending_dispatches: Option<(Event, Vec<EventDispatch>)>,
+    pending_dispatches: Option<(Event, SmallVec<[EventDispatch; 1]>)>,
     calling: bool,
 }
 
@@ -163,11 +164,11 @@ impl Hierarchy {
         target: Option<&ContainerID>,
     ) -> Option<Path> {
         if let ContainerID::Root { name, .. } = descendant {
-            return Some(vec![Index::Key(name.into())]);
+            return Some(smallvec::smallvec![Index::Key(name.into())]);
         }
 
         if target.map(|x| x == descendant).unwrap_or(false) {
-            return Some(vec![]);
+            return Some(smallvec::smallvec![]);
         }
 
         let mut path = Path::default();
@@ -248,7 +249,7 @@ impl Hierarchy {
         false
     }
 
-    pub(crate) fn notify_without_lock(hierarchy: Arc<Mutex<Hierarchy>>, raw_event: RawEvent) {
+    pub(crate) fn notify_without_lock(hierarchy: &Arc<Mutex<Hierarchy>>, raw_event: RawEvent) {
         let target_id = raw_event.container_id;
 
         let (observers, dispatches, event) = {
@@ -263,7 +264,7 @@ impl Hierarchy {
                 local: raw_event.local,
                 origin: raw_event.origin,
             };
-            let mut dispatches = Vec::new();
+            let mut dispatches: SmallVec<[_; 1]> = SmallVec::new();
             let mut hierarchy = hierarchy.try_lock().unwrap();
             let mut current_target_id = Some(target_id.clone());
             let mut count = 0;
@@ -283,7 +284,7 @@ impl Hierarchy {
                 };
                 if !node.deep_observers.is_empty() {
                     let mut dispatch = EventDispatch::default();
-                    let mut relative_path = path_to_root[..count].to_vec();
+                    let mut relative_path: Path = path_to_root[..count].iter().cloned().collect();
                     relative_path.reverse();
                     dispatch.rewrite = Some(PathAndTarget {
                         relative_path,
@@ -328,16 +329,16 @@ impl Hierarchy {
         };
         if let (Some(mut observers), Some(dispatches), Some(event)) = (observers, dispatches, event)
         {
-            Self::call_observers(Arc::clone(&hierarchy), &mut observers, dispatches, event);
+            Self::call_observers(hierarchy, &mut observers, dispatches, event);
             Self::reset(hierarchy, observers);
         }
     }
 
     #[inline]
     fn call_observers(
-        hierarchy: Arc<Mutex<Hierarchy>>,
+        hierarchy: &Arc<Mutex<Hierarchy>>,
         observers: &mut FxHashMap<SubscriptionID, Observer>,
-        dispatches: Vec<EventDispatch>,
+        dispatches: SmallVec<[EventDispatch; 1]>,
         mut event: Event,
     ) {
         for dispatch in dispatches {
@@ -349,7 +350,6 @@ impl Hierarchy {
                 event.relative_path = relative_path;
                 event.current_target = target;
             };
-            let event = Arc::new(event.clone());
             for sub_id in dispatch.sub_ids.iter() {
                 if let Some(observer) = observers.get_mut(sub_id) {
                     observer.call(&event);
@@ -363,18 +363,25 @@ impl Hierarchy {
     }
 
     #[inline]
-    fn reset(hierarchy: Arc<Mutex<Hierarchy>>, mut observers: FxHashMap<SubscriptionID, Observer>) {
+    fn reset(
+        hierarchy: &Arc<Mutex<Hierarchy>>,
+        mut observers: FxHashMap<SubscriptionID, Observer>,
+    ) {
         let mut hierarchy_guard = hierarchy.try_lock().unwrap();
         let deleted_ids = std::mem::take(&mut hierarchy_guard.deleted_observers);
         for sub_id in deleted_ids.iter() {
             hierarchy_guard._remove_observer(sub_id, &mut observers);
         }
-        hierarchy_guard.observers.extend(observers);
+        if hierarchy_guard.observers.is_empty() {
+            hierarchy_guard.observers = observers;
+        } else {
+            hierarchy_guard.observers.extend(observers);
+        }
         let pending_dispatches = hierarchy_guard.pending_dispatches.take();
         if let Some((event, dispatches)) = pending_dispatches {
             let mut observers = std::mem::take(&mut hierarchy_guard.observers);
             drop(hierarchy_guard);
-            Self::call_observers(Arc::clone(&hierarchy), &mut observers, dispatches, event);
+            Self::call_observers(hierarchy, &mut observers, dispatches, event);
             Self::reset(hierarchy, observers);
         } else {
             hierarchy_guard.calling = false;
@@ -453,11 +460,11 @@ impl Hierarchy {
     }
 
     pub(crate) fn send_notifications_without_lock(
-        hierarchy: Arc<Mutex<Hierarchy>>,
+        hierarchy: &Arc<Mutex<Hierarchy>>,
         events: Vec<RawEvent>,
     ) {
         for event in events {
-            Hierarchy::notify_without_lock(hierarchy.clone(), event);
+            Hierarchy::notify_without_lock(hierarchy, event);
         }
     }
 }

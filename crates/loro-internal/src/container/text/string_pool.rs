@@ -5,7 +5,7 @@ use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
 use crate::smstring::SmString;
 
-use super::{text_content::SliceRange, unicode::TextLength};
+use super::{text_content::SliceRange, unicode::TextLength, utf16::count_utf16_chars};
 
 #[derive(Debug, Default)]
 pub struct StringPool {
@@ -210,7 +210,7 @@ impl Sliceable for PoolString {
             Some(bytes) => {
                 let bytes = bytes.slice(from, to);
                 // SAFETY: we are sure it's valid utf-8 str
-                let utf16 = get_utf16_len(&bytes);
+                let utf16 = count_utf16_chars(&bytes);
                 Self {
                     utf16_length: utf16 as i32,
                     slice: Some(bytes),
@@ -220,13 +220,6 @@ impl Sliceable for PoolString {
             None => Self::new_unknown(to - from),
         }
     }
-}
-
-#[inline(always)]
-fn get_utf16_len(bytes: &BytesSlice) -> usize {
-    let str = bytes_to_str(bytes);
-    let utf16 = encode_utf16(str).count();
-    utf16
 }
 
 #[inline(always)]
@@ -240,7 +233,7 @@ impl From<BytesSlice> for PoolString {
     #[inline(always)]
     fn from(slice: BytesSlice) -> Self {
         Self {
-            utf16_length: get_utf16_len(&slice) as i32,
+            utf16_length: count_utf16_chars(&slice) as i32,
             slice: Some(slice),
             unknown_len: 0,
         }
@@ -293,88 +286,74 @@ impl PoolString {
     }
 
     pub fn utf16_index_to_utf8(&self, end: usize) -> usize {
-        let str = bytes_to_str(self.slice.as_ref().unwrap());
-        utf16_index_to_utf8(str, end)
+        let b = self.slice.as_ref().unwrap();
+        utf16_index_to_utf8(b, end)
     }
 
     pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
-        let str = bytes_to_str(self.slice.as_ref().unwrap());
-        encode_utf16(&str[..end]).count()
+        count_utf16_chars(&self.slice.as_ref().unwrap()[..end])
     }
 }
 
 #[inline(always)]
-fn utf16_index_to_utf8(str: &str, end: usize) -> usize {
-    let len = str.len();
-    let mut iter = encode_utf16(str);
-    for _ in 0..end {
-        iter.next();
-    }
-    len - iter.chars.as_str().len()
-}
+fn utf16_index_to_utf8(str: &[u8], end: usize) -> usize {
+    let mut utf8_index = 0;
+    let mut utf16_count = 0;
 
-fn encode_utf16(s: &str) -> EncodeUtf16 {
-    EncodeUtf16 {
-        chars: s.chars(),
-        extra: 0,
-    }
-}
+    let mut iter = str.iter().cloned();
 
-// from std
-#[derive(Clone)]
-pub struct EncodeUtf16<'a> {
-    pub(super) chars: Chars<'a>,
-    pub(super) extra: u16,
-}
-
-impl fmt::Debug for EncodeUtf16<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("EncodeUtf16").finish_non_exhaustive()
-    }
-}
-
-impl<'a> Iterator for EncodeUtf16<'a> {
-    type Item = u16;
-
-    #[inline]
-    fn next(&mut self) -> Option<u16> {
-        if self.extra != 0 {
-            let tmp = self.extra;
-            self.extra = 0;
-            return Some(tmp);
+    while let Some(byte) = iter.next() {
+        if utf16_count >= end {
+            break;
         }
 
-        let mut buf = [0; 2];
-        self.chars.next().map(|ch| {
-            let n = ch.encode_utf16(&mut buf).len();
-            if n == 2 {
-                self.extra = buf[1];
+        utf8_index += 1;
+        if byte & 0b1000_0000 == 0 {
+            utf16_count += 1;
+        } else if byte & 0b1110_0000 == 0b1100_0000 {
+            let _ = iter.next();
+
+            utf16_count += 1;
+            utf8_index += 1;
+        } else if byte & 0b1111_0000 == 0b1110_0000 {
+            let _ = iter.next();
+            let _ = iter.next();
+
+            utf16_count += 1;
+            utf8_index += 2;
+        } else if byte & 0b1111_1000 == 0b1111_0000 {
+            let u = ((byte & 0b0000_0111) as u32) << 18
+                | ((iter.next().unwrap_or(0) & 0b0011_1111) as u32) << 12
+                | ((iter.next().unwrap_or(0) & 0b0011_1111) as u32) << 6
+                | ((iter.next().unwrap_or(0) & 0b0011_1111) as u32);
+
+            utf8_index += 3;
+            if u >= 0x10000 {
+                utf16_count += 2;
+            } else {
+                utf16_count += 1;
             }
-            buf[0]
-        })
+        } else {
+            unreachable!()
+        }
     }
 
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let (low, high) = self.chars.size_hint();
-        // every char gets either one u16 or two u16,
-        // so this iterator is between 1 or 2 times as
-        // long as the underlying iterator.
-        (low, high.and_then(|n| n.checked_mul(2)))
-    }
+    utf8_index
 }
 
 #[cfg(test)]
 mod test {
-    use super::{encode_utf16, utf16_index_to_utf8};
+    use crate::text::utf16::count_utf16_chars;
+
+    use super::utf16_index_to_utf8;
 
     #[test]
     fn utf16_convert() {
-        assert_eq!(utf16_index_to_utf8("你aaaaa", 4), 6);
-        assert_eq!(utf16_index_to_utf8("你好aaaa", 4), 8);
-        assert_eq!(utf16_index_to_utf8("你好aaaa", 6), 10);
+        assert_eq!(utf16_index_to_utf8("你aaaaa".as_bytes(), 4), 6);
+        assert_eq!(utf16_index_to_utf8("你好aaaa".as_bytes(), 4), 8);
+        assert_eq!(utf16_index_to_utf8("你好aaaa".as_bytes(), 6), 10);
         assert_eq!("你好".len(), 6);
-        assert_eq!(encode_utf16("你好").count(), 2);
-        assert_eq!(encode_utf16("ab").count(), 2);
+        assert_eq!(count_utf16_chars("你好".as_bytes()), 2);
+        assert_eq!(count_utf16_chars("ab".as_bytes()), 2);
     }
 }

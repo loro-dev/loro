@@ -106,6 +106,13 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
         })
     }
 
+    pub fn root_cache(&self) -> A::Cache {
+        self.with_node(|node| match &**node {
+            Node::Internal(node) => node.cache,
+            Node::Leaf(node) => node.cache,
+        })
+    }
+
     /// return a cursor at the given index
     #[inline]
     pub fn get(&self, mut index: A::Int) -> Option<SafeCursor<'_, T, A>> {
@@ -482,11 +489,12 @@ impl<T: Rle, A: RleTreeTrait<T>> RleTree<T, A> {
 
     pub fn debug_inspect(&mut self) {
         println!(
-            "RleTree: \n- len={:?}\n- InternalNodes={}\n- LeafNodes={}\n- Elements={}\n- Bytes={}",
+            "RleTree: \n- len={:?}\n- InternalNodes={}\n- LeafNodes={}\n- Elements={}\n- ElementSize={}\n- Bytes={}",
             self.len(),
             self.internal_node_num(),
             self.leaf_node_num(),
             self.elem_num(),
+            std::mem::size_of::<T>(),
             self.with_bump(|bump| bump.allocated_bytes())
         );
     }

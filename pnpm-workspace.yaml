@@ -1,0 +1,3 @@
+packages:
+  - "loro-js"
+  - "crates/loro-wasm"
