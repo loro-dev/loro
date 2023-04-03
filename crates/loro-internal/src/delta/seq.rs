@@ -37,6 +37,8 @@ pub trait Meta: Debug + Clone + PartialEq + Default {
         Self::default()
     }
     fn is_empty(&self) -> bool;
+
+    /// this is used when composing two [DeltaItem]s with the same length
     fn compose(&mut self, other: &Self, type_pair: (DeltaType, DeltaType));
     #[allow(unused)]
     fn take(&mut self, other: &Self) -> Self {
@@ -44,6 +46,8 @@ pub trait Meta: Debug + Clone + PartialEq + Default {
     }
 
     fn is_mergeable(&self, other: &Self) -> bool;
+    /// This is used when we merge two [DeltaItem]s.
+    /// And it's guaranteed that [Meta::is_mergeable] is true
     fn merge(&mut self, other: &Self);
 }
 
