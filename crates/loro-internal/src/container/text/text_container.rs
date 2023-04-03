@@ -92,24 +92,22 @@ impl TextContainer {
         pos: usize,
         text: &str,
     ) {
-        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            let id = store.next_id();
-            let op = Op::new(
-                id,
-                InnerContent::List(InnerListOp::Insert {
-                    slice: op_slice,
-                    pos,
-                }),
-                self.idx,
-            );
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
+        let id = txn.store.next_id();
+        let op = Op::new(
+            id,
+            InnerContent::List(InnerListOp::Insert {
+                slice: op_slice,
+                pos,
+            }),
+            self.idx,
+        );
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
 
-            if hierarchy.should_notify(&self.id) {
-                let delta = Delta::new().retain(pos).insert(text.to_owned());
-                txn.append_event_diff(self.idx, Diff::Text(delta), true);
-            }
-        });
+        if txn.hierarchy.should_notify(&self.id) {
+            let delta = Delta::new().retain(pos).insert(text.to_owned());
+            txn.append_event_diff(self.idx, Diff::Text(delta), true);
+        }
     }
 
     pub(crate) fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
@@ -137,21 +135,19 @@ impl TextContainer {
     }
 
     fn _record_delete_op(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
-        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            let id = store.next_id();
-            let op = Op::new(
-                id,
-                InnerContent::List(InnerListOp::new_del(pos, len)),
-                self.idx,
-            );
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
+        let id = txn.store.next_id();
+        let op = Op::new(
+            id,
+            InnerContent::List(InnerListOp::new_del(pos, len)),
+            self.idx,
+        );
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
 
-            if hierarchy.should_notify(&self.id) {
-                let delta = Delta::new().retain(pos).delete(len);
-                txn.append_event_diff(self.idx, Diff::Text(delta), true);
-            }
-        });
+        if txn.hierarchy.should_notify(&self.id) {
+            let delta = Delta::new().retain(pos).delete(len);
+            txn.append_event_diff(self.idx, Diff::Text(delta), true);
+        }
     }
 
     pub fn text_len(&self) -> usize {

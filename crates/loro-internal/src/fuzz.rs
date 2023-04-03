@@ -144,16 +144,15 @@ impl Actionable for Vec<LoroCore> {
     fn apply_action(&mut self, action: &Action) {
         match action {
             Action::Ins { content, pos, site } => {
-                let site = &mut self[*site as usize];
-                let txn = site.transact();
-                let mut text = site.get_text("text");
-                text.insert(&txn, *pos, &content.to_string()).unwrap();
+                let loro = &mut self[*site as usize];
+                let mut text = loro.get_text("text");
+                text.insert(&self[*site as usize], *pos, &content.to_string())
+                    .unwrap();
             }
             Action::Del { pos, len, site } => {
-                let site = &mut self[*site as usize];
-                let txn = site.transact();
-                let mut text = site.get_text("text");
-                text.delete(&txn, *pos, *len).unwrap();
+                let loro = &mut self[*site as usize];
+                let mut text = loro.get_text("text");
+                text.delete(&self[*site as usize], *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
                 let to_vv = self[*to as usize].vv_cloned();

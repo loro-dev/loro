@@ -343,7 +343,7 @@ fn utf16_index_to_utf8(str: &[u8], end: usize) -> usize {
 
 #[cfg(test)]
 mod test {
-    use crate::text::utf16::count_utf16_chars;
+    use crate::container::text::utf16::count_utf16_chars;
 
     use super::utf16_index_to_utf8;
 

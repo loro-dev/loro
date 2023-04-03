@@ -477,9 +477,7 @@ pub trait ContainerWrapper {
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_transaction(txn, |txn, x| {
-            let h = txn.hierarchy.upgrade().unwrap();
-            let mut h = h.try_lock().unwrap();
-            Ok(x.subscribe(&mut h, handler, false, false))
+            Ok(x.subscribe(txn.hierarchy_mut(), handler, false, false))
         })
     }
 
@@ -489,9 +487,7 @@ pub trait ContainerWrapper {
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_transaction(txn, |txn, x| {
-            let h = txn.hierarchy.upgrade().unwrap();
-            let mut h = h.try_lock().unwrap();
-            Ok(x.subscribe(&mut h, handler, true, false))
+            Ok(x.subscribe(txn.hierarchy_mut(), handler, true, false))
         })
     }
 
@@ -501,9 +497,7 @@ pub trait ContainerWrapper {
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_transaction(txn, |txn, x| {
-            let h = txn.hierarchy.upgrade().unwrap();
-            let mut h = h.try_lock().unwrap();
-            Ok(x.subscribe(&mut h, handler, false, true))
+            Ok(x.subscribe(txn.hierarchy_mut(), handler, false, true))
         })
     }
 
@@ -513,9 +507,7 @@ pub trait ContainerWrapper {
         handler: ObserverHandler,
     ) -> Result<SubscriptionID, LoroError> {
         self.with_transaction(txn, |txn, x| {
-            let h = txn.hierarchy.upgrade().unwrap();
-            let mut h = h.try_lock().unwrap();
-            Ok(x.subscribe(&mut h, handler, true, true))
+            Ok(x.subscribe(txn.hierarchy_mut(), handler, true, true))
         })
     }
 
@@ -525,9 +517,7 @@ pub trait ContainerWrapper {
         subscription: SubscriptionID,
     ) -> Result<(), LoroError> {
         self.with_transaction(txn, |txn, x| {
-            let h = txn.hierarchy.upgrade().unwrap();
-            let mut h = h.try_lock().unwrap();
-            x.unsubscribe(&mut h, subscription);
+            x.unsubscribe(txn.hierarchy_mut(), subscription);
             Ok(())
         })
     }

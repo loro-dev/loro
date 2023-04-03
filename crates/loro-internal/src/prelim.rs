@@ -91,10 +91,8 @@ impl Prelim for PrelimText {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let text = txn.with_store(|s| {
-            let container = s.get_container_by_idx(&container_idx).unwrap();
-            Text::from_instance(container, s.this_client_id)
-        });
+        let container = txn.store.get_container_by_idx(&container_idx).unwrap();
+        let text = Text::from_instance(container, txn.store.this_client_id);
         text.with_container(|x| x.insert(txn, 0, &self.0))
     }
 }
@@ -112,10 +110,8 @@ impl Prelim for PrelimList {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let list = txn.with_store(|s| {
-            let container = s.get_container_by_idx(&container_idx).unwrap();
-            List::from_instance(container, s.this_client_id)
-        });
+        let container = txn.store.get_container_by_idx(&container_idx).unwrap();
+        let list = List::from_instance(container, txn.store.this_client_id);
         list.with_container(|x| x.insert_batch(txn, 0, self.0));
         Ok(())
     }
@@ -134,10 +130,8 @@ impl Prelim for PrelimMap {
         txn: &mut Transaction,
         container_idx: ContainerIdx,
     ) -> Result<(), LoroError> {
-        let map = txn.with_store(|s| {
-            let container = s.get_container_by_idx(&container_idx).unwrap();
-            Map::from_instance(container, s.this_client_id)
-        });
+        let container = txn.store.get_container_by_idx(&container_idx).unwrap();
+        let map = Map::from_instance(container, txn.store.this_client_id);
         for (k, value) in self.0.into_iter() {
             map.with_container(|x| x.insert(txn, k.into(), value))?;
         }

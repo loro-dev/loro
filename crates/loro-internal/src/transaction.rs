@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::BTreeMap,
     rc::Rc,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard, Weak},
 };
 
 use crate::{
@@ -19,63 +19,62 @@ use serde::Serialize;
 use smallvec::{smallvec, SmallVec};
 
 pub trait Transact {
-    fn transact(&self) -> TransactionWrap;
-    fn transact_with(&self, origin: Option<Origin>) -> TransactionWrap;
+    fn transact<'s: 'a, 'a>(&'s self) -> TransactionWrap<'a>;
+    fn transact_with<'s: 'a, 'a>(&'s self, origin: Option<Origin>) -> TransactionWrap<'a>;
 }
 
 impl Transact for LoroCore {
-    fn transact(&self) -> TransactionWrap {
-        TransactionWrap(Rc::new(RefCell::new(Transaction::new(
-            Arc::downgrade(&self.log_store),
-            Arc::downgrade(&self.hierarchy),
-        ))))
+    fn transact<'s: 'a, 'a>(&'s self) -> TransactionWrap<'a> {
+        let store = self.log_store.try_write().unwrap();
+        let hierarchy = self.hierarchy.try_lock().unwrap();
+        TransactionWrap(Rc::new(RefCell::new(Transaction::new(store, hierarchy))))
     }
 
-    fn transact_with(&self, origin: Option<Origin>) -> TransactionWrap {
+    fn transact_with<'s: 'a, 'a>(&'s self, origin: Option<Origin>) -> TransactionWrap<'a> {
+        let store = self.log_store.try_write().unwrap();
+        let hierarchy = self.hierarchy.try_lock().unwrap();
         TransactionWrap(Rc::new(RefCell::new(
-            Transaction::new(
-                Arc::downgrade(&self.log_store),
-                Arc::downgrade(&self.hierarchy),
-            )
-            .set_origin(origin),
+            Transaction::new(store, hierarchy).set_origin(origin),
         )))
     }
 }
 
-impl Transact for TransactionWrap {
-    fn transact(&self) -> TransactionWrap {
-        TransactionWrap(Rc::clone(&self.0))
+impl<'pre> Transact for TransactionWrap<'pre> {
+    fn transact<'s: 'a, 'a>(&'s self) -> TransactionWrap<'a> {
+        // use unsafe to avoid lifetime issues 'a: 'pre
+        // Safety: we are cloning the Rc, so the lifetime is not affected
+        unsafe { std::mem::transmute(TransactionWrap(Rc::clone(&self.0))) }
     }
 
-    fn transact_with(&self, _origin: Option<Origin>) -> TransactionWrap {
+    fn transact_with<'s: 'a, 'a>(&'s self, origin: Option<Origin>) -> TransactionWrap<'a> {
         unreachable!()
     }
 }
 
-impl AsMut<Transaction> for Transaction {
-    fn as_mut(&mut self) -> &mut Transaction {
+impl<'a> AsMut<Transaction<'a>> for Transaction<'a> {
+    fn as_mut(&mut self) -> &mut Transaction<'a> {
         self
     }
 }
 
-pub struct TransactionWrap(pub(crate) Rc<RefCell<Transaction>>);
+pub struct TransactionWrap<'a>(pub(crate) Rc<RefCell<Transaction<'a>>>);
 
-impl TransactionWrap {
+impl<'a> TransactionWrap<'a> {
     pub fn get_text_by_idx(&self, idx: ContainerIdx) -> Option<Text> {
         let txn = self.0.borrow();
-        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        let instance = txn.store.get_container_by_idx(&idx);
         instance.map(|i| Text::from_instance(i, txn.client_id))
     }
 
     pub fn get_list_by_idx(&self, idx: ContainerIdx) -> Option<List> {
         let txn = self.0.borrow();
-        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        let instance = txn.store.get_container_by_idx(&idx);
         instance.map(|i| List::from_instance(i, txn.client_id))
     }
 
     pub fn get_map_by_idx(&self, idx: ContainerIdx) -> Option<Map> {
         let txn = self.0.borrow();
-        let instance = txn.with_store(|s| s.get_container_by_idx(&idx));
+        let instance = txn.store.get_container_by_idx(&idx);
         instance.map(|i| Map::from_instance(i, txn.client_id))
     }
 
@@ -105,10 +104,10 @@ impl<T: AsRef<str>> From<T> for Origin {
     }
 }
 
-pub struct Transaction {
+pub struct Transaction<'a> {
     pub(crate) client_id: ClientID,
-    pub(crate) store: Weak<RwLock<LogStore>>,
-    pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
+    pub(crate) store: RwLockWriteGuard<'a, LogStore>,
+    pub(crate) hierarchy: MutexGuard<'a, Hierarchy>,
     pub(crate) origin: Option<Origin>,
     // sort by [ContainerIdx]
     // TODO Origin, now use local bool
@@ -118,13 +117,13 @@ pub struct Transaction {
     committed: bool,
 }
 
-impl Transaction {
-    pub(crate) fn new(store: Weak<RwLock<LogStore>>, hierarchy: Weak<Mutex<Hierarchy>>) -> Self {
-        let (client_id, start_vv): (u64, Frontiers) = {
-            let store = store.upgrade().unwrap();
-            let store = store.try_read().unwrap();
-            (store.this_client_id, store.frontiers().into())
-        };
+impl<'a> Transaction<'a> {
+    pub(crate) fn new(
+        store: RwLockWriteGuard<'a, LogStore>,
+        hierarchy: MutexGuard<'a, Hierarchy>,
+    ) -> Self {
+        let (client_id, start_vv): (u64, Frontiers) =
+            { (store.this_client_id, store.frontiers().into()) };
         Self {
             client_id,
             store,
@@ -137,59 +136,17 @@ impl Transaction {
         }
     }
 
+    pub(crate) fn store_mut(&mut self) -> &mut LogStore {
+        &mut self.store
+    }
+
+    pub(crate) fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+        &mut self.hierarchy
+    }
+
     pub(crate) fn set_origin(mut self, origin: Option<Origin>) -> Self {
         self.origin = origin;
         self
-    }
-
-    pub(crate) fn with_store<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&LogStore) -> R,
-    {
-        let store = self.store.upgrade().unwrap();
-        let store = store.try_read().unwrap();
-        f(&store)
-    }
-
-    #[allow(unused)]
-    pub(crate) fn with_store_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut LogStore) -> R,
-    {
-        let store = self.store.upgrade().unwrap();
-        let mut store = store.try_write().unwrap();
-        f(&mut store)
-    }
-
-    #[allow(unused)]
-    pub(crate) fn with_hierarchy<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&Hierarchy) -> R,
-    {
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let hierarchy = hierarchy.try_lock().unwrap();
-        f(&hierarchy)
-    }
-
-    #[allow(unused)]
-    pub(crate) fn with_hierarchy_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut Hierarchy) -> R,
-    {
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        f(&mut hierarchy)
-    }
-
-    pub(crate) fn with_store_hierarchy_mut<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut Self, &mut LogStore, &mut Hierarchy) -> R,
-    {
-        let store = self.store.upgrade().unwrap();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        f(self, &mut store, &mut hierarchy)
     }
 
     pub(crate) fn update_version(&mut self, new_version: Frontiers) {
@@ -220,29 +177,27 @@ impl Transaction {
 
         let pending_events = std::mem::take(&mut self.pending_event_diff);
         let mut events: SmallVec<[_; 2]> = SmallVec::new();
-        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            for (idx, event) in pending_events {
-                let id = store.reg.get_id(idx).unwrap();
-                for (local, diff) in event {
-                    if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, id) {
-                        let event = RawEvent {
-                            diff: smallvec![diff],
-                            local,
-                            old_version: txn.start_frontier.clone(),
-                            new_version: txn.latest_frontier.clone(),
-                            container_id: id.clone(),
-                            abs_path,
-                            origin: txn.origin.as_ref().cloned(),
-                        };
-                        events.push(event);
-                    }
+
+        for (idx, event) in pending_events {
+            let id = self.store.reg.get_id(idx).unwrap();
+            for (local, diff) in event {
+                if let Some(abs_path) = self.hierarchy.get_abs_path(&self.store.reg, id) {
+                    let event = RawEvent {
+                        diff: smallvec![diff],
+                        local,
+                        old_version: self.start_frontier.clone(),
+                        new_version: self.latest_frontier.clone(),
+                        container_id: id.clone(),
+                        abs_path,
+                        origin: self.origin.as_ref().cloned(),
+                    };
+                    events.push(event);
                 }
             }
-        });
+        }
 
-        let hierarchy = self.hierarchy.upgrade().unwrap();
         for event in events {
-            Hierarchy::notify_without_lock(&hierarchy, event);
+            Hierarchy::notify_without_lock_impl(&mut self.hierarchy, event);
         }
     }
 
@@ -251,11 +206,9 @@ impl Transaction {
         parent_id: &ContainerID,
         type_: ContainerType,
     ) -> (ContainerID, ContainerIdx) {
-        self.with_store_hierarchy_mut(|_txn, s, h| {
-            let (container_id, idx) = s.create_container(type_);
-            h.add_child(parent_id, &container_id);
-            (container_id, idx)
-        })
+        let (container_id, idx) = self.store.create_container(type_);
+        self.hierarchy.add_child(parent_id, &container_id);
+        (container_id, idx)
     }
 
     pub(crate) fn delete_container(&mut self, idx: ContainerIdx) {
@@ -263,14 +216,10 @@ impl Transaction {
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let store = self.store.upgrade().unwrap();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
+        let events = LoroEncoder::decode(&mut self.store, &mut self.hierarchy, input)?;
         // TODO decode just gets diff
         for event in events {
-            let idx = store.get_container_idx(&event.container_id).unwrap();
+            let idx = self.store.get_container_idx(&event.container_id).unwrap();
             let local = event.local;
             for d in event.diff {
                 self.append_event_diff(idx, d, local);
@@ -291,7 +240,7 @@ impl Transaction {
     }
 }
 
-impl Drop for Transaction {
+impl<'a> Drop for Transaction<'a> {
     fn drop(&mut self) {
         if !self.committed {
             self.commit().unwrap();

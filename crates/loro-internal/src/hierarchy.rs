@@ -250,6 +250,11 @@ impl Hierarchy {
     }
 
     pub(crate) fn notify_without_lock(hierarchy: &Arc<Mutex<Hierarchy>>, raw_event: RawEvent) {
+        let mut hierarchy = hierarchy.try_lock().unwrap();
+        Self::notify_without_lock_impl(&mut hierarchy, raw_event);
+    }
+
+    pub(crate) fn notify_without_lock_impl(hierarchy: &mut Hierarchy, raw_event: RawEvent) {
         let target_id = raw_event.container_id;
 
         let (observers, dispatches, event) = {
@@ -265,7 +270,7 @@ impl Hierarchy {
                 origin: raw_event.origin,
             };
             let mut dispatches: SmallVec<[_; 1]> = SmallVec::new();
-            let mut hierarchy = hierarchy.try_lock().unwrap();
+
             let mut current_target_id = Some(target_id.clone());
             let mut count = 0;
             let mut path_to_root = event.absolute_path.clone();
@@ -336,7 +341,7 @@ impl Hierarchy {
 
     #[inline]
     fn call_observers(
-        hierarchy: &Arc<Mutex<Hierarchy>>,
+        hierarchy: &mut Hierarchy,
         observers: &mut FxHashMap<SubscriptionID, Observer>,
         dispatches: SmallVec<[EventDispatch; 1]>,
         mut event: Event,
@@ -354,8 +359,8 @@ impl Hierarchy {
                 if let Some(observer) = observers.get_mut(sub_id) {
                     observer.call(&event);
                     if observer.once() {
-                        let mut hierarchy_guard = hierarchy.try_lock().unwrap();
-                        hierarchy_guard.deleted_observers.insert(*sub_id);
+                        // let mut hierarchy_guard = hierarchy.try_lock().unwrap();
+                        hierarchy.deleted_observers.insert(*sub_id);
                     }
                 }
             }
@@ -363,28 +368,23 @@ impl Hierarchy {
     }
 
     #[inline]
-    fn reset(
-        hierarchy: &Arc<Mutex<Hierarchy>>,
-        mut observers: FxHashMap<SubscriptionID, Observer>,
-    ) {
-        let mut hierarchy_guard = hierarchy.try_lock().unwrap();
-        let deleted_ids = std::mem::take(&mut hierarchy_guard.deleted_observers);
+    fn reset(hierarchy: &mut Hierarchy, mut observers: FxHashMap<SubscriptionID, Observer>) {
+        let deleted_ids = std::mem::take(&mut hierarchy.deleted_observers);
         for sub_id in deleted_ids.iter() {
-            hierarchy_guard._remove_observer(sub_id, &mut observers);
+            hierarchy._remove_observer(sub_id, &mut observers);
         }
-        if hierarchy_guard.observers.is_empty() {
-            hierarchy_guard.observers = observers;
+        if hierarchy.observers.is_empty() {
+            hierarchy.observers = observers;
         } else {
-            hierarchy_guard.observers.extend(observers);
+            hierarchy.observers.extend(observers);
         }
-        let pending_dispatches = hierarchy_guard.pending_dispatches.take();
+        let pending_dispatches = hierarchy.pending_dispatches.take();
         if let Some((event, dispatches)) = pending_dispatches {
-            let mut observers = std::mem::take(&mut hierarchy_guard.observers);
-            drop(hierarchy_guard);
+            let mut observers = std::mem::take(&mut hierarchy.observers);
             Self::call_observers(hierarchy, &mut observers, dispatches, event);
             Self::reset(hierarchy, observers);
         } else {
-            hierarchy_guard.calling = false;
+            hierarchy.calling = false;
         }
     }
 

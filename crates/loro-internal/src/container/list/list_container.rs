@@ -79,29 +79,27 @@ impl ListContainer {
     }
 
     fn insert_value(&mut self, txn: &mut Transaction, pos: usize, value: LoroValue) {
-        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            let id = store.next_id();
-            let slice = self.raw_data.alloc(value);
-            self.state.insert(pos, slice.clone().into());
-            let op = Op::new(
-                id,
-                InnerContent::List(InnerListOp::Insert {
-                    slice: slice.clone().into(),
-                    pos,
-                }),
-                self.idx,
-            );
-            // record op id
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
-            // cache event
+        let id = txn.store.next_id();
+        let slice = self.raw_data.alloc(value);
+        self.state.insert(pos, slice.clone().into());
+        let op = Op::new(
+            id,
+            InnerContent::List(InnerListOp::Insert {
+                slice: slice.clone().into(),
+                pos,
+            }),
+            self.idx,
+        );
+        // record op id
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
+        // cache event
 
-            if hierarchy.should_notify(&self.id) {
-                let value = self.raw_data.slice(&slice)[0].clone();
-                let delta = Delta::new().retain(pos).insert(vec![value]);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
-            }
-        });
+        if txn.hierarchy.should_notify(&self.id) {
+            let value = self.raw_data.slice(&slice)[0].clone();
+            let delta = Delta::new().retain(pos).insert(vec![value]);
+            txn.append_event_diff(self.idx, Diff::List(delta), true);
+        }
     }
 
     pub(crate) fn insert_batch(
@@ -113,57 +111,54 @@ impl ListContainer {
         if values.is_empty() {
             return;
         }
-        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            let slice = self.raw_data.alloc_arr(values);
-            // cache event
-            if hierarchy.should_notify(&self.id) {
-                let values = self.raw_data.slice(&slice).to_vec();
-                let delta = Delta::new().retain(pos).insert(values);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
-            }
-            self.state.insert(pos, slice.clone().into());
-            let id = store.next_id();
-            let op = Op::new(
-                id,
-                InnerContent::List(InnerListOp::Insert {
-                    slice: slice.into(),
-                    pos,
-                }),
-                self.idx,
-            );
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
-        });
+        let slice = self.raw_data.alloc_arr(values);
+        // cache event
+        if txn.hierarchy.should_notify(&self.id) {
+            let values = self.raw_data.slice(&slice).to_vec();
+            let delta = Delta::new().retain(pos).insert(values);
+            txn.append_event_diff(self.idx, Diff::List(delta), true);
+        }
+        self.state.insert(pos, slice.clone().into());
+        let id = txn.store.next_id();
+        let op = Op::new(
+            id,
+            InnerContent::List(InnerListOp::Insert {
+                slice: slice.into(),
+                pos,
+            }),
+            self.idx,
+        );
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
     }
 
     fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
         if len == 0 {
             return;
         }
+        let id = txn.store.next_id();
+        let op = Op::new(
+            id,
+            InnerContent::List(InnerListOp::new_del(pos, len)),
+            self.idx,
+        );
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
 
-        txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            let id = store.next_id();
-            let op = Op::new(
-                id,
-                InnerContent::List(InnerListOp::new_del(pos, len)),
-                self.idx,
-            );
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
+        if let Some(deleted_containers) =
+            self.update_hierarchy_on_delete(txn.hierarchy_mut(), pos, len)
+        {
+            deleted_containers.into_iter().for_each(|id| {
+                let idx = txn.store.get_container_idx(&id).unwrap();
+                txn.delete_container(idx);
+            })
+        }
 
-            if let Some(deleted_containers) = self.update_hierarchy_on_delete(hierarchy, pos, len) {
-                deleted_containers.into_iter().for_each(|id| {
-                    let idx = store.get_container_idx(&id).unwrap();
-                    txn.delete_container(idx);
-                })
-            }
-
-            self.state.delete_range(Some(pos), Some(pos + len));
-            if hierarchy.should_notify(&self.id) {
-                let delta = Delta::new().retain(pos).delete(len);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
-            }
-        });
+        self.state.delete_range(Some(pos), Some(pos + len));
+        if txn.hierarchy.should_notify(&self.id) {
+            let delta = Delta::new().retain(pos).delete(len);
+            txn.append_event_diff(self.idx, Diff::List(delta), true);
+        }
     }
 
     pub fn get(&self, pos: usize) -> Option<LoroValue> {

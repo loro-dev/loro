@@ -94,55 +94,55 @@ impl MapContainer {
     }
 
     fn insert_value(&mut self, txn: &mut Transaction, key: InternalString, value: LoroValue) {
-        txn.with_store_hierarchy_mut(|txn, store, h| {
-            if h.should_notify(self.id()) {
-                let mut diff = MapDiff::new();
-                if let Some(old_value) = self.get(&key).cloned() {
-                    if value.is_null() {
-                        diff.deleted.insert(key.clone(), old_value);
-                    } else {
-                        diff.updated.insert(
-                            key.clone(),
-                            ValuePair {
-                                old: old_value,
-                                new: value.clone(),
-                            },
-                        );
-                    }
+        if txn.hierarchy.should_notify(self.id()) {
+            let mut diff = MapDiff::new();
+            if let Some(old_value) = self.get(&key).cloned() {
+                if value.is_null() {
+                    diff.deleted.insert(key.clone(), old_value);
                 } else {
-                    diff.added.insert(key.clone(), value.clone());
-                };
-
-                txn.append_event_diff(self.idx, Diff::Map(diff), true);
-            }
-            let value_index = self.pool.alloc(value).start;
-
-            if let Some(deleted_id) = self.update_hierarchy_if_container_is_overwritten(&key, h) {
-                let idx = store.get_container_idx(&deleted_id).unwrap();
-                txn.delete_container(idx);
-            }
-            self.state.insert(
-                key.clone(),
-                ValueSlot {
-                    value: value_index,
-                    order: TotalOrderStamp {
-                        lamport: store.next_lamport(),
-                        client_id: store.this_client_id,
-                    },
-                },
-            );
-            let id = store.next_id();
-            let op = Op {
-                counter: id.counter,
-                container: self.idx,
-                content: InnerContent::Map(InnerMapSet {
-                    key,
-                    value: value_index,
-                }),
+                    diff.updated.insert(
+                        key.clone(),
+                        ValuePair {
+                            old: old_value,
+                            new: value.clone(),
+                        },
+                    );
+                }
+            } else {
+                diff.added.insert(key.clone(), value.clone());
             };
-            store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
-        });
+
+            txn.append_event_diff(self.idx, Diff::Map(diff), true);
+        }
+        let value_index = self.pool.alloc(value).start;
+
+        if let Some(deleted_id) =
+            self.update_hierarchy_if_container_is_overwritten(&key, txn.hierarchy_mut())
+        {
+            let idx = txn.store.get_container_idx(&deleted_id).unwrap();
+            txn.delete_container(idx);
+        }
+        self.state.insert(
+            key.clone(),
+            ValueSlot {
+                value: value_index,
+                order: TotalOrderStamp {
+                    lamport: txn.store.next_lamport(),
+                    client_id: txn.store.this_client_id,
+                },
+            },
+        );
+        let id = txn.store.next_id();
+        let op = Op {
+            counter: id.counter,
+            container: self.idx,
+            content: InnerContent::Map(InnerMapSet {
+                key,
+                value: value_index,
+            }),
+        };
+        txn.store.append_local_ops(&[op]);
+        txn.update_version(txn.store.frontiers().into());
     }
 
     fn update_hierarchy_if_container_is_overwritten(
