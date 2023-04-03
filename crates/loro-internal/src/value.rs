@@ -244,7 +244,7 @@ impl LoroValue {
                                 s.insert_str(index, value);
                                 index += value.len();
                             }
-                            DeltaItem::Delete(len) => {
+                            DeltaItem::Delete { len, .. } => {
                                 s.drain(index..index + len);
                             }
                         }
@@ -268,7 +268,7 @@ impl LoroValue {
                                     index += 1;
                                 });
                             }
-                            DeltaItem::Delete(len) => {
+                            DeltaItem::Delete { len, .. } => {
                                 seq.drain(index..index + len);
                             }
                         }
@@ -329,7 +329,7 @@ pub mod wasm {
     use crate::{
         container::ContainerID,
         delta::{Delta, DeltaItem, MapDiff},
-        event::{Diff, Index},
+        event::{Diff, Index, Utf16Meta},
         LoroError, LoroValue,
     };
 
@@ -556,21 +556,22 @@ pub mod wasm {
         }
     }
 
-    impl From<Delta<String>> for JsValue {
-        fn from(value: Delta<String>) -> Self {
+    impl From<Delta<String, Utf16Meta>> for JsValue {
+        fn from(value: Delta<String, Utf16Meta>) -> Self {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.iter().enumerate() {
                 arr.set(i as u32, JsValue::from(v.clone()));
             }
+
             arr.into_js_result().unwrap()
         }
     }
 
-    impl From<DeltaItem<String, ()>> for JsValue {
-        fn from(value: DeltaItem<String, ()>) -> Self {
+    impl From<DeltaItem<String, Utf16Meta>> for JsValue {
+        fn from(value: DeltaItem<String, Utf16Meta>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len, .. } => {
+                DeltaItem::Retain { len, meta } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -580,7 +581,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(len as f64),
+                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
                     )
                     .unwrap();
                 }
@@ -599,7 +600,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Delete(len) => {
+                DeltaItem::Delete { len, meta } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -609,7 +610,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(len as f64),
+                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
                     )
                     .unwrap();
                 }
@@ -657,7 +658,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Delete(len) => {
+                DeltaItem::Delete { len, .. } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),

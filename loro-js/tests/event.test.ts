@@ -211,6 +211,50 @@ describe("event", () => {
       expect(times).toBe(2);
     });
   });
+
+  describe("text event length should be utf16", () => {
+    it("test", async () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let string = "";
+      text.subscribe(loro, (event) => {
+        for (const diff of event.diff) {
+          expect(diff.type).toBe("text");
+          if (diff.type === "text") {
+            let newString = "";
+            let pos = 0;
+            for (const delta of diff.diff) {
+              if (delta.type === "retain") {
+                pos += delta.len;
+                newString += string.slice(0, pos);
+              } else if (delta.type === "insert") {
+                newString += delta.value;
+              } else {
+                pos += delta.len;
+              }
+            }
+
+            string = newString + string.slice(pos);
+          }
+        }
+      });
+      text.insert(loro, 0, "你好");
+      await zeroMs();
+      expect(text.toString()).toBe(string);
+
+      text.insert(loro, 1, "世界");
+      await zeroMs();
+      expect(text.toString()).toBe(string);
+
+      text.insert(loro, 2, "👍");
+      await zeroMs();
+      expect(text.toString()).toBe(string);
+
+      text.insert(loro, 4, "♪(^∇^*)");
+      await zeroMs();
+      expect(text.toString()).toBe(string);
+    });
+  });
 });
 
 function zeroMs(): Promise<void> {

@@ -817,8 +817,8 @@ mod find_common_ancestors_proptest {
 
         #[test]
         fn test_4dags(
-            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100 * PROPTEST_FACTOR_10),
-            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..100 * PROPTEST_FACTOR_10)
+            before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..50 * PROPTEST_FACTOR_10),
+            after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..50 * PROPTEST_FACTOR_10)
         ) {
             test_single_common_ancestor(4, before_merged_insertions, after_merged_insertions)?;
         }

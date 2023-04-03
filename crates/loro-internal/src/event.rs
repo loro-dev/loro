@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::ContainerID,
-    delta::{Delta, MapDiff},
+    delta::{Delta, DeltaType, MapDiff, Meta},
     transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,
@@ -55,10 +55,67 @@ pub enum Index {
     Seq(usize),
 }
 
+#[repr(transparent)]
+#[derive(Default, Clone, Copy, Debug, Serialize, PartialEq)]
+pub struct Utf16Meta {
+    pub utf16_len: Option<usize>,
+}
+
+impl Meta for Utf16Meta {
+    fn empty() -> Self {
+        Utf16Meta { utf16_len: None }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.utf16_len.is_none()
+    }
+
+    fn compose(&mut self, _: &Self, _: (DeltaType, DeltaType)) {}
+
+    fn take(&mut self, other: &Self) -> Self {
+        if let Some(utf16_len) = &mut self.utf16_len {
+            let other_len = other.utf16_len.unwrap_or(0);
+            debug_assert!(
+                other_len <= *utf16_len,
+                "other_len: {}, utf16_len: {}",
+                other_len,
+                utf16_len
+            );
+            *utf16_len -= other_len;
+            debug_assert_ne!(*utf16_len, 0);
+        }
+
+        *other
+    }
+
+    fn is_mergeable(&self, _: &Self) -> bool {
+        true
+    }
+
+    fn merge(&mut self, other: &Self) {
+        match (&mut self.utf16_len, &other.utf16_len) {
+            (Some(a), Some(b)) => {
+                *a += *b;
+            }
+            (a, _) => {
+                *a = None;
+            }
+        }
+    }
+}
+
+impl Utf16Meta {
+    pub(crate) fn new(utf16_len: usize) -> Self {
+        Utf16Meta {
+            utf16_len: Some(utf16_len),
+        }
+    }
+}
+
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
-    Text(Delta<String>),
+    Text(Delta<String, Utf16Meta>),
     Map(MapDiff<LoroValue>),
 }
 

@@ -290,8 +290,9 @@ impl PoolString {
         utf16_index_to_utf8(b, end)
     }
 
-    pub fn utf8_index_to_utf16(&self, end: usize) -> usize {
-        count_utf16_chars(&self.slice.as_ref().unwrap()[..end])
+    pub fn utf8_index_to_utf16(&self, end: usize) -> Option<usize> {
+        let slice = self.slice.as_ref()?;
+        Some(count_utf16_chars(&slice[..end]))
     }
 }
 
@@ -343,7 +344,7 @@ fn utf16_index_to_utf8(str: &[u8], end: usize) -> usize {
 
 #[cfg(test)]
 mod test {
-    use crate::text::utf16::count_utf16_chars;
+    use crate::container::text::utf16::count_utf16_chars;
 
     use super::utf16_index_to_utf8;
 

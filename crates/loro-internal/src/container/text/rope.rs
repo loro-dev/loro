@@ -41,7 +41,19 @@ impl Rope {
             |x| x.atom_len(),
             |x| x.utf16 as usize,
             |x| x.utf16_length as usize,
-            |s, src_offset| s.utf8_index_to_utf16(src_offset),
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap(),
+        )
+    }
+
+    /// this method will downgrade to use utf8 length directly when the content is unknown
+    pub fn utf8_to_utf16_with_unknown(&self, index: usize) -> usize {
+        self.process_cursor_at(
+            index,
+            |x| x.utf8 as usize,
+            |x| x.atom_len(),
+            |x| x.utf16 as usize,
+            |x| x.utf16_length as usize,
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(0),
         )
     }
 
@@ -152,7 +164,6 @@ impl Rope {
         utf16_len: usize,
     ) -> Result<(usize, usize), LoroError> {
         if utf16_pos + utf16_len > self.utf16_len() {
-            dbg!(self.len(), self.utf16_len());
             return Err(LoroError::OutOfBound {
                 pos: utf16_len + utf16_pos,
                 len: self.utf16_len(),
