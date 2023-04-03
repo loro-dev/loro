@@ -1345,6 +1345,30 @@ mod failed_tests {
         )
     }
 
+    #[test]
+    fn merge_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 2,
+                    is_del: true,
+                },
+            ],
+        )
+    }
+
     use super::ContainerType as C;
     #[test]
     fn to_minify() {

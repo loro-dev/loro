@@ -140,7 +140,6 @@ impl MapContainer {
                     value: value_index,
                 }),
             };
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
         });

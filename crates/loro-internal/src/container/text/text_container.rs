@@ -53,10 +53,45 @@ impl TextContainer {
         }
     }
 
-    pub(crate) fn insert(&mut self, txn: &mut Transaction, pos: usize, text: &str) {
+    pub(crate) fn insert(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        text: &str,
+    ) -> Result<(), LoroError> {
+        if pos > self.state.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.state.len(),
+            });
+        }
         let slice = self.raw_str.alloc(text);
         let op_slice = SliceRange::from_pool_string(&slice);
         self.state.insert(pos, slice);
+        self._record_insert_op(txn, op_slice, pos, text);
+        Ok(())
+    }
+
+    pub(crate) fn insert_utf16(
+        &mut self,
+        txn: &mut Transaction,
+        utf16_pos: usize,
+        text: &str,
+    ) -> Result<(), LoroError> {
+        let slice = self.raw_str.alloc(text);
+        let op_slice = SliceRange::from_pool_string(&slice);
+        let pos = self.state.insert_utf16(utf16_pos, slice)?;
+        self._record_insert_op(txn, op_slice, pos, text);
+        Ok(())
+    }
+
+    fn _record_insert_op(
+        &mut self,
+        txn: &mut Transaction,
+        op_slice: SliceRange,
+        pos: usize,
+        text: &str,
+    ) {
         txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let id = store.next_id();
             let op = Op::new(
@@ -67,7 +102,6 @@ impl TextContainer {
                 }),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 
@@ -82,6 +116,37 @@ impl TextContainer {
     }
 
     pub(crate) fn delete(&mut self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        self._record_delete_op(txn, pos, len, None, None);
+        self.state.delete_range(Some(pos), Some(pos + len));
+    }
+
+    pub(crate) fn delete_utf16(
+        &mut self,
+        txn: &mut Transaction,
+        utf16_pos: usize,
+        utf16_len: usize,
+    ) -> Result<(), LoroError> {
+        if utf16_len == 0 {
+            return Ok(());
+        }
+
+        let (pos, len) = self.state.delete_utf16(utf16_pos, utf16_len)?;
+        self._record_delete_op(txn, pos, len, Some(utf16_pos), Some(utf16_len));
+        Ok(())
+    }
+
+    fn _record_delete_op(
+        &mut self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+        utf16_pos: Option<usize>,
+        utf16_len: Option<usize>,
+    ) {
         txn.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let id = store.next_id();
             let op = Op::new(
@@ -89,20 +154,19 @@ impl TextContainer {
                 InnerContent::List(InnerListOp::new_del(pos, len)),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 
             if hierarchy.should_notify(&self.id) {
-                let utf16_pos = self.state.utf8_to_utf16(pos);
-                let utf16_end = self.state.utf8_to_utf16(pos + len);
+                let utf16_pos = utf16_pos.unwrap_or_else(|| self.state.utf8_to_utf16(pos));
+                let utf16_len =
+                    utf16_len.unwrap_or_else(|| self.state.utf8_to_utf16(pos + len) - utf16_pos);
                 let delta = Delta::new()
                     .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
-                    .delete_with_meta(len, Utf16Meta::new(utf16_end - utf16_pos));
+                    .delete_with_meta(len, Utf16Meta::new(utf16_len));
                 txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
-        self.state.delete_range(Some(pos), Some(pos + len));
     }
 
     pub fn text_len(&self) -> usize {
@@ -119,7 +183,7 @@ impl TextContainer {
     pub fn debug_inspect(&mut self) {
         let pool = &self.raw_str;
         println!(
-            "Text Container {:?}, Raw String size={}, Tree=>\n",
+            "Text Container {:?}, Raw String size={}, Tree=>",
             self.id,
             pool.len(),
         );
@@ -509,17 +573,10 @@ impl Text {
         }
         self.with_transaction(txn, |txn, x| {
             let len = x.text_len();
-            if len < pos{
-                return Err(LoroError::TransactionError(
-                    format!(
-                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
-                        self.container_idx, len, pos
-                    )
-                    .into(),
-                ));
+            if len < pos {
+                return Err(LoroError::OutOfBound { pos, len });
             }
-            x.insert(txn, pos, text);
-            Ok(())
+            x.insert(txn, pos, text)
         })
     }
 
@@ -529,21 +586,7 @@ impl Text {
         pos: usize,
         text: S,
     ) -> Result<(), crate::LoroError> {
-        self.with_transaction(txn, |txn, x| {
-            let pos = x.state.utf16_to_utf8(pos);
-            let len = x.text_len();
-            if len < pos{
-                return Err(LoroError::TransactionError(
-                    format!(
-                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
-                        self.container_idx, len, pos
-                    )
-                    .into(),
-                ));
-            }
-            x.insert(txn, pos, text.as_ref());
-            Ok(())
-        })
+        self.with_transaction(txn, |txn, x| x.insert_utf16(txn, pos, text.as_ref()))
     }
 
     pub fn delete<T: Transact>(
@@ -557,19 +600,11 @@ impl Text {
         }
         self.with_transaction(txn, |txn, x| {
             let current_length = x.text_len();
-            if pos > current_length {
-                return Err(LoroError::TransactionError(
-                    format!(
-                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
-                        self.container_idx, len, pos
-                    )
-                    .into(),
-                ));
-            }
             if pos + len > current_length {
-                return Err(LoroError::TransactionError(
-                    format!("`ContainerIdx-{:?}` can not apply delete op: the current len is {} but the delete range is {:?}", self.container_idx, current_length, pos..pos+len).into(),
-                ));
+                return Err(LoroError::OutOfBound {
+                    pos: pos + len,
+                    len: current_length,
+                });
             }
             x.delete(txn, pos, len);
             Ok(())
@@ -582,28 +617,7 @@ impl Text {
         pos: usize,
         len: usize,
     ) -> Result<(), crate::LoroError> {
-        self.with_transaction(txn, |txn, text| {
-            let end = pos + len;
-            let pos = text.state.utf16_to_utf8(pos);
-            let len = text.state.utf16_to_utf8(end) - pos;
-            let current_length = text.text_len();
-            if pos > current_length {
-                return Err(LoroError::TransactionError(
-                    format!(
-                        "`ContainerIdx-{:?}` index out of bounds: the len is {} but the index is {}",
-                        self.container_idx, len, pos
-                    )
-                    .into(),
-                ));
-            }
-            if pos + len > current_length {
-                return Err(LoroError::TransactionError(
-                    format!("`ContainerIdx-{:?}` can not apply delete op: the current len is {} but the delete range is {:?}", self.container_idx, current_length, pos..pos+len).into(),
-                ));
-            }
-            text.delete(txn, pos, len);
-            Ok(())
-        })
+        self.with_transaction(txn, |txn, text| text.delete_utf16(txn, pos, len))
     }
 
     pub fn get_value(&self) -> LoroValue {

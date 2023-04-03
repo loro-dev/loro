@@ -203,7 +203,9 @@ fn two_client_text_sync() {
     let value = value.as_string().unwrap();
     assert_eq!(&**value, "0563412");
 
+    println!("{}", text_container.len());
     text_container.delete(&store_b, 0, 2).unwrap();
+    println!("{}", text_container.len());
     text_container.insert(&store_b, 4, "789").unwrap();
     let value = text_container.get_value();
     let value = value.as_string().unwrap();

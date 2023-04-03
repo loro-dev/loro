@@ -8,3 +8,4 @@ pub mod tracker;
 mod unicode;
 #[cfg(feature = "test_utils")]
 pub use unicode::test::{apply, Action};
+mod utf16;

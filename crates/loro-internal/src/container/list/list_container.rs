@@ -1,4 +1,3 @@
-// TODO: refactor, extract common code with text
 use std::sync::{Mutex, Weak};
 
 use rle::{
@@ -93,7 +92,6 @@ impl ListContainer {
                 self.idx,
             );
             // record op id
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
             // cache event
@@ -133,7 +131,6 @@ impl ListContainer {
                 }),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
         });
@@ -151,7 +148,6 @@ impl ListContainer {
                 InnerContent::List(InnerListOp::new_del(pos, len)),
                 self.idx,
             );
-            txn.push(self.idx, id);
             store.append_local_ops(&[op]);
             txn.update_version(store.frontiers().into());
 

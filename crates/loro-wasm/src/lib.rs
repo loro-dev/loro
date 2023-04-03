@@ -244,7 +244,8 @@ impl Loro {
     }
 }
 
-fn call_after_micro_task(ob: observer::Observer, e: Arc<loro_internal::event::Event>) {
+fn call_after_micro_task(ob: observer::Observer, e: &loro_internal::event::Event) {
+    let e = e.clone();
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
@@ -374,15 +375,23 @@ pub struct LoroText(Text);
 
 #[wasm_bindgen]
 impl LoroText {
-    pub fn insert(&mut self, txn: &JsTransaction, index: usize, content: &str) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.insert_utf16(&txn, index, content)?;
+    pub fn __loro_insert(&mut self, txn: &Loro, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_utf16(&*txn.0.borrow(), index, content)?;
         Ok(())
     }
 
-    pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.delete_utf16(&txn, index, len)?;
+    pub fn __loro_delete(&mut self, txn: &Loro, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_utf16(&*txn.0.borrow(), index, len)?;
+        Ok(())
+    }
+
+    pub fn __txn_insert(&mut self, txn: &Transaction, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_utf16(&txn.0, index, content)?;
+        Ok(())
+    }
+
+    pub fn __txn_delete(&mut self, txn: &Transaction, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_utf16(&txn.0, index, len)?;
         Ok(())
     }
 
@@ -441,20 +450,31 @@ const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Ma
 
 #[wasm_bindgen]
 impl LoroMap {
-    #[wasm_bindgen(js_name = "set")]
-    pub fn insert(&mut self, txn: &JsTransaction, key: &str, value: JsValue) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
+    pub fn __loro_insert(&mut self, txn: &Loro, key: &str, value: JsValue) -> JsResult<()> {
         if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&txn, key, v)?;
+            self.0.insert(&*txn.0.borrow(), key, v)?;
         } else {
-            self.0.insert(&txn, key, value)?;
+            self.0.insert(&*txn.0.borrow(), key, value)?;
         };
         Ok(())
     }
 
-    pub fn delete(&mut self, txn: &JsTransaction, key: &str) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.delete(&txn, key)?;
+    pub fn __txn_insert(&mut self, txn: &Transaction, key: &str, value: JsValue) -> JsResult<()> {
+        if let Some(v) = js_try_to_prelim(&value) {
+            self.0.insert(&txn.0, key, v)?;
+        } else {
+            self.0.insert(&txn.0, key, value)?;
+        };
+        Ok(())
+    }
+
+    pub fn __loro_delete(&mut self, txn: &Loro, key: &str) -> JsResult<()> {
+        self.0.delete(&*txn.0.borrow(), key)?;
+        Ok(())
+    }
+
+    pub fn __txn_delete(&mut self, txn: &Transaction, key: &str) -> JsResult<()> {
+        self.0.delete(&txn.0, key)?;
         Ok(())
     }
 
@@ -562,19 +582,36 @@ pub struct LoroList(List);
 
 #[wasm_bindgen]
 impl LoroList {
-    pub fn insert(&mut self, txn: &JsTransaction, index: usize, value: JsValue) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
+    pub fn __loro_insert(&mut self, loro: &Loro, index: usize, value: JsValue) -> JsResult<()> {
         if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&txn, index, v)?;
+            self.0.insert(&*loro.0.borrow(), index, v)?;
         } else {
-            self.0.insert(&txn, index, value)?;
+            self.0.insert(&*loro.0.borrow(), index, value)?;
         };
         Ok(())
     }
 
-    pub fn delete(&mut self, txn: &JsTransaction, index: usize, len: usize) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.delete(&txn, index, len)?;
+    pub fn __txn_insert(
+        &mut self,
+        txn: &Transaction,
+        index: usize,
+        value: JsValue,
+    ) -> JsResult<()> {
+        if let Some(v) = js_try_to_prelim(&value) {
+            self.0.insert(&txn.0, index, v)?;
+        } else {
+            self.0.insert(&txn.0, index, value)?;
+        };
+        Ok(())
+    }
+
+    pub fn __loro_delete(&mut self, loro: &Loro, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete(&*loro.0.borrow(), index, len)?;
+        Ok(())
+    }
+
+    pub fn __txn_delete(&mut self, loro: &Transaction, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete(&loro.0, index, len)?;
         Ok(())
     }
 
@@ -599,8 +636,6 @@ impl LoroList {
         value.into()
     }
 
-    /// FIXME: the returned value should not hold a Arc reference to the container
-    /// it may cause memory leak
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,

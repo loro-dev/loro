@@ -154,7 +154,7 @@ impl LoroCore {
     }
 
     #[cfg(feature = "test_utils")]
-    pub fn debug_inspect(&self) {
+    pub fn diagnose(&self) {
         self.log_store.try_write().unwrap().debug_inspect();
     }
 
@@ -178,7 +178,7 @@ impl LoroCore {
 
     #[instrument(skip_all)]
     pub(crate) fn notify(&self, events: Vec<RawEvent>) {
-        Hierarchy::send_notifications_without_lock(self.hierarchy.clone(), events)
+        Hierarchy::send_notifications_without_lock(&self.hierarchy, events)
     }
 
     // config
