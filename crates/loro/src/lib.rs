@@ -94,12 +94,15 @@ impl Loro {
 
 impl Transact for Loro {
     #[inline(always)]
-    fn transact(&self) -> loro_internal::TransactionWrap {
+    fn transact<'s: 'a, 'a>(&'s self) -> loro_internal::TransactionWrap<'a> {
         self.0.transact()
     }
 
     #[inline(always)]
-    fn transact_with(&self, origin: Option<loro_internal::Origin>) -> TransactionWrap {
+    fn transact_with<'s: 'a, 'a>(
+        &'s self,
+        origin: Option<loro_internal::Origin>,
+    ) -> TransactionWrap<'a> {
         self.0.transact_with(origin)
     }
 }

@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::BTreeMap,
     rc::Rc,
-    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard, Weak},
+    sync::{MutexGuard, RwLockWriteGuard},
 };
 
 use crate::{

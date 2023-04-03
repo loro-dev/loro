@@ -237,7 +237,7 @@ impl Loro {
     #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
     pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
         let origin = origin.as_string().map(Origin::from);
-        let txn = self.0.borrow().transact_with(origin);
+        let txn = unsafe { std::mem::transmute(self.0.borrow().transact_with(origin)) };
         let js_txn = JsValue::from(Transaction(txn));
         f.call1(&JsValue::NULL, &js_txn)?;
         Ok(())
@@ -336,7 +336,7 @@ impl Event {
 }
 
 #[wasm_bindgen]
-pub struct Transaction(TransactionWrap);
+pub struct Transaction(TransactionWrap<'static>);
 
 #[wasm_bindgen]
 impl Transaction {
@@ -357,13 +357,13 @@ fn get_transaction_mut(txn: &JsTransaction) -> TransactionWrap {
             let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
             let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
             let txn: RefMut<Transaction> = unsafe { Transaction::ref_mut_from_abi(ptr) };
-            txn.0.transact()
+            unsafe { std::mem::transmute(txn.0.transact()) }
         } else if ctor_name == "Loro" {
             let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
             let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
             let loro: RefMut<Loro> = unsafe { Loro::ref_mut_from_abi(ptr) };
             let loro = loro.0.borrow();
-            loro.transact()
+            unsafe { std::mem::transmute(loro.transact()) }
         } else {
             panic!("you should input Transaction");
         }
