@@ -29,6 +29,7 @@ use super::{
     string_pool::{Alive, PoolString, StringPool},
     text_content::{ListSlice, SliceRange},
     tracker::{Effect, Tracker},
+    utf16::count_utf16_chars,
 };
 
 #[derive(Debug)]
@@ -109,7 +110,10 @@ impl TextContainer {
                 let utf16_pos = self.state.utf8_to_utf16(pos);
                 let delta = Delta::new()
                     .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
-                    .insert(text.to_owned());
+                    .insert_with_meta(
+                        text.to_owned(),
+                        Utf16Meta::new(count_utf16_chars(text.as_bytes())),
+                    );
                 txn.append_event_diff(self.idx, Diff::Text(delta), true);
             }
         });
@@ -330,12 +334,13 @@ impl ContainerTrait for TextContainer {
                         } else {
                             self.raw_str.slice(&slice.0).to_owned()
                         };
+                        let s_len = Utf16Meta::new(count_utf16_chars(s.as_bytes()));
                         let delta = Delta::new()
                             .retain_with_meta(
                                 *pos,
                                 Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(*pos)),
                             )
-                            .insert(s);
+                            .insert_with_meta(s, s_len);
                         ctx.push_diff(&self.id, Diff::Text(delta));
                     }
                     self.state.insert(
@@ -423,12 +428,13 @@ impl ContainerTrait for TextContainer {
                         } else {
                             self.raw_str.slice(&content.0).to_owned()
                         };
+                        let s_len = Utf16Meta::new(count_utf16_chars(s.as_bytes()));
                         let delta = Delta::new()
                             .retain_with_meta(
                                 pos,
                                 Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(pos)),
                             )
-                            .insert(s);
+                            .insert_with_meta(s, s_len);
                         diff.push(Diff::Text(delta));
                     }
 
@@ -521,7 +527,8 @@ impl ContainerTrait for TextContainer {
             let should_notify = hierarchy.should_notify(&self.id);
             if should_notify {
                 let s = self.raw_str.slice(&(0..state_len)).to_owned();
-                let delta = Delta::new().insert(s);
+                let s_len = Utf16Meta::new(count_utf16_chars(s.as_bytes()));
+                let delta = Delta::new().insert_with_meta(s, s_len);
                 ctx.push_diff(&self.id, Diff::Text(delta));
             }
         } else {
@@ -571,12 +578,12 @@ impl Text {
         if text.is_empty() {
             return Ok(());
         }
-        self.with_transaction(txn, |txn, x| {
-            let len = x.text_len();
+        self.with_transaction(txn, |txn, inner| {
+            let len = inner.text_len();
             if len < pos {
                 return Err(LoroError::OutOfBound { pos, len });
             }
-            x.insert(txn, pos, text)
+            inner.insert(txn, pos, text)
         })
     }
 

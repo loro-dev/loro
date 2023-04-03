@@ -581,7 +581,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(meta.unwrap().utf16_len as f64),
+                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
                     )
                     .unwrap();
                 }
@@ -610,7 +610,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(meta.unwrap().utf16_len as f64),
+                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
                     )
                     .unwrap();
                 }

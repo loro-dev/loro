@@ -164,7 +164,6 @@ impl Rope {
         utf16_len: usize,
     ) -> Result<(usize, usize), LoroError> {
         if utf16_pos + utf16_len > self.utf16_len() {
-            dbg!(self.len(), self.utf16_len());
             return Err(LoroError::OutOfBound {
                 pos: utf16_len + utf16_pos,
                 len: self.utf16_len(),
