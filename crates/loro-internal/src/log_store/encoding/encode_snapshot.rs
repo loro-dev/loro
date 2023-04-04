@@ -24,7 +24,7 @@ use crate::{
     log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
     op::{InnerContent, Op},
     span::HasLamportSpan,
-    version::TotalOrderStamp,
+    version::{Frontiers, TotalOrderStamp},
     ContainerType, InternalString, LogStore, LoroCore, LoroError, LoroValue, VersionVector,
 };
 
@@ -427,7 +427,7 @@ pub(super) fn decode_snapshot(
                     let raw = deps_iter.next().unwrap();
                     ID::new(clients[raw.client_idx as usize], raw.counter)
                 })
-                .collect::<SmallVec<_>>();
+                .collect::<Frontiers>();
 
             if dep_on_self {
                 deps.push(ID::new(client_id, counter - 1));

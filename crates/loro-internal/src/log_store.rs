@@ -246,7 +246,7 @@ impl LogStore {
         let last_id = ID::new(self.this_client_id, last_ctr);
         let change = Change {
             id,
-            deps: std::mem::replace(&mut self.frontiers, smallvec::smallvec![last_id]),
+            deps: std::mem::replace(&mut self.frontiers, Frontiers::from_id(last_id)),
             ops: ops.into(),
             lamport,
             timestamp,

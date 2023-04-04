@@ -789,7 +789,8 @@ mod find_common_ancestors {
         );
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
-                .into_iter()
+                .iter()
+                .copied()
                 .collect::<Vec<_>>(),
             vec![ID::new(0, 2)]
         );
@@ -950,7 +951,7 @@ mod find_common_ancestors_proptest {
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
         let actual = dags[0].find_common_ancestor(&[a], &[b]);
-        prop_assert_eq!(&*actual, &[expected]);
+        prop_assert_eq!(&**actual, &[expected]);
         Ok(())
     }
 

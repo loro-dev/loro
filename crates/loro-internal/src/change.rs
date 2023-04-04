@@ -122,7 +122,7 @@ impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
         Self {
             ops: self.ops.slice(from, to),
             deps: if from > 0 {
-                smallvec::smallvec![self.id.inc(from as Counter - 1)]
+                Frontiers::from_id(self.id.inc(from as Counter - 1))
             } else {
                 self.deps.clone()
             },

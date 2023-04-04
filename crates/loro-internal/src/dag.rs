@@ -311,7 +311,7 @@ where
     F: Fn(ID) -> Option<&'a D>,
 {
     if a_id.is_empty() || b_id.is_empty() {
-        return smallvec::smallvec![];
+        return Default::default();
     }
 
     _find_common_ancestor_new(get, a_id, b_id)
@@ -485,18 +485,18 @@ where
             let right_span = get(right).unwrap();
             if std::ptr::eq(left_span, right_span) {
                 if left.counter < right.counter {
-                    return smallvec![left];
+                    return smallvec![left].into();
                 } else {
-                    return smallvec![right];
+                    return smallvec![right].into();
                 }
             }
 
             if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
-                return smallvec![right];
+                return smallvec![right].into();
             }
 
             if right_span.deps().len() == 1 && left_span.contains_id(right_span.deps()[0]) {
-                return smallvec![left];
+                return smallvec![left].into();
             }
         }
     }
