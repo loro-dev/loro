@@ -59,7 +59,7 @@ impl GcConfig {
 }
 
 type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
-type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
+pub(crate) type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro

@@ -6,7 +6,7 @@ use fxhash::FxHashMap;
 use rle::HasLength;
 
 use crate::{
-    context::Context, dag::Dag, event::RawEvent, hierarchy::Hierarchy, LogStore, LoroError,
+    context::Context, dag::Dag, event::EventDiff, hierarchy::Hierarchy, LogStore, LoroError,
     VersionVector,
 };
 
@@ -60,28 +60,6 @@ impl LoroEncoder {
         Self::encode(&store, mode)
     }
 
-    pub(crate) fn decode_context<C: Context>(
-        ctx: &C,
-        input: &[u8],
-    ) -> Result<Vec<RawEvent>, LoroError> {
-        let store = ctx.log_store();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = ctx.hierarchy();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        Self::decode(&mut store, &mut hierarchy, input)
-    }
-
-    pub(crate) fn decode_batch_context<C: Context>(
-        ctx: &C,
-        input: &[Vec<u8>],
-    ) -> Result<Vec<RawEvent>, LoroError> {
-        let store = ctx.log_store();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = ctx.hierarchy();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        Self::decode_batch(&mut store, &mut hierarchy, input)
-    }
-
     pub(crate) fn encode(store: &LogStore, mode: EncodeMode) -> Vec<u8> {
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
@@ -122,7 +100,7 @@ impl LoroEncoder {
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         input: &[u8],
-    ) -> Result<Vec<RawEvent>, LoroError> {
+    ) -> Result<Vec<EventDiff>, LoroError> {
         let (magic_bytes, input) = input.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -143,7 +121,7 @@ impl LoroEncoder {
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         batch: &[Vec<u8>],
-    ) -> Result<Vec<RawEvent>, LoroError> {
+    ) -> Result<Vec<EventDiff>, LoroError> {
         let mut changes: RemoteClientChanges = FxHashMap::default();
         for input in batch {
             let (magic_bytes, input) = input.split_at(4);
@@ -187,7 +165,7 @@ impl LoroEncoder {
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         input: &[u8],
-    ) -> Result<Vec<RawEvent>, LoroError> {
+    ) -> Result<Vec<EventDiff>, LoroError> {
         let changes = encode_updates::decode_updates(input)?;
         Ok(store.import(hierarchy, changes))
     }
@@ -202,7 +180,7 @@ impl LoroEncoder {
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         input: &[u8],
-    ) -> Result<Vec<RawEvent>, LoroError> {
+    ) -> Result<Vec<EventDiff>, LoroError> {
         let changes = encode_changes::decode_changes_to_inner_format(input, store)?;
         Ok(store.import(hierarchy, changes))
     }
@@ -217,7 +195,7 @@ impl LoroEncoder {
         store: &mut LogStore,
         hierarchy: &mut Hierarchy,
         input: &[u8],
-    ) -> Result<Vec<RawEvent>, LoroError> {
+    ) -> Result<Vec<EventDiff>, LoroError> {
         debug_log::group!("decode snapshot");
         let ans = encode_snapshot::decode_snapshot(store, hierarchy, input);
         debug_log::group_end!();

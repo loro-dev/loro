@@ -16,7 +16,7 @@ use crate::{
         ContainerID, ContainerType,
     },
     dag::Dag,
-    event::RawEvent,
+    event::EventDiff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
@@ -229,7 +229,7 @@ pub(super) fn decode_changes(
     store: &mut LogStore,
     hierarchy: &mut Hierarchy,
     input: &[u8],
-) -> Result<Vec<RawEvent>, LoroError> {
+) -> Result<Vec<EventDiff>, LoroError> {
     // TODO: using the one with fewer changes to import
     decode_changes_to_inner_format(input, store).map(|changes| store.import(hierarchy, changes))
 }

@@ -113,13 +113,12 @@ impl MapContainer {
                     diff.added.insert(key.clone(), value.clone());
                 };
 
-                txn.append_event_diff(self.idx, Diff::Map(diff), true);
+                txn.append_event_diff(&self.id, Diff::Map(diff), true);
             }
             let value_index = self.pool.alloc(value).start;
 
             if let Some(deleted_id) = self.update_hierarchy_if_container_is_overwritten(&key, h) {
-                let idx = store.get_container_idx(&deleted_id).unwrap();
-                txn.delete_container(idx);
+                txn.delete_container(&deleted_id);
             }
             self.state.insert(
                 key.clone(),
@@ -141,7 +140,6 @@ impl MapContainer {
                 }),
             };
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
         });
     }
 

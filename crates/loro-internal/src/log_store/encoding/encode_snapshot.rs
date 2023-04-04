@@ -5,7 +5,7 @@ use itertools::Itertools;
 use rle::{HasLength, RleVec, RleVecWithIndex};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::{
     change::{Change, ChangeMergeCfg},
@@ -18,7 +18,7 @@ use crate::{
         ContainerID, ContainerTrait,
     },
     dag::{remove_included_frontiers, Dag},
-    event::RawEvent,
+    event::EventDiff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
     log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
@@ -308,7 +308,7 @@ pub(super) fn decode_snapshot(
     store: &mut LogStore,
     hierarchy: &mut Hierarchy,
     input: &[u8],
-) -> Result<Vec<RawEvent>, LoroError> {
+) -> Result<Vec<EventDiff>, LoroError> {
     let encoded: SnapshotEncoded =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let SnapshotEncoded {
@@ -543,7 +543,7 @@ fn load_snapshot(
 
     // rebuild states by snapshot
     let mut import_context = ImportContext {
-        old_frontiers: smallvec![],
+        // old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
         old_vv: new_store.vv(),
         spans: vv.diff(&new_store.vv).left,

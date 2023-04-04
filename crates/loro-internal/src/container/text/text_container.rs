@@ -104,7 +104,6 @@ impl TextContainer {
                 self.idx,
             );
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
 
             if hierarchy.should_notify(&self.id) {
                 let utf16_pos = self.state.utf8_to_utf16(pos);
@@ -114,7 +113,7 @@ impl TextContainer {
                         text.to_owned(),
                         Utf16Meta::new(count_utf16_chars(text.as_bytes())),
                     );
-                txn.append_event_diff(self.idx, Diff::Text(delta), true);
+                txn.append_event_diff(&self.id, Diff::Text(delta), true);
             }
         });
     }
@@ -159,7 +158,6 @@ impl TextContainer {
                 self.idx,
             );
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
 
             if hierarchy.should_notify(&self.id) {
                 let utf16_pos = utf16_pos.unwrap_or_else(|| self.state.utf8_to_utf16(pos));
@@ -168,7 +166,7 @@ impl TextContainer {
                 let delta = Delta::new()
                     .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
                     .delete_with_meta(len, Utf16Meta::new(utf16_len));
-                txn.append_event_diff(self.idx, Diff::Text(delta), true);
+                txn.append_event_diff(&self.id, Diff::Text(delta), true);
             }
         });
     }

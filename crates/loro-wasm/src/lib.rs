@@ -256,7 +256,7 @@ fn call_after_micro_task(ob: observer::Observer, e: &loro_internal::event::Event
                 local: e.local,
                 origin: e.origin.clone(),
                 target: e.target.clone(),
-                diff: Either::A(e.diff.to_vec()),
+                diff: Either::A(e.diff),
                 path: Either::A(e.absolute_path.clone()),
             }
             .into(),
@@ -284,7 +284,7 @@ pub struct Event {
     pub local: bool,
     origin: Option<Origin>,
     target: ContainerID,
-    diff: Either<Vec<Diff>, JsValue>,
+    diff: Either<Diff, JsValue>,
     path: Either<Path, JsValue>,
 }
 
@@ -322,11 +322,7 @@ impl Event {
     pub fn diff(&mut self) -> JsValue {
         match &self.diff {
             Either::A(diff) => {
-                let arr = Array::new_with_length(diff.len() as u32);
-                for (i, p) in diff.iter().enumerate() {
-                    arr.set(i as u32, p.clone().into());
-                }
-                let value = arr.into_js_result().unwrap();
+                let value: JsValue = diff.clone().into();
                 self.diff = Either::B(value.clone());
                 value
             }

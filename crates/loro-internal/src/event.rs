@@ -11,12 +11,19 @@ use crate::{
 };
 
 #[derive(Debug)]
+pub(crate) struct EventDiff {
+    pub id: ContainerID,
+    pub diff: SmallVec<[Diff; 1]>,
+    pub local: bool,
+}
+
+#[derive(Debug)]
 pub(crate) struct RawEvent {
     pub container_id: ContainerID,
     pub old_version: Frontiers,
     pub new_version: Frontiers,
     pub local: bool,
-    pub diff: SmallVec<[Diff; 1]>,
+    pub diff: Diff,
     pub abs_path: Path,
     pub origin: Option<Origin>,
 }
@@ -30,7 +37,7 @@ pub struct Event {
     /// the relative path from current_target to target
     pub relative_path: Path,
     pub absolute_path: Path,
-    pub diff: SmallVec<[Diff; 1]>,
+    pub diff: Diff,
     pub local: bool,
     pub origin: Option<Origin>,
 }

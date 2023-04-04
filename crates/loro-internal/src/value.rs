@@ -571,7 +571,7 @@ pub mod wasm {
         fn from(value: DeltaItem<String, Utf16Meta>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len, meta } => {
+                DeltaItem::Retain { len: _len, meta } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -600,7 +600,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Delete { len, meta } => {
+                DeltaItem::Delete { len: _len, meta } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),

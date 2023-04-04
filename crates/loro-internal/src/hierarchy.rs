@@ -458,15 +458,6 @@ impl Hierarchy {
             }
         }
     }
-
-    pub(crate) fn send_notifications_without_lock(
-        hierarchy: &Arc<Mutex<Hierarchy>>,
-        events: Vec<RawEvent>,
-    ) {
-        for event in events {
-            Hierarchy::notify_without_lock(hierarchy, event);
-        }
-    }
 }
 
 #[cfg(test)]

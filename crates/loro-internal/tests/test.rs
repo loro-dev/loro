@@ -82,7 +82,7 @@ fn text_observe() {
     let moved_value = Arc::clone(&track_value);
     doc.subscribe_deep(Box::new(move |event| {
         let mut v = moved_value.lock().unwrap();
-        v.apply(&event.relative_path, &event.diff);
+        v.apply(&event.relative_path, &[event.diff.clone()]);
     }));
     let mut map = doc.get_map("meta");
     map.insert(&doc, "name", "anonymous").unwrap();

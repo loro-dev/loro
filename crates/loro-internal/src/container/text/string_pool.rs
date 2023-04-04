@@ -1,4 +1,4 @@
-use std::{fmt, ops::Range, str::Chars};
+use std::ops::Range;
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
