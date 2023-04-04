@@ -82,7 +82,6 @@ impl Meta for Utf16Meta {
                 utf16_len
             );
             *utf16_len -= other_len;
-            debug_assert_ne!(*utf16_len, 0);
         }
 
         *other
