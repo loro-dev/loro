@@ -123,6 +123,7 @@ impl LoroEncoder {
         batch: &[Vec<u8>],
     ) -> Result<Vec<EventDiff>, LoroError> {
         let mut changes: RemoteClientChanges = FxHashMap::default();
+        let mut snapshot_events = Vec::new();
         for input in batch {
             let (magic_bytes, input) = input.split_at(4);
             let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
@@ -134,23 +135,35 @@ impl LoroEncoder {
             let (_version, input) = input.split_at(version_len[0] as usize);
             let mode: ConcreteEncodeMode = input[0].into();
             let decoded = &input[1..];
-            let decoded = match mode {
+            let decoded_changes = match mode {
                 ConcreteEncodeMode::Updates => {
                     encode_updates::decode_updates_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::RleUpdates => {
                     encode_changes::decode_changes_to_inner_format(decoded, store)?
                 }
-                _ => unreachable!("snapshot should not be batched"),
+                ConcreteEncodeMode::Snapshot => {
+                    let (changes, events) = encode_snapshot::decode_snapshot_to_inner_format(
+                        store, hierarchy, decoded,
+                    )?;
+                    if let Some(events) = events {
+                        snapshot_events = events;
+                    }
+                    changes
+                }
             };
 
-            for (client, mut new_changes) in decoded {
+            for (client, mut new_changes) in decoded_changes {
                 // FIXME: changes may not be consecutive
                 changes.entry(client).or_default().append(&mut new_changes);
             }
         }
 
-        Ok(store.import(hierarchy, changes))
+        Ok(store
+            .import(hierarchy, changes)
+            .into_iter()
+            .chain(snapshot_events)
+            .collect())
     }
 }
 
@@ -200,5 +213,27 @@ impl LoroEncoder {
         let ans = encode_snapshot::decode_snapshot(store, hierarchy, input);
         debug_log::group_end!();
         ans
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::LoroCore;
+
+    #[test]
+    fn decode_batch() {
+        let mut a = LoroCore::default();
+        let mut b = LoroCore::default();
+        let mut text = a.get_text("text");
+        text.insert(&a, 0, "hello").unwrap();
+        let snapshot = a.encode_all();
+        let v1 = a.vv_cloned();
+        text.insert(&a, 5, " world").unwrap();
+        let updates2 = a.encode_from(v1);
+        let v2 = a.vv_cloned();
+        text.insert(&a, 11, "!!!").unwrap();
+        let updates3 = a.encode_from(v2);
+        b.decode_batch(&[updates3, updates2, snapshot]).unwrap();
+        assert_eq!(a.to_json(), b.to_json());
     }
 }

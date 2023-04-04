@@ -21,7 +21,9 @@ use crate::{
     event::EventDiff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
-    log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
+    log_store::{
+        encoding::encode_changes::get_lamport_by_deps, ImportContext, RemoteClientChanges,
+    },
     op::{InnerContent, Op},
     span::HasLamportSpan,
     version::TotalOrderStamp,
@@ -309,6 +311,20 @@ pub(super) fn decode_snapshot(
     hierarchy: &mut Hierarchy,
     input: &[u8],
 ) -> Result<Vec<EventDiff>, LoroError> {
+    let (changes, events) = decode_snapshot_to_inner_format(store, hierarchy, input)?;
+    let pending_events = store.import(hierarchy, changes);
+    if let Some(events) = events {
+        Ok(pending_events.into_iter().chain(events).collect())
+    } else {
+        Ok(pending_events)
+    }
+}
+
+pub(super) fn decode_snapshot_to_inner_format(
+    store: &mut LogStore,
+    hierarchy: &mut Hierarchy,
+    input: &[u8],
+) -> Result<(RemoteClientChanges, Option<Vec<EventDiff>>), LoroError> {
     let encoded: SnapshotEncoded =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let SnapshotEncoded {
@@ -328,7 +344,7 @@ pub(super) fn decode_snapshot(
                 store.get_or_create_container(&container_id);
             }
         }
-        return Ok(vec![]);
+        return Ok((Default::default(), None));
     }
     let mut container_idx2type = FxHashMap::default();
     for (idx, container_id) in containers.iter().enumerate() {
@@ -343,11 +359,11 @@ pub(super) fn decode_snapshot(
             std::cmp::Ordering::Less => {
                 // TODO warning
                 debug_log::debug_log!("[Warning] the vv of encoded snapshot is smaller than self, no change is applied");
-                return Ok(vec![]);
+                return Ok((Default::default(), None));
             }
             std::cmp::Ordering::Equal => {
                 debug_log::debug_log!("vv is equal, no change is applied");
-                return Ok(vec![]);
+                return Ok((Default::default(), None));
             }
             std::cmp::Ordering::Greater => store.vv.is_empty(),
         },
@@ -499,11 +515,10 @@ pub(super) fn decode_snapshot(
         for client_id in import_context.new_vv.keys() {
             changes.insert(*client_id, Vec::new());
         }
-        let pending_events = store.import(hierarchy, changes);
-        // TODO: events new vv need to be changed
+        // let pending_events = store.import(hierarchy, changes);
         let mut snapshot_events = store.get_events(hierarchy, &mut import_context);
-        snapshot_events.extend(pending_events);
-        Ok(snapshot_events)
+        // snapshot_events.extend(pending_events);
+        Ok((changes, Some(snapshot_events)))
     } else {
         let new_loro = LoroCore::default();
         let mut new_store = new_loro.log_store.try_write().unwrap();
@@ -519,7 +534,7 @@ pub(super) fn decode_snapshot(
             &clients,
         );
         let diff_changes = new_store.export(&store.vv);
-        Ok(store.import(hierarchy, diff_changes))
+        Ok((diff_changes, None))
     }
 }
 
@@ -543,7 +558,7 @@ fn load_snapshot(
 
     // rebuild states by snapshot
     let mut import_context = ImportContext {
-        // old_frontiers: smallvec![],
+        // // old_frontiers: smallvec![],
         new_frontiers: frontiers.get_frontiers(),
         old_vv: new_store.vv(),
         spans: vv.diff(&new_store.vv).left,
