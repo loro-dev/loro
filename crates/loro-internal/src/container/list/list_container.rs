@@ -93,13 +93,11 @@ impl ListContainer {
             );
             // record op id
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
-            // cache event
 
             if hierarchy.should_notify(&self.id) {
                 let value = self.raw_data.slice(&slice)[0].clone();
                 let delta = Delta::new().retain(pos).insert(vec![value]);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
+                txn.append_event_diff(&self.id, Diff::List(delta), true);
             }
         });
     }
@@ -119,7 +117,7 @@ impl ListContainer {
             if hierarchy.should_notify(&self.id) {
                 let values = self.raw_data.slice(&slice).to_vec();
                 let delta = Delta::new().retain(pos).insert(values);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
+                txn.append_event_diff(&self.id, Diff::List(delta), true);
             }
             self.state.insert(pos, slice.clone().into());
             let id = store.next_id();
@@ -132,7 +130,6 @@ impl ListContainer {
                 self.idx,
             );
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
         });
     }
 
@@ -149,19 +146,17 @@ impl ListContainer {
                 self.idx,
             );
             store.append_local_ops(&[op]);
-            txn.update_version(store.frontiers().into());
 
             if let Some(deleted_containers) = self.update_hierarchy_on_delete(hierarchy, pos, len) {
                 deleted_containers.into_iter().for_each(|id| {
-                    let idx = store.get_container_idx(&id).unwrap();
-                    txn.delete_container(idx);
+                    txn.delete_container(&id);
                 })
             }
 
             self.state.delete_range(Some(pos), Some(pos + len));
             if hierarchy.should_notify(&self.id) {
                 let delta = Delta::new().retain(pos).delete(len);
-                txn.append_event_diff(self.idx, Diff::List(delta), true);
+                txn.append_event_diff(&self.id, Diff::List(delta), true);
             }
         });
     }

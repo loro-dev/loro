@@ -1,4 +1,5 @@
 use crate::change::Change;
+use crate::event::EventDiff;
 use crate::hierarchy::Hierarchy;
 use crate::id::{ClientID, Counter, ID};
 use crate::op::RemoteOp;
@@ -7,7 +8,7 @@ use crate::version::PatchedVersionVector;
 use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
-    event::{Diff, RawEvent},
+    event::Diff,
     version::{Frontiers, IdSpanVector},
 };
 use itertools::Itertools;
@@ -33,7 +34,7 @@ use super::{ContainerGuard, RemoteClientChanges};
 
 #[derive(Debug)]
 pub struct ImportContext {
-    pub old_frontiers: Frontiers,
+    // pub old_frontiers: Frontiers,
     pub new_frontiers: Frontiers,
     pub old_vv: VersionVector,
     pub patched_old_vv: Option<PatchedVersionVector>,
@@ -89,7 +90,7 @@ impl LogStore {
         &mut self,
         hierarchy: &mut Hierarchy,
         changes: RemoteClientChanges,
-    ) -> Vec<RawEvent> {
+    ) -> Vec<EventDiff> {
         let changes = self.process_and_queue_changes(changes);
         if changes.is_empty() {
             return vec![];
@@ -103,7 +104,7 @@ impl LogStore {
             .map(|(k, v)| (self.reg.get_idx(&k).unwrap(), v))
             .collect();
         let mut context = ImportContext {
-            old_frontiers: self.frontiers.iter().copied().collect(),
+            // old_frontiers: self.frontiers.iter().copied().collect(),
             new_frontiers: next_frontiers.get_frontiers(),
             old_vv: self.vv.clone(),
             spans: next_vv.diff(&self.vv).left,
@@ -128,33 +129,20 @@ impl LogStore {
         &mut self,
         hierarchy: &mut Hierarchy,
         context: &mut ImportContext,
-    ) -> Vec<RawEvent> {
+    ) -> Vec<EventDiff> {
         let deleted = hierarchy.take_deleted();
         let mut events = Vec::with_capacity(context.diff.len());
-        let h = hierarchy;
-        let reg = &self.reg;
         for (id, diff) in std::mem::take(&mut context.diff)
             .into_iter()
             .filter(|x| !deleted.contains(&x.0))
         {
-            let Some(abs_path) = h.get_abs_path(reg, &id) else {
-                continue;
-            };
-            let raw_event = RawEvent {
-                abs_path,
+            let raw_event = EventDiff {
                 diff,
-                container_id: id,
-                old_version: context.old_frontiers.clone(),
-                new_version: context.new_frontiers.clone(),
+                id,
                 local: false,
-                origin: None,
             };
             events.push(raw_event);
         }
-
-        // notify event in the order of path length
-        // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
-        events.sort_by_cached_key(|x| x.abs_path.len());
         events
     }
 
@@ -365,10 +353,7 @@ impl LogStore {
         }
     }
 
-    fn process_and_queue_changes(
-        &mut self,
-        mut changes: RemoteClientChanges,
-    ) -> RemoteClientChanges {
+    fn process_and_queue_changes(&mut self, changes: RemoteClientChanges) -> RemoteClientChanges {
         let mut latest_vv = self.get_vv().clone();
         let mut retain_changes = FxHashMap::default();
 

@@ -75,7 +75,7 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Box::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            root_value.apply(&event.relative_path, &event.diff);
+            root_value.apply(&event.relative_path, &[event.diff.clone()]);
         }));
 
         let log_store = actor.loro.log_store.write().unwrap();
@@ -84,27 +84,25 @@ impl Actor {
         hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut text = text.lock().unwrap();
-                for diff in event.diff.iter() {
-                    match diff {
-                        Diff::Text(delta) => {
-                            let mut index = 0;
-                            for item in delta.iter() {
-                                match item {
-                                    DeltaItem::Retain { len, meta: _ } => {
-                                        index += len;
-                                    }
-                                    DeltaItem::Insert { value, meta: _ } => {
-                                        text.insert_str(index, value);
-                                        index += value.len();
-                                    }
-                                    DeltaItem::Delete { len, .. } => {
-                                        text.drain(index..index + *len);
-                                    }
+                match &event.diff {
+                    Diff::Text(delta) => {
+                        let mut index = 0;
+                        for item in delta.iter() {
+                            match item {
+                                DeltaItem::Retain { len, meta: _ } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { value, meta: _ } => {
+                                    text.insert_str(index, value);
+                                    index += value.len();
+                                }
+                                DeltaItem::Delete { len, .. } => {
+                                    text.drain(index..index + *len);
                                 }
                             }
                         }
-                        _ => unreachable!(),
                     }
+                    _ => unreachable!(),
                 }
             }),
             ContainerID::new_root("text", ContainerType::Text),
@@ -114,22 +112,20 @@ impl Actor {
         hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut map = map.lock().unwrap();
-                for diff in event.diff.iter() {
-                    match diff {
-                        Diff::Map(map_diff) => {
-                            for (key, value) in map_diff.added.iter() {
-                                map.insert(key.to_string(), value.clone());
-                            }
-                            for (key, _v) in map_diff.deleted.iter() {
-                                // map.remove(&key.to_string());
-                                map.insert(key.to_string(), LoroValue::Null);
-                            }
-                            for (key, value) in map_diff.updated.iter() {
-                                map.insert(key.to_string(), value.new.clone());
-                            }
+                match &event.diff {
+                    Diff::Map(map_diff) => {
+                        for (key, value) in map_diff.added.iter() {
+                            map.insert(key.to_string(), value.clone());
                         }
-                        _ => unreachable!(),
+                        for (key, _v) in map_diff.deleted.iter() {
+                            // map.remove(&key.to_string());
+                            map.insert(key.to_string(), LoroValue::Null);
+                        }
+                        for (key, value) in map_diff.updated.iter() {
+                            map.insert(key.to_string(), value.new.clone());
+                        }
                     }
+                    _ => unreachable!(),
                 }
             }),
             ContainerID::new_root("map", ContainerType::Map),
@@ -139,29 +135,27 @@ impl Actor {
         hierarchy.subscribe(Observer::new_container(
             Box::new(move |event| {
                 let mut list = list.lock().unwrap();
-                for diff in event.diff.iter() {
-                    match diff {
-                        Diff::List(delta) => {
-                            let mut index = 0;
-                            for item in delta.iter() {
-                                match item {
-                                    DeltaItem::Retain { len, meta: _ } => {
-                                        index += len;
+                match &event.diff {
+                    Diff::List(delta) => {
+                        let mut index = 0;
+                        for item in delta.iter() {
+                            match item {
+                                DeltaItem::Retain { len, meta: _ } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { value, meta: _ } => {
+                                    for v in value {
+                                        list.insert(index, v.clone());
+                                        index += 1;
                                     }
-                                    DeltaItem::Insert { value, meta: _ } => {
-                                        for v in value {
-                                            list.insert(index, v.clone());
-                                            index += 1;
-                                        }
-                                    }
-                                    DeltaItem::Delete { len, .. } => {
-                                        list.drain(index..index + *len);
-                                    }
+                                }
+                                DeltaItem::Delete { len, .. } => {
+                                    list.drain(index..index + *len);
                                 }
                             }
                         }
-                        _ => unreachable!(),
                     }
+                    _ => unreachable!(),
                 }
             }),
             ContainerID::new_root("list", ContainerType::List),

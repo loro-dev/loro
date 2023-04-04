@@ -3,14 +3,12 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
     context::Context,
-    event::{ObserverHandler, RawEvent},
+    event::ObserverHandler,
     hierarchy::Hierarchy,
     log_store::LoroEncoder,
-    EncodeMode, LoroError, LoroValue,
+    EncodeMode, LoroError, LoroValue, Transact,
 };
 use fxhash::{FxHashMap, FxHashSet};
-
-use tracing::instrument;
 
 use crate::{
     change::Change,
@@ -118,12 +116,11 @@ impl LoroCore {
     // TODO: make it private
     pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
         debug_log::group!("Import at {}", self.client_id());
-        let events = {
-            let mut store = self.log_store.write().unwrap();
-            let mut hierarchy = self.hierarchy.try_lock().unwrap();
-            store.import(&mut hierarchy, changes)
-        };
-        self.notify(events);
+        let txn = self.transact();
+        let mut txn = txn.0.borrow_mut();
+        let txn = txn.as_mut();
+        txn.import(changes);
+        txn.commit().unwrap();
         debug_log::group_end!();
     }
 
@@ -142,14 +139,20 @@ impl LoroCore {
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode_context(self, input)?;
-        self.notify(events);
+        let txn = self.transact();
+        let mut txn = txn.0.borrow_mut();
+        let txn = txn.as_mut();
+        txn.decode(input)?;
+        txn.commit()?;
         Ok(())
     }
 
     pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
-        let events = LoroEncoder::decode_batch_context(self, input)?;
-        self.notify(events);
+        let txn = self.transact();
+        let mut txn = txn.0.borrow_mut();
+        let txn = txn.as_mut();
+        txn.decode_batch(input)?;
+        txn.commit()?;
         Ok(())
     }
 
@@ -176,13 +179,7 @@ impl LoroCore {
         self.hierarchy.try_lock().unwrap().subscribe(observer)
     }
 
-    #[instrument(skip_all)]
-    pub(crate) fn notify(&self, events: Vec<RawEvent>) {
-        Hierarchy::send_notifications_without_lock(&self.hierarchy, events)
-    }
-
     // config
-
     pub fn max_change_length(&mut self, max_change_length: usize) {
         self.log_store
             .write()

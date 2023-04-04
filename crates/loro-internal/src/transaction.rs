@@ -1,22 +1,21 @@
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
     rc::Rc,
     sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
-    event::{Diff, RawEvent},
+    event::{Diff, EventDiff, RawEvent},
     hierarchy::Hierarchy,
     id::ClientID,
-    log_store::LoroEncoder,
+    log_store::{LoroEncoder, RemoteClientChanges},
     version::Frontiers,
     ContainerType, InternalString, List, LogStore, LoroCore, LoroError, Map, Text,
 };
 use fxhash::FxHashMap;
 use serde::Serialize;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 pub trait Transact {
     fn transact(&self) -> TransactionWrap;
@@ -110,11 +109,8 @@ pub struct Transaction {
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     pub(crate) origin: Option<Origin>,
-    // sort by [ContainerIdx]
-    // TODO Origin, now use local bool
-    pending_event_diff: BTreeMap<ContainerIdx, FxHashMap<bool, Diff>>,
+    pending_event_diff: FxHashMap<ContainerID, FxHashMap<bool, Diff>>,
     start_frontier: Frontiers,
-    latest_frontier: Frontiers,
     committed: bool,
 }
 
@@ -130,7 +126,6 @@ impl Transaction {
             store,
             hierarchy,
             pending_event_diff: Default::default(),
-            latest_frontier: start_vv.clone(),
             start_frontier: start_vv,
             origin: None,
             committed: false,
@@ -192,25 +187,33 @@ impl Transaction {
         f(self, &mut store, &mut hierarchy)
     }
 
-    pub(crate) fn update_version(&mut self, new_version: Frontiers) {
-        self.latest_frontier = new_version;
-    }
-
-    pub(crate) fn append_event_diff(&mut self, idx: ContainerIdx, diff: Diff, local: bool) {
+    pub(crate) fn append_event_diff(&mut self, id: &ContainerID, diff: Diff, local: bool) {
         // cache events
-        if let Some(old_diff) = self.pending_event_diff.get_mut(&idx) {
+        if let Some(old_diff) = self.pending_event_diff.get_mut(id) {
             if let Some(old_diff) = old_diff.get_mut(&local) {
-                // println!("old event {:?}", old_diff);
-                // println!("new event {:?}", diff);
                 compose_two_event_diff(old_diff, diff);
-                // println!("res {:?}\n", old_diff)
                 return;
             }
         }
+
+        if !self.pending_event_diff.contains_key(id) {
+            self.pending_event_diff
+                .insert(id.clone(), Default::default());
+        }
+
         self.pending_event_diff
-            .entry(idx)
-            .or_insert_with(FxHashMap::default)
+            .get_mut(id)
+            .unwrap()
             .insert(local, diff);
+    }
+
+    fn append_batch_event_diff(&mut self, events: Vec<EventDiff>) {
+        for event in events {
+            let EventDiff { id, diff, local } = event;
+            for d in diff {
+                self.append_event_diff(&id, d, local);
+            }
+        }
     }
 
     fn emit_events(&mut self) {
@@ -221,15 +224,14 @@ impl Transaction {
         let pending_events = std::mem::take(&mut self.pending_event_diff);
         let mut events: SmallVec<[_; 2]> = SmallVec::new();
         self.with_store_hierarchy_mut(|txn, store, hierarchy| {
-            for (idx, event) in pending_events {
-                let id = store.reg.get_id(idx).unwrap();
+            for (id, event) in pending_events {
                 for (local, diff) in event {
-                    if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, id) {
+                    if let Some(abs_path) = hierarchy.get_abs_path(&store.reg, &id) {
                         let event = RawEvent {
-                            diff: smallvec![diff],
+                            diff,
                             local,
                             old_version: txn.start_frontier.clone(),
-                            new_version: txn.latest_frontier.clone(),
+                            new_version: store.frontiers().into(),
                             container_id: id.clone(),
                             abs_path,
                             origin: txn.origin.as_ref().cloned(),
@@ -241,6 +243,9 @@ impl Transaction {
         });
 
         let hierarchy = self.hierarchy.upgrade().unwrap();
+        // notify event in the order of path length
+        // otherwise, the paths to children may be incorrect when the parents are affected by some of the events
+        events.sort_by_cached_key(|x| x.abs_path.len());
         for event in events {
             Hierarchy::notify_without_lock(&hierarchy, event);
         }
@@ -258,25 +263,31 @@ impl Transaction {
         })
     }
 
-    pub(crate) fn delete_container(&mut self, idx: ContainerIdx) {
-        self.pending_event_diff.remove(&idx);
+    pub(crate) fn delete_container(&mut self, id: &ContainerID) {
+        self.pending_event_diff.remove(id);
+    }
+
+    pub(crate) fn import(&mut self, changes: RemoteClientChanges) {
+        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let events = store.import(hierarchy, changes);
+            txn.append_batch_event_diff(events);
+        });
     }
 
     pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let store = self.store.upgrade().unwrap();
-        let mut store = store.try_write().unwrap();
-        let hierarchy = self.hierarchy.upgrade().unwrap();
-        let mut hierarchy = hierarchy.try_lock().unwrap();
-        let events = LoroEncoder::decode(&mut store, &mut hierarchy, input)?;
-        // TODO decode just gets diff
-        for event in events {
-            let idx = store.get_container_idx(&event.container_id).unwrap();
-            let local = event.local;
-            for d in event.diff {
-                self.append_event_diff(idx, d, local);
-            }
-        }
-        Ok(())
+        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let events = LoroEncoder::decode(store, hierarchy, input)?;
+            txn.append_batch_event_diff(events);
+            Ok(())
+        })
+    }
+
+    pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
+        self.with_store_hierarchy_mut(|txn, store, hierarchy| {
+            let events = LoroEncoder::decode_batch(store, hierarchy, input)?;
+            txn.append_batch_event_diff(events);
+            Ok(())
+        })
     }
 
     pub fn commit(&mut self) -> Result<(), LoroError> {

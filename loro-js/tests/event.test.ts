@@ -52,15 +52,15 @@ describe("event", () => {
     text.insert(loro, 0, "3");
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{ type: "text", diff: [{ type: "insert", value: "3" }] } as TextDiff],
+      { type: "text", diff: [{ type: "insert", value: "3" }] } as TextDiff,
     );
     text.insert(loro, 1, "12");
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{
+      {
         type: "text",
         diff: [{ type: "retain", len: 1 }, { type: "insert", value: "12" }],
-      } as TextDiff],
+      } as TextDiff,
     );
   });
 
@@ -74,15 +74,15 @@ describe("event", () => {
     text.insert(loro, 0, "3");
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{ type: "list", diff: [{ type: "insert", value: ["3"] }] } as ListDiff],
+      { type: "list", diff: [{ type: "insert", value: ["3"] }] } as ListDiff,
     );
     text.insert(loro, 1, "12");
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{
+      {
         type: "list",
         diff: [{ type: "retain", len: 1 }, { type: "insert", value: ["12"] }],
-      } as ListDiff],
+      } as ListDiff,
     );
   });
 
@@ -99,7 +99,7 @@ describe("event", () => {
     });
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{
+      {
         type: "map",
         diff: {
           added: {
@@ -109,7 +109,7 @@ describe("event", () => {
           deleted: {},
           updated: {},
         },
-      } as MapDiff],
+      } as MapDiff,
     );
     loro.transact((tx) => {
       map.set(tx, "0", "0");
@@ -117,7 +117,7 @@ describe("event", () => {
     });
     await zeroMs();
     expect(lastEvent?.diff).toStrictEqual(
-      [{
+      {
         type: "map",
         diff: {
           added: {},
@@ -127,7 +127,7 @@ describe("event", () => {
           },
           deleted: {},
         },
-      } as MapDiff],
+      } as MapDiff,
     );
   });
 
@@ -142,7 +142,7 @@ describe("event", () => {
       });
       const sub = text.subscribe(loro, (event) => {
         if (!ran) {
-          expect(event.diff[0].diff).toStrictEqual(
+          expect(event.diff.diff).toStrictEqual(
             [{ type: "insert", "value": "123" }] as Delta<string>[],
           );
         }
@@ -218,7 +218,7 @@ describe("event", () => {
       const text = loro.getText("text");
       let string = "";
       text.subscribe(loro, (event) => {
-        for (const diff of event.diff) {
+        const diff = event.diff;
           expect(diff.type).toBe("text");
           if (diff.type === "text") {
             let newString = "";
@@ -236,7 +236,7 @@ describe("event", () => {
 
             string = newString + string.slice(pos);
           }
-        }
+        
       });
       text.insert(loro, 0, "你好");
       await zeroMs();
