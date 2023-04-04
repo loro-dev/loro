@@ -51,9 +51,21 @@ impl Rope {
             index,
             |x| x.utf8 as usize,
             |x| x.atom_len(),
-            |x| x.utf16 as usize,
-            |x| x.utf16_length as usize,
-            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(0),
+            |x| {
+                if x.unknown_elem_len != 0 {
+                    x.utf8 as usize
+                } else {
+                    x.utf16 as usize
+                }
+            },
+            |x| {
+                if x.slice.is_some() {
+                    x.utf16_length as usize
+                } else {
+                    x.unknown_len as usize
+                }
+            },
+            |s, src_offset| s.utf8_index_to_utf16(src_offset).unwrap_or(src_offset),
         )
     }
 
