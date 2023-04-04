@@ -130,7 +130,7 @@ export type Diff = ListDiff | TextDiff | MapDIff;
 export interface LoroEvent {
   local: boolean;
   origin?: string;
-  diff: Diff[];
+  diff: Diff;
   target: ContainerID;
   path: Path;
 }
