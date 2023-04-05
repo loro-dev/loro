@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    cmp::Ordering,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
@@ -6,6 +9,7 @@ use crate::{
     event::ObserverHandler,
     hierarchy::Hierarchy,
     log_store::LoroEncoder,
+    version::Frontiers,
     EncodeMode, LoroError, LoroValue, Transact,
 };
 use fxhash::{FxHashMap, FxHashSet};
@@ -32,6 +36,7 @@ impl Default for LoroCore {
 }
 
 impl LoroCore {
+    #[inline]
     pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
         Self {
             log_store: LogStore::new(cfg, client_id),
@@ -39,12 +44,27 @@ impl LoroCore {
         }
     }
 
+    #[inline]
     pub fn client_id(&self) -> ClientID {
         self.log_store.read().unwrap().this_client_id()
     }
 
+    #[inline]
     pub fn vv_cloned(&self) -> VersionVector {
         self.log_store.read().unwrap().get_vv().clone()
+    }
+
+    #[inline]
+    pub fn frontiers(&self) -> Frontiers {
+        self.log_store.read().unwrap().frontiers().clone()
+    }
+
+    /// - Ordering::Less means self is less than target or parallel
+    /// - Ordering::Equal means versions equal
+    /// - Ordering::Greater means self's version is greater than target
+    #[inline]
+    pub fn cmp_frontiers(&self, frontiers: &Frontiers) -> Ordering {
+        self.log_store.read().unwrap().cmp_frontiers(frontiers)
     }
 
     #[inline(always)]

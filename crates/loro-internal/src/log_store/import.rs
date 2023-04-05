@@ -489,7 +489,7 @@ fn can_remote_change_be_applied(
     if vv_latest_ctr >= end || start == end {
         return ChangeApplyState::Existing;
     }
-    for dep in &change.deps {
+    for dep in change.deps.iter() {
         let dep_vv_latest_ctr = vv.get(&dep.client_id).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
             return ChangeApplyState::Future(dep.client_id);
@@ -647,7 +647,6 @@ mod test {
         let mut a = LoroCore::new(Default::default(), Some(1));
         let mut b = LoroCore::new(Default::default(), Some(2));
         let mut list_a = a.get_list("list");
-        let mut list_b = b.get_list("list");
         {
             let txn = a.transact();
             list_a.insert(&txn, 0, "1").unwrap();

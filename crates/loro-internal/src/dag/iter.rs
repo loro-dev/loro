@@ -213,7 +213,7 @@ pub(crate) struct IterReturn<'a, T> {
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
         let mut in_degrees: FxHashMap<ID, usize> = FxHashMap::default();
-        let mut succ = BTreeMap::default();
+        let mut succ: BTreeMap<ID, Frontiers> = BTreeMap::default();
         let mut stack = Vec::new();
         let mut q = vec![];
         for id in target.iter() {
@@ -242,7 +242,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 } else {
                     in_degrees.entry(id).and_modify(|i| *i += 1).or_insert(1);
                 }
-                succ.entry(*dep).or_insert_with(SmallVec::new).push(id);
+                succ.entry(*dep).or_default().push(id.into());
             }
             let mut target_span = *target.get(&client).unwrap();
             let last_counter = node.id_last().counter;
@@ -327,7 +327,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         debug_log::debug_dbg!(&path);
         debug_log::group_end!();
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
-        self.frontier = smallvec::smallvec![node.id_start().inc(slice_end - 1)];
+        self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));
 
         let current_client = node_id.client_id;
         let mut keys = Vec::new();
@@ -335,7 +335,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
         for (key, succ) in self.succ.range((node.id_start(), node.id_end())) {
             keys.push(*key);
-            for succ_id in succ {
+            for succ_id in succ.iter() {
                 self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
                 if let Some(in_degree) = self.in_degrees.get(succ_id) {
                     if in_degree.is_zero() {

@@ -9,6 +9,7 @@ use crate::{
     id::{ClientID, Counter, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
+    version::Frontiers,
     LogStore, LoroError, VersionVector,
 };
 
@@ -142,7 +143,7 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
     let mut counter: Counter = changes.meta.counter;
     for encoded in changes.data {
         let start_counter = counter;
-        let mut deps = SmallVec::with_capacity(encoded.deps.len());
+        let mut deps: Frontiers = SmallVec::with_capacity(encoded.deps.len()).into();
 
         for dep in encoded.deps {
             deps.push(dep);

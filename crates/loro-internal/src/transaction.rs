@@ -119,7 +119,7 @@ impl Transaction {
         let (client_id, start_vv): (u64, Frontiers) = {
             let store = store.upgrade().unwrap();
             let store = store.try_read().unwrap();
-            (store.this_client_id, store.frontiers().into())
+            (store.this_client_id, store.frontiers().clone())
         };
         Self {
             client_id,
@@ -231,7 +231,7 @@ impl Transaction {
                             diff,
                             local,
                             old_version: txn.start_frontier.clone(),
-                            new_version: store.frontiers().into(),
+                            new_version: store.frontiers().clone(),
                             container_id: id.clone(),
                             abs_path,
                             origin: txn.origin.as_ref().cloned(),

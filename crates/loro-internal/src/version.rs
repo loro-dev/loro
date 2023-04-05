@@ -1,10 +1,11 @@
+use smallvec::smallvec;
 use std::{
     cmp::Ordering,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -33,8 +34,78 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
-// TODO: use new type
-pub type Frontiers = SmallVec<[ID; 2]>;
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Frontiers(SmallVec<[ID; 2]>);
+
+impl PartialEq for Frontiers {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() <= 1 {
+            self.0 == other.0
+        } else if self.len() <= 10 {
+            self.0.iter().all(|id| other.0.contains(id))
+        } else {
+            let set = self.0.iter().collect::<FxHashSet<_>>();
+            other.iter().all(|x| set.contains(x))
+        }
+    }
+}
+
+impl Frontiers {
+    #[inline]
+    pub(crate) fn from_id(id: ID) -> Self {
+        Self(smallvec![id])
+    }
+
+    #[inline]
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(&self).unwrap()
+    }
+
+    #[inline]
+    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
+        postcard::from_bytes(bytes).map_err(|_| {
+            LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
+        })
+    }
+}
+
+impl Deref for Frontiers {
+    type Target = SmallVec<[ID; 2]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Frontiers {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<SmallVec<[ID; 2]>> for Frontiers {
+    fn from(value: SmallVec<[ID; 2]>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&[ID]> for Frontiers {
+    fn from(value: &[ID]) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Vec<ID>> for Frontiers {
+    fn from(value: Vec<ID>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl FromIterator<ID> for Frontiers {
+    fn from_iter<I: IntoIterator<Item = ID>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
 
 impl PartialEq for VersionVector {
     fn eq(&self, other: &Self) -> bool {

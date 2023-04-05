@@ -5,7 +5,7 @@ import {
   Loro,
   LoroEvent,
   LoroMap,
-  MapDIff as MapDiff,
+  MapDiff as MapDiff,
   PrelimList,
   PrelimMap,
   PrelimText,
