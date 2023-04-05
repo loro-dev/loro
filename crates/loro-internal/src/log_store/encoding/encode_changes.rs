@@ -1,5 +1,3 @@
-use std::{collections::VecDeque, ops::Range};
-
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
@@ -92,6 +90,7 @@ struct DocEncoding {
     containers: Containers,
     keys: Vec<InternalString>,
     start_counter: Vec<Counter>,
+    lamports: Vec<Vec<Lamport>>,
 }
 
 #[instrument(skip_all)]
@@ -131,6 +130,9 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             });
         }
     }
+    let mut lamports = (0..client_id_to_idx.len())
+        .map(|_| Vec::new())
+        .collect_vec();
 
     let mut changes = Vec::with_capacity(change_num);
     let mut ops = Vec::with_capacity(change_num);
@@ -152,6 +154,10 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             } else {
                 dep_on_self = true;
             }
+        }
+
+        if lamports[client_idx as usize].is_empty() || deps_len > 0 {
+            lamports[client_idx as usize].push(change.lamport);
         }
 
         let mut op_len = 0;
@@ -219,6 +225,7 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
         containers: container_ids,
         keys,
         start_counter,
+        lamports,
     };
 
     to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
@@ -231,12 +238,11 @@ pub(super) fn decode_changes(
     input: &[u8],
 ) -> Result<Vec<EventDiff>, LoroError> {
     // TODO: using the one with fewer changes to import
-    decode_changes_to_inner_format(input, store).map(|changes| store.import(hierarchy, changes))
+    decode_changes_to_inner_format(input).map(|changes| store.import(hierarchy, changes))
 }
 
 pub(super) fn decode_changes_to_inner_format(
     input: &[u8],
-    store: &LogStore,
 ) -> Result<RemoteClientChanges, LoroError> {
     let encoded: DocEncoding =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
@@ -249,6 +255,7 @@ pub(super) fn decode_changes_to_inner_format(
         containers,
         keys,
         start_counter,
+        lamports,
     } = encoded;
 
     let mut op_iter = ops.into_iter();
@@ -259,6 +266,10 @@ pub(super) fn decode_changes_to_inner_format(
         &change_encodings.into_iter().group_by(|c| c.client_idx)
     {
         let mut counter = start_counter[client_idx as usize];
+        let this_lamports = &lamports[client_idx as usize];
+        let mut lamport_idx = 0;
+        let mut next_lamport = 0;
+
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
                 client_idx,
@@ -267,7 +278,6 @@ pub(super) fn decode_changes_to_inner_format(
                 deps_len,
                 dep_on_self,
             } = change_encoding;
-
             let client_id = clients[client_idx as usize];
             let mut ops = RleVec::<[RemoteOp; 2]>::new();
             let mut delta = 0;
@@ -283,6 +293,7 @@ pub(super) fn decode_changes_to_inner_format(
                 let container_type = container_id.container_type();
                 let content = match container_type {
                     ContainerType::Map => {
+                        next_lamport += 1;
                         let key = keys[prop].clone();
                         RemoteContent::Map(MapSet { key, value })
                     }
@@ -327,120 +338,31 @@ pub(super) fn decode_changes_to_inner_format(
             if dep_on_self {
                 deps.push(ID::new(client_id, counter - 1));
             }
-
+            let lamport = if lamport_idx == 0 || deps_len > 0 {
+                lamport_idx += 1;
+                this_lamports[lamport_idx - 1]
+            } else {
+                next_lamport
+            };
             let change = Change {
                 id: ID { client_id, counter },
                 // calc lamport after parsing all changes
-                lamport: 0,
+                lamport,
                 timestamp,
                 ops,
                 deps,
             };
 
+            next_lamport = change.lamport + change.content_len() as Lamport;
+
             counter += delta;
             changes
                 .entry(client_id)
-                .or_insert_with(VecDeque::new)
-                .push_back(change)
+                .or_insert_with(Vec::new)
+                .push(change)
         }
     }
 
-    let start_vv: VersionVector = changes
-        .iter()
-        .map(|(client, changes)| (*client, changes.iter().map(|c| c.id.counter).min().unwrap()))
-        .collect::<FxHashMap<_, _>>()
-        .into();
-    if start_vv > store.vv() {
-        return Err(LoroError::DecodeError(
-            format!(
-            "Warning: current Loro version is `{:?}`, but remote changes start at version `{:?}`. 
-        These updates can not be applied",
-            store.get_vv(),
-            start_vv
-        )
-            .into(),
-        ));
-    }
-
-    let mut lamport_map = FxHashMap::default();
-    let mut changes_ans = FxHashMap::default();
-    // calculate lamport
-    let mut client_ids: VecDeque<_> = changes.keys().copied().collect();
-    let len = client_ids.len();
-    let mut loop_time = len;
-    while let Some(client_id) = client_ids.pop_front() {
-        let this_client_changes = changes.get_mut(&client_id).unwrap();
-        while let Some(mut change) = this_client_changes.pop_front() {
-            match get_lamport_by_deps(&change.deps, &lamport_map, Some(store)) {
-                Ok(lamport) => {
-                    change.lamport = lamport;
-                    lamport_map.entry(client_id).or_insert_with(Vec::new).push((
-                        change.id.counter..change.id.counter + change.content_len() as Counter,
-                        lamport,
-                    ));
-                    changes_ans
-                        .entry(client_id)
-                        .or_insert_with(Vec::new)
-                        .push(change);
-                    loop_time = len;
-                }
-                Err(_not_found_client) => {
-                    this_client_changes.push_front(change);
-                    client_ids.push_back(client_id);
-                    loop_time -= 1;
-                    if loop_time == 0 {
-                        unreachable!();
-                    }
-                    break;
-                }
-            }
-        }
-    }
     // TODO: using the one with fewer changes to import
-    Ok(changes_ans)
-}
-
-pub(crate) fn get_lamport_by_deps(
-    deps: &Frontiers,
-    lamport_map: &FxHashMap<ClientID, Vec<(Range<Counter>, Lamport)>>,
-    store: Option<&LogStore>,
-) -> Result<Lamport, ClientID> {
-    let mut ans = Vec::new();
-    for id in deps.iter() {
-        if let Some(c) = store.and_then(|x| x.lookup_change(*id)) {
-            let offset = id.counter - c.id.counter;
-            ans.push(c.lamport + offset as u32);
-        } else if let Some(v) = lamport_map.get(&id.client_id) {
-            if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
-                ans.push(lamport + offset);
-            } else {
-                return Err(id.client_id);
-            }
-        } else {
-            return Err(id.client_id);
-        }
-    }
-    Ok(ans.into_iter().max().unwrap_or(0) + 1)
-}
-
-fn get_value_from_range_map(
-    v: &[(Range<Counter>, Lamport)],
-    key: Counter,
-) -> Option<(Lamport, u32)> {
-    let index = match v.binary_search_by_key(&key, |&(ref range, _)| range.start) {
-        Ok(index) => Some(index),
-
-        // If the requested key is smaller than the smallest range in the slice,
-        // we would be computing `0 - 1`, which would underflow an `usize`.
-        // We use `checked_sub` to get `None` instead.
-        Err(index) => index.checked_sub(1),
-    };
-
-    if let Some(index) = index {
-        let (ref range, value) = v[index];
-        if key < range.end {
-            return Some((value, (key - range.start) as u32));
-        }
-    }
-    None
+    Ok(changes)
 }

@@ -140,7 +140,7 @@ impl LoroEncoder {
                     encode_updates::decode_updates_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::RleUpdates => {
-                    encode_changes::decode_changes_to_inner_format(decoded, store)?
+                    encode_changes::decode_changes_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::Snapshot => {
                     let (changes, events) = encode_snapshot::decode_snapshot_to_inner_format(
@@ -194,7 +194,7 @@ impl LoroEncoder {
         hierarchy: &mut Hierarchy,
         input: &[u8],
     ) -> Result<Vec<EventDiff>, LoroError> {
-        let changes = encode_changes::decode_changes_to_inner_format(input, store)?;
+        let changes = encode_changes::decode_changes_to_inner_format(input)?;
         Ok(store.import(hierarchy, changes))
     }
 

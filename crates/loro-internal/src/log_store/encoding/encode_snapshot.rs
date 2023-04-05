@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Range};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -8,7 +8,7 @@ use serde_columnar::{columnar, from_bytes, to_vec};
 use smallvec::SmallVec;
 
 use crate::{
-    change::{Change, ChangeMergeCfg},
+    change::{Change, ChangeMergeCfg, Lamport},
     container::text::text_content::SliceRange,
     container::{
         list::list_op::{DeleteSpan, InnerListOp},
@@ -21,12 +21,10 @@ use crate::{
     event::EventDiff,
     hierarchy::Hierarchy,
     id::{ClientID, Counter, ID},
-    log_store::{
-        encoding::encode_changes::get_lamport_by_deps, ImportContext, RemoteClientChanges,
-    },
+    log_store::{ImportContext, RemoteClientChanges},
     op::{InnerContent, Op},
     span::HasLamportSpan,
-    version::TotalOrderStamp,
+    version::{Frontiers, TotalOrderStamp},
     ContainerType, InternalString, LogStore, LoroCore, LoroError, LoroValue, VersionVector,
 };
 
@@ -515,9 +513,7 @@ pub(super) fn decode_snapshot_to_inner_format(
         for client_id in import_context.new_vv.keys() {
             changes.insert(*client_id, Vec::new());
         }
-        // let pending_events = store.import(hierarchy, changes);
-        let mut snapshot_events = store.get_events(hierarchy, &mut import_context);
-        // snapshot_events.extend(pending_events);
+        let snapshot_events = store.get_events(hierarchy, &mut import_context);
         Ok((changes, Some(snapshot_events)))
     } else {
         let new_loro = LoroCore::default();
@@ -637,6 +633,51 @@ fn calc_vv(
         vv.insert(client_id, counter);
     }
     vv.into()
+}
+
+pub(crate) fn get_lamport_by_deps(
+    deps: &Frontiers,
+    lamport_map: &FxHashMap<ClientID, Vec<(Range<Counter>, Lamport)>>,
+    store: Option<&LogStore>,
+) -> Result<Lamport, ClientID> {
+    let mut ans = Vec::new();
+    for id in deps.iter() {
+        if let Some(c) = store.and_then(|x| x.lookup_change(*id)) {
+            let offset = id.counter - c.id.counter;
+            ans.push(c.lamport + offset as u32);
+        } else if let Some(v) = lamport_map.get(&id.client_id) {
+            if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
+                ans.push(lamport + offset);
+            } else {
+                return Err(id.client_id);
+            }
+        } else {
+            return Err(id.client_id);
+        }
+    }
+    Ok(ans.into_iter().max().unwrap_or(0) + 1)
+}
+
+fn get_value_from_range_map(
+    v: &[(Range<Counter>, Lamport)],
+    key: Counter,
+) -> Option<(Lamport, u32)> {
+    let index = match v.binary_search_by_key(&key, |&(ref range, _)| range.start) {
+        Ok(index) => Some(index),
+
+        // If the requested key is smaller than the smallest range in the slice,
+        // we would be computing `0 - 1`, which would underflow an `usize`.
+        // We use `checked_sub` to get `None` instead.
+        Err(index) => index.checked_sub(1),
+    };
+
+    if let Some(index) = index {
+        let (ref range, value) = v[index];
+        if key < range.end {
+            return Some((value, (key - range.start) as u32));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

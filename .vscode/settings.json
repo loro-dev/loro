@@ -6,6 +6,7 @@
     "flate",
     "gmax",
     "heapless",
+    "lamports",
     "Leeeon",
     "LOGSTORE",
     "napi",
