@@ -130,9 +130,7 @@ impl LoroEncoder {
             if magic_bytes != MAGIC_BYTES {
                 return Err(LoroError::DecodeError("Invalid header bytes".into()));
             }
-            let (version_len, input) = input.split_at(1);
-            // check version
-            let (_version, input) = input.split_at(version_len[0] as usize);
+            let (_version, input) = input.split_at(1);
             let mode: ConcreteEncodeMode = input[0].into();
             let decoded = &input[1..];
             let decoded_changes = match mode {
