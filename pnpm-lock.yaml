@@ -10,8 +10,8 @@ importers:
       vite-plugin-top-level-await: ^1.2.2
       vite-plugin-wasm: ^3.1.0
     devDependencies:
-      vite-plugin-top-level-await: 1.3.0
-      vite-plugin-wasm: 3.2.2
+      vite-plugin-top-level-await: 1.3.0_vite@4.2.1
+      vite-plugin-wasm: 3.2.2_vite@4.2.1
 
   loro-js:
     specifiers:
@@ -984,7 +984,7 @@ packages:
       - terser
     dev: true
 
-  /vite-plugin-top-level-await/1.3.0:
+  /vite-plugin-top-level-await/1.3.0_vite@4.2.1:
     resolution: {integrity: sha512-owIfsgWudMlQODWJSwp0sQB3AZZu3qsMygeBjZy8CyjEk6OB9AGd8lHqmgwrcEqgvy9N58lYxSBLVk3/4ejEiA==}
     peerDependencies:
       vite: '>=2.8'
@@ -992,14 +992,9 @@ packages:
       '@rollup/plugin-virtual': 3.0.1
       '@swc/core': 1.3.44
       uuid: 9.0.0
+      vite: 4.2.1
     transitivePeerDependencies:
       - rollup
-    dev: true
-
-  /vite-plugin-wasm/3.2.2:
-    resolution: {integrity: sha512-cdbBUNR850AEoMd5nvLmnyeq63CSfoP1ctD/L2vLk/5+wsgAPlAVAzUK5nGKWO/jtehNlrSSHLteN+gFQw7VOA==}
-    peerDependencies:
-      vite: ^2 || ^3 || ^4
     dev: true
 
   /vite-plugin-wasm/3.2.2_vite@4.2.1:

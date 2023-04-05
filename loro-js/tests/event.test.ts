@@ -4,7 +4,7 @@ import {
   ListDiff,
   Loro,
   LoroEvent,
-  MapDIff as MapDiff,
+  MapDiff as MapDiff,
   TextDiff,
 } from "../src";
 
@@ -219,24 +219,23 @@ describe("event", () => {
       let string = "";
       text.subscribe(loro, (event) => {
         const diff = event.diff;
-          expect(diff.type).toBe("text");
-          if (diff.type === "text") {
-            let newString = "";
-            let pos = 0;
-            for (const delta of diff.diff) {
-              if (delta.type === "retain") {
-                pos += delta.len;
-                newString += string.slice(0, pos);
-              } else if (delta.type === "insert") {
-                newString += delta.value;
-              } else {
-                pos += delta.len;
-              }
+        expect(diff.type).toBe("text");
+        if (diff.type === "text") {
+          let newString = "";
+          let pos = 0;
+          for (const delta of diff.diff) {
+            if (delta.type === "retain") {
+              pos += delta.len;
+              newString += string.slice(0, pos);
+            } else if (delta.type === "insert") {
+              newString += delta.value;
+            } else {
+              pos += delta.len;
             }
-
-            string = newString + string.slice(pos);
           }
-        
+
+          string = newString + string.slice(pos);
+        }
       });
       text.insert(loro, 0, "你好");
       await zeroMs();

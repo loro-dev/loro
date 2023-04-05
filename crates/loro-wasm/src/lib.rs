@@ -5,9 +5,10 @@ use loro_internal::{
     context::Context,
     event::{Diff, Path},
     log_store::GcConfig,
+    version::Frontiers,
     ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
-use std::{cell::RefCell, ops::Deref, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
 use wasm_bindgen::{
     __rt::{IntoJsResult, RefMut},
     prelude::*,
@@ -173,6 +174,25 @@ impl Loro {
         self.0.borrow().vv_cloned().encode()
     }
 
+    #[inline]
+    pub fn frontiers(&self) -> Vec<u8> {
+        self.0.borrow().frontiers().encode()
+    }
+
+    /// - -1: self's version is less than frontiers or is parallel to target
+    /// - 0: self's version equals to frontiers
+    /// - 1: self's version is greater than frontiers
+    #[inline]
+    #[wasm_bindgen(js_name = "cmpFrontiers")]
+    pub fn cmp_frontiers(&self, frontiers: &[u8]) -> JsResult<i32> {
+        let frontiers = Frontiers::decode(frontiers)?;
+        Ok(match self.0.borrow().cmp_frontiers(&frontiers) {
+            Ordering::Less => -1,
+            Ordering::Greater => 1,
+            Ordering::Equal => 0,
+        })
+    }
+
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.borrow().encode_all())
@@ -195,8 +215,8 @@ impl Loro {
         Ok(self.0.borrow().encode_from(vv))
     }
 
-    pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<()> {
-        self.0.borrow_mut().decode(&update_or_snapshot)?;
+    pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
+        self.0.borrow_mut().decode(update_or_snapshot)?;
         Ok(())
     }
 

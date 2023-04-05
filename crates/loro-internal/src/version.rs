@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -34,12 +34,38 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<ClientID, Counter>);
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Frontiers(SmallVec<[ID; 2]>);
 
+impl PartialEq for Frontiers {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() <= 1 {
+            self.0 == other.0
+        } else if self.len() <= 10 {
+            self.0.iter().all(|id| other.0.contains(id))
+        } else {
+            let set = self.0.iter().collect::<FxHashSet<_>>();
+            other.iter().all(|x| set.contains(x))
+        }
+    }
+}
+
 impl Frontiers {
+    #[inline]
     pub(crate) fn from_id(id: ID) -> Self {
         Self(smallvec![id])
+    }
+
+    #[inline]
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(&self).unwrap()
+    }
+
+    #[inline]
+    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
+        postcard::from_bytes(bytes).map_err(|_| {
+            LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
+        })
     }
 }
 

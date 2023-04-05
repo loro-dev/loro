@@ -113,7 +113,7 @@ export type TextDiff = {
   diff: Delta<string>[];
 };
 
-export type MapDIff = {
+export type MapDiff = {
   type: "map";
   diff: {
     added: Record<string, Value>;
@@ -125,7 +125,7 @@ export type MapDIff = {
   };
 };
 
-export type Diff = ListDiff | TextDiff | MapDIff;
+export type Diff = ListDiff | TextDiff | MapDiff;
 
 export interface LoroEvent {
   local: boolean;

@@ -9,6 +9,7 @@ use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
+    cmp::Ordering,
     marker::PhantomPinned,
     sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
 };
@@ -225,8 +226,25 @@ impl LogStore {
     }
 
     #[inline(always)]
-    pub fn frontiers(&self) -> &[ID] {
+    pub fn frontiers(&self) -> &Frontiers {
         &self.frontiers
+    }
+
+    pub fn cmp_frontiers(&self, frontiers: &Frontiers) -> Ordering {
+        if &self.frontiers == frontiers {
+            Ordering::Equal
+        } else if frontiers.iter().all(|id| self.includes_id(*id)) {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }
+    }
+
+    pub fn includes_id(&self, id: ID) -> bool {
+        let Some(changes) = self.changes.get(&id.client_id) else {
+            return false
+        };
+        changes.last().unwrap().id_last().counter >= id.counter
     }
 
     /// this method would not get the container and apply op
