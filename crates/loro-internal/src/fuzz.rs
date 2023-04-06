@@ -238,6 +238,34 @@ fn check_synced(sites: &mut [LoroCore]) {
     }
 }
 
+fn check_batch_decode_synced(sites: &mut [LoroCore]) {
+    for i in 0..sites.len() - 1 {
+        for j in i + 1..sites.len() {
+            debug_log::group!("checking {} with {}", i, j);
+            let (a, b) = array_mut_ref!(sites, [i, j]);
+            a.decode(&b.encode_from(a.vv_cloned())).unwrap();
+            // batch decode
+            let end_vv = b.vv_cloned();
+            let mut updates = vec![];
+            if end_vv.is_empty() {
+                updates.push(a.encode_all());
+            } else {
+                for (&client_id, &counter) in end_vv.iter() {
+                    let mut vv1 = VersionVector::new();
+                    vv1.insert(client_id, counter);
+                    let mut vv2 = VersionVector::new();
+                    vv2.insert(client_id, counter / 2);
+                    updates.push(a.encode_with_cfg(crate::EncodeMode::Updates(vv2)));
+                    updates.push(a.encode_with_cfg(crate::EncodeMode::RleUpdates(vv1)));
+                }
+            }
+            b.decode_batch(&updates).unwrap();
+            check_eq(a, b);
+            debug_log::group_end!();
+        }
+    }
+}
+
 pub fn test_single_client(mut actions: Vec<Action>) {
     let mut store = LoroCore::new(Default::default(), Some(1));
     let mut text_container = store.get_text("haha");
@@ -455,6 +483,26 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
     check_synced(&mut sites);
+    debug_log::group_end!();
+}
+
+pub fn test_multi_sites_batch_decode(site_num: u8, actions: &mut [Action]) {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        debug_log!("\n{}", (&applied).table());
+        sites.apply_action(action);
+    }
+
+    debug_log::group!("CheckSynced");
+    // println!("{}", actions.table());
+    check_batch_decode_synced(&mut sites);
     debug_log::group_end!();
 }
 
@@ -948,5 +996,22 @@ mod test {
             pos: 4631600097073807295,
             site: 191,
         }])
+    }
+
+    #[test]
+    fn mini_batch_decode() {
+        minify_error(5, vec![], test_multi_sites_batch_decode, normalize)
+    }
+
+    #[test]
+    fn unknown() {
+        test_multi_sites_batch_decode(
+            8,
+            &mut [Ins {
+                content: 30069,
+                pos: 0,
+                site: 2,
+            }],
+        )
     }
 }

@@ -1,6 +1,7 @@
 mod encode_changes;
 mod encode_snapshot;
 mod encode_updates;
+mod utils;
 
 use fxhash::FxHashMap;
 use rle::HasLength;
@@ -9,6 +10,8 @@ use crate::{
     context::Context, dag::Dag, event::EventDiff, hierarchy::Hierarchy, LogStore, LoroError,
     VersionVector,
 };
+
+use self::{encode_snapshot::Snapshot, utils::BatchSnapshotSelector};
 
 use super::RemoteClientChanges;
 
@@ -32,6 +35,11 @@ impl EncodeMode {
             EncodeMode::Snapshot => 2,
         }
     }
+}
+
+pub(crate) trait EncodeBuffer: Sized {
+    fn calc_start_vv(&mut self) -> VersionVector;
+    fn calc_end_vv(&mut self) -> VersionVector;
 }
 
 enum ConcreteEncodeMode {
@@ -124,6 +132,7 @@ impl LoroEncoder {
     ) -> Result<Vec<EventDiff>, LoroError> {
         let mut changes: RemoteClientChanges = FxHashMap::default();
         let mut snapshot_events = Vec::new();
+        let mut snapshot_selector = BatchSnapshotSelector::new();
         for input in batch {
             let (magic_bytes, input) = input.split_at(4);
             let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
@@ -141,16 +150,24 @@ impl LoroEncoder {
                     encode_changes::decode_changes_to_inner_format(decoded)?
                 }
                 ConcreteEncodeMode::Snapshot => {
-                    let (changes, events) = encode_snapshot::decode_snapshot_to_inner_format(
-                        store, hierarchy, decoded,
-                    )?;
-                    if let Some(events) = events {
-                        snapshot_events = events;
-                    }
-                    changes
+                    let snapshot = Snapshot::from_bytes(decoded)?;
+                    snapshot_selector.add_snapshot(snapshot);
+                    continue;
                 }
             };
 
+            for (client, mut new_changes) in decoded_changes {
+                // FIXME: changes may not be consecutive
+                changes.entry(client).or_default().append(&mut new_changes);
+            }
+        }
+
+        for snapshot in snapshot_selector.select() {
+            let (decoded_changes, events) =
+                encode_snapshot::decode_snapshot_to_inner_format(store, hierarchy, snapshot)?;
+            if let Some(events) = events {
+                snapshot_events = events;
+            }
             for (client, mut new_changes) in decoded_changes {
                 // FIXME: changes may not be consecutive
                 changes.entry(client).or_default().append(&mut new_changes);
@@ -208,7 +225,8 @@ impl LoroEncoder {
         input: &[u8],
     ) -> Result<Vec<EventDiff>, LoroError> {
         debug_log::group!("decode snapshot");
-        let ans = encode_snapshot::decode_snapshot(store, hierarchy, input);
+        let snapshot = Snapshot::from_bytes(input)?;
+        let ans = encode_snapshot::decode_snapshot(store, hierarchy, snapshot);
         debug_log::group_end!();
         ans
     }

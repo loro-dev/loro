@@ -132,17 +132,16 @@ mod batch_decode {
     use rand::{Rng, SeedableRng};
 
     pub fn b4(c: &mut Criterion) {
-        let mut b = c.benchmark_group("batch decode 2053");
+        let mut b = c.benchmark_group("batch_decode");
         b.sample_size(10);
         let mut rng: StdRng = SeedableRng::seed_from_u64(1);
-        let encode_modes = vec!["snapshot", "updates", "changes"];
         let actions = bench_utils::get_automerge_actions();
         let mut updates = Vec::new();
         let mut last_vv = VersionVector::new();
         let mut loro = LoroCore::new(Default::default(), Some(1));
         let mut text = loro.get_text("text");
         let mut action_iter = actions.into_iter().take(100000).peekable();
-
+        let mut snapshot_num = 0;
         while action_iter.peek_mut().is_some() {
             let n = rng.gen_range(20..80);
             let txn = loro.transact();
@@ -152,11 +151,18 @@ mod batch_decode {
                 text.insert(&txn, pos, ins).unwrap();
             }
             drop(txn);
-            let mode = encode_modes.choose(&mut rng).unwrap();
+            let mode = match rng.gen_range(0..=10) {
+                0 => "snapshot",
+                1..=5 => "updates",
+                _ => "changes",
+            };
             let overlap = rng.gen_range(0..=(*last_vv.get(&1).unwrap_or(&0)).min(10));
             *last_vv.get_mut(&1).unwrap_or(&mut 0) -= overlap;
-            let update = match *mode {
-                "snapshot" => loro.encode_all(),
+            let update = match mode {
+                "snapshot" => {
+                    snapshot_num += 1;
+                    loro.encode_all()
+                }
                 "updates" => loro.encode_with_cfg(EncodeMode::Updates(last_vv.clone())),
                 "changes" => loro.encode_with_cfg(EncodeMode::RleUpdates(last_vv.clone())),
                 _ => unreachable!(),
@@ -164,11 +170,21 @@ mod batch_decode {
             updates.push(update);
             last_vv = loro.vv_cloned();
         }
+        println!("{} snapshots", snapshot_num);
         updates.shuffle(&mut rng);
         b.bench_function("B4_random_batch_decode", |b| {
             b.iter(|| {
                 let mut loro2 = LoroCore::default();
                 loro2.decode_batch(&updates).unwrap();
+            })
+        });
+
+        b.bench_function("B4_random_decode", |b| {
+            b.iter(|| {
+                let mut loro2 = LoroCore::default();
+                for u in &updates {
+                    loro2.decode(u).unwrap();
+                }
             })
         });
     }

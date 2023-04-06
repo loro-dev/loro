@@ -28,7 +28,47 @@ use crate::{
     ContainerType, InternalString, LogStore, LoroCore, LoroError, LoroValue, VersionVector,
 };
 
-use super::encode_changes::{ChangeEncoding, DepsEncoding};
+use super::{
+    encode_changes::{ChangeEncoding, DepsEncoding},
+    EncodeBuffer,
+};
+
+#[derive(Debug)]
+pub(super) struct Snapshot<'a> {
+    input: &'a [u8],
+    clients: Clients,
+    end_version: VersionVector,
+}
+
+impl<'a> Snapshot<'a> {
+    pub(super) fn from_bytes(input: &'a [u8]) -> Result<Self, LoroError> {
+        let (vv_len, input) = input.split_at(std::mem::size_of::<usize>());
+        let vv_len = usize::from_le_bytes(vv_len.try_into().unwrap());
+        let (vv_encoded, input) = input.split_at(vv_len);
+        let (vv_counters, clients): (Vec<u32>, Clients) = postcard::from_bytes(vv_encoded)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+        let mut end_version = VersionVector::new();
+        for (&client, counter) in clients.iter().zip(vv_counters) {
+            end_version.insert(client, counter as Counter);
+        }
+
+        Ok(Self {
+            input,
+            end_version,
+            clients,
+        })
+    }
+}
+
+impl<'a> EncodeBuffer for Snapshot<'a> {
+    fn calc_start_vv(&mut self) -> VersionVector {
+        VersionVector::new()
+    }
+
+    fn calc_end_vv(&mut self) -> VersionVector {
+        self.end_version.clone()
+    }
+}
 
 type Containers = Vec<ContainerID>;
 type ClientIdx = u32;
@@ -144,7 +184,7 @@ pub(super) struct SnapshotEncoded {
     ops: Vec<SnapshotOpEncoding>,
     #[columnar(type = "vec")]
     deps: Vec<DepsEncoding>,
-    clients: Clients,
+    // clients: Clients,
     containers: Containers,
     container_states: Vec<EncodedStateContent>,
     keys: Vec<InternalString>,
@@ -292,24 +332,37 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
                 .into_encoded(&key_to_idx, &client_id_to_idx)
         })
         .collect::<Vec<_>>();
+    let vv_counters = clients
+        .iter()
+        .map(|&c| *store.vv.get(&c).unwrap() as u32)
+        .collect::<Vec<_>>();
+
+    let vv_encoded = postcard::to_allocvec(&(vv_counters, clients)).unwrap();
+    let vv_len_bytes = vv_encoded.len().to_le_bytes().to_vec();
+
     let encoded = SnapshotEncoded {
         changes,
         ops,
         deps,
-        clients,
+        // clients,
         containers,
         container_states,
         keys,
     };
-    to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))
+    let encoded = to_vec(&encoded).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    Ok(vv_len_bytes
+        .into_iter()
+        .chain(vv_encoded)
+        .chain(encoded)
+        .collect())
 }
 
 pub(super) fn decode_snapshot(
     store: &mut LogStore,
     hierarchy: &mut Hierarchy,
-    input: &[u8],
+    snapshot: Snapshot,
 ) -> Result<Vec<EventDiff>, LoroError> {
-    let (changes, events) = decode_snapshot_to_inner_format(store, hierarchy, input)?;
+    let (changes, events) = decode_snapshot_to_inner_format(store, hierarchy, snapshot)?;
     let pending_events = store.import(hierarchy, changes);
     if let Some(events) = events {
         Ok(pending_events.into_iter().chain(events).collect())
@@ -321,15 +374,18 @@ pub(super) fn decode_snapshot(
 pub(super) fn decode_snapshot_to_inner_format(
     store: &mut LogStore,
     hierarchy: &mut Hierarchy,
-    input: &[u8],
+    snapshot: Snapshot,
 ) -> Result<(RemoteClientChanges, Option<Vec<EventDiff>>), LoroError> {
-    let encoded: SnapshotEncoded =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let Snapshot {
+        input,
+        clients,
+        end_version: vv,
+    } = snapshot;
+    let encoded = from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let SnapshotEncoded {
         changes: change_encodings,
         ops,
         deps,
-        clients,
         containers,
         container_states,
         keys,
@@ -344,14 +400,13 @@ pub(super) fn decode_snapshot_to_inner_format(
         }
         return Ok((Default::default(), None));
     }
+
     let mut container_idx2type = FxHashMap::default();
     for (idx, container_id) in containers.iter().enumerate() {
         // assert containers are sorted by container_idx
         container_idx2type.insert(idx, container_id.container_type());
     }
 
-    // calc vv
-    let vv = calc_vv(&change_encodings, &ops, &clients, &container_idx2type);
     let can_load = match vv.partial_cmp(&store.vv) {
         Some(ord) => match ord {
             std::cmp::Ordering::Less => {

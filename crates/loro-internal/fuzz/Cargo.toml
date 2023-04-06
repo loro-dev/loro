@@ -71,3 +71,9 @@ name = "unicode"
 path = "fuzz_targets/unicode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "batch_decode"
+path = "fuzz_targets/batch_decode.rs"
+test = false
+doc = false
