@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "",
   "main": "dist/loro.js",
   "module": "dist/loro.mjs",
