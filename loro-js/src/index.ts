@@ -33,6 +33,27 @@ Loro.prototype.transact = function (cb, origin) {
   });
 };
 
+Loro.prototype.getTypedMap = Loro.prototype.getMap;
+Loro.prototype.getTypedList = Loro.prototype.getList;
+LoroList.prototype.getTyped = function (loro, index) {
+  const value = this.get(index);
+  if (typeof value === "string" && isContainerId(value)) {
+    return loro.getContainerById(value);
+  } else {
+    return value;
+  }
+};
+LoroList.prototype.insertTyped = LoroList.prototype.insert;
+LoroMap.prototype.getTyped = function (loro, key) {
+  const value = this.get(key);
+  if (typeof value === "string" && isContainerId(value)) {
+    return loro.getContainerById(value);
+  } else {
+    return value;
+  }
+};
+LoroMap.prototype.setTyped = LoroMap.prototype.set;
+
 LoroText.prototype.insert = function (txn, pos, text) {
   if (txn instanceof Loro) {
     this.__loro_insert(txn, pos, text);
@@ -173,7 +194,16 @@ declare module "loro-wasm" {
     transact(f: (tx: Transaction) => void, origin?: string): void;
   }
 
-  interface LoroList {
+  interface Loro<T extends Record<string, any> = Record<string, any>> {
+    getTypedMap<Key extends (keyof T) & string>(
+      name: Key,
+    ): T[Key] extends LoroMap ? T[Key] : never;
+    getTypedList<Key extends (keyof T) & string>(
+      name: Key,
+    ): T[Key] extends LoroList ? T[Key] : never;
+  }
+
+  interface LoroList<T extends any[] = any[]> {
     insertContainer(
       txn: Transaction | Loro,
       pos: number,
@@ -196,6 +226,12 @@ declare module "loro-wasm" {
     ): never;
 
     get(index: number): Value;
+    getTyped<Key extends (keyof T) & number>(loro: Loro, index: Key): T[Key];
+    insertTyped<Key extends (keyof T) & number>(
+      txn: Transaction | Loro,
+      pos: Key,
+      value: T[Key],
+    ): void;
     insert(txn: Transaction | Loro, pos: number, value: Value | Prelim): void;
     delete(txn: Transaction | Loro, pos: number, len: number): void;
     subscribe(txn: Transaction | Loro, listener: Listener): number;
@@ -203,7 +239,7 @@ declare module "loro-wasm" {
     subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
   }
 
-  interface LoroMap {
+  interface LoroMap<T extends Record<string, any> = Record<string, any>> {
     insertContainer(
       txn: Transaction | Loro,
       key: string,
@@ -226,7 +262,16 @@ declare module "loro-wasm" {
     ): never;
 
     get(key: string): Value;
+    getTyped<Key extends (keyof T) & string>(
+      txn: Loro,
+      key: Key,
+    ): T[Key];
     set(txn: Transaction | Loro, key: string, value: Value | Prelim): void;
+    setTyped<Key extends (keyof T) & string>(
+      txn: Transaction | Loro,
+      key: Key,
+      value: T[Key],
+    ): void;
     delete(txn: Transaction | Loro, key: string): void;
     subscribe(txn: Transaction | Loro, listener: Listener): number;
     subscribeDeep(txn: Transaction | Loro, listener: Listener): number;

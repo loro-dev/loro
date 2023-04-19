@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { assertType, describe, expect, it } from "vitest";
 import {
   Delta,
   ListDiff,
   Loro,
   LoroEvent,
+  LoroList,
   LoroMap,
   MapDiff as MapDiff,
   PrelimList,
@@ -12,6 +13,7 @@ import {
   TextDiff,
   Transaction,
 } from "../src";
+import { expectTypeOf } from "vitest";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
@@ -254,6 +256,35 @@ describe("wasm", () => {
     assertEquals(b2.id, id);
     b2.set(loro, "0", 12);
     assertEquals(b2.value, b.value);
+  });
+});
+
+describe("type", () => {
+  it("test map type", () => {
+    const loro = new Loro<{ map: LoroMap<{ name: "he" }> }>();
+    const map = loro.getTypedMap("map");
+    const v = map.getTyped(loro, "name");
+    expectTypeOf(v).toEqualTypeOf<"he">();
+  });
+
+  it("test recursive map type", () => {
+    const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
+    const map = loro.getTypedMap("map");
+    map.insertContainer(loro, "map", "Map");
+    const subMap = map.getTyped(loro, "map");
+    const name = subMap.getTyped(loro, "name");
+    expectTypeOf(name).toEqualTypeOf<"he">();
+  });
+
+  it("works for list type", () => {
+    const loro = new Loro<{ list: LoroList<[string, number]> }>();
+    const list = loro.getTypedList("list");
+    list.insertTyped(loro, 0, "123");
+    list.insertTyped(loro, 1, 123);
+    const v0 = list.getTyped(loro, 0);
+    expectTypeOf(v0).toEqualTypeOf<string>();
+    const v1 = list.getTyped(loro, 1);
+    expectTypeOf(v1).toEqualTypeOf<number>();
   });
 });
 
