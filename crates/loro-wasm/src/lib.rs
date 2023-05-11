@@ -591,6 +591,11 @@ impl LoroMap {
         self.0.unsubscribe(&txn, subscription)?;
         Ok(())
     }
+
+    #[wasm_bindgen(js_name = "size", method, getter)]
+    pub fn size(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[wasm_bindgen]
@@ -726,6 +731,11 @@ impl LoroList {
         let txn = get_transaction_mut(txn);
         self.0.unsubscribe(&txn, subscription)?;
         Ok(())
+    }
+
+    #[wasm_bindgen(js_name = "length", method, getter)]
+    pub fn length(&self) -> usize {
+        self.0.len()
     }
 }
 

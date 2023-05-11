@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "0.2.7",
+  "version": "0.2.8-alpha-2",
   "description": "",
   "main": "dist/loro.js",
   "module": "dist/loro.mjs",
@@ -8,7 +8,8 @@
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublish": "pnpm run build"
   },
   "author": "",
   "license": "ISC",

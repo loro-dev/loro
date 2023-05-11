@@ -2,10 +2,5 @@
   "tasks": {
     "release": "deno run -A ./scripts/build.ts release",
     "dev": "deno run -A ./scripts/build.ts dev"
-  },
-  "test": {
-    "files": {
-      "include": ["deno_test/"]
-    }
   }
 }
