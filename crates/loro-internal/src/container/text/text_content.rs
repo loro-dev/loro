@@ -3,8 +3,13 @@ use std::ops::Range;
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
+use smallvec::{smallvec, SmallVec};
 
-use crate::{smstring::SmString, LoroValue};
+use crate::{
+    delta::{DeltaItem, DeltaValue},
+    smstring::SmString,
+    LoroValue,
+};
 
 use super::string_pool::PoolString;
 
@@ -136,6 +141,44 @@ impl Mergable for ListSlice {
             (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.merge(b, &()),
             _ => unreachable!(),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SliceRanges(pub SmallVec<[SliceRange; 2]>);
+
+impl From<SliceRange> for SliceRanges {
+    fn from(value: SliceRange) -> Self {
+        Self(smallvec![value])
+    }
+}
+
+impl DeltaValue for SliceRanges {
+    fn value_extend(&mut self, other: Self) {
+        self.0.extend(other.0.into_iter());
+    }
+
+    fn take(&mut self, target_len: usize) -> Self {
+        let mut ret = SmallVec::new();
+        let mut cur_len = 0;
+        while cur_len < target_len {
+            let range = self.0.pop().unwrap();
+            let range_len = range.content_len();
+            if cur_len + range_len <= target_len {
+                ret.push(range);
+                cur_len += range_len;
+            } else {
+                let new_range = range.slice(0, target_len - cur_len);
+                ret.push(new_range);
+                self.0.push(range.slice(target_len - cur_len, range_len));
+                cur_len = target_len;
+            }
+        }
+        SliceRanges(ret)
+    }
+
+    fn length(&self) -> usize {
+        self.0.iter().fold(0, |acc, x| acc + x.atom_len())
     }
 }
 

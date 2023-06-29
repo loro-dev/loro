@@ -28,7 +28,7 @@ use crate::{
     transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError, Transact,
+    LoroError, Transact, VersionVector,
 };
 
 use super::list_op::InnerListOp;
@@ -379,7 +379,7 @@ impl ContainerTrait for ListContainer {
         }
     }
 
-    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_init(&mut self, vv: &VersionVector) {
         match &mut self.tracker {
             Some(tracker) => {
                 if (!vv.is_empty() || tracker.start_vv().is_empty())
@@ -396,7 +396,7 @@ impl ContainerTrait for ListContainer {
         }
     }
 
-    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_checkout(&mut self, vv: &VersionVector) {
         self.tracker.as_mut().unwrap().checkout(vv)
     }
 
@@ -411,10 +411,12 @@ impl ContainerTrait for ListContainer {
     ) {
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = smallvec![];
-        for effect in self.tracker.as_mut().unwrap().iter_effects(
-            import_context.patched_old_vv.as_ref().unwrap(),
-            &import_context.spans,
-        ) {
+        for effect in self
+            .tracker
+            .as_mut()
+            .unwrap()
+            .iter_effects(&import_context.old_vv, &import_context.spans)
+        {
             match effect {
                 Effect::Del { pos, len } => {
                     if should_notify {

@@ -462,6 +462,31 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 mod test {
     use super::Action::*;
     use super::*;
+
+    #[test]
+    fn case2() {
+        test_multi_sites(
+            8,
+            &mut [
+                Ins {
+                    content: 54005,
+                    pos: 4846792390771214546,
+                    site: 67,
+                },
+                Del {
+                    pos: 3261524511316722499,
+                    len: 3111424388986580269,
+                    site: 43,
+                },
+                Ins {
+                    content: 0,
+                    pos: 18446548360639872768,
+                    site: 255,
+                },
+            ],
+        )
+    }
+
     #[test]
     fn case1() {
         test_multi_sites(
@@ -723,192 +748,73 @@ mod test {
     }
 
     #[test]
-    fn mini() {
-        minify_error(
-            8,
-            vec![
+    fn case_diff() {
+        test_multi_sites(
+            5,
+            &mut [
                 Ins {
-                    content: 35108,
+                    content: 65362,
                     pos: 0,
                     site: 2,
-                },
-                Ins {
-                    content: 18218,
-                    pos: 0,
-                    site: 7,
-                },
-                Ins {
-                    content: 35624,
-                    pos: 0,
-                    site: 0,
-                },
-                Ins {
-                    content: 38400,
-                    pos: 0,
-                    site: 6,
-                },
-                Ins {
-                    content: 65280,
-                    pos: 2,
-                    site: 7,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 5,
-                    site: 0,
-                },
-                Ins {
-                    content: 60672,
-                    pos: 0,
-                    site: 1,
-                },
-                Ins {
-                    content: 35072,
-                    pos: 1,
-                    site: 2,
-                },
-                Ins {
-                    content: 15035,
-                    pos: 3,
-                    site: 0,
-                },
-                Ins {
-                    content: 65280,
-                    pos: 0,
-                    site: 7,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 0,
-                    site: 0,
-                },
-                Ins {
-                    content: 201,
-                    pos: 2,
-                    site: 2,
-                },
-                Ins {
-                    content: 65377,
-                    pos: 3,
-                    site: 1,
-                },
-                Ins {
-                    content: 9988,
-                    pos: 0,
-                    site: 0,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 14,
-                    site: 0,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 11,
-                    site: 7,
-                },
-                Ins {
-                    content: 1070,
-                    pos: 0,
-                    site: 5,
-                },
-                Ins {
-                    content: 27421,
-                    pos: 7,
-                    site: 1,
-                },
-                Ins {
-                    content: 65121,
-                    pos: 22,
-                    site: 0,
-                },
-                Ins {
-                    content: 65462,
-                    pos: 1,
-                    site: 0,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 0,
-                    site: 4,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 16,
-                    site: 0,
-                },
-                Ins {
-                    content: 65462,
-                    pos: 11,
-                    site: 2,
-                },
-                Ins {
-                    content: 48009,
-                    pos: 10,
-                    site: 0,
-                },
-                Ins {
-                    content: 23277,
-                    pos: 7,
-                    site: 0,
-                },
-                Ins {
-                    content: 60672,
-                    pos: 13,
-                    site: 1,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 2,
-                    site: 7,
-                },
-                Ins {
-                    content: 4626,
-                    pos: 2,
-                    site: 0,
-                },
-                Ins {
-                    content: 2606,
-                    pos: 0,
-                    site: 3,
-                },
-                Ins {
-                    content: 65270,
-                    pos: 10,
-                    site: 0,
                 },
                 SyncAll,
                 Ins {
-                    content: 65462,
-                    pos: 107,
-                    site: 4,
+                    content: 1837,
+                    pos: 2,
+                    site: 2,
                 },
-                SyncAll,
                 Ins {
-                    content: 4626,
-                    pos: 98,
-                    site: 0,
+                    content: 2570,
+                    pos: 0,
+                    site: 2,
                 },
-                SyncAll,
+                Ins {
+                    content: 2570,
+                    pos: 8,
+                    site: 2,
+                },
+                Ins {
+                    content: 2570,
+                    pos: 0,
+                    site: 1,
+                },
                 Ins {
                     content: 0,
+                    pos: 10,
+                    site: 2,
+                },
+                Ins {
+                    content: 2570,
+                    pos: 1,
+                    site: 2,
+                },
+                Ins {
+                    content: 2570,
+                    pos: 2,
+                    site: 2,
+                },
+                Ins {
+                    content: 2570,
                     pos: 0,
                     site: 0,
                 },
                 Del {
-                    pos: 0,
-                    len: 147,
-                    site: 0,
+                    pos: 4,
+                    len: 1,
+                    site: 3,
                 },
-                Ins {
-                    content: 0,
-                    pos: 146,
+                Del {
+                    pos: 3,
+                    len: 2,
                     site: 4,
                 },
             ],
-            test_multi_sites,
-            normalize,
         )
+    }
+
+    #[test]
+    fn mini() {
+        minify_error(8, vec![], test_multi_sites, normalize)
     }
 
     #[test]

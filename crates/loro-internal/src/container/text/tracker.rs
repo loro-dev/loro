@@ -1,13 +1,15 @@
-use debug_log::debug_log;
+use debug_log::debug_dbg;
 use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
 use crate::{
     container::{list::list_op::InnerListOp, text::tracker::yata_impl::YataImpl},
+    delta::Delta,
     id::{Counter, ID},
     op::{InnerContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},
-    version::{IdSpanVector, PatchedVersionVector},
+    version::IdSpanVector,
+    VersionVector,
 };
 
 #[allow(unused)]
@@ -22,7 +24,7 @@ use self::{
 
 pub(crate) use effects_iter::Effect;
 
-use super::text_content::ListSlice;
+use super::text_content::{ListSlice, SliceRanges};
 mod content_map;
 mod cursor_map;
 mod effects_iter;
@@ -44,11 +46,11 @@ pub struct Tracker {
     #[cfg(feature = "test_utils")]
     client_id: ClientID,
     /// from start_vv to latest vv are applied
-    start_vv: PatchedVersionVector,
+    start_vv: VersionVector,
     /// latest applied ops version vector
-    all_vv: PatchedVersionVector,
+    all_vv: VersionVector,
     /// current content version vector
-    current_vv: PatchedVersionVector,
+    current_vv: VersionVector,
     /// The pretend current content version vector.
     ///
     /// Because sometimes we don't actually need to checkout to the version.
@@ -69,7 +71,7 @@ impl From<ID> for u128 {
 }
 
 impl Tracker {
-    pub fn new(start_vv: PatchedVersionVector, init_len: Counter) -> Self {
+    pub fn new(start_vv: VersionVector, init_len: Counter) -> Self {
         let mut content: ContentMap = Default::default();
         let mut id_to_cursor: CursorMap = Default::default();
         if init_len > 0 {
@@ -80,6 +82,7 @@ impl Tracker {
                     origin_right: None,
                     id: ID::unknown(0),
                     status: Status::new(),
+                    after_status: None,
                     slice: ListSlice::unknown_range(init_len as usize),
                 },
                 &mut make_notify(&mut id_to_cursor),
@@ -97,11 +100,11 @@ impl Tracker {
     }
 
     #[inline]
-    pub fn start_vv(&self) -> &PatchedVersionVector {
+    pub fn start_vv(&self) -> &VersionVector {
         &self.start_vv
     }
 
-    pub fn all_vv(&self) -> &PatchedVersionVector {
+    pub fn all_vv(&self) -> &VersionVector {
         &self.all_vv
     }
 
@@ -135,18 +138,64 @@ impl Tracker {
         self.id_to_cursor.debug_check();
     }
 
-    pub fn checkout(&mut self, vv: &PatchedVersionVector) {
+    pub fn checkout(&mut self, vv: &VersionVector) {
+        self._checkout(vv, false)
+    }
+
+    /// for_diff = true should be called after the tracker checkout to A version with for_diff = false.
+    /// Then we can calculate the diff between A and vv.  
+    fn _checkout(&mut self, vv: &VersionVector, for_diff: bool) {
+        // clear after_status as it may be outdated
+        if for_diff {
+            for mut span in self.content.iter_mut() {
+                span.as_mut().after_status = None;
+            }
+        }
+
         if &self.current_vv == vv {
+            // we can return here even if in for_diff mode.
+            // because by default after_status will use the status in the current version
             return;
         }
 
+        debug_dbg!(&self.current_vv, &vv);
         let self_vv = std::mem::take(&mut self.current_vv);
         {
             let diff = self_vv.diff_iter(vv);
-            self.retreat(diff.0);
-            self.forward(diff.1);
+            self.retreat(diff.0, for_diff);
+            self.forward(diff.1, for_diff);
         }
-        self.current_vv = vv.clone();
+
+        if for_diff {
+            // if it's for_diff, current_version is not changed, so it should be reset to its old value
+            self.current_vv = self_vv;
+        } else {
+            self.current_vv = vv.clone();
+        }
+
+        debug_dbg!(&self.current_vv, &vv);
+    }
+
+    pub fn diff(&mut self, from: &VersionVector, to: &VersionVector) -> Delta<SliceRanges, ()> {
+        self._checkout(from, false);
+        self._checkout(to, true);
+        let mut ans = Delta::new();
+        for span in self.content.iter() {
+            let s = span.as_ref();
+            debug_dbg!(&s);
+            match s.status_diff() {
+                y_span::StatusDiff::New => {
+                    let v: SliceRanges = s.slice.clone().into();
+                    ans = ans.insert(v);
+                }
+                y_span::StatusDiff::Delete => ans = ans.delete(s.slice.atom_len()),
+                y_span::StatusDiff::Unchanged => {
+                    ans = ans.retain(s.content_len());
+                }
+            }
+        }
+
+        ans.chop()
     }
 
     pub fn track_apply(&mut self, rich_op: &RichOp) {
@@ -156,14 +205,14 @@ impl Tracker {
             .all_vv()
             .includes_id(id.inc(content.atom_len() as Counter - 1))
         {
-            self.forward(std::iter::once(id.to_span(content.atom_len())));
+            self.forward(std::iter::once(id.to_span(content.atom_len())), false);
             return;
         }
 
         if self.all_vv().includes_id(id) {
             let this_ctr = self.all_vv().get(&id.client_id).unwrap();
             let shift = this_ctr - id.counter;
-            self.forward(std::iter::once(id.to_span(shift as usize)));
+            self.forward(std::iter::once(id.to_span(shift as usize)), false);
             if shift as usize >= content.atom_len() {
                 unreachable!();
             }
@@ -176,12 +225,15 @@ impl Tracker {
         }
     }
 
-    fn forward(&mut self, spans: impl Iterator<Item = IdSpan>) {
+    fn forward(&mut self, spans: impl Iterator<Item = IdSpan>, for_diff: bool) {
         let mut cursors = Vec::new();
         let mut args = Vec::new();
         for span in spans {
+            debug_log::group!("forward {:?}", &span);
             let end_id = ID::new(span.client_id, span.counter.end);
-            self.current_vv.set_end(end_id);
+            if !for_diff {
+                self.current_vv.set_end(end_id);
+            }
             if let Some(all_end_ctr) = self.all_vv.get(&span.client_id) {
                 let all_end = *all_end_ctr;
                 if all_end < span.counter.end {
@@ -199,6 +251,7 @@ impl Tracker {
             let IdSpanQueryResult { inserts, deletes } = self.id_to_cursor.get_cursors_at_id_span(
                 IdSpan::new(span.client_id, span.counter.start, span.counter.end),
             );
+            debug_dbg!(&deletes);
             for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
                     for span in self
@@ -208,6 +261,7 @@ impl Tracker {
                         .into_iter()
                         .map(|x| x.1)
                     {
+                        debug_dbg!(&span);
                         cursors.push(span);
                         args.push(StatusChange::Delete);
                     }
@@ -218,24 +272,38 @@ impl Tracker {
                 cursors.push(span);
                 args.push(StatusChange::SetAsCurrent);
             }
+            debug_log::group_end!();
         }
 
         self.content.update_at_cursors_with_args(
             &cursors,
             &args,
             &mut |v: &mut YSpan, arg| {
-                v.status.apply(*arg);
+                debug_dbg!(&v);
+                if !for_diff {
+                    v.status.apply(*arg);
+                } else {
+                    if v.after_status.is_none() {
+                        v.after_status = Some(v.status);
+                    }
+
+                    v.after_status.as_mut().unwrap().apply(*arg);
+                }
+                debug_dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
     }
 
-    fn retreat(&mut self, spans: impl Iterator<Item = IdSpan>) {
+    fn retreat(&mut self, spans: impl Iterator<Item = IdSpan>, for_diff: bool) {
         let mut cursors = Vec::new();
         let mut args = Vec::new();
         for span in spans {
+            debug_dbg!("retreat", &span);
             let span_start = ID::new(span.client_id, span.counter.start);
-            self.current_vv.set_end(span_start);
+            if !for_diff {
+                self.current_vv.set_end(span_start);
+            }
             if let Some(all_end_ctr) = self.all_vv.get(&span.client_id) {
                 let all_end = *all_end_ctr;
                 if all_end < span.counter.start {
@@ -282,7 +350,15 @@ impl Tracker {
             &cursors,
             &args,
             &mut |v: &mut YSpan, arg| {
-                v.status.apply(*arg);
+                if !for_diff {
+                    v.status.apply(*arg);
+                } else {
+                    if v.after_status.is_none() {
+                        v.after_status = Some(v.status);
+                    }
+
+                    v.after_status.as_mut().unwrap().apply(*arg);
+                }
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
@@ -309,7 +385,7 @@ impl Tracker {
                 let mut spans = self
                     .content
                     .get_active_id_spans(span.start() as usize, span.atom_len());
-                debug_log!("DELETED SPANS={}", format!("{:#?}", &spans));
+                debug_log::debug_log!("DELETED SPANS={}", format!("{:?}", &spans));
                 self.update_spans(&spans, StatusChange::Delete);
 
                 if span.is_reversed() && span.atom_len() > 1 {
@@ -370,16 +446,16 @@ impl Tracker {
         )
     }
 
-    pub fn iter_effects(
-        &mut self,
-        from: &PatchedVersionVector,
-        target: &IdSpanVector,
-    ) -> EffectIter<'_> {
+    pub fn iter_effects(&mut self, from: &VersionVector, target: &IdSpanVector) -> EffectIter<'_> {
         self.checkout(from);
         EffectIter::new(self, target)
     }
 
     pub fn check(&mut self) {
         self.check_consistency();
+    }
+
+    pub fn len(&self) -> usize {
+        self.content.len()
     }
 }

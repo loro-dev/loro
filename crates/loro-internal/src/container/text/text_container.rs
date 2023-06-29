@@ -1,6 +1,7 @@
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
+use debug_log::debug_dbg;
 use rle::HasLength;
 use smallvec::{smallvec, SmallVec};
 use tracing::instrument;
@@ -12,7 +13,7 @@ use crate::{
         registry::{ContainerIdx, ContainerInstance, ContainerWrapper},
         ContainerID, ContainerTrait, ContainerType,
     },
-    delta::Delta,
+    delta::{Delta, DeltaItem},
     event::{Diff, Utf16Meta},
     hierarchy::Hierarchy,
     id::{ClientID, Counter},
@@ -21,7 +22,7 @@ use crate::{
     transaction::Transaction,
     value::LoroValue,
     version::PatchedVersionVector,
-    LoroError, Transact,
+    LoroError, Transact, VersionVector,
 };
 
 use super::{
@@ -369,7 +370,7 @@ impl ContainerTrait for TextContainer {
     }
 
     #[instrument(skip_all)]
-    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_init(&mut self, vv: &VersionVector) {
         match &mut self.tracker {
             Some(tracker) => {
                 if (!vv.is_empty() || tracker.start_vv().is_empty())
@@ -386,7 +387,7 @@ impl ContainerTrait for TextContainer {
         }
     }
 
-    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_checkout(&mut self, vv: &VersionVector) {
         self.tracker.as_mut().unwrap().checkout(vv)
     }
 
@@ -399,49 +400,96 @@ impl ContainerTrait for TextContainer {
         hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
+        debug_log::group!("new diff");
+        // let mut state = self.get_value().as_string().unwrap().to_string();
+        let delta = self
+            .tracker
+            .as_mut()
+            .unwrap()
+            .diff(&import_context.old_vv, &import_context.new_vv);
+
+        debug_log::debug_dbg!(
+            &delta,
+            self.state.len(),
+            &import_context.old_vv,
+            &import_context.new_vv
+        );
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = smallvec![];
-        for effect in self.tracker.as_mut().unwrap().iter_effects(
-            import_context.patched_old_vv.as_ref().unwrap(),
-            &import_context.spans,
-        ) {
-            match effect {
-                Effect::Del { pos, len } => {
-                    if should_notify {
-                        let utf16_pos = self.state.utf8_to_utf16_with_unknown(pos);
-                        let utf16_end = self.state.utf8_to_utf16_with_unknown(pos + len);
-                        let delta = Delta::new()
-                            .retain_with_meta(pos, Utf16Meta::new(utf16_pos))
-                            .delete_with_meta(len, Utf16Meta::new(utf16_end - utf16_pos));
-                        diff.push(Diff::Text(delta));
-                    }
-
-                    self.state.delete_range(Some(pos), Some(pos + len));
+        let mut index = 0;
+        for span in delta.iter() {
+            match span {
+                DeltaItem::Retain { len, .. } => {
+                    index += len;
                 }
-                Effect::Ins { pos, content } => {
-                    // HACK: after lazifying the event, we can avoid this weird hack
+                DeltaItem::Insert { value: values, .. } => {
+                    for value in values.0.iter() {
+                        // HACK: after lazifying the event, we can avoid this weird hack
+                        if should_notify {
+                            let s = if value.is_unknown() {
+                                unreachable!()
+                                // " ".repeat(value.atom_len())
+                            } else {
+                                self.raw_str.slice(&value.0).to_owned()
+                            };
+                            let s_len = Utf16Meta::new(count_utf16_chars(s.as_bytes()));
+                            let delta = Delta::new()
+                                .retain_with_meta(
+                                    index,
+                                    Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(index)),
+                                )
+                                .insert_with_meta(s, s_len);
+                            diff.push(Diff::Text(delta));
+                        }
+
+                        self.state.insert(
+                            index,
+                            PoolString::from_slice_range(&self.raw_str, value.clone()),
+                        );
+                        index += value.atom_len();
+                    }
+                }
+                DeltaItem::Delete { len, .. } => {
                     if should_notify {
-                        let s = if content.is_unknown() {
-                            " ".repeat(content.atom_len())
-                        } else {
-                            self.raw_str.slice(&content.0).to_owned()
-                        };
-                        let s_len = Utf16Meta::new(count_utf16_chars(s.as_bytes()));
+                        let utf16_pos = self.state.utf8_to_utf16_with_unknown(index);
+                        let utf16_end = self.state.utf8_to_utf16_with_unknown(index + len);
                         let delta = Delta::new()
-                            .retain_with_meta(
-                                pos,
-                                Utf16Meta::new(self.state.utf8_to_utf16_with_unknown(pos)),
-                            )
-                            .insert_with_meta(s, s_len);
+                            .retain_with_meta(index, Utf16Meta::new(utf16_pos))
+                            .delete_with_meta(*len, Utf16Meta::new(utf16_end - utf16_pos));
                         diff.push(Diff::Text(delta));
                     }
 
-                    self.state
-                        .insert(pos, PoolString::from_slice_range(&self.raw_str, content));
+                    self.state.delete_range(Some(index), Some(index + len));
                 }
             }
         }
+        debug_log::group_end!();
 
+        // debug_log::group!("old");
+        // {
+        //     for effect in self
+        //         .tracker
+        //         .as_mut()
+        //         .unwrap()
+        //         .iter_effects(&import_context.old_vv, &import_context.spans)
+        //     {
+        //         debug_dbg!(&effect);
+        //         match effect {
+        //             Effect::Del { pos, len } => {
+        //                 state.drain(pos..pos + len);
+        //             }
+        //             Effect::Ins { pos, content } => {
+        //                 state.insert_str(
+        //                     pos,
+        //                     PoolString::from_slice_range(&self.raw_str, content).as_str_unchecked(),
+        //                 );
+        //             }
+        //         }
+        //     }
+        // }
+
+        // debug_log::group_end!();
+        // assert_eq!(&**self.get_value().as_string().unwrap(), &state);
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
         }

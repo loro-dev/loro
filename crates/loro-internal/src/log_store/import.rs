@@ -37,7 +37,6 @@ pub struct ImportContext {
     // pub old_frontiers: Frontiers,
     pub new_frontiers: Frontiers,
     pub old_vv: VersionVector,
-    pub patched_old_vv: Option<PatchedVersionVector>,
     pub new_vv: VersionVector,
     pub spans: IdSpanVector,
     pub diff: Vec<(ContainerID, SmallVec<[Diff; 1]>)>,
@@ -110,7 +109,6 @@ impl LogStore {
             spans: next_vv.diff(&self.vv).left,
             new_vv: next_vv,
             diff: Default::default(),
-            patched_old_vv: None,
         };
         hierarchy.take_deleted();
 
@@ -260,12 +258,6 @@ impl LogStore {
         let mut common_ancestors_vv = self.vv.clone();
         common_ancestors_vv.retreat(&self.find_path(&common_ancestors, &self.frontiers).right);
         let iter_targets = context.new_vv.sub_vec(&common_ancestors_vv);
-        let common_ancestors_vv = Arc::new(common_ancestors_vv);
-        context.patched_old_vv = Some(PatchedVersionVector::from_version(
-            &common_ancestors_vv,
-            &context.old_vv,
-        ));
-        let common_ancestors_vv = PatchedVersionVector::new(common_ancestors_vv);
         for (_, container) in container_map.iter_mut() {
             container.tracker_init(&common_ancestors_vv);
         }

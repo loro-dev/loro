@@ -14,27 +14,31 @@ use rle::{
 const MAX_CHILDREN_SIZE: usize = 16;
 pub(super) type YSpanTreeTrait = CumulateTreeTrait<YSpan, MAX_CHILDREN_SIZE, HeapMode>;
 
-/// 80 bytes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YSpan {
-    // 16 bytes
     pub id: ID,
-    // 8 bytes
+    /// The status at the current version
     pub status: Status,
-    // 24 bytes
+    /// The status at the `after` version
+    /// It's used when calculating diff
+    pub after_status: Option<Status>,
     pub origin_left: Option<ID>,
-    // 24 bytes
     pub origin_right: Option<ID>,
-    // 8 bytes
     pub slice: SliceRange,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Copy)]
 pub struct Status {
     /// is this span from a future operation
     pub future: bool,
     pub delete_times: u16,
     pub undo_times: u16,
+}
+
+pub enum StatusDiff {
+    New,
+    Delete,
+    Unchanged,
 }
 
 impl Display for Status {
@@ -126,12 +130,28 @@ impl YSpan {
         self.id.counter < id.ctr_end()
             && self.id.counter + (self.atom_len() as Counter) > id.ctr_start()
     }
+
+    pub fn status_diff(&self) -> StatusDiff {
+        if self.after_status.is_none() {
+            return StatusDiff::Unchanged;
+        }
+
+        match (
+            self.status.is_activated(),
+            self.after_status.unwrap().is_activated(),
+        ) {
+            (true, false) => StatusDiff::Delete,
+            (false, true) => StatusDiff::New,
+            _ => StatusDiff::Unchanged,
+        }
+    }
 }
 
 impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         other.id.client_id == self.id.client_id
             && self.status == other.status
+            && self.after_status == other.after_status
             && self.id.counter + self.atom_len() as Counter == other.id.counter
             && self.origin_right == other.origin_right
             && Some(self.id.inc(self.atom_len() as Counter - 1)) == other.origin_left
@@ -162,7 +182,8 @@ impl Sliceable for YSpan {
             origin_left,
             origin_right,
             id: self.id.inc(from as i32),
-            status: self.status.clone(),
+            status: self.status,
+            after_status: self.after_status,
             slice: self.slice.slice(from, to),
         }
     }

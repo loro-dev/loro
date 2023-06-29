@@ -9,7 +9,7 @@ use crate::{
     delta::{MapDiff, ValuePair},
     op::OwnedRichOp,
     transaction::Transaction,
-    LoroError, Transact,
+    LoroError, Transact, VersionVector,
 };
 use fxhash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
@@ -238,9 +238,9 @@ impl ContainerTrait for MapContainer {
         map.into()
     }
 
-    fn tracker_init(&mut self, _vv: &crate::version::PatchedVersionVector) {}
+    fn tracker_init(&mut self, _vv: &VersionVector) {}
 
-    fn tracker_checkout(&mut self, _vv: &crate::version::PatchedVersionVector) {}
+    fn tracker_checkout(&mut self, _vv: &VersionVector) {}
 
     fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
         if let Ok(set) = content.into_map() {

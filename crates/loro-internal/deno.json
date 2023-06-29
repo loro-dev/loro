@@ -2,7 +2,7 @@
   "tasks": {
     "test": "cargo nextest run",
     "deny": "cargo deny check",
-    "fuzz": "cargo fuzz run",
+    "fuzz": "cargo +nightly fuzz run",
     "quick-fuzz": "deno run -A ./scripts/fuzz.ts text recursive encoding recursive_txn",
     "mem": "deno run -A ./scripts/run_mem.ts",
     "flame": "CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --example automerge_x100 --root",

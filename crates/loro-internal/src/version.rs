@@ -338,7 +338,7 @@ impl VersionVector {
                 } else {
                     None
                 }
-            } else {
+            } else if counter > 0 {
                 Some(IdSpan {
                     client_id: *client_id,
                     counter: CounterSpan {
@@ -346,6 +346,8 @@ impl VersionVector {
                         end: counter,
                     },
                 })
+            } else {
+                None
             }
         })
     }
@@ -833,17 +835,17 @@ impl PartialEq for PatchedVersionVector {
         if Arc::ptr_eq(&self.base, &other.base) {
             self.patch.eq(&other.patch)
         } else {
-            unimplemented!()
+            self.base == other.base && self.patch == other.patch
         }
     }
 }
 
 impl PartialOrd for PatchedVersionVector {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if Arc::ptr_eq(&self.base, &other.base) {
+        if Arc::ptr_eq(&self.base, &other.base) || self.base == other.base {
             self.patch.partial_cmp(&other.patch)
         } else {
-            unimplemented!()
+            None
         }
     }
 }

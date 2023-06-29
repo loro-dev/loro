@@ -10,6 +10,7 @@
     "LOGSTORE",
     "napi",
     "nextest",
+    "oplog",
     "peekable",
     "Peritext",
     "RUSTFLAGS",
@@ -19,12 +20,10 @@
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {
-    "RUST_BACKTRACE": "full"
+    "RUST_BACKTRACE": "full",
+    "DEBUG": "*"
   },
-  "rust-analyzer.cargo.features": [
-    "loro-internal/test_utils",
-    "loro-internal/wasm"
-  ],
+  "rust-analyzer.cargo.features": ["test_utils"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "editor.formatOnSave": true,
   "todo-tree.general.tags": [

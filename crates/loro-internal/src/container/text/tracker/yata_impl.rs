@@ -197,6 +197,7 @@ mod test {
             origin_left: Some(ID::new(0, 1)),
             origin_right: Some(ID::new(0, 2)),
             status: Status::new(),
+            after_status: None,
             slice: ListSlice::unknown_range(10),
         });
         assert!(set.contain(ID::new(1, 10)));

@@ -10,7 +10,7 @@ use crate::{
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
     version::PatchedVersionVector,
-    InternalString, LoroError, LoroValue, ID,
+    InternalString, LoroError, LoroValue, VersionVector, ID,
 };
 
 use serde::{Deserialize, Serialize};
@@ -103,10 +103,10 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     fn to_import(&mut self, content: RemoteContent) -> InnerContent;
 
     /// Initialize tracker at the target version
-    fn tracker_init(&mut self, vv: &PatchedVersionVector);
+    fn tracker_init(&mut self, vv: &VersionVector);
 
     /// Tracker need to checkout to target version in order to apply the op.
-    fn tracker_checkout(&mut self, vv: &PatchedVersionVector);
+    fn tracker_checkout(&mut self, vv: &VersionVector);
 
     /// Apply the op to the tracker.
     ///

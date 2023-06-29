@@ -21,7 +21,7 @@ use crate::{
     op::{RemoteContent, RichOp},
     transaction::Transaction,
     version::PatchedVersionVector,
-    LoroError, LoroValue, Transact,
+    LoroError, LoroValue, Transact, VersionVector,
 };
 
 use super::{
@@ -84,7 +84,7 @@ impl ContainerTrait for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn tracker_init(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_init(&mut self, vv: &VersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_init(vv),
             ContainerInstance::Text(x) => x.tracker_init(vv),
@@ -94,7 +94,7 @@ impl ContainerTrait for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn tracker_checkout(&mut self, vv: &PatchedVersionVector) {
+    fn tracker_checkout(&mut self, vv: &VersionVector) {
         match self {
             ContainerInstance::Map(x) => x.tracker_checkout(vv),
             ContainerInstance::Text(x) => x.tracker_checkout(vv),

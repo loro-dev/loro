@@ -549,7 +549,6 @@ fn load_snapshot(
         spans: vv.diff(&new_store.vv).left,
         new_vv: vv.clone(),
         diff: Default::default(),
-        patched_old_vv: None,
     };
     for (container_id, pool_mapping) in containers.into_iter().zip(container_states.into_iter()) {
         let state = pool_mapping.into_state(keys, clients);

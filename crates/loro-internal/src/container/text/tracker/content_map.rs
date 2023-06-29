@@ -32,6 +32,7 @@ impl ContentMap {
             origin_right: right,
             id,
             status: Default::default(),
+            after_status: None,
             slice,
         }
     }
