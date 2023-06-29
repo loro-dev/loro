@@ -400,20 +400,12 @@ impl ContainerTrait for TextContainer {
         hierarchy: &mut Hierarchy,
         import_context: &mut ImportContext,
     ) {
-        debug_log::group!("new diff");
-        // let mut state = self.get_value().as_string().unwrap().to_string();
         let delta = self
             .tracker
             .as_mut()
             .unwrap()
             .diff(&import_context.old_vv, &import_context.new_vv);
 
-        debug_log::debug_dbg!(
-            &delta,
-            self.state.len(),
-            &import_context.old_vv,
-            &import_context.new_vv
-        );
         let should_notify = hierarchy.should_notify(&self.id);
         let mut diff = smallvec![];
         let mut index = 0;
@@ -463,33 +455,7 @@ impl ContainerTrait for TextContainer {
                 }
             }
         }
-        debug_log::group_end!();
 
-        // debug_log::group!("old");
-        // {
-        //     for effect in self
-        //         .tracker
-        //         .as_mut()
-        //         .unwrap()
-        //         .iter_effects(&import_context.old_vv, &import_context.spans)
-        //     {
-        //         debug_dbg!(&effect);
-        //         match effect {
-        //             Effect::Del { pos, len } => {
-        //                 state.drain(pos..pos + len);
-        //             }
-        //             Effect::Ins { pos, content } => {
-        //                 state.insert_str(
-        //                     pos,
-        //                     PoolString::from_slice_range(&self.raw_str, content).as_str_unchecked(),
-        //                 );
-        //             }
-        //         }
-        //     }
-        // }
-
-        // debug_log::group_end!();
-        // assert_eq!(&**self.get_value().as_string().unwrap(), &state);
         if should_notify {
             import_context.push_diff_vec(&self.id, diff);
         }
