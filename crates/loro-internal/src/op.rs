@@ -15,11 +15,6 @@ use smallvec::SmallVec;
 
 /// Operation is a unit of change.
 ///
-/// It has 3 types:
-/// - Insert
-/// - Delete
-/// - Restore
-///
 /// A Op may have multiple atomic operations, since Op can be merged.
 #[derive(Debug, Clone)]
 pub struct Op {

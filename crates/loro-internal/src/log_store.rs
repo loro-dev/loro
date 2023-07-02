@@ -59,7 +59,7 @@ impl GcConfig {
     }
 }
 
-type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
+pub(crate) type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
 pub(crate) type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
 
 #[derive(Debug)]

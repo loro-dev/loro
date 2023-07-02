@@ -1,7 +1,6 @@
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
-use debug_log::debug_dbg;
 use rle::HasLength;
 use smallvec::{smallvec, SmallVec};
 use tracing::instrument;
@@ -21,7 +20,6 @@ use crate::{
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::Transaction,
     value::LoroValue,
-    version::PatchedVersionVector,
     LoroError, Transact, VersionVector,
 };
 
@@ -29,7 +27,7 @@ use super::{
     rope::Rope,
     string_pool::{Alive, PoolString, StringPool},
     text_content::{ListSlice, SliceRange},
-    tracker::{Effect, Tracker},
+    tracker::Tracker,
     utf16::count_utf16_chars,
 };
 
@@ -86,6 +84,8 @@ impl TextContainer {
         self._record_insert_op(txn, op_slice, pos, text);
         Ok(())
     }
+
+    pub fn diff(&mut self) {}
 
     fn _record_insert_op(
         &mut self,

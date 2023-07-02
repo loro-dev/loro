@@ -25,6 +25,7 @@
   },
   "rust-analyzer.cargo.features": ["test_utils"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  "rust-analyzer.server.extraEnv": { "RUSTUP_TOOLCHAIN": "stable" },
   "editor.formatOnSave": true,
   "todo-tree.general.tags": [
     "BUG",

@@ -19,6 +19,8 @@ pub type Timestamp = i64;
 pub type Lamport = u32;
 
 /// A `Change` contains a list of [Op]s.
+///
+/// When undo/redo we should always undo/redo a whole [Change].
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 2]>,
