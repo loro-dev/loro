@@ -32,6 +32,7 @@ tracing = { version = "0.1.37" }
 append-only-bytes = { version = "0.1.4", features = ["u32_range"] }
 itertools = "0.10.5"
 enum_dispatch = "0.3.11"
+im = "15.1.0"
 
 [dev-dependencies]
 serde_json = "1.0.87"
