@@ -67,7 +67,7 @@ impl ListContainer {
         if let Some(prelim) = maybe_container {
             let type_ = value.into_container().unwrap();
             let (id, idx) = txn.register_container(&self.id, type_);
-            let value = LoroValue::Unresolved(id.into());
+            let value = LoroValue::Container(id.into());
             self.insert_value(txn, pos, value);
             prelim.integrate(txn, idx)?;
             Ok(Some(idx))
@@ -185,7 +185,7 @@ impl ListContainer {
                 continue;
             }
             for value in self.raw_data.slice(range).iter() {
-                if let LoroValue::Unresolved(container_id) = value {
+                if let LoroValue::Container(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);
                     hierarchy.remove_child(&self.id, container_id);
                     ans.push(container_id.as_ref().clone());
@@ -221,7 +221,7 @@ impl ListContainer {
         for values in self.state.iter() {
             let value = values.as_ref();
             for v in self.raw_data.slice(&value.0) {
-                if v.as_unresolved().map(|x| &**x == child).unwrap_or(false) {
+                if v.as_container().map(|x| &**x == child).unwrap_or(false) {
                     return Some(Index::Seq(idx));
                 }
 
@@ -234,7 +234,7 @@ impl ListContainer {
 
     fn update_hierarchy_on_insert(&mut self, hierarchy: &mut Hierarchy, content: &SliceRange) {
         for value in self.raw_data.slice(&content.0).iter() {
-            if let LoroValue::Unresolved(container_id) = value {
+            if let LoroValue::Container(container_id) = value {
                 hierarchy.add_child(&self.id, container_id);
             }
         }
@@ -430,7 +430,7 @@ impl ContainerTrait for ListContainer {
                             let range = state.get_sliced();
                             if !range.is_unknown() {
                                 for value in self.raw_data.slice(&range.0).iter() {
-                                    if let LoroValue::Unresolved(container_id) = value {
+                                    if let LoroValue::Container(container_id) = value {
                                         debug_log::debug_log!("Deleted {:?}", container_id);
                                         hierarchy.remove_child(&self.id, container_id);
                                     }
@@ -454,7 +454,7 @@ impl ContainerTrait for ListContainer {
                     if !content.is_unknown() {
                         for value in self.raw_data.slice(&content.0).iter() {
                             // update hierarchy
-                            if let LoroValue::Unresolved(container_id) = value {
+                            if let LoroValue::Container(container_id) = value {
                                 hierarchy.add_child(&self.id, container_id);
                             }
                         }
@@ -528,7 +528,7 @@ impl ContainerTrait for ListContainer {
     ) {
         if let StateContent::List { pool, state_len } = state_content {
             for v in pool.iter() {
-                if let LoroValue::Unresolved(child_container_id) = v {
+                if let LoroValue::Container(child_container_id) = v {
                     hierarchy.add_child(self.id(), child_container_id.as_ref());
                 }
             }

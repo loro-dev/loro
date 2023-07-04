@@ -452,19 +452,19 @@ pub trait ContainerWrapper {
         match &mut value {
             LoroValue::List(list) => {
                 list.iter_mut().for_each(|x| {
-                    if x.as_unresolved().is_some() {
+                    if x.as_container().is_some() {
                         *x = x.clone().resolve_deep(reg)
                     }
                 });
             }
             LoroValue::Map(map) => {
                 map.iter_mut().for_each(|(_, x)| {
-                    if x.as_unresolved().is_some() {
+                    if x.as_container().is_some() {
                         *x = x.clone().resolve_deep(reg)
                     }
                 });
             }
-            LoroValue::Unresolved(_) => unreachable!(),
+            LoroValue::Container(_) => unreachable!(),
             _ => {}
         }
 

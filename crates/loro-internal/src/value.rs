@@ -22,7 +22,7 @@ pub enum LoroValue {
     String(Box<str>),
     List(Box<Vec<LoroValue>>),
     Map(Box<FxHashMap<String, LoroValue>>),
-    Unresolved(Box<ContainerID>),
+    Container(Box<ContainerID>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,19 +36,19 @@ impl LoroValue {
         match &mut self {
             LoroValue::List(list) => {
                 for v in list.iter_mut() {
-                    if v.as_unresolved().is_some() {
+                    if v.as_container().is_some() {
                         *v = v.clone().resolve_deep(reg)
                     }
                 }
             }
             LoroValue::Map(map) => {
                 for v in map.values_mut() {
-                    if v.as_unresolved().is_some() {
+                    if v.as_container().is_some() {
                         *v = v.clone().resolve_deep(reg)
                     }
                 }
             }
-            LoroValue::Unresolved(id) => {
+            LoroValue::Container(id) => {
                 self = reg
                     .get(id)
                     .map(|container| {
@@ -58,19 +58,19 @@ impl LoroValue {
                         match &mut value {
                             LoroValue::List(list) => {
                                 for v in list.iter_mut() {
-                                    if v.as_unresolved().is_some() {
+                                    if v.as_container().is_some() {
                                         *v = v.clone().resolve_deep(reg)
                                     }
                                 }
                             }
                             LoroValue::Map(map) => {
                                 for v in map.values_mut() {
-                                    if v.as_unresolved().is_some() {
+                                    if v.as_container().is_some() {
                                         *v = v.clone().resolve_deep(reg)
                                     }
                                 }
                             }
-                            LoroValue::Unresolved(_) => unreachable!(),
+                            LoroValue::Container(_) => unreachable!(),
                             _ => {}
                         }
 
@@ -99,7 +99,7 @@ impl LoroValue {
 
     pub fn to_json_value(&self, reg: &ContainerRegistry) -> LoroValue {
         match self {
-            LoroValue::Unresolved(_) => self.clone().resolve_deep(reg).to_json_value(reg),
+            LoroValue::Container(_) => self.clone().resolve_deep(reg).to_json_value(reg),
             _ => self.clone(),
         }
     }
@@ -183,7 +183,7 @@ impl From<String> for LoroValue {
 
 impl From<ContainerID> for LoroValue {
     fn from(v: ContainerID) -> Self {
-        LoroValue::Unresolved(Box::new(v))
+        LoroValue::Container(Box::new(v))
     }
 }
 
@@ -309,7 +309,7 @@ impl LoroValue {
 }
 
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
-    if let Some(container) = v.as_unresolved() {
+    if let Some(container) = v.as_container() {
         match container.container_type() {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
@@ -356,7 +356,7 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Unresolved(container_id) => JsValue::from(*container_id),
+            LoroValue::Container(container_id) => JsValue::from(*container_id),
         }
     }
 
@@ -711,7 +711,7 @@ impl Serialize for LoroValue {
                 LoroValue::String(s) => serializer.serialize_str(s),
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
-                LoroValue::Unresolved(id) => {
+                LoroValue::Container(id) => {
                     let mut state = serializer.serialize_struct("Unresolved", 1)?;
                     state.serialize_field("Unresolved", id)?;
                     state.end()
@@ -735,7 +735,7 @@ impl Serialize for LoroValue {
                     serializer.serialize_newtype_variant("LoroValue", 5, "List", l)
                 }
                 LoroValue::Map(m) => serializer.serialize_newtype_variant("LoroValue", 6, "Map", m),
-                LoroValue::Unresolved(id) => {
+                LoroValue::Container(id) => {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Unresolved", id)
                 }
             }
@@ -887,7 +887,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::String, v) => v.newtype_variant().map(LoroValue::String),
             (LoroValueFields::List, v) => v.newtype_variant().map(LoroValue::List),
             (LoroValueFields::Map, v) => v.newtype_variant().map(LoroValue::Map),
-            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Unresolved),
+            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Container),
         }
     }
 }

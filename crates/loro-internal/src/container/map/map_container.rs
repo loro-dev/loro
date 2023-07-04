@@ -83,7 +83,7 @@ impl MapContainer {
         if let Some(prelim) = maybe_container {
             let type_ = value.into_container().unwrap();
             let (id, idx) = txn.register_container(self.id(), type_);
-            self.insert_value(txn, key, LoroValue::Unresolved(id.into()));
+            self.insert_value(txn, key, LoroValue::Container(id.into()));
             prelim.integrate(txn, idx)?;
             Ok(Some(idx))
         } else {
@@ -150,7 +150,7 @@ impl MapContainer {
     ) -> Option<ContainerID> {
         if let Some(old_value) = self.state.get(key) {
             let v = &self.pool[old_value.value];
-            if let Some(container) = v.as_unresolved() {
+            if let Some(container) = v.as_container() {
                 h.remove_child(&self.id, container);
                 return Some(container.as_ref().clone());
             }
@@ -161,7 +161,7 @@ impl MapContainer {
     pub fn index_of_child(&self, child: &ContainerID) -> Option<Index> {
         for (key, value) in self.state.iter() {
             if self.pool[value.value]
-                .as_unresolved()
+                .as_container()
                 .map(|x| &**x == child)
                 .unwrap_or(false)
             {
@@ -224,11 +224,11 @@ impl ContainerTrait for MapContainer {
         for (key, value) in self.state.iter() {
             let index = value.value;
             let value = self.pool.slice(&(index..index + 1))[0].clone();
-            if let Some(container_id) = value.as_unresolved() {
+            if let Some(container_id) = value.as_container() {
                 map.insert(
                     key.to_string(),
                     // TODO: make a from
-                    LoroValue::Unresolved(container_id.clone()),
+                    LoroValue::Container(container_id.clone()),
                 );
             } else {
                 map.insert(key.to_string(), value);
@@ -293,10 +293,10 @@ impl ContainerTrait for MapContainer {
                 }
 
                 let old_val = &self.pool[slot.value];
-                if let Some(container) = old_val.as_unresolved() {
+                if let Some(container) = old_val.as_container() {
                     hierarchy.remove_child(&self.id, container);
                 }
-                if let Some(container) = new_value.as_unresolved() {
+                if let Some(container) = new_value.as_container() {
                     hierarchy.add_child(&self.id, container);
                 }
 
@@ -313,7 +313,7 @@ impl ContainerTrait for MapContainer {
                 ctx.push_diff(&self.id, Diff::Map(map_diff));
             }
 
-            if let Some(container) = new_value.as_unresolved() {
+            if let Some(container) = new_value.as_container() {
                 hierarchy.add_child(&self.id, container);
             }
 
@@ -402,7 +402,7 @@ impl ContainerTrait for MapContainer {
     ) {
         if let StateContent::Map { pool, keys, values } = state_content {
             for v in pool.iter() {
-                if let LoroValue::Unresolved(child_container_id) = v {
+                if let LoroValue::Container(child_container_id) = v {
                     hierarchy.add_child(self.id(), child_container_id.as_ref());
                 }
             }

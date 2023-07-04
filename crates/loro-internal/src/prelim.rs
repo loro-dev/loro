@@ -33,7 +33,7 @@ where
 {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
         let value: LoroValue = self.into();
-        if let LoroValue::Unresolved(_) = value {
+        if let LoroValue::Container(_) = value {
             return Err(LoroError::PrelimError);
         }
         Ok((PrelimValue::Value(value), None))

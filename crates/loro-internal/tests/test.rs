@@ -166,7 +166,7 @@ fn map() {
     assert_eq!(value.as_map().unwrap().len(), 2);
     let map = value.as_map().unwrap();
     assert_eq!(*map.get("haha").unwrap().as_double().unwrap(), 1.2);
-    assert!(map.get("map").unwrap().as_unresolved().is_some());
+    assert!(map.get("map").unwrap().as_container().is_some());
     println!("{}", value.to_json());
     let deep_value = root.get_value_deep(&loro);
     assert_eq!(deep_value.as_map().unwrap().len(), 2);
