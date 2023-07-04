@@ -1,12 +1,12 @@
 use fxhash::FxHashMap;
 
-use crate::container::ContainerIdx;
+use crate::container::{ContainerID, ContainerIdx};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
 #[derive(Default)]
 pub(super) struct DiffCalculator {
-    calc: FxHashMap<ContainerIdx, ContainerDiffCalculator>,
+    calc: FxHashMap<ContainerID, ContainerDiffCalculator>,
 }
 impl DiffCalculator {
     pub(crate) fn calc(

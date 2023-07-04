@@ -1,7 +1,12 @@
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 
-use crate::{container::ContainerIdx, event::Diff, version::Frontiers, VersionVector};
+use crate::{
+    container::{ContainerID, ContainerIdx},
+    event::Diff,
+    version::Frontiers,
+    VersionVector,
+};
 
 use super::arena::SharedArena;
 
@@ -17,7 +22,7 @@ use text_state::TextState;
 pub struct AppState {
     vv: VersionVector,
     frontiers: Frontiers,
-    state: FxHashMap<ContainerIdx, State>,
+    state: FxHashMap<ContainerID, State>,
     arena: SharedArena,
 }
 
@@ -39,6 +44,6 @@ pub struct AppStateDiff {
 }
 
 pub struct ContainerStateDiff {
-    pub idx: ContainerIdx,
+    pub idx: ContainerID,
     pub diff: Diff,
 }
