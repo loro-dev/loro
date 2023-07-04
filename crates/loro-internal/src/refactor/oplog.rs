@@ -14,7 +14,7 @@ use crate::event::Diff;
 use crate::id::{Counter, PeerID, ID};
 use crate::log_store::ClientChanges;
 use crate::span::{HasId, HasLamport};
-use crate::version::{Frontiers, VersionVector};
+use crate::version::{Frontiers, ImVersionVector, VersionVector};
 
 use super::diff_calc::DiffCalculator;
 
@@ -47,6 +47,7 @@ pub struct AppDagNode {
     cnt: Counter,
     lamport: Lamport,
     parents: SmallVec<[ID; 2]>,
+    vv: ImVersionVector,
     len: usize,
 }
 
