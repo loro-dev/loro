@@ -8,7 +8,7 @@ use crate::{
     container::{registry::ContainerIdx, ContainerID},
     event::{Diff, EventDiff, RawEvent},
     hierarchy::Hierarchy,
-    id::ClientID,
+    id::PeerID,
     log_store::{LoroEncoder, RemoteClientChanges},
     version::Frontiers,
     ContainerType, InternalString, List, LogStore, LoroCore, LoroError, Map, Text,
@@ -105,7 +105,7 @@ impl<T: AsRef<str>> From<T> for Origin {
 }
 
 pub struct Transaction {
-    pub(crate) client_id: ClientID,
+    pub(crate) client_id: PeerID,
     pub(crate) store: Weak<RwLock<LogStore>>,
     pub(crate) hierarchy: Weak<Mutex<Hierarchy>>,
     pub(crate) origin: Option<Origin>,

@@ -129,7 +129,7 @@ impl ListCrdt for YataImpl {
     }
 
     fn cmp_id(op_a: &Self::OpUnit, op_b: &Self::OpUnit) -> std::cmp::Ordering {
-        op_a.id.client_id.cmp(&op_b.id.client_id)
+        op_a.id.peer.cmp(&op_b.id.peer)
     }
 
     fn contains(op: &Self::OpUnit, id: Self::OpId) -> bool {
@@ -263,7 +263,7 @@ pub mod fuzz {
                 Tracker,
             },
         },
-        id::{ClientID, Counter, ID},
+        id::{Counter, PeerID, ID},
         span::IdSpan,
     };
 
@@ -333,7 +333,7 @@ pub mod fuzz {
             let mut tracker = Tracker::new(Default::default(), Counter::MAX / 2);
             #[cfg(feature = "test_utils")]
             {
-                tracker.client_id = client_id as ClientID;
+                tracker.client_id = client_id as PeerID;
             }
 
             tracker

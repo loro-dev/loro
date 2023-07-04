@@ -4,7 +4,7 @@ use crate::{
         registry::{ContainerIdx, ContainerInstance},
         ContainerID, ContainerTrait,
     },
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     span::{HasCounter, HasId, HasLamport},
 };
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
@@ -34,7 +34,7 @@ pub struct RemoteOp {
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
     op: &'a Op,
-    client_id: ClientID,
+    client_id: PeerID,
     lamport: Lamport,
     timestamp: Timestamp,
     start: usize,
@@ -45,7 +45,7 @@ pub struct RichOp<'a> {
 #[derive(Debug, Clone)]
 pub struct OwnedRichOp {
     pub op: Op,
-    pub client_id: ClientID,
+    pub client_id: PeerID,
     pub lamport: Lamport,
     pub timestamp: Timestamp,
 }
@@ -188,7 +188,7 @@ impl HasCounter for RemoteOp {
 impl<'a> HasId for RichOp<'a> {
     fn id_start(&self) -> ID {
         ID {
-            client_id: self.client_id,
+            peer: self.client_id,
             counter: self.op.counter + self.start as Counter,
         }
     }
@@ -207,7 +207,7 @@ impl<'a> HasLamport for RichOp<'a> {
 }
 
 impl<'a> RichOp<'a> {
-    pub fn new(op: &'a Op, client_id: ClientID, lamport: Lamport, timestamp: Timestamp) -> Self {
+    pub fn new(op: &'a Op, client_id: PeerID, lamport: Lamport, timestamp: Timestamp) -> Self {
         RichOp {
             op,
             client_id,
@@ -222,7 +222,7 @@ impl<'a> RichOp<'a> {
         let diff = op.counter - change.id.counter;
         RichOp {
             op,
-            client_id: change.id.client_id,
+            client_id: change.id.peer,
             lamport: change.lamport + diff as Lamport,
             timestamp: change.timestamp,
             start: 0,
@@ -240,7 +240,7 @@ impl<'a> RichOp<'a> {
         let op_slice_end = (end - op_index_in_change).clamp(0, op.atom_len() as i32);
         RichOp {
             op,
-            client_id: change.id.client_id,
+            client_id: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
             start: op_slice_start as usize,

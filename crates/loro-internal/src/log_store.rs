@@ -26,7 +26,7 @@ use crate::{
         ContainerID,
     },
     dag::Dag,
-    id::{ClientID, Counter},
+    id::{Counter, PeerID},
     op::RemoteOp,
     span::{HasCounterSpan, HasIdSpan, IdSpan},
     ContainerType, Lamport, Op, Timestamp, VersionVector, ID,
@@ -59,8 +59,8 @@ impl GcConfig {
     }
 }
 
-pub(crate) type ClientChanges = FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>;
-pub(crate) type RemoteClientChanges = FxHashMap<ClientID, Vec<Change<RemoteOp>>>;
+pub(crate) type ClientChanges = FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>;
+pub(crate) type RemoteClientChanges = FxHashMap<PeerID, Vec<Change<RemoteOp>>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -77,7 +77,7 @@ pub struct LogStore {
     latest_lamport: Lamport,
     latest_timestamp: Timestamp,
     frontiers: Frontiers,
-    pub(crate) this_client_id: ClientID,
+    pub(crate) this_client_id: PeerID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
     pending_changes: RemoteClientChanges,
@@ -87,7 +87,7 @@ pub struct LogStore {
 type ContainerGuard<'a> = MutexGuard<'a, ContainerInstance>;
 
 impl LogStore {
-    pub(crate) fn new(cfg: Configure, client_id: Option<ClientID>) -> Arc<RwLock<Self>> {
+    pub(crate) fn new(cfg: Configure, client_id: Option<PeerID>) -> Arc<RwLock<Self>> {
         let this_client_id = client_id.unwrap_or_else(|| cfg.rand.next_u64());
         Arc::new(RwLock::new(Self {
             cfg,
@@ -105,7 +105,7 @@ impl LogStore {
 
     #[inline]
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
-        self.changes.get(&id.client_id).and_then(|changes| {
+        self.changes.get(&id.peer).and_then(|changes| {
             if id.counter <= changes.last().unwrap().id_last().counter {
                 Some(changes.get(id.counter as usize).unwrap().element)
             } else {
@@ -114,13 +114,13 @@ impl LogStore {
         })
     }
 
-    pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<ClientID, Vec<Change<RemoteOp>>> {
-        let mut ans: FxHashMap<ClientID, Vec<Change<RemoteOp>>> = Default::default();
+    pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<PeerID, Vec<Change<RemoteOp>>> {
+        let mut ans: FxHashMap<PeerID, Vec<Change<RemoteOp>>> = Default::default();
         let self_vv = self.vv();
         for span in self_vv.sub_iter(remote_vv) {
             let changes = self.get_changes_slice(span.id_span());
             for change in changes.iter() {
-                let vec = ans.entry(change.id.client_id).or_insert_with(Vec::new);
+                let vec = ans.entry(change.id.peer).or_insert_with(Vec::new);
                 vec.push(self.change_to_export_format(change));
             }
         }
@@ -207,21 +207,21 @@ impl LogStore {
     #[inline(always)]
     pub fn next_id(&self) -> ID {
         ID {
-            client_id: self.this_client_id,
+            peer: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         }
     }
 
     #[inline(always)]
-    pub fn next_id_for(&self, client: ClientID) -> ID {
+    pub fn next_id_for(&self, client: PeerID) -> ID {
         ID {
-            client_id: client,
+            peer: client,
             counter: self.get_next_counter(client),
         }
     }
 
     #[inline(always)]
-    pub fn this_client_id(&self) -> ClientID {
+    pub fn this_client_id(&self) -> PeerID {
         self.this_client_id
     }
 
@@ -241,7 +241,7 @@ impl LogStore {
     }
 
     pub fn includes_id(&self, id: ID) -> bool {
-        let Some(changes) = self.changes.get(&id.client_id) else {
+        let Some(changes) = self.changes.get(&id.peer) else {
             return false
         };
         changes.last().unwrap().id_last().counter >= id.counter
@@ -256,7 +256,7 @@ impl LogStore {
         let lamport = self.next_lamport();
         let timestamp = (self.cfg.get_time)();
         let id = ID {
-            client_id: self.this_client_id,
+            peer: self.this_client_id,
             counter: self.get_next_counter(self.this_client_id),
         };
         let last = ops.last().unwrap();
@@ -293,13 +293,13 @@ impl LogStore {
     #[inline]
     pub fn contains_id(&self, id: ID) -> bool {
         self.changes
-            .get(&id.client_id)
+            .get(&id.peer)
             .map_or(0, |changes| changes.atom_len())
             > id.counter as usize
     }
 
     #[inline]
-    fn get_next_counter(&self, client_id: ClientID) -> Counter {
+    fn get_next_counter(&self, client_id: PeerID) -> Counter {
         self.changes
             .get(&client_id)
             .map(|changes| changes.atom_len())
@@ -308,7 +308,7 @@ impl LogStore {
 
     #[inline]
     #[allow(dead_code)]
-    pub(crate) fn iter_client_op(&self, client_id: ClientID) -> iter::ClientOpIter<'_> {
+    pub(crate) fn iter_client_op(&self, client_id: PeerID) -> iter::ClientOpIter<'_> {
         iter::ClientOpIter {
             change_index: 0,
             op_index: 0,
@@ -414,7 +414,7 @@ impl Dag for LogStore {
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
         self.changes
-            .get(&id.client_id)
+            .get(&id.peer)
             .and_then(|x| x.get(id.counter as usize).map(|x| x.element))
     }
 

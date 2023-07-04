@@ -6,8 +6,8 @@ use loro_internal::{
 };
 
 pub use loro_internal::{
-    container::ContainerIdx, event, id::ClientID, EncodeMode, List, LoroError, LoroValue, Map,
-    Text, VersionVector,
+    container::ContainerIdx, event, id::PeerID, EncodeMode, List, LoroError, LoroValue, Map, Text,
+    VersionVector,
 };
 
 #[repr(transparent)]
@@ -16,12 +16,12 @@ pub struct Loro(LoroCore);
 
 impl Loro {
     #[inline(always)]
-    pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
+    pub fn new(cfg: Configure, client_id: Option<PeerID>) -> Self {
         Self(LoroCore::new(cfg, client_id))
     }
 
     #[inline(always)]
-    pub fn client_id(&self) -> ClientID {
+    pub fn client_id(&self) -> PeerID {
         self.0.client_id()
     }
 

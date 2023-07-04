@@ -1,6 +1,6 @@
 use super::*;
 struct BreakPoints {
-    break_points: FxHashMap<ClientID, FxHashSet<Counter>>,
+    break_points: FxHashMap<PeerID, FxHashSet<Counter>>,
     /// start ID to ID. The target ID may be in the middle of an op.
     ///
     /// only includes links across different clients
@@ -8,7 +8,7 @@ struct BreakPoints {
 }
 
 struct Output {
-    clients: FxHashMap<ClientID, Vec<IdSpan>>,
+    clients: FxHashMap<PeerID, Vec<IdSpan>>,
     /// start ID to start ID.
     ///
     /// only includes links across different clients
@@ -60,7 +60,7 @@ fn to_str(output: Output) -> String {
         for id_to in id_tos.iter() {
             s += format!(
                 "{}-{} --> {}-{}",
-                id_from.client_id, id_from.counter, id_to.client_id, id_to.counter
+                id_from.peer, id_from.counter, id_to.peer, id_to.counter
             )
             .as_str();
             new_line!();
@@ -75,7 +75,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
         clients: FxHashMap::default(),
         links: FxHashMap::default(),
     };
-    let breaks: FxHashMap<ClientID, Vec<Counter>> = input
+    let breaks: FxHashMap<PeerID, Vec<Counter>> = input
         .break_points
         .into_iter()
         .map(|(client_id, set)| {
@@ -94,7 +94,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
 
     for (id_from, id_tos) in input.links.iter() {
         for id_to in id_tos {
-            let client_breaks = breaks.get(&id_to.client_id).unwrap();
+            let client_breaks = breaks.get(&id_to.peer).unwrap();
             match client_breaks.binary_search(&id_to.counter) {
                 Ok(_) => {
                     output.links.entry(*id_from).or_default().push(*id_to);
@@ -104,7 +104,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
                         .links
                         .entry(*id_from)
                         .or_default()
-                        .push(ID::new(id_to.client_id, client_breaks[index - 1]));
+                        .push(ID::new(id_to.peer, client_breaks[index - 1]));
                 }
             }
         }
@@ -120,17 +120,17 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
 
     for node in dag.iter() {
         let id = node.id_start();
-        let set = break_points.break_points.entry(id.client_id).or_default();
+        let set = break_points.break_points.entry(id.peer).or_default();
         set.insert(id.counter);
         set.insert(id.counter + node.content_len() as Counter);
         for dep in node.deps() {
-            if dep.client_id == id.client_id {
+            if dep.peer == id.peer {
                 continue;
             }
 
             break_points
                 .break_points
-                .entry(dep.client_id)
+                .entry(dep.peer)
                 .or_default()
                 .insert(dep.counter);
             break_points.links.entry(id).or_default().push(*dep);

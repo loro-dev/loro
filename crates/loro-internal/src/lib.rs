@@ -37,7 +37,7 @@ mod value;
 pub use error::LoroError;
 pub(crate) mod macros;
 pub(crate) use change::{Lamport, Timestamp};
-pub(crate) use id::{ClientID, ID};
+pub(crate) use id::{PeerID, ID};
 pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
 // TODO: rename as Key?

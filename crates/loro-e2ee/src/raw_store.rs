@@ -1,6 +1,6 @@
 use fxhash::FxHashMap;
 use loro_internal::{
-    id::{ClientID, Counter},
+    id::{Counter, PeerID},
     version::VersionVector,
 };
 use rle::{HasLength, RleVecWithIndex};
@@ -10,8 +10,8 @@ use crate::raw_change::{ChangeData, ChangeHash};
 pub type Mac = [u8; 32];
 
 pub struct RawStore {
-    changes: FxHashMap<ClientID, RleVecWithIndex<ChangeData>>,
-    macs: Option<FxHashMap<ClientID, Mac>>,
+    changes: FxHashMap<PeerID, RleVecWithIndex<ChangeData>>,
+    macs: Option<FxHashMap<PeerID, Mac>>,
 }
 
 impl RawStore {
@@ -47,7 +47,7 @@ impl RawStore {
         true
     }
 
-    pub fn get_final_hash(&self, client_id: ClientID) -> ChangeHash {
+    pub fn get_final_hash(&self, client_id: PeerID) -> ChangeHash {
         let changes = self.changes.get(&client_id).unwrap();
         let last = changes.vec().last().unwrap();
         last.hash.unwrap()

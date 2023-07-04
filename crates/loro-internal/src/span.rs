@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::{
     change::Lamport,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     version::IdSpanVector,
 };
 use rle::{HasLength, Mergable, Slice, Sliceable};
@@ -170,13 +170,13 @@ impl Mergable for CounterSpan {
 /// We need this because it'll make merging deletions easier.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct IdSpan {
-    pub client_id: ClientID,
+    pub client_id: PeerID,
     pub counter: CounterSpan,
 }
 
 impl IdSpan {
     #[inline]
-    pub fn new(client_id: ClientID, from: Counter, to: Counter) -> Self {
+    pub fn new(client_id: PeerID, from: Counter, to: Counter) -> Self {
         Self {
             client_id,
             counter: CounterSpan {
@@ -188,7 +188,7 @@ impl IdSpan {
 
     #[inline]
     pub fn contains(&self, id: ID) -> bool {
-        self.client_id == id.client_id && self.counter.contains(id.counter)
+        self.client_id == id.peer && self.counter.contains(id.counter)
     }
 
     #[inline(always)]
@@ -292,7 +292,7 @@ pub trait HasIdSpan: HasId + HasLength {
     fn intersect<T: HasIdSpan>(&self, other: &T) -> bool {
         let self_start = self.id_start();
         let other_start = self.id_start();
-        if self_start.client_id != other_start.client_id {
+        if self_start.peer != other_start.peer {
             false
         } else {
             let self_start = self_start.counter;
@@ -306,7 +306,7 @@ pub trait HasIdSpan: HasId + HasLength {
     fn id_span(&self) -> IdSpan {
         let id = self.id_start();
         IdSpan::new(
-            id.client_id,
+            id.peer,
             id.counter,
             id.counter + self.content_len() as Counter,
         )
@@ -324,7 +324,7 @@ pub trait HasIdSpan: HasId + HasLength {
 
     fn contains_id(&self, id: ID) -> bool {
         let id_start = self.id_start();
-        if id.client_id != id_start.client_id {
+        if id.peer != id_start.peer {
             return false;
         }
 

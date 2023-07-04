@@ -116,14 +116,14 @@ impl YSpan {
 
     #[inline]
     pub fn contain_id(&self, id: ID) -> bool {
-        self.id.client_id == id.client_id
+        self.id.peer == id.peer
             && self.id.counter <= id.counter
             && id.counter < self.id.counter + self.atom_len() as i32
     }
 
     #[inline]
     pub fn overlap(&self, id: IdSpan) -> bool {
-        if self.id.client_id != id.client_id {
+        if self.id.peer != id.client_id {
             return false;
         }
 
@@ -149,7 +149,7 @@ impl YSpan {
 
 impl Mergable for YSpan {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        other.id.client_id == self.id.client_id
+        other.id.peer == self.id.peer
             && self.status == other.status
             && self.after_status == other.after_status
             && self.id.counter + self.atom_len() as Counter == other.id.counter

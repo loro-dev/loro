@@ -1,7 +1,7 @@
 use crate::change::Change;
 use crate::event::EventDiff;
 use crate::hierarchy::Hierarchy;
-use crate::id::{ClientID, Counter, ID};
+use crate::id::{Counter, PeerID, ID};
 use crate::op::RemoteOp;
 use crate::span::{CounterSpan, HasCounter, HasCounterSpan};
 use crate::version::PatchedVersionVector;
@@ -292,10 +292,7 @@ impl LogStore {
                 }
             }
 
-            current_vv.set_end(ID::new(
-                change.id.client_id,
-                end as Counter + change.id.counter,
-            ));
+            current_vv.set_end(ID::new(change.id.peer, end as Counter + change.id.counter));
         }
         debug_log::group!("apply effects");
         let mut queue: VecDeque<_> = container_map.into_values().collect();
@@ -367,7 +364,7 @@ impl LogStore {
                 // sort changes by lamport from small to large
                 .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
                 .for_each(|mut c| {
-                    let c_client_id = c.id.client_id;
+                    let c_client_id = c.id.peer;
                     if pending_clients.contains(&c_client_id) {
                         self.pending_changes.get_mut(&c_client_id).unwrap().push(c);
                         return;
@@ -401,7 +398,7 @@ impl LogStore {
 
     fn try_apply_pending(
         &mut self,
-        client_id: &ClientID,
+        client_id: &PeerID,
         latest_vv: &mut VersionVector,
         retain_changes: &mut RemoteClientChanges,
     ) {
@@ -414,7 +411,7 @@ impl LogStore {
                 match can_remote_change_be_applied(latest_vv, peek_c) {
                     ChangeApplyState::Directly => {
                         let c = may_apply_iter.next().unwrap();
-                        let c_client_id = c.id.client_id;
+                        let c_client_id = c.id.peer;
                         latest_vv.set_end(c.id_end());
                         // other pending
                         retain_changes
@@ -465,14 +462,14 @@ enum ChangeApplyState {
     Existing,
     Directly,
     /// The client id of first missing dep
-    Future(ClientID),
+    Future(PeerID),
 }
 
 fn can_remote_change_be_applied(
     vv: &VersionVector,
     change: &mut Change<RemoteOp>,
 ) -> ChangeApplyState {
-    let change_client_id = change.id.client_id;
+    let change_client_id = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&change_client_id).copied().unwrap_or(0);
     if vv_latest_ctr < start {
@@ -482,9 +479,9 @@ fn can_remote_change_be_applied(
         return ChangeApplyState::Existing;
     }
     for dep in change.deps.iter() {
-        let dep_vv_latest_ctr = vv.get(&dep.client_id).copied().unwrap_or(0);
+        let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeApplyState::Future(dep.client_id);
+            return ChangeApplyState::Future(dep.peer);
         }
     }
 

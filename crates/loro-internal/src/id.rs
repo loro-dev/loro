@@ -7,26 +7,26 @@ use crate::{
     LoroError,
 };
 
-pub type ClientID = u64;
+pub type PeerID = u64;
 pub type Counter = i32;
-const UNKNOWN: ClientID = 404;
+const UNKNOWN: PeerID = 404;
 
 // Note: It will be encoded into binary format, so its order should not be changed.
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ID {
-    pub client_id: ClientID,
+    pub peer: PeerID,
     pub counter: Counter,
 }
 
 impl Debug for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("c{}:{}", self.client_id, self.counter).as_str())
+        f.write_str(format!("c{}:{}", self.peer, self.counter).as_str())
     }
 }
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}@{}", self.counter, self.client_id).as_str())
+        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
     }
 }
 
@@ -43,15 +43,18 @@ impl TryFrom<&str> for ID {
             .parse::<Counter>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         let client_id = splitted[1]
-            .parse::<ClientID>()
+            .parse::<PeerID>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
-        Ok(ID { client_id, counter })
+        Ok(ID {
+            peer: client_id,
+            counter,
+        })
     }
 }
 
 impl PartialOrd for ID {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.client_id.partial_cmp(&other.client_id) {
+        match self.peer.partial_cmp(&other.peer) {
             Some(core::cmp::Ordering::Equal) => {}
             ord => return ord,
         }
@@ -61,7 +64,7 @@ impl PartialOrd for ID {
 
 impl Ord for ID {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.client_id.cmp(&other.client_id) {
+        match self.peer.cmp(&other.peer) {
             core::cmp::Ordering::Equal => self.counter.cmp(&other.counter),
             ord => ord,
         }
@@ -69,14 +72,14 @@ impl Ord for ID {
 }
 
 pub const ROOT_ID: ID = ID {
-    client_id: ClientID::MAX,
+    peer: PeerID::MAX,
     counter: i32::MAX,
 };
 
 impl From<u128> for ID {
     fn from(id: u128) -> Self {
         ID {
-            client_id: (id >> 64) as ClientID,
+            peer: (id >> 64) as PeerID,
             counter: id as Counter,
         }
     }
@@ -84,8 +87,8 @@ impl From<u128> for ID {
 
 impl ID {
     #[inline]
-    pub fn new(client_id: ClientID, counter: Counter) -> Self {
-        ID { client_id, counter }
+    pub fn new(peer: PeerID, counter: Counter) -> Self {
+        ID { peer, counter }
     }
 
     #[inline]
@@ -95,13 +98,13 @@ impl ID {
 
     #[inline]
     pub fn is_null(&self) -> bool {
-        self.client_id == ClientID::MAX
+        self.peer == PeerID::MAX
     }
 
     #[inline]
     pub fn to_span(&self, len: usize) -> IdSpan {
         IdSpan {
-            client_id: self.client_id,
+            client_id: self.peer,
             counter: CounterSpan::new(self.counter, self.counter + len as Counter),
         }
     }
@@ -109,33 +112,33 @@ impl ID {
     #[inline]
     pub fn unknown(counter: Counter) -> Self {
         ID {
-            client_id: UNKNOWN,
+            peer: UNKNOWN,
             counter,
         }
     }
 
     #[inline]
     pub fn is_unknown(&self) -> bool {
-        self.client_id == UNKNOWN
+        self.peer == UNKNOWN
     }
 
     #[inline]
     #[allow(dead_code)]
     pub(crate) fn is_connected_id(&self, other: &Self, self_len: usize) -> bool {
-        self.client_id == other.client_id && self.counter + self_len as Counter == other.counter
+        self.peer == other.peer && self.counter + self_len as Counter == other.counter
     }
 
     #[inline]
     pub fn inc(&self, inc: i32) -> Self {
         ID {
-            client_id: self.client_id,
+            peer: self.peer,
             counter: self.counter + inc,
         }
     }
 
     #[inline]
     pub fn contains(&self, len: Counter, target: ID) -> bool {
-        self.client_id == target.client_id
+        self.peer == target.peer
             && self.counter <= target.counter
             && target.counter < self.counter + len
     }

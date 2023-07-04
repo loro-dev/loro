@@ -15,7 +15,7 @@ use crate::{
     container::ContainerID,
     delta::DeltaItem,
     event::{Diff, Observer},
-    id::ClientID,
+    id::PeerID,
     ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 use crate::{container::registry::ContainerIdx, EncodeMode};
@@ -60,7 +60,7 @@ struct Actor {
 }
 
 impl Actor {
-    fn new(id: ClientID) -> Self {
+    fn new(id: PeerID) -> Self {
         let mut actor = Actor {
             loro: LoroCore::new(Default::default(), Some(id)),
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),

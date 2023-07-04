@@ -6,7 +6,7 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
     version::Frontiers,
@@ -27,7 +27,7 @@ struct EncodedClientChanges {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct FirstChangeInfo {
-    pub(crate) client: ClientID,
+    pub(crate) client: PeerID,
     pub(crate) counter: Counter,
     pub(crate) lamport: Lamport,
     pub(crate) timestamp: Timestamp,
@@ -91,7 +91,7 @@ where
     I: Iterator<Item = Change<RemoteOp>>,
 {
     let first_change = changes.next().unwrap();
-    let this_client_id = first_change.id.client_id;
+    let this_client_id = first_change.id.peer;
     let mut data = Vec::with_capacity(changes.size_hint().0 + 1);
     let mut last_change = first_change.clone();
     data.push(EncodedChange {
@@ -161,7 +161,7 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
         }
         let change = Change {
             id: ID {
-                client_id: changes.meta.client,
+                peer: changes.meta.client,
                 counter: start_counter,
             },
             lamport: last_lamport + encoded.lamport_delta,

@@ -18,7 +18,7 @@ use crate::{
     dag::Dag,
     event::EventDiff,
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
     smstring::SmString,
@@ -28,7 +28,7 @@ use crate::{
 };
 
 type ClientIdx = u32;
-type Clients = Vec<ClientID>;
+type Clients = Vec<PeerID>;
 type Containers = Vec<ContainerID>;
 
 #[columnar(vec, ser, de)]
@@ -96,7 +96,7 @@ struct DocEncoding {
 
 #[instrument(skip_all)]
 pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec<u8>, LoroError> {
-    let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
+    let mut client_id_to_idx: FxHashMap<PeerID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut container_indexes = Vec::new();
     let mut container_idx2index = FxHashMap::default();
@@ -124,9 +124,9 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
 
     for change in &diff_changes {
         for deps in change.deps.iter() {
-            client_id_to_idx.entry(deps.client_id).or_insert_with(|| {
+            client_id_to_idx.entry(deps.peer).or_insert_with(|| {
                 let idx = clients.len() as ClientIdx;
-                clients.push(deps.client_id);
+                clients.push(deps.peer);
                 idx
             });
         }
@@ -139,13 +139,13 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
     let mut deps = Vec::with_capacity(change_num);
 
     for change in diff_changes {
-        let client_idx = client_id_to_idx[&change.id.client_id];
+        let client_idx = client_id_to_idx[&change.id.peer];
         let mut dep_on_self = false;
         let mut deps_len = 0;
         for dep in change.deps.iter() {
-            if change.id.client_id != dep.client_id {
+            if change.id.peer != dep.peer {
                 deps.push(DepsEncoding::new(
-                    *client_id_to_idx.get(&dep.client_id).unwrap(),
+                    *client_id_to_idx.get(&dep.peer).unwrap(),
                     dep.counter,
                 ));
                 deps_len += 1;
@@ -329,7 +329,10 @@ pub(super) fn decode_changes_to_inner_format(
             }
 
             let change = Change {
-                id: ID { client_id, counter },
+                id: ID {
+                    peer: client_id,
+                    counter,
+                },
                 // calc lamport after parsing all changes
                 lamport: 0,
                 timestamp,
@@ -402,22 +405,22 @@ pub(super) fn decode_changes_to_inner_format(
 
 pub(crate) fn get_lamport_by_deps(
     deps: &Frontiers,
-    lamport_map: &FxHashMap<ClientID, Vec<(Range<Counter>, Lamport)>>,
+    lamport_map: &FxHashMap<PeerID, Vec<(Range<Counter>, Lamport)>>,
     store: Option<&LogStore>,
-) -> Result<Lamport, ClientID> {
+) -> Result<Lamport, PeerID> {
     let mut ans = Vec::new();
     for id in deps.iter() {
         if let Some(c) = store.and_then(|x| x.lookup_change(*id)) {
             let offset = id.counter - c.id.counter;
             ans.push(c.lamport + offset as u32);
-        } else if let Some(v) = lamport_map.get(&id.client_id) {
+        } else if let Some(v) = lamport_map.get(&id.peer) {
             if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
                 ans.push(lamport + offset);
             } else {
-                return Err(id.client_id);
+                return Err(id.peer);
             }
         } else {
-            return Err(id.client_id);
+            return Err(id.peer);
         }
     }
     Ok(ans.into_iter().max().unwrap_or(0) + 1)

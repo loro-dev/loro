@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use crate::change::{Lamport, Timestamp};
 use crate::dag::{Dag, DagNode};
 use crate::event::Diff;
-use crate::id::{ClientID, Counter, ID};
+use crate::id::{Counter, PeerID, ID};
 use crate::log_store::ClientChanges;
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, VersionVector};
@@ -36,14 +36,14 @@ pub struct OpLog {
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug, Clone, Default)]
 pub struct AppDag {
-    map: FxHashMap<ClientID, RleVec<[AppDagNode; 1]>>,
+    map: FxHashMap<PeerID, RleVec<[AppDagNode; 1]>>,
     frontiers: Frontiers,
     vv: VersionVector,
 }
 
 #[derive(Debug, Clone)]
 pub struct AppDagNode {
-    client: ClientID,
+    client: PeerID,
     cnt: Counter,
     lamport: Lamport,
     parents: SmallVec<[ID; 2]>,

@@ -19,7 +19,7 @@ use crate::{
     configure::Configure,
     container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
     event::{Observer, SubscriptionID},
-    id::ClientID,
+    id::PeerID,
     op::RemoteOp,
     LogStore, VersionVector,
 };
@@ -37,7 +37,7 @@ impl Default for LoroCore {
 
 impl LoroCore {
     #[inline]
-    pub fn new(cfg: Configure, client_id: Option<ClientID>) -> Self {
+    pub fn new(cfg: Configure, client_id: Option<PeerID>) -> Self {
         Self {
             log_store: LogStore::new(cfg, client_id),
             hierarchy: Default::default(),
@@ -45,7 +45,7 @@ impl LoroCore {
     }
 
     #[inline]
-    pub fn client_id(&self) -> ClientID {
+    pub fn client_id(&self) -> PeerID {
         self.log_store.read().unwrap().this_client_id()
     }
 

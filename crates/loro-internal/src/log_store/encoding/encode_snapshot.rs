@@ -20,7 +20,7 @@ use crate::{
     dag::{remove_included_frontiers, Dag},
     event::EventDiff,
     hierarchy::Hierarchy,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
     op::{InnerContent, Op},
     span::HasLamportSpan,
@@ -32,7 +32,7 @@ use super::encode_changes::{ChangeEncoding, DepsEncoding};
 
 type Containers = Vec<ContainerID>;
 type ClientIdx = u32;
-type Clients = Vec<ClientID>;
+type Clients = Vec<PeerID>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EncodedStateContent {
@@ -56,7 +56,7 @@ impl StateContent {
     fn into_encoded(
         self,
         key_to_idx: &FxHashMap<InternalString, usize>,
-        client_id_to_idx: &FxHashMap<ClientID, ClientIdx>,
+        client_id_to_idx: &FxHashMap<PeerID, ClientIdx>,
     ) -> EncodedStateContent {
         match self {
             StateContent::List { pool, state_len } => EncodedStateContent::List { pool, state_len },
@@ -87,7 +87,7 @@ impl StateContent {
 }
 
 impl EncodedStateContent {
-    pub fn into_state(self, keys: &[InternalString], clients: &[ClientID]) -> StateContent {
+    pub fn into_state(self, keys: &[InternalString], clients: &[PeerID]) -> StateContent {
         match self {
             EncodedStateContent::List { pool, state_len } => StateContent::List { pool, state_len },
             EncodedStateContent::Map {
@@ -194,7 +194,7 @@ fn convert_inner_content(
 pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, LoroError> {
     debug_log::debug_dbg!(&store.vv);
     debug_log::debug_dbg!(&store.changes);
-    let mut client_id_to_idx: FxHashMap<ClientID, ClientIdx> = FxHashMap::default();
+    let mut client_id_to_idx: FxHashMap<PeerID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
     for (key, changes) in store.changes.iter() {
@@ -229,17 +229,17 @@ pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, Lor
     let mut deps = Vec::with_capacity(change_num);
     for (client_idx, (_, change_vec)) in store.changes.iter().enumerate() {
         for change in change_vec.iter() {
-            let client_id = change.id.client_id;
+            let client_id = change.id.peer;
             let mut op_len = 0;
             let mut deps_len = 0;
             let mut dep_on_self = false;
             for dep in change.deps.iter() {
                 // the first change will encode the self-client deps
-                if dep.client_id == client_id {
+                if dep.peer == client_id {
                     dep_on_self = true;
                 } else {
                     deps.push(DepsEncoding::new(
-                        *client_id_to_idx.get(&dep.client_id).unwrap(),
+                        *client_id_to_idx.get(&dep.peer).unwrap(),
                         dep.counter,
                     ));
                     deps_len += 1;
@@ -433,7 +433,10 @@ pub(super) fn decode_snapshot(
                 deps.push(ID::new(client_id, counter - 1));
             }
             let change = Change {
-                id: ID { client_id, counter },
+                id: ID {
+                    peer: client_id,
+                    counter,
+                },
                 // cal lamport after parsing all changes
                 lamport: 0,
                 timestamp,
@@ -528,7 +531,7 @@ fn load_snapshot(
     new_store: &mut LogStore,
     new_hierarchy: &mut Hierarchy,
     vv: VersionVector,
-    changes: FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
+    changes: FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>,
     containers: Vec<ContainerID>,
     container_states: Vec<EncodedStateContent>,
     keys: &[InternalString],
@@ -579,7 +582,7 @@ fn load_snapshot(
 fn calc_vv(
     changes_encoding: &[ChangeEncoding],
     ops_encoding: &[SnapshotOpEncoding],
-    clients: &[ClientID],
+    clients: &[PeerID],
     idx_to_container_type: &FxHashMap<usize, ContainerType>,
 ) -> VersionVector {
     let mut vv = FxHashMap::default();

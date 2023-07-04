@@ -112,7 +112,7 @@ impl ContentMap {
             if cursor.as_ref().status.is_activated() {
                 let cursor = cursor.unwrap();
                 ans.push(IdSpan::new(
-                    id.client_id,
+                    id.peer,
                     id.counter + (cursor.offset as i32),
                     id.counter + (cursor.offset + cursor.len) as i32,
                 ));
@@ -129,7 +129,7 @@ impl ContentMap {
             let id = cursor.as_ref().id;
             let cursor = cursor.unwrap();
             ans.push(IdSpan::new(
-                id.client_id,
+                id.peer,
                 id.counter + (cursor.offset as i32),
                 id.counter + (cursor.offset + cursor.len) as i32,
             ));

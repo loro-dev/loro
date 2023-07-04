@@ -21,7 +21,7 @@ use crate::{
     },
     event::{Diff, Index},
     hierarchy::Hierarchy,
-    id::ClientID,
+    id::PeerID,
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
@@ -426,12 +426,12 @@ impl ContainerTrait for MapContainer {
 #[derive(Debug, Clone)]
 pub struct Map {
     container: Weak<Mutex<ContainerInstance>>,
-    client_id: ClientID,
+    client_id: PeerID,
     container_idx: ContainerIdx,
 }
 
 impl Map {
-    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: PeerID) -> Self {
         let container_idx = instance.upgrade().unwrap().try_lock().unwrap().idx();
         Self {
             container: instance,
@@ -506,7 +506,7 @@ impl Map {
 impl ContainerWrapper for Map {
     type Container = MapContainer;
 
-    fn client_id(&self) -> ClientID {
+    fn client_id(&self) -> PeerID {
         self.client_id
     }
 

@@ -6,7 +6,7 @@ use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 pub mod recursive_txn;
 
-use crate::{array_mut_ref, id::ClientID, LoroCore, Transact, VersionVector};
+use crate::{array_mut_ref, id::PeerID, LoroCore, Transact, VersionVector};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -414,7 +414,7 @@ where
 pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
+        sites.push(LoroCore::new(Default::default(), Some(i as PeerID)));
     }
 
     let mut applied = Vec::new();
@@ -441,7 +441,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        sites.push(LoroCore::new(Default::default(), Some(i as ClientID)));
+        sites.push(LoroCore::new(Default::default(), Some(i as PeerID)));
     }
 
     let mut applied = Vec::new();

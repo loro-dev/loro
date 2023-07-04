@@ -15,7 +15,7 @@ use crate::{
     change::Lamport,
     id::{Counter, ID},
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
-    ClientID, LoroError,
+    LoroError, PeerID,
 };
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -32,7 +32,7 @@ use crate::{
 /// see also [im].
 #[repr(transparent)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VersionVector(FxHashMap<ClientID, Counter>);
+pub struct VersionVector(FxHashMap<PeerID, Counter>);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Frontiers(SmallVec<[ID; 2]>);
@@ -120,7 +120,7 @@ impl PartialEq for VersionVector {
 impl Eq for VersionVector {}
 
 impl Deref for VersionVector {
-    type Target = FxHashMap<ClientID, Counter>;
+    type Target = FxHashMap<PeerID, Counter>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -128,21 +128,21 @@ impl Deref for VersionVector {
 }
 
 // TODO: wrap this type?
-pub type IdSpanVector = FxHashMap<ClientID, CounterSpan>;
+pub type IdSpanVector = FxHashMap<PeerID, CounterSpan>;
 
-impl HasId for (&ClientID, &CounterSpan) {
+impl HasId for (&PeerID, &CounterSpan) {
     fn id_start(&self) -> ID {
         ID {
-            client_id: *self.0,
+            peer: *self.0,
             counter: self.1.min(),
         }
     }
 }
 
-impl HasId for (ClientID, CounterSpan) {
+impl HasId for (PeerID, CounterSpan) {
     fn id_start(&self) -> ID {
         ID {
-            client_id: self.0,
+            peer: self.0,
             counter: self.1.min(),
         }
     }
@@ -192,7 +192,7 @@ impl VersionVectorDiff {
     }
 }
 
-fn subtract_start(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
+fn subtract_start(m: &mut FxHashMap<PeerID, CounterSpan>, target: IdSpan) {
     if let Some(span) = m.get_mut(&target.client_id) {
         if span.start < target.counter.end {
             span.start = target.counter.end;
@@ -200,7 +200,7 @@ fn subtract_start(m: &mut FxHashMap<ClientID, CounterSpan>, target: IdSpan) {
     }
 }
 
-fn merge(m: &mut FxHashMap<ClientID, CounterSpan>, mut target: IdSpan) {
+fn merge(m: &mut FxHashMap<PeerID, CounterSpan>, mut target: IdSpan) {
     target.normalize_();
     if let Some(span) = m.get_mut(&target.client_id) {
         span.start = span.start.min(target.counter.start);
@@ -378,7 +378,7 @@ impl VersionVector {
             .filter_map(|(client_id, &counter)| {
                 if counter > 0 {
                     Some(ID {
-                        client_id: *client_id,
+                        peer: *client_id,
                         counter: counter - 1,
                     })
                 } else {
@@ -396,11 +396,11 @@ impl VersionVector {
     /// set the inclusive ending point. target id will be included by self
     #[inline]
     pub fn set_last(&mut self, id: ID) {
-        self.0.insert(id.client_id, id.counter + 1);
+        self.0.insert(id.peer, id.counter + 1);
     }
 
     #[inline]
-    pub fn get_last(&self, client_id: ClientID) -> Option<Counter> {
+    pub fn get_last(&self, client_id: PeerID) -> Option<Counter> {
         self.0
             .get(&client_id)
             .and_then(|&x| if x == 0 { None } else { Some(x - 1) })
@@ -409,14 +409,14 @@ impl VersionVector {
     /// set the exclusive ending point. target id will NOT be included by self
     #[inline]
     pub fn set_end(&mut self, id: ID) {
-        self.0.insert(id.client_id, id.counter);
+        self.0.insert(id.peer, id.counter);
     }
 
     /// Update the end counter of the given client if the end is greater.
     /// Return whether updated
     #[inline]
     pub fn try_update_last(&mut self, id: ID) -> bool {
-        if let Some(end) = self.0.get_mut(&id.client_id) {
+        if let Some(end) = self.0.get_mut(&id.peer) {
             if *end < id.counter + 1 {
                 *end = id.counter + 1;
                 true
@@ -424,7 +424,7 @@ impl VersionVector {
                 false
             }
         } else {
-            self.0.insert(id.client_id, id.counter + 1);
+            self.0.insert(id.peer, id.counter + 1);
             true
         }
     }
@@ -457,7 +457,7 @@ impl VersionVector {
     }
 
     pub fn includes_id(&self, id: ID) -> bool {
-        if let Some(end) = self.get(&id.client_id) {
+        if let Some(end) = self.get(&id.peer) {
             if *end > id.counter {
                 return true;
             }
@@ -467,7 +467,7 @@ impl VersionVector {
 
     pub fn intersect_span<S: HasIdSpan>(&self, target: &S) -> Option<CounterSpan> {
         let id = target.id_start();
-        if let Some(end) = self.get(&id.client_id) {
+        if let Some(end) = self.get(&id.peer) {
             if *end > id.counter {
                 return Some(CounterSpan {
                     start: id.counter,
@@ -492,7 +492,7 @@ impl VersionVector {
     }
 
     pub fn extend_to_include_last_id(&mut self, id: ID) {
-        if let Some(counter) = self.get_mut(&id.client_id) {
+        if let Some(counter) = self.get_mut(&id.peer) {
             if *counter <= id.counter {
                 *counter = id.counter + 1;
             }
@@ -577,8 +577,8 @@ impl Default for VersionVector {
     }
 }
 
-impl From<FxHashMap<ClientID, Counter>> for VersionVector {
-    fn from(map: FxHashMap<ClientID, Counter>) -> Self {
+impl From<FxHashMap<PeerID, Counter>> for VersionVector {
+    fn from(map: FxHashMap<PeerID, Counter>) -> Self {
         let mut im_map = FxHashMap::default();
         for (client_id, counter) in map {
             im_map.insert(client_id, counter);
@@ -613,7 +613,7 @@ impl FromIterator<ID> for VersionVector {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct TotalOrderStamp {
     pub(crate) lamport: Lamport,
-    pub(crate) client_id: ClientID,
+    pub(crate) client_id: PeerID,
 }
 
 pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
@@ -704,19 +704,19 @@ impl PatchedVersionVector {
     #[inline]
     pub fn extend_to_include_last_id(&mut self, id: ID) {
         self.patch.extend_to_include_last_id(id);
-        self.omit_if_needless(id.client_id);
+        self.omit_if_needless(id.peer);
     }
 
     #[inline]
     pub fn set_end(&mut self, id: ID) {
         self.patch.set_end(id);
-        self.omit_if_needless(id.client_id);
+        self.omit_if_needless(id.peer);
     }
 
     #[inline]
     pub fn set_last(&mut self, id: ID) {
         self.patch.set_last(id);
-        self.omit_if_needless(id.client_id);
+        self.omit_if_needless(id.peer);
     }
 
     #[inline]
@@ -773,7 +773,7 @@ impl PatchedVersionVector {
     }
 
     #[inline(always)]
-    fn omit_if_needless(&mut self, client_id: ClientID) {
+    fn omit_if_needless(&mut self, client_id: PeerID) {
         if let Some(patch_value) = self.patch.get(&client_id) {
             if *patch_value == *self.base.get(&client_id).unwrap_or(&0) {
                 self.patch.remove(&client_id);
@@ -782,14 +782,14 @@ impl PatchedVersionVector {
     }
 
     #[inline]
-    pub fn get(&self, client_id: &ClientID) -> Option<&Counter> {
+    pub fn get(&self, client_id: &PeerID) -> Option<&Counter> {
         self.patch
             .get(client_id)
             .or_else(|| self.base.get(client_id))
     }
 
     #[inline]
-    pub fn insert(&mut self, client_id: ClientID, counter: Counter) {
+    pub fn insert(&mut self, client_id: PeerID, counter: Counter) {
         self.patch.insert(client_id, counter);
         self.omit_if_needless(client_id);
     }
@@ -799,7 +799,7 @@ impl PatchedVersionVector {
         self.patch.includes_id(id) || self.base.includes_id(id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&ClientID, &Counter)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&PeerID, &Counter)> {
         self.patch.iter().chain(
             self.base
                 .iter()

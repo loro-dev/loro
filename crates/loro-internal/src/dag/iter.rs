@@ -225,14 +225,14 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
 
         // traverse all nodes
         while let Some(id) = q.pop() {
-            let client = id.client_id;
+            let client = id.peer;
             let node = dag.get(id).unwrap();
             let deps = node.deps();
             if deps.len().is_zero() {
                 in_degrees.insert(id, 0);
             }
             for dep in deps.iter() {
-                let filter = if let Some(span) = target.get(&dep.client_id) {
+                let filter = if let Some(span) = target.get(&dep.peer) {
                     dep.counter < span.min()
                 } else {
                     true
@@ -287,7 +287,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         }
         let node_id = self.stack.pop().unwrap();
 
-        let target_span = self.target.get_mut(&node_id.client_id).unwrap();
+        let target_span = self.target.get_mut(&node_id.peer).unwrap();
         debug_assert_eq!(
             node_id.counter,
             target_span.min(),
@@ -329,7 +329,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));
 
-        let current_client = node_id.client_id;
+        let current_client = node_id.peer;
         let mut keys = Vec::new();
         let mut heap = BinaryHeap::new();
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
@@ -339,7 +339,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
                 self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
                 if let Some(in_degree) = self.in_degrees.get(succ_id) {
                     if in_degree.is_zero() {
-                        heap.push((succ_id.client_id != current_client, *succ_id));
+                        heap.push((succ_id.peer != current_client, *succ_id));
                         self.in_degrees.remove(succ_id);
                     }
                 }
@@ -432,10 +432,7 @@ mod test {
             let end = n.slice.end;
             let change = n.data;
 
-            vv.set_end(ID::new(
-                change.id.client_id,
-                end as Counter + change.id.counter,
-            ));
+            vv.set_end(ID::new(change.id.peer, end as Counter + change.id.counter));
             println!("{:?}\n", vv);
         }
     }
@@ -472,11 +469,11 @@ mod test {
 
         let mut from_vv = VersionVector::new();
         from_vv.set_last(ID {
-            client_id: 1,
+            peer: 1,
             counter: 1,
         });
         from_vv.set_last(ID {
-            client_id: 2,
+            peer: 2,
             counter: 1,
         });
         let mut vv = from_vv.clone();
@@ -484,11 +481,11 @@ mod test {
         for n in c1_store.iter_causal(
             &[
                 ID {
-                    client_id: 1,
+                    peer: 1,
                     counter: 1,
                 },
                 ID {
-                    client_id: 2,
+                    peer: 2,
                     counter: 1,
                 },
             ],
@@ -501,10 +498,7 @@ mod test {
             let end = n.slice.end;
             let change = n.data;
 
-            vv.set_end(ID::new(
-                change.id.client_id,
-                end as Counter + change.id.counter,
-            ));
+            vv.set_end(ID::new(change.id.peer, end as Counter + change.id.counter));
             println!("{:?}\n", vv);
         }
     }

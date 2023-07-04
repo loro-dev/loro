@@ -14,7 +14,7 @@ use crate::{
     container::{registry::ContainerIdx, ContainerID},
     delta::DeltaItem,
     event::{Diff, Observer},
-    id::ClientID,
+    id::PeerID,
     transaction::TransactionWrap,
     ContainerType, EncodeMode, List, LoroCore, LoroValue, Map, Text, Transact,
 };
@@ -60,7 +60,7 @@ struct Actor {
 }
 
 impl Actor {
-    fn new(id: ClientID) -> Self {
+    fn new(id: PeerID) -> Self {
         let loro = LoroCore::new(Default::default(), Some(id));
         let txn = loro.transact();
         let mut actor = Actor {

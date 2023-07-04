@@ -22,7 +22,7 @@ mod test;
 
 use crate::{
     change::Lamport,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{Frontiers, IdSpanVector, VersionVector, VersionVectorDiff},
 };
@@ -99,18 +99,18 @@ impl<T: Dag + ?Sized> DagUtils for T {
         if from.len() == 1 && to.len() == 1 {
             let from = from[0];
             let to = to[0];
-            if from.client_id == to.client_id {
+            if from.peer == to.peer {
                 let from_span = self.get(from).unwrap();
                 let to_span = self.get(to).unwrap();
                 if std::ptr::eq(from_span, to_span) {
                     if from.counter < to.counter {
                         ans.right.insert(
-                            from.client_id,
+                            from.peer,
                             CounterSpan::new(from.counter + 1, to.counter + 1),
                         );
                     } else {
                         ans.left.insert(
-                            from.client_id,
+                            from.peer,
                             CounterSpan::new(to.counter + 1, from.counter + 1),
                         );
                     }
@@ -119,7 +119,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
                 if from_span.deps().len() == 1 && to_span.contains_id(from_span.deps()[0]) {
                     ans.left.insert(
-                        from.client_id,
+                        from.peer,
                         CounterSpan::new(to.counter + 1, from.counter + 1),
                     );
                     return ans;
@@ -127,7 +127,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
                 if to_span.deps().len() == 1 && from_span.contains_id(to_span.deps()[0]) {
                     ans.right.insert(
-                        from.client_id,
+                        from.peer,
                         CounterSpan::new(from.counter + 1, to.counter + 1),
                     );
                     return ans;
@@ -194,7 +194,7 @@ where
 {
     let mut vv = VersionVector::new();
     let mut visited: FxHashSet<ID> = FxHashSet::default();
-    vv.insert(id.client_id, id.counter + 1);
+    vv.insert(id.peer, id.counter + 1);
     let node = get(id).unwrap();
 
     if node.deps().is_empty() {
@@ -324,13 +324,13 @@ fn _find_common_ancestor<'a, F, D, G>(
     b_ids: &[ID],
     notify: &mut G,
     find_path: bool,
-) -> FxHashMap<ClientID, Counter>
+) -> FxHashMap<PeerID, Counter>
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<&'a D>,
     G: FnMut(IdSpan, NodeType),
 {
-    let mut ans: FxHashMap<ClientID, Counter> = Default::default();
+    let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids {
         queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::A));
@@ -338,7 +338,7 @@ where
     for id in b_ids {
         queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::B));
     }
-    let mut visited: HashMap<ClientID, (Counter, NodeType), _> = FxHashMap::default();
+    let mut visited: HashMap<PeerID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
     //
     // - visited's (client, counters) are subset of max(version_vector_a, version_vector_b)
@@ -380,10 +380,8 @@ where
                     }
                 } else {
                     if node_type != NodeType::Shared {
-                        if visited.get(&node.id.client_id).map(|(_, t)| *t)
-                            != Some(NodeType::Shared)
-                        {
-                            ans.insert(node.id.client_id, other_node.id_last().counter);
+                        if visited.get(&node.id.peer).map(|(_, t)| *t) != Some(NodeType::Shared) {
+                            ans.insert(node.id.peer, other_node.id_last().counter);
                         }
                         node_type = NodeType::Shared;
                     }
@@ -401,20 +399,20 @@ where
         }
 
         // detect whether client is visited by other
-        if let Some((ctr, visited_type)) = visited.get_mut(&node.id.client_id) {
+        if let Some((ctr, visited_type)) = visited.get_mut(&node.id.peer) {
             debug_assert!(*ctr >= node.id_last().counter);
             if *visited_type == NodeType::Shared {
                 node_type = NodeType::Shared;
             } else if *visited_type != node_type {
                 // if node_type is shared, ans should already contains it or its descendance
                 if node_type != NodeType::Shared {
-                    ans.insert(node.id.client_id, node.id_last().counter);
+                    ans.insert(node.id.peer, node.id_last().counter);
                 }
                 *visited_type = NodeType::Shared;
                 node_type = NodeType::Shared;
             }
         } else {
-            visited.insert(node.id.client_id, (node.id_last().counter, node_type));
+            visited.insert(node.id.peer, (node.id_last().counter, node_type));
         }
 
         // if this is not shared, the end of the span must be only reachable from A, or only reachable from B.
@@ -480,7 +478,7 @@ where
     if left.len() == 1 && right.len() == 1 {
         let left = left[0];
         let right = right[0];
-        if left.client_id == right.client_id {
+        if left.peer == right.peer {
             let left_span = get(left).unwrap();
             let right_span = get(right).unwrap();
             if std::ptr::eq(left_span, right_span) {
@@ -585,9 +583,9 @@ where
 
 pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
     for dep in new_change_deps.iter() {
-        if let Some(last) = frontiers.get_last(dep.client_id) {
+        if let Some(last) = frontiers.get_last(dep.peer) {
             if last <= dep.counter {
-                frontiers.remove(&dep.client_id);
+                frontiers.remove(&dep.peer);
             }
         }
     }

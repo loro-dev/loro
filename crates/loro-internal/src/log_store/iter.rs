@@ -1,6 +1,6 @@
 use crate::Op;
 
-use crate::id::ClientID;
+use crate::id::PeerID;
 
 use crate::op::RichOp;
 
@@ -51,7 +51,7 @@ pub struct OpSpanIter<'a> {
 
 impl<'a> OpSpanIter<'a> {
     pub fn new(
-        changes: &'a FxHashMap<ClientID, RleVecWithIndex<Change, ChangeMergeCfg>>,
+        changes: &'a FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>,
         target_span: IdSpan,
     ) -> Self {
         let rle_changes = changes.get(&target_span.client_id).unwrap();

@@ -112,7 +112,7 @@ impl<O: Rle + HasIndex> Mergable<ChangeMergeCfg> for Change<O> {
             return false;
         }
 
-        self.id.client_id == other.id.client_id
+        self.id.peer == other.id.peer
             && self.id.counter + self.content_len() as Counter == other.id.counter
             && self.lamport + self.content_len() as Lamport == other.lamport
     }

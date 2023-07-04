@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[allow(unused)]
-use crate::ClientID;
+use crate::PeerID;
 
 use self::{
     content_map::ContentMap,
@@ -44,7 +44,7 @@ pub mod yata_impl;
 #[derive(Debug)]
 pub struct Tracker {
     #[cfg(feature = "test_utils")]
-    client_id: ClientID,
+    client_id: PeerID,
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
     /// latest applied ops version vector
@@ -66,7 +66,7 @@ unsafe impl Sync for Tracker {}
 
 impl From<ID> for u128 {
     fn from(id: ID) -> Self {
-        ((id.client_id as u128) << 64) | id.counter as u128
+        ((id.peer as u128) << 64) | id.counter as u128
     }
 }
 
@@ -117,7 +117,7 @@ impl Tracker {
         for span in self.content.iter() {
             let yspan = span.as_ref();
             let id_span = IdSpan::new(
-                yspan.id.client_id,
+                yspan.id.peer,
                 yspan.id.counter,
                 yspan.atom_len() as Counter + yspan.id.counter,
             );
@@ -210,7 +210,7 @@ impl Tracker {
         }
 
         if self.all_vv().includes_id(id) {
-            let this_ctr = self.all_vv().get(&id.client_id).unwrap();
+            let this_ctr = self.all_vv().get(&id.peer).unwrap();
             let shift = this_ctr - id.counter;
             self.forward(std::iter::once(id.to_span(shift as usize)), false);
             if shift as usize >= content.atom_len() {
@@ -366,8 +366,8 @@ impl Tracker {
 
     /// apply an operation directly to the current tracker
     fn apply(&mut self, id: ID, content: &InnerContent) {
-        assert!(*self.current_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
-        assert!(*self.all_vv.get(&id.client_id).unwrap_or(&0) <= id.counter);
+        assert!(*self.current_vv.get(&id.peer).unwrap_or(&0) <= id.counter);
+        assert!(*self.all_vv.get(&id.peer).unwrap_or(&0) <= id.counter);
         self.current_vv
             .set_end(id.inc(content.content_len() as i32));
         self.all_vv.set_end(id.inc(content.content_len() as i32));

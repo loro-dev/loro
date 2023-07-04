@@ -7,9 +7,9 @@
 use crate::{
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
+    id::{Counter, PeerID},
     log_store::ImportContext,
     op::{InnerContent, RemoteContent, RichOp},
-    version::PatchedVersionVector,
     InternalString, LoroError, LoroValue, VersionVector, ID,
 };
 
@@ -172,7 +172,8 @@ pub enum ContainerID {
         container_type: ContainerType,
     },
     Normal {
-        id: ID,
+        peer: PeerID,
+        counter: Counter,
         container_type: ContainerType,
     },
 }
@@ -184,9 +185,15 @@ impl Display for ContainerID {
                 name,
                 container_type,
             } => f.write_fmt(format_args!("/{}:{}", name, container_type))?,
-            ContainerID::Normal { id, container_type } => {
-                f.write_fmt(format_args!("{}:{}", id, container_type))?
-            }
+            ContainerID::Normal {
+                peer,
+                counter,
+                container_type,
+            } => f.write_fmt(format_args!(
+                "{}:{}",
+                ID::new(*peer, *counter),
+                container_type
+            ))?,
         };
         Ok(())
     }
@@ -210,10 +217,8 @@ impl TryFrom<&str> for ContainerID {
             let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
             let client = parts.next().ok_or(())?.parse().map_err(|_| ())?;
             Ok(ContainerID::Normal {
-                id: ID {
-                    counter,
-                    client_id: client,
-                },
+                counter,
+                peer: client,
                 container_type,
             })
         }
@@ -241,7 +246,9 @@ impl From<&ContainerID> for ContainerIdRaw {
     fn from(id: &ContainerID) -> Self {
         match id {
             ContainerID::Root { name, .. } => ContainerIdRaw::Root { name: name.clone() },
-            ContainerID::Normal { id, .. } => ContainerIdRaw::Normal { id: *id },
+            ContainerID::Normal { peer, counter, .. } => ContainerIdRaw::Normal {
+                id: ID::new(*peer, *counter),
+            },
         }
     }
 }
@@ -250,7 +257,9 @@ impl From<ContainerID> for ContainerIdRaw {
     fn from(id: ContainerID) -> Self {
         match id {
             ContainerID::Root { name, .. } => ContainerIdRaw::Root { name },
-            ContainerID::Normal { id, .. } => ContainerIdRaw::Normal { id },
+            ContainerID::Normal { peer, counter, .. } => ContainerIdRaw::Normal {
+                id: ID::new(peer, counter),
+            },
         }
     }
 }
@@ -262,7 +271,11 @@ impl ContainerIdRaw {
                 name,
                 container_type,
             },
-            ContainerIdRaw::Normal { id } => ContainerID::Normal { id, container_type },
+            ContainerIdRaw::Normal { id } => ContainerID::Normal {
+                peer: id.peer,
+                counter: id.counter,
+                container_type,
+            },
         }
     }
 }
@@ -270,7 +283,11 @@ impl ContainerIdRaw {
 impl ContainerID {
     #[inline]
     pub fn new_normal(id: ID, container_type: ContainerType) -> Self {
-        ContainerID::Normal { id, container_type }
+        ContainerID::Normal {
+            peer: id.peer,
+            counter: id.counter,
+            container_type,
+        }
     }
 
     #[inline]

@@ -1,11 +1,11 @@
 use thiserror::Error;
 
-use crate::id::ClientID;
+use crate::id::PeerID;
 
 #[derive(Error, Debug)]
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
-    UnmatchedContext { expected: ClientID, found: ClientID },
+    UnmatchedContext { expected: PeerID, found: PeerID },
     #[error("Decode version vector error. Please provide correct version.")]
     DecodeVersionVectorError,
     #[error("Decode error ({0})")]

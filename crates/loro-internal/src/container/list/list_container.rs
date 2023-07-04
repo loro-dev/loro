@@ -21,7 +21,7 @@ use crate::{
     delta::Delta,
     event::{Diff, Index},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter},
+    id::{Counter, PeerID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     prelim::Prelim,
@@ -560,12 +560,12 @@ impl ContainerTrait for ListContainer {
 #[derive(Debug, Clone)]
 pub struct List {
     container: Weak<Mutex<ContainerInstance>>,
-    client_id: ClientID,
+    client_id: PeerID,
     container_idx: ContainerIdx,
 }
 
 impl List {
-    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: PeerID) -> Self {
         let container_idx = {
             let list = instance.upgrade().unwrap();
             let list = list.try_lock().unwrap();
@@ -741,7 +741,7 @@ impl ContainerWrapper for List {
         f(list)
     }
 
-    fn client_id(&self) -> ClientID {
+    fn client_id(&self) -> PeerID {
         self.client_id
     }
 

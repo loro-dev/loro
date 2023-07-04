@@ -15,7 +15,7 @@ use crate::{
     delta::{Delta, DeltaItem},
     event::{Diff, Utf16Meta},
     hierarchy::Hierarchy,
-    id::{ClientID, Counter},
+    id::{Counter, PeerID},
     log_store::ImportContext,
     op::{InnerContent, Op, RemoteContent, RichOp},
     transaction::Transaction,
@@ -552,12 +552,12 @@ impl ContainerTrait for TextContainer {
 #[derive(Debug, Clone)]
 pub struct Text {
     container: Weak<Mutex<ContainerInstance>>,
-    client_id: ClientID,
+    client_id: PeerID,
     container_idx: ContainerIdx,
 }
 
 impl Text {
-    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: ClientID) -> Self {
+    pub fn from_instance(instance: Weak<Mutex<ContainerInstance>>, client_id: PeerID) -> Self {
         let container_idx = {
             let x = instance.upgrade().unwrap();
             let x = x.try_lock().unwrap();
@@ -659,7 +659,7 @@ impl Text {
 impl ContainerWrapper for Text {
     type Container = TextContainer;
 
-    fn client_id(&self) -> crate::id::ClientID {
+    fn client_id(&self) -> crate::id::PeerID {
         self.client_id
     }
 

@@ -16,7 +16,7 @@ use crate::{
     context::Context,
     event::{Index, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
-    id::ClientID,
+    id::PeerID,
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
     transaction::Transaction,
@@ -433,7 +433,7 @@ pub trait ContainerWrapper {
         ans
     }
 
-    fn client_id(&self) -> ClientID;
+    fn client_id(&self) -> PeerID;
 
     fn id(&self) -> ContainerID {
         self.with_container(|x| x.id().clone())

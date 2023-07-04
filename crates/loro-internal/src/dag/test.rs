@@ -7,7 +7,7 @@ use super::*;
 use crate::{
     array_mut_ref,
     change::Lamport,
-    id::{ClientID, Counter, ID},
+    id::{Counter, PeerID, ID},
     span::HasIdSpan,
 };
 
@@ -71,11 +71,11 @@ impl HasLength for TestNode {
 
 #[derive(Debug, PartialEq, Eq)]
 struct TestDag {
-    nodes: FxHashMap<ClientID, Vec<TestNode>>,
+    nodes: FxHashMap<PeerID, Vec<TestNode>>,
     frontier: Vec<ID>,
     version_vec: VersionVector,
     next_lamport: Lamport,
-    client_id: ClientID,
+    client_id: PeerID,
 }
 
 impl TestDag {
@@ -88,7 +88,7 @@ impl Dag for TestDag {
     type Node = TestNode;
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
-        let arr = self.nodes.get(&id.client_id)?;
+        let arr = self.nodes.get(&id.peer)?;
         arr.binary_search_by(|node| {
             if node.id.counter > id.counter {
                 Ordering::Greater
@@ -111,7 +111,7 @@ impl Dag for TestDag {
 }
 
 impl TestDag {
-    pub fn new(client_id: ClientID) -> Self {
+    pub fn new(client_id: PeerID) -> Self {
         Self {
             nodes: FxHashMap::default(),
             frontier: Vec::new(),
@@ -135,7 +135,7 @@ impl TestDag {
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
         let deps = std::mem::replace(&mut self.frontier, vec![id.inc(len as Counter - 1)]);
-        if deps.len() == 1 && deps[0].client_id == client_id {
+        if deps.len() == 1 && deps[0].peer == client_id {
             // can merge two op
             let arr = self.nodes.get_mut(&client_id).unwrap();
             let mut last = arr.last_mut().unwrap();
@@ -182,21 +182,18 @@ impl TestDag {
 
     fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
         frontier.retain(|x| {
-            if x.client_id == new_node_id.client_id && x.counter <= new_node_id.counter {
+            if x.peer == new_node_id.peer && x.counter <= new_node_id.counter {
                 return false;
             }
 
             !new_node_deps
                 .iter()
-                .any(|y| y.client_id == x.client_id && y.counter >= x.counter)
+                .any(|y| y.peer == x.peer && y.counter >= x.counter)
         });
 
         // nodes from the same client with `counter < new_node_id.counter`
         // are filtered out from frontier.
-        if frontier
-            .iter()
-            .all(|x| x.client_id != new_node_id.client_id)
-        {
+        if frontier.iter().all(|x| x.peer != new_node_id.peer) {
             frontier.push(new_node_id);
         }
     }
@@ -204,10 +201,10 @@ impl TestDag {
     fn _try_push_node(
         &mut self,
         node: &TestNode,
-        pending: &mut Vec<(ClientID, usize)>,
+        pending: &mut Vec<(PeerID, usize)>,
         i: usize,
     ) -> bool {
-        let client_id = node.id.client_id;
+        let client_id = node.id.peer;
         if self.contains(node.id_last()) {
             return false;
         }
@@ -260,7 +257,7 @@ fn test_dag() {
     assert_eq!(
         a.frontier()[0],
         ID {
-            client_id: 0,
+            peer: 0,
             counter: 1
         }
     );
@@ -552,7 +549,7 @@ mod find_path {
         preprocess(&mut interactions, dag_num);
         let mut dags = Vec::new();
         for i in 0..dag_num {
-            dags.push(TestDag::new(i as ClientID));
+            dags.push(TestDag::new(i as PeerID));
         }
 
         for interaction in interactions.iter_mut() {
@@ -914,7 +911,7 @@ mod find_common_ancestors_proptest {
         preprocess(&mut after_merge_insertion, dag_num);
         let mut dags = Vec::new();
         for i in 0..dag_num {
-            dags.push(TestDag::new(i as ClientID));
+            dags.push(TestDag::new(i as PeerID));
         }
 
         for interaction in before_merge_insertion {
@@ -981,7 +978,7 @@ mod find_common_ancestors_proptest {
         preprocess(&mut after_merge_insertion, dag_num);
         let mut dags = Vec::new();
         for i in 0..dag_num {
-            dags.push(TestDag::new(i as ClientID));
+            dags.push(TestDag::new(i as PeerID));
         }
 
         for mut interaction in before_merge_insertion {
@@ -1124,7 +1121,7 @@ mod dag_partial_iter {
         preprocess(&mut interactions, dag_num);
         let mut dags = Vec::new();
         for i in 0..dag_num {
-            dags.push(TestDag::new(i as ClientID));
+            dags.push(TestDag::new(i as PeerID));
         }
 
         for interaction in interactions.iter_mut() {
@@ -1182,19 +1179,19 @@ mod dag_partial_iter {
                         // dbg!(&sliced, &forward, &retreat, slice);
                     }
                     assert!(diff_spans
-                        .get(&data.id.client_id)
+                        .get(&data.id.peer)
                         .unwrap()
                         .contains(sliced.id.counter));
                     vv.forward(&forward);
                     vv.retreat(&retreat);
                     let mut data_vv = map.get(&data.id).unwrap().clone();
                     data_vv.extend_to_include(IdSpan::new(
-                        sliced.id.client_id,
+                        sliced.id.peer,
                         sliced.id.counter,
                         sliced.id.counter + 1,
                     ));
                     data_vv.shrink_to_exclude(IdSpan::new(
-                        sliced.id.client_id,
+                        sliced.id.peer,
                         sliced.id.counter,
                         sliced.id_end().counter,
                     ));

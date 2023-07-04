@@ -25,7 +25,7 @@ impl Sliceable for AppDagNode {
 impl HasId for AppDagNode {
     fn id_start(&self) -> ID {
         ID {
-            client_id: self.client,
+            peer: self.client,
             counter: self.cnt,
         }
     }
@@ -63,7 +63,10 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<&Self::Node> {
-        let ID { client_id, counter } = id;
+        let ID {
+            peer: client_id,
+            counter,
+        } = id;
         self.map
             .get(&client_id)
             .and_then(|rle| rle.get(counter).map(|x| x.element))
