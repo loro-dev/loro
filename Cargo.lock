@@ -594,6 +594,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "generic-btree"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff012c9d64685dc26c5ebac85b7e56a29799646a945239db2d91fc3a597de6d8"
+dependencies = [
+ "fxhash",
+ "smallvec",
+ "thunderdome",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,6 +750,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jumprope"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "829c74fe88dda0d2a5425b022b44921574a65c4eb78e6e39a61b40eb416a4ef8"
+dependencies = [
+ "rand",
+ "str_indices",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -824,9 +845,11 @@ dependencies = [
  "enum_dispatch",
  "flate2",
  "fxhash",
+ "generic-btree",
  "im",
  "itertools",
  "js-sys",
+ "jumprope",
  "num",
  "postcard",
  "proptest",
@@ -1726,6 +1749,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "str_indices"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f026164926842ec52deb1938fae44f83dfdb82d0a5b0270c5bd5935ab74d6dd"
+
+[[package]]
 name = "string_cache"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1870,6 +1899,12 @@ checksum = "5516c27b78311c50bf42c071425c560ac799b11c30b31f87e3081965fe5e0180"
 dependencies = [
  "once_cell",
 ]
+
+[[package]]
+name = "thunderdome"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e170f93360bf9ae6fe3c31116bbf27adb1d054cedd6bc3d7857e34f2d98d0b"
 
 [[package]]
 name = "tinytemplate"

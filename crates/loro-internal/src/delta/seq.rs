@@ -555,6 +555,15 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     }
 }
 
+impl<Value, M> IntoIterator for Delta<Value, M> {
+    type Item = DeltaItem<Value, M>;
+
+    type IntoIter = std::vec::IntoIter<DeltaItem<Value, M>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
+    }
+}
+
 impl<Value: DeltaValue, M: Meta> Default for Delta<Value, M> {
     fn default() -> Self {
         Self::new()
