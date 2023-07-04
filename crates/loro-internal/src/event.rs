@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::ContainerID,
-    delta::{Delta, DeltaType, MapDiff, Meta},
+    delta::{Delta, DeltaType, MapDelta, MapDiff, Meta},
     transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,
@@ -123,6 +123,7 @@ pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String, Utf16Meta>),
     Map(MapDiff<LoroValue>),
+    NewMap(MapDelta),
 }
 
 // pub type Observer = Box<dyn FnMut(&Event) + Send>;

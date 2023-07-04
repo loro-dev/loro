@@ -310,6 +310,7 @@ impl Drop for Transaction {
     }
 }
 
+// TODO: perf slow
 fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
     let diff = match other_diff {
         Diff::List(x) => {
@@ -326,6 +327,11 @@ fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
             let inner = std::mem::take(this_diff.as_text_mut().unwrap());
             let diff = inner.compose(x);
             Diff::Text(diff)
+        }
+        Diff::NewMap(x) => {
+            let inner = std::mem::take(this_diff.as_new_map_mut().unwrap());
+            let diff = inner.compose(x);
+            Diff::NewMap(diff)
         }
     };
     *this_diff = diff;

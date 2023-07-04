@@ -303,6 +303,7 @@ impl LoroValue {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
             Diff::Map(_) => TypeHint::Map,
+            Diff::NewMap(_) => TypeHint::Map,
         };
         self.get_mut(path, hint).apply_diff(diff);
     }
@@ -486,6 +487,21 @@ pub mod wasm {
                     .unwrap();
 
                     js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &map.into()).unwrap();
+                }
+                Diff::NewMap(map) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("map"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("diff"),
+                        &serde_wasm_bindgen::to_value(&map).unwrap(),
+                    )
+                    .unwrap();
                 }
             };
 
