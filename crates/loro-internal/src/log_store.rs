@@ -9,9 +9,10 @@ use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
+    cell::Cell,
     cmp::Ordering,
     marker::PhantomPinned,
-    sync::{Arc, Mutex, MutexGuard, RwLock, Weak},
+    sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard, RwLock, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -81,6 +82,8 @@ pub struct LogStore {
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
     pending_changes: RemoteClientChanges,
+    /// if local ops are not exposed yet, new ops can be merged to the existing change
+    can_merge_local_op: AtomicBool,
     _pin: PhantomPinned,
 }
 
@@ -99,12 +102,16 @@ impl LogStore {
             vv: Default::default(),
             reg: ContainerRegistry::new(),
             pending_changes: Default::default(),
+            can_merge_local_op: AtomicBool::new(true),
             _pin: PhantomPinned,
         }))
     }
 
     #[inline]
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
+        if id.peer == self.this_client_id {
+            self.expose_local_change();
+        }
         self.changes.get(&id.peer).and_then(|changes| {
             if id.counter <= changes.last().unwrap().id_last().counter {
                 Some(changes.get_by_atom_index(id.counter).unwrap().element)
@@ -115,6 +122,7 @@ impl LogStore {
     }
 
     pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<PeerID, Vec<Change<RemoteOp>>> {
+        self.expose_local_change();
         let mut ans: FxHashMap<PeerID, Vec<Change<RemoteOp>>> = Default::default();
         let self_vv = self.vv();
         for span in self_vv.sub_iter(remote_vv) {
@@ -126,6 +134,11 @@ impl LogStore {
         }
 
         ans
+    }
+
+    pub fn expose_local_change(&self) {
+        self.can_merge_local_op
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn get_changes_slice(&self, id_span: IdSpan) -> Vec<Change> {
@@ -270,10 +283,26 @@ impl LogStore {
         self.latest_lamport = lamport + change.content_len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
-        self.changes
-            .entry(self.this_client_id)
-            .or_default()
-            .push(change);
+        let can_merge = self
+            .can_merge_local_op
+            .load(std::sync::atomic::Ordering::Acquire);
+        let changes = self.changes.entry(self.this_client_id).or_default();
+        if can_merge
+            && changes
+                .vec()
+                .last()
+                .map(|x| x.can_merge_right(&change))
+                .unwrap_or(false)
+        {
+            let last_change_ops = &mut changes.vec_mut().last_mut().unwrap().ops;
+            for op in change.ops {
+                last_change_ops.push(op)
+            }
+        } else {
+            changes.push(change);
+            self.can_merge_local_op
+                .store(true, std::sync::atomic::Ordering::Release)
+        }
     }
 
     #[inline]

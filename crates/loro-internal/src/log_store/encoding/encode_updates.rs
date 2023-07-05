@@ -49,6 +49,7 @@ struct EncodedChange {
 
 #[instrument(skip_all)]
 pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
+    store.expose_local_change();
     let changes = store.export(from);
     let mut updates = Updates {
         changes: Vec::with_capacity(changes.len()),

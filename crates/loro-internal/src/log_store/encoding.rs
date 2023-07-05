@@ -61,6 +61,7 @@ impl LoroEncoder {
     }
 
     pub(crate) fn encode(store: &LogStore, mode: EncodeMode) -> Vec<u8> {
+        store.expose_local_change();
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
         // maybe u8 is enough

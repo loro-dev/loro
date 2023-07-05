@@ -117,3 +117,12 @@ impl DagNode for Change {
         &self.deps
     }
 }
+
+impl Change {
+    pub fn can_merge_right(&self, other: &Self) -> bool {
+        other.id.peer == self.id.peer
+            && other.id.counter == self.id.counter + self.content_len() as Counter
+            && other.deps.len() == 1
+            && other.deps[0].peer == self.id.peer
+    }
+}

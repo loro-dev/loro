@@ -96,6 +96,7 @@ struct DocEncoding {
 
 #[instrument(skip_all)]
 pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec<u8>, LoroError> {
+    store.expose_local_change();
     let mut client_id_to_idx: FxHashMap<PeerID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut container_indexes = Vec::new();

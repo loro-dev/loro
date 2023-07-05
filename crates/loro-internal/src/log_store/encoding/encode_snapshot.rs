@@ -193,6 +193,7 @@ fn convert_inner_content(
 pub(super) fn encode_snapshot(store: &LogStore, gc: bool) -> Result<Vec<u8>, LoroError> {
     debug_log::debug_dbg!(&store.vv);
     debug_log::debug_dbg!(&store.changes);
+    store.expose_local_change();
     let mut client_id_to_idx: FxHashMap<PeerID, ClientIdx> = FxHashMap::default();
     let mut clients = Vec::with_capacity(store.changes.len());
     let mut change_num = 0;
