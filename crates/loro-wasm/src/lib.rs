@@ -112,7 +112,6 @@ impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let cfg: Configure = Configure {
-            change: Default::default(),
             gc: GcConfig::default().with_gc(false),
             get_time: || js_sys::Date::now() as i64,
             rand: Arc::new(MathRandom),

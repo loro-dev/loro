@@ -72,7 +72,7 @@ impl Dag for AppDag {
         } = id;
         self.map
             .get(&client_id)
-            .and_then(|rle| rle.get(counter).map(|x| x.element))
+            .and_then(|rle| rle.get_by_atom_index(counter).map(|x| x.element))
     }
 
     fn vv(&self) -> VersionVector {
@@ -85,7 +85,7 @@ impl AppDag {
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
         self.map.get(&id.peer).and_then(|rle| {
-            rle.get(id.counter).map(|x| {
+            rle.get_by_atom_index(id.counter).map(|x| {
                 let mut vv = x.element.vv.clone();
                 vv.insert(id.peer, id.counter);
                 vv
@@ -107,7 +107,7 @@ impl AppDag {
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
         self.map.get(&id.peer).and_then(|rle| {
-            rle.get(id.counter)
+            rle.get_by_atom_index(id.counter)
                 .map(|x| x.element.lamport + (id.counter - x.element.cnt) as Lamport)
         })
     }

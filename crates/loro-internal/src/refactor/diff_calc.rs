@@ -1,6 +1,6 @@
 use fxhash::FxHashMap;
 
-use crate::container::{ContainerID, ContainerIdx};
+use crate::container::ContainerID;
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].

@@ -27,7 +27,6 @@ use crate::{
     prelim::Prelim,
     transaction::Transaction,
     value::LoroValue,
-    version::PatchedVersionVector,
     LoroError, Transact, VersionVector,
 };
 

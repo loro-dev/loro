@@ -4,7 +4,6 @@ use crate::hierarchy::Hierarchy;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::RemoteOp;
 use crate::span::{CounterSpan, HasCounter, HasCounterSpan};
-use crate::version::PatchedVersionVector;
 use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
@@ -13,13 +12,12 @@ use crate::{
 };
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
-use std::sync::Arc;
 use std::{collections::VecDeque, sync::MutexGuard};
 use tracing::instrument;
 
 use fxhash::{FxHashMap, FxHashSet};
 
-use rle::{slice_vec_by, HasLength, RleVecWithIndex, Sliceable};
+use rle::{slice_vec_by, HasLength, Sliceable};
 
 use crate::{
     container::{registry::ContainerInstance, ContainerID, ContainerTrait},
@@ -173,7 +171,6 @@ impl LogStore {
             next_vv.set_end(changes.last().unwrap().id_end());
         }
         // push changes to log stores
-        let cfg = self.get_change_merge_cfg();
         for (client_id, changes) in changes.iter() {
             let mut inner_changes = Vec::with_capacity(changes.len());
             for change in changes.iter() {
@@ -182,10 +179,7 @@ impl LogStore {
                 inner_changes.push(change);
             }
 
-            let rle = self
-                .changes
-                .entry(*client_id)
-                .or_insert_with(|| RleVecWithIndex::new_cfg(cfg.clone()));
+            let rle = self.changes.entry(*client_id).or_default();
             for change in inner_changes {
                 // if let Some(last) = rle.last() {
                 //     assert_eq!(

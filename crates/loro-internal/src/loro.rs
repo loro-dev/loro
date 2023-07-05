@@ -200,19 +200,6 @@ impl LoroCore {
     }
 
     // config
-    pub fn max_change_length(&mut self, max_change_length: usize) {
-        self.log_store
-            .write()
-            .unwrap()
-            .max_change_length(max_change_length);
-    }
-
-    pub fn max_change_interval(&mut self, max_change_interval: usize) {
-        self.log_store
-            .write()
-            .unwrap()
-            .max_change_interval(max_change_interval);
-    }
 
     pub fn gc(&mut self, gc: bool) {
         self.log_store.write().unwrap().gc(gc)

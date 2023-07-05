@@ -365,7 +365,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
 #[cfg(test)]
 mod test {
     use crate::{
-        change::ChangeMergeCfg,
         configure::Configure,
         dag::DagUtils,
         id::{Counter, ID},
@@ -441,20 +440,12 @@ mod test {
     fn parallel_case() {
         let mut c1 = LoroCore::new(
             Configure {
-                change: ChangeMergeCfg {
-                    max_change_length: 0,
-                    max_change_interval: 0,
-                },
                 ..Default::default()
             },
             Some(1),
         );
         let mut c2 = LoroCore::new(
             Configure {
-                change: ChangeMergeCfg {
-                    max_change_length: 0,
-                    max_change_interval: 0,
-                },
                 ..Default::default()
             },
             Some(2),

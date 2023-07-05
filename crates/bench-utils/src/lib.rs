@@ -69,7 +69,7 @@ pub fn gen_realtime_actions(action_num: usize, client_num: usize, seed: u64) -> 
             Action::Text { client, action } => {
                 *client %= client_num;
                 if !action.ins.is_empty() {
-                    action.ins = (action.ins.as_bytes()[0] as u8).to_string();
+                    action.ins = (action.ins.as_bytes()[0]).to_string();
                 }
             }
             Action::SyncAll => {

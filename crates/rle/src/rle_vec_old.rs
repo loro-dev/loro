@@ -345,7 +345,7 @@ impl<T, Cfg> Deref for RleVecWithIndex<T, Cfg> {
 #[cfg(test)]
 mod test {
     mod prime_value {
-        use crate::{Mergable, RleVecWithIndex, Sliceable};
+        use crate::{Mergable, RleVecWithIndex};
 
         impl Mergable for String {
             fn is_mergable(&self, _: &Self, _: &()) -> bool {

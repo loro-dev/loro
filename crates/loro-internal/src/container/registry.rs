@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, DerefMut},
+    ops::Deref,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex, Weak,
@@ -20,7 +20,6 @@ use crate::{
     log_store::ImportContext,
     op::{RemoteContent, RichOp},
     transaction::Transaction,
-    version::PatchedVersionVector,
     LoroError, LoroValue, Transact, VersionVector,
 };
 
@@ -346,6 +345,8 @@ impl ContainerRegistry {
 
     #[cfg(feature = "test_utils")]
     pub fn debug_inspect(&mut self) {
+        use std::ops::DerefMut;
+
         for (_, ContainerAndId { container, id: _ }) in self.containers.iter_mut() {
             if let ContainerInstance::Text(x) = container.try_lock().unwrap().deref_mut() {
                 x.debug_inspect()

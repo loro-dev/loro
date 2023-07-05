@@ -1,12 +1,7 @@
 use enum_dispatch::enum_dispatch;
 use fxhash::FxHashMap;
 
-use crate::{
-    container::{ContainerID, ContainerIdx},
-    event::Diff,
-    version::Frontiers,
-    VersionVector,
-};
+use crate::{container::ContainerID, event::Diff, version::Frontiers, VersionVector};
 
 use super::arena::SharedArena;
 

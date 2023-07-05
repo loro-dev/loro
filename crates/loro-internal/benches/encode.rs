@@ -124,7 +124,7 @@ mod run {
 
 mod import {
     use criterion::Criterion;
-    use loro_internal::{change::ChangeMergeCfg, configure::Configure, LoroCore};
+    use loro_internal::{configure::Configure, LoroCore};
 
     pub fn causal_iter(c: &mut Criterion) {
         let mut b = c.benchmark_group("causal_iter");
@@ -133,20 +133,12 @@ mod import {
             b.iter(|| {
                 let mut c1 = LoroCore::new(
                     Configure {
-                        change: ChangeMergeCfg {
-                            max_change_length: 0,
-                            max_change_interval: 0,
-                        },
                         ..Default::default()
                     },
                     Some(1),
                 );
                 let mut c2 = LoroCore::new(
                     Configure {
-                        change: ChangeMergeCfg {
-                            max_change_length: 0,
-                            max_change_interval: 0,
-                        },
                         ..Default::default()
                     },
                     Some(2),

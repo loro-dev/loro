@@ -9,11 +9,11 @@ use crate::{
     dag::DagNode,
     id::{Counter, ID},
     op::Op,
-    span::{HasId, HasIdSpan, HasLamport},
+    span::{HasId, HasLamport},
     version::Frontiers,
 };
 use num::traits::AsPrimitive;
-use rle::{HasIndex, HasLength, Mergable, Rle, RleVec, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 
 pub type Timestamp = i64;
 pub type Lamport = u32;
@@ -52,6 +52,14 @@ impl<O> Change<O> {
     }
 }
 
+impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {
+    type Int = Counter;
+
+    fn get_start_index(&self) -> Self::Int {
+        self.id.counter
+    }
+}
+
 impl<O> HasId for Change<O> {
     fn id_start(&self) -> ID {
         self.id
@@ -63,58 +71,27 @@ impl<O> HasLamport for Change<O> {
         self.lamport
     }
 }
+
+impl<O> Mergable for Change<O> {
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    fn merge(&mut self, _other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        unreachable!()
+    }
+}
+
 use std::fmt::Debug;
 impl<O: Mergable + HasLength + HasIndex + Debug> HasLength for Change<O> {
     fn content_len(&self) -> usize {
         self.ops.span().as_()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ChangeMergeCfg {
-    pub max_change_length: usize,
-    pub max_change_interval: usize,
-}
-
-impl ChangeMergeCfg {
-    pub fn new() -> Self {
-        ChangeMergeCfg {
-            max_change_length: 1024,
-            max_change_interval: 60,
-        }
-    }
-}
-
-impl Default for ChangeMergeCfg {
-    fn default() -> Self {
-        Self {
-            max_change_length: 1024,
-            max_change_interval: 60,
-        }
-    }
-}
-
-impl<O: Rle + HasIndex> Mergable<ChangeMergeCfg> for Change<O> {
-    fn merge(&mut self, other: &Self, _: &ChangeMergeCfg) {
-        self.ops.merge(&other.ops, &());
-    }
-
-    fn is_mergable(&self, other: &Self, cfg: &ChangeMergeCfg) -> bool {
-        if other.deps.is_empty() || !(other.deps.len() == 1 && self.id_last() == other.deps[0]) {
-            return false;
-        }
-
-        if self.content_len() > cfg.max_change_length {
-            return false;
-        }
-
-        if other.timestamp - self.timestamp > cfg.max_change_interval as i64 {
-            return false;
-        }
-
-        self.id.peer == other.id.peer
-            && self.id.counter + self.content_len() as Counter == other.id.counter
-            && self.lamport + self.content_len() as Lamport == other.lamport
     }
 }
 

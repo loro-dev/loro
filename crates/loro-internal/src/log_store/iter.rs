@@ -9,17 +9,15 @@ use crate::span::IdSpan;
 
 use fxhash::FxHashMap;
 use rle::HasLength;
-
-use crate::change::ChangeMergeCfg;
+use rle::RleVec;
+use rle::RleVecWithLen;
 
 use crate::change::Change;
-
-use rle::RleVecWithIndex;
 
 pub struct ClientOpIter<'a> {
     pub(crate) change_index: usize,
     pub(crate) op_index: usize,
-    pub(crate) changes: Option<&'a RleVecWithIndex<Change, ChangeMergeCfg>>,
+    pub(crate) changes: Option<&'a RleVec<[Change; 0]>>,
 }
 
 impl<'a> Iterator for ClientOpIter<'a> {
@@ -50,14 +48,11 @@ pub struct OpSpanIter<'a> {
 }
 
 impl<'a> OpSpanIter<'a> {
-    pub fn new(
-        changes: &'a FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>,
-        target_span: IdSpan,
-    ) -> Self {
+    pub fn new(changes: &'a FxHashMap<PeerID, RleVec<[Change; 0]>>, target_span: IdSpan) -> Self {
         let rle_changes = changes.get(&target_span.client_id).unwrap();
         let changes = rle_changes.vec();
         let change_index = rle_changes
-            .get(target_span.id_start().counter as usize)
+            .get_by_atom_index(target_span.id_start().counter)
             .map(|x| x.merged_index)
             .unwrap_or(changes.len());
 
@@ -67,7 +62,7 @@ impl<'a> OpSpanIter<'a> {
             change_index,
             op_index: rle_changes[change_index]
                 .ops
-                .get(target_span.counter.start)
+                .get_by_atom_index(target_span.counter.start)
                 .unwrap()
                 .merged_index,
         }

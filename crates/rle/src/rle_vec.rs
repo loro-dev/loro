@@ -96,7 +96,7 @@ where
         &self,
         index: <A::Item as HasIndex>::Int,
     ) -> Option<SearchResult<'_, A::Item, <A::Item as HasIndex>::Int>> {
-        self.vec.get(index)
+        self.vec.get_by_atom_index(index)
     }
 
     pub fn iter_by_index(
@@ -279,13 +279,13 @@ where
             return SliceIterator::new_empty();
         }
 
-        let start = self.get(from);
+        let start = self.get_by_atom_index(from);
         if start.is_none() {
             return SliceIterator::new_empty();
         }
 
         let start = start.unwrap();
-        let end = self.get(to);
+        let end = self.get_by_atom_index(to);
         if let Some(end) = end {
             SliceIterator {
                 vec: &self.vec,
@@ -317,7 +317,7 @@ where
 
     /// get the element at the given atom index.
     /// return: (element, merged_index, offset)
-    pub fn get(
+    pub fn get_by_atom_index(
         &self,
         index: <A::Item as HasIndex>::Int,
     ) -> Option<SearchResult<'_, A::Item, <A::Item as HasIndex>::Int>> {
@@ -355,9 +355,55 @@ where
         })
     }
 
+    pub fn slice_iter(
+        &self,
+        from: <A::Item as HasIndex>::Int,
+        to: <A::Item as HasIndex>::Int,
+    ) -> SliceIterator<A::Item> {
+        if from == to || self.merged_len() == 0 {
+            return SliceIterator::new_empty();
+        }
+
+        let from_result = self.get_by_atom_index(from);
+        if from_result.is_none() {
+            return SliceIterator::new_empty();
+        }
+
+        let from_result = from_result.unwrap();
+        let to_result = if to == self.atom_len() {
+            None
+        } else {
+            self.get_by_atom_index(to)
+        };
+        if let Some(to_result) = to_result {
+            SliceIterator {
+                vec: &self.vec,
+                cur_index: from_result.merged_index,
+                cur_offset: from_result.offset.as_(),
+                end_index: Some(to_result.merged_index),
+                end_offset: Some(to_result.offset.as_()),
+            }
+        } else {
+            SliceIterator {
+                vec: &self.vec,
+                cur_index: from_result.merged_index,
+                cur_offset: from_result.offset.as_(),
+                end_index: None,
+                end_offset: None,
+            }
+        }
+    }
+
     #[inline]
     pub fn slice_merged(&self, range: Range<usize>) -> &[A::Item] {
         &self.vec[range]
+    }
+
+    pub fn atom_len(&self) -> <A::Item as HasIndex>::Int {
+        self.vec
+            .last()
+            .map(|x| x.get_end_index())
+            .unwrap_or(<A::Item as HasIndex>::Int::from_usize(0).unwrap())
     }
 }
 impl<A: Array> RleVec<A>

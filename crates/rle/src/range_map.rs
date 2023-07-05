@@ -485,7 +485,6 @@ impl<Index: GlobalIndex, T: PartialEq + Eq> Mergable for WithStartEnd<Index, T> 
 
 #[cfg(test)]
 mod test {
-    use std::ops::Range;
 
     use super::*;
     #[derive(Debug, PartialEq, Eq, Clone)]

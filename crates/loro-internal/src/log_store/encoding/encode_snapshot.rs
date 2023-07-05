@@ -2,13 +2,12 @@ use std::collections::VecDeque;
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use rle::{HasLength, RleVec, RleVecWithIndex};
+use rle::{HasLength, RleVec, RleVecWithLen};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
-use smallvec::SmallVec;
 
 use crate::{
-    change::{Change, ChangeMergeCfg},
+    change::Change,
     container::text::text_content::SliceRange,
     container::{
         list::list_op::{DeleteSpan, InnerListOp},
@@ -21,7 +20,7 @@ use crate::{
     event::EventDiff,
     hierarchy::Hierarchy,
     id::{Counter, PeerID, ID},
-    log_store::{encoding::encode_changes::get_lamport_by_deps, ImportContext},
+    log_store::{encoding::encode_changes::get_lamport_by_deps, ClientChanges, ImportContext},
     op::{InnerContent, Op},
     span::HasLamportSpan,
     version::{Frontiers, TotalOrderStamp},
@@ -454,7 +453,7 @@ pub(super) fn decode_snapshot(
     }
     // calculate lamport
     let mut lamport_map = FxHashMap::default();
-    let mut changes = FxHashMap::default();
+    let mut changes: ClientChanges = FxHashMap::default();
     let mut client_ids: VecDeque<_> = changes_dq.keys().copied().collect();
     let len = client_ids.len();
     let mut loop_time = len;
@@ -468,10 +467,7 @@ pub(super) fn decode_snapshot(
                         change.id.counter..change.id.counter + change.content_len() as Counter,
                         lamport,
                     ));
-                    changes
-                        .entry(client_id)
-                        .or_insert_with(|| RleVecWithIndex::new_with_conf(ChangeMergeCfg::new()))
-                        .push(change);
+                    changes.entry(client_id).or_default().push(change);
                     loop_time = len;
                 }
                 Err(_not_found_client) => {
@@ -531,7 +527,7 @@ fn load_snapshot(
     new_store: &mut LogStore,
     new_hierarchy: &mut Hierarchy,
     vv: VersionVector,
-    changes: FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>,
+    changes: ClientChanges,
     containers: Vec<ContainerID>,
     container_states: Vec<EncodedStateContent>,
     keys: &[InternalString],

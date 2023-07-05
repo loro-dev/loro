@@ -16,10 +16,10 @@ use std::{
 
 use fxhash::FxHashMap;
 
-use rle::{HasLength, RleVec, RleVecWithIndex, Sliceable};
+use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
-    change::{Change, ChangeMergeCfg},
+    change::Change,
     configure::Configure,
     container::{
         registry::{ContainerIdx, ContainerInstance, ContainerRegistry},
@@ -59,7 +59,7 @@ impl GcConfig {
     }
 }
 
-pub(crate) type ClientChanges = FxHashMap<PeerID, RleVecWithIndex<Change, ChangeMergeCfg>>;
+pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
 pub(crate) type RemoteClientChanges = FxHashMap<PeerID, Vec<Change<RemoteOp>>>;
 
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl LogStore {
     pub fn lookup_change(&self, id: ID) -> Option<&Change> {
         self.changes.get(&id.peer).and_then(|changes| {
             if id.counter <= changes.last().unwrap().id_last().counter {
-                Some(changes.get(id.counter as usize).unwrap().element)
+                Some(changes.get_by_atom_index(id.counter).unwrap().element)
             } else {
                 None
             }
@@ -131,10 +131,7 @@ impl LogStore {
     fn get_changes_slice(&self, id_span: IdSpan) -> Vec<Change> {
         if let Some(changes) = self.changes.get(&id_span.client_id) {
             let mut ans = Vec::with_capacity(id_span.atom_len() / 30);
-            for change in changes.slice_iter(
-                id_span.counter.min() as usize,
-                id_span.counter.norm_end() as usize,
-            ) {
+            for change in changes.slice_iter(id_span.counter.min(), id_span.counter.norm_end()) {
                 let change = change.value.slice(change.start, change.end);
                 ans.push(change);
             }
@@ -273,10 +270,9 @@ impl LogStore {
         self.latest_lamport = lamport + change.content_len() as u32 - 1;
         self.latest_timestamp = timestamp;
         self.vv.set_end(change.id_end());
-        let cfg = self.get_change_merge_cfg();
         self.changes
             .entry(self.this_client_id)
-            .or_insert_with(|| RleVecWithIndex::new_with_conf(cfg))
+            .or_default()
             .push(change);
     }
 
@@ -295,7 +291,7 @@ impl LogStore {
         self.changes
             .get(&id.peer)
             .map_or(0, |changes| changes.atom_len())
-            > id.counter as usize
+            > id.counter
     }
 
     #[inline]
@@ -325,21 +321,6 @@ impl LogStore {
         &self.vv
     }
 
-    fn get_change_merge_cfg(&self) -> ChangeMergeCfg {
-        ChangeMergeCfg {
-            max_change_length: self.cfg.change.max_change_length,
-            max_change_interval: self.cfg.change.max_change_interval,
-        }
-    }
-
-    pub(crate) fn max_change_length(&mut self, max_change_length: usize) {
-        self.cfg.change.max_change_length = max_change_length
-    }
-
-    pub(crate) fn max_change_interval(&mut self, max_change_interval: usize) {
-        self.cfg.change.max_change_interval = max_change_interval
-    }
-
     pub(crate) fn gc(&mut self, gc: bool) {
         self.cfg.gc.gc = gc;
     }
@@ -355,12 +336,12 @@ impl LogStore {
             self.changes.len(),
             self.changes
                 .values()
-                .map(|v| format!("{}", v.vec().len()))
+                .map(|v| format!("{}", v.len()))
                 .collect::<Vec<_>>()
                 .join(", "),
             self.changes
                 .values()
-                .map(|v| format!("{}", v.vec().iter().map(|x| x.ops.len()).sum::<usize>()))
+                .map(|v| format!("{}", v.iter().map(|x| x.ops.len()).sum::<usize>()))
                 .collect::<Vec<_>>()
                 .join(", "),
             self.changes
@@ -415,7 +396,7 @@ impl Dag for LogStore {
     fn get(&self, id: ID) -> Option<&Self::Node> {
         self.changes
             .get(&id.peer)
-            .and_then(|x| x.get(id.counter as usize).map(|x| x.element))
+            .and_then(|x| x.get_by_atom_index(id.counter).map(|x| x.element))
     }
 
     fn frontier(&self) -> &[ID] {

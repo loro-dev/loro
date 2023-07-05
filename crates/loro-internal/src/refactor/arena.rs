@@ -1,6 +1,4 @@
-use im::Vector;
-
-use crate::container::{ContainerID, ContainerIdx};
+use crate::container::ContainerID;
 
 /// This is shared between [OpLog] and [AppState].
 /// It uses a immutable data structure inside so that we have O(1) clone time.

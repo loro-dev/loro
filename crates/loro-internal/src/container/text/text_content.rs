@@ -5,11 +5,7 @@ use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-use crate::{
-    delta::{DeltaItem, DeltaValue},
-    smstring::SmString,
-    LoroValue,
-};
+use crate::{delta::DeltaValue, smstring::SmString, LoroValue};
 
 use super::string_pool::PoolString;
 
