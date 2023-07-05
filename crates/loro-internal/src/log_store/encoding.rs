@@ -135,7 +135,7 @@ impl LoroEncoder {
             let (_version, input) = input.split_at(version_len[0] as usize);
             let mode: ConcreteEncodeMode = input[0].into();
             let decoded = &input[1..];
-            let decoded = match mode {
+            let decoded2 = match mode {
                 ConcreteEncodeMode::Updates => {
                     encode_updates::decode_updates_to_inner_format(decoded)?
                 }
@@ -145,7 +145,7 @@ impl LoroEncoder {
                 _ => unreachable!("snapshot should not be batched"),
             };
 
-            for (client, mut new_changes) in decoded {
+            for (client, mut new_changes) in decoded2 {
                 // FIXME: changes may not be consecutive
                 changes.entry(client).or_default().append(&mut new_changes);
             }

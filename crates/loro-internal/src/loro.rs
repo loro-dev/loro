@@ -128,13 +128,16 @@ impl LoroCore {
     }
 
     // TODO: make it private
-    pub fn export(&self, remote_vv: VersionVector) -> FxHashMap<u64, Vec<Change<RemoteOp>>> {
+    pub fn export(
+        &self,
+        remote_vv: VersionVector,
+    ) -> FxHashMap<u64, Vec<Change<RemoteOp<'static>>>> {
         let store = self.log_store.read().unwrap();
         store.export(&remote_vv)
     }
 
     // TODO: make it private
-    pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp>>>) {
+    pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp<'static>>>>) {
         debug_log::group!("Import at {}", self.client_id());
         let txn = self.transact();
         let mut txn = txn.0.borrow_mut();

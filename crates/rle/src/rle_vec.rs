@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    marker::PhantomData,
     ops::{Deref, Index, Range},
 };
 
@@ -21,6 +22,7 @@ use crate::{rle_trait::HasIndex, HasLength, Mergable, SearchResult, SliceIterato
 /// - get(index) returns the atom element at the index.
 /// - slice(from, to) returns a slice of atom elements from the index from to the index to.
 pub struct RleVec<A: Array> {
+    _p: PhantomData<fn() -> A::Item>,
     vec: SmallVec<A>,
 }
 
@@ -127,6 +129,7 @@ impl<A: Array> RleVec<A> {
     pub fn new() -> Self {
         RleVec {
             vec: SmallVec::new(),
+            _p: PhantomData,
         }
     }
 
@@ -134,6 +137,7 @@ impl<A: Array> RleVec<A> {
     pub fn with_capacity(size: usize) -> Self {
         RleVec {
             vec: SmallVec::with_capacity(size),
+            _p: PhantomData,
         }
     }
 
@@ -193,6 +197,7 @@ where
     fn clone(&self) -> Self {
         Self {
             vec: self.vec.clone(),
+            _p: PhantomData,
         }
     }
 }
@@ -454,7 +459,10 @@ where
 
 impl<A: Array> From<SmallVec<A>> for RleVec<A> {
     fn from(value: SmallVec<A>) -> Self {
-        RleVec { vec: value }
+        RleVec {
+            vec: value,
+            _p: PhantomData,
+        }
     }
 }
 
@@ -554,7 +562,10 @@ where
             index += len;
         }
 
-        Self { vec: ans }
+        Self {
+            vec: ans,
+            _p: PhantomData,
+        }
     }
 }
 

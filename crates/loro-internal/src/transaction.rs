@@ -267,7 +267,7 @@ impl Transaction {
         self.pending_event_diff.remove(id);
     }
 
-    pub(crate) fn import(&mut self, changes: RemoteClientChanges) {
+    pub(crate) fn import(&mut self, changes: RemoteClientChanges<'static>) {
         self.with_store_hierarchy_mut(|txn, store, hierarchy| {
             let events = store.import(hierarchy, changes);
             txn.append_batch_event_diff(events);

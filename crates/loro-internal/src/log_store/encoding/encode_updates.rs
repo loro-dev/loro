@@ -36,7 +36,7 @@ struct FirstChangeInfo {
 #[derive(Serialize, Deserialize, Debug)]
 struct EncodedOp {
     pub(crate) container: ContainerID,
-    pub(crate) contents: Vec<RemoteContent>,
+    pub(crate) contents: Vec<RemoteContent<'static>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,7 +63,7 @@ pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<V
         .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
 }
 
-pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges, LoroError> {
+pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static>, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let mut changes: RemoteClientChanges = Default::default();
@@ -74,9 +74,9 @@ pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges, LoroEr
     Ok(changes)
 }
 
-pub(super) fn decode_updates_to_inner_format(
-    input: &[u8],
-) -> Result<RemoteClientChanges, LoroError> {
+pub(super) fn decode_updates_to_inner_format<'a>(
+    input: &'a [u8],
+) -> Result<RemoteClientChanges<'static>, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let mut changes: RemoteClientChanges = Default::default();
@@ -87,9 +87,9 @@ pub(super) fn decode_updates_to_inner_format(
     Ok(changes)
 }
 
-fn convert_changes_to_encoded<I>(mut changes: I) -> EncodedClientChanges
+fn convert_changes_to_encoded<'a, I>(mut changes: I) -> EncodedClientChanges
 where
-    I: Iterator<Item = Change<RemoteOp>>,
+    I: Iterator<Item = Change<RemoteOp<'a>>>,
 {
     let first_change = changes.next().unwrap();
     let this_client_id = first_change.id.peer;
@@ -101,7 +101,7 @@ where
             .iter()
             .map(|op| EncodedOp {
                 container: op.container.clone(),
-                contents: op.contents.iter().cloned().collect(),
+                contents: op.contents.iter().map(|x| x.to_static()).collect(),
             })
             .collect(),
         deps: first_change.deps.iter().copied().collect(),
@@ -115,7 +115,7 @@ where
                 .iter()
                 .map(|op| EncodedOp {
                     container: op.container.clone(),
-                    contents: op.contents.iter().cloned().collect(),
+                    contents: op.contents.iter().map(|x| x.to_static()).collect(),
                 })
                 .collect(),
             deps: change.deps.iter().copied().collect(),
@@ -137,7 +137,7 @@ where
 }
 
 #[instrument(skip_all)]
-fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp>> {
+fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp<'static>>> {
     let mut result = Vec::with_capacity(changes.data.len());
     let mut last_lamport = changes.meta.lamport;
     let mut last_timestamp = changes.meta.timestamp;

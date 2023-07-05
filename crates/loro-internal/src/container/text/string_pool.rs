@@ -3,8 +3,6 @@ use std::ops::Range;
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use rle::{HasLength, Mergable, RleVecWithIndex, Sliceable};
 
-use crate::smstring::SmString;
-
 use super::{text_content::SliceRange, unicode::TextLength, utf16::count_utf16_chars};
 
 #[derive(Debug, Default)]
@@ -86,8 +84,8 @@ impl StringPool {
         }
     }
 
-    pub fn get_string(&self, range: &Range<u32>) -> SmString {
-        let mut ans = SmString::default();
+    pub fn get_string(&self, range: &Range<u32>) -> String {
+        let mut ans = String::default();
         ans.push_str(
             std::str::from_utf8(&self.data[range.start as usize..range.end as usize]).unwrap(),
         );

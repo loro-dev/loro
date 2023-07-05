@@ -9,7 +9,6 @@ use crate::{version::Frontiers, LoroValue};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{
-    cell::Cell,
     cmp::Ordering,
     marker::PhantomPinned,
     sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard, RwLock, Weak},
@@ -61,7 +60,7 @@ impl GcConfig {
 }
 
 pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
-pub(crate) type RemoteClientChanges = FxHashMap<PeerID, Vec<Change<RemoteOp>>>;
+pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
 #[derive(Debug)]
 /// LogStore stores the full history of Loro
@@ -81,7 +80,7 @@ pub struct LogStore {
     pub(crate) this_client_id: PeerID,
     /// CRDT container manager
     pub(crate) reg: ContainerRegistry,
-    pending_changes: RemoteClientChanges,
+    pending_changes: RemoteClientChanges<'static>,
     /// if local ops are not exposed yet, new ops can be merged to the existing change
     can_merge_local_op: AtomicBool,
     _pin: PhantomPinned,
@@ -121,9 +120,12 @@ impl LogStore {
         })
     }
 
-    pub fn export(&self, remote_vv: &VersionVector) -> FxHashMap<PeerID, Vec<Change<RemoteOp>>> {
+    pub fn export(
+        &self,
+        remote_vv: &VersionVector,
+    ) -> FxHashMap<PeerID, Vec<Change<RemoteOp<'static>>>> {
         self.expose_local_change();
-        let mut ans: FxHashMap<PeerID, Vec<Change<RemoteOp>>> = Default::default();
+        let mut ans: FxHashMap<PeerID, Vec<Change<RemoteOp<'static>>>> = Default::default();
         let self_vv = self.vv();
         for span in self_vv.sub_iter(remote_vv) {
             let changes = self.get_changes_slice(span.id_span());
@@ -178,7 +180,7 @@ impl LogStore {
         }
     }
 
-    pub(crate) fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp> {
+    pub(crate) fn change_to_export_format(&self, change: &Change) -> Change<RemoteOp<'static>> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
             ops.push(self.to_remote_op(op));
@@ -192,11 +194,13 @@ impl LogStore {
         }
     }
 
-    fn to_remote_op(&self, op: &Op) -> RemoteOp {
+    fn to_remote_op(&self, op: &Op) -> RemoteOp<'static> {
         let container = self.reg.get_by_idx(&op.container).unwrap();
         let container = container.upgrade().unwrap();
         let mut container = container.try_lock().unwrap();
-        op.clone().convert(&mut container, self.cfg.gc.gc)
+        op.clone()
+            .convert(&mut container, self.cfg.gc.gc)
+            .to_static()
     }
 
     pub(crate) fn create_container(

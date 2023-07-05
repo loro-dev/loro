@@ -156,9 +156,10 @@ impl Actionable for Vec<LoroCore> {
                 text.delete(&txn, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
-                let to_vv = self[*to as usize].vv_cloned();
-                let from_exported = self[*from as usize].export(to_vv);
-                self[*to as usize].import(from_exported);
+                let (from, to) = arref::array_mut_ref!(self, [*from as usize, *to as usize]);
+                let to_vv = to.vv_cloned();
+                let from_exported = from.export(to_vv);
+                to.import(from_exported);
             }
             Action::SyncAll => {
                 for i in 1..self.len() {

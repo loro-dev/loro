@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use rle::{HasLength, RleVec, RleVecWithLen};
+use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
 

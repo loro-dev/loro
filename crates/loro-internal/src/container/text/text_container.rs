@@ -260,7 +260,9 @@ impl ContainerTrait for TextContainer {
                                 match span {
                                     Alive::True(span) => {
                                         ans.push(RemoteContent::List(ListOp::Insert {
-                                            slice: ListSlice::RawStr(s[start..start + span].into()),
+                                            slice: ListSlice::RawStr(std::borrow::Cow::Owned(
+                                                s[start..start + span].to_string(),
+                                            )),
                                             pos: pos_start,
                                         }));
                                     }
@@ -279,7 +281,7 @@ impl ContainerTrait for TextContainer {
                             assert_eq!(start, r.atom_len());
                         } else {
                             ans.push(RemoteContent::List(ListOp::Insert {
-                                slice: ListSlice::RawStr(s),
+                                slice: ListSlice::RawStr(std::borrow::Cow::Owned(s)),
                                 pos,
                             }))
                         }

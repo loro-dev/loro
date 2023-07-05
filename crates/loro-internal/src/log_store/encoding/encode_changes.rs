@@ -21,7 +21,6 @@ use crate::{
     id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
     op::{RemoteContent, RemoteOp},
-    smstring::SmString,
     span::HasIdSpan,
     version::Frontiers,
     InternalString, LogStore, LoroError, LoroValue, VersionVector,
@@ -182,9 +181,12 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
                                 ListSlice::Unknown(v) => *v,
                                 _ => 0,
                             },
+                            // TODO: perf may be optimized by using borrow type instead
                             match slice {
-                                ListSlice::RawData(v) => v.into(),
-                                ListSlice::RawStr(s) => s.as_str().into(),
+                                ListSlice::RawData(v) => LoroValue::List(Box::new(v.to_vec())),
+                                ListSlice::RawStr(s) => {
+                                    LoroValue::String(s.to_string().into_boxed_str())
+                                }
                                 ListSlice::Unknown(_) => LoroValue::Null,
                             },
                         ),
@@ -235,10 +237,10 @@ pub(super) fn decode_changes(
     decode_changes_to_inner_format(input, store).map(|changes| store.import(hierarchy, changes))
 }
 
-pub(super) fn decode_changes_to_inner_format(
-    input: &[u8],
-    store: &LogStore,
-) -> Result<RemoteClientChanges, LoroError> {
+pub(super) fn decode_changes_to_inner_format<'a, 'b>(
+    input: &'a [u8],
+    store: &'b LogStore,
+) -> Result<RemoteClientChanges<'static>, LoroError> {
     let encoded: DocEncoding =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
@@ -300,8 +302,12 @@ pub(super) fn decode_changes_to_inner_format(
                             },
                             _ => {
                                 let slice = match value {
-                                    LoroValue::String(s) => ListSlice::RawStr(SmString::from(&*s)),
-                                    LoroValue::List(v) => ListSlice::RawData(*v),
+                                    LoroValue::String(s) => {
+                                        ListSlice::RawStr(std::borrow::Cow::Owned(s.to_string()))
+                                    }
+                                    LoroValue::List(v) => {
+                                        ListSlice::RawData(std::borrow::Cow::Owned(*v))
+                                    }
                                     _ => unreachable!(),
                                 };
                                 ListOp::Insert { slice, pos }
@@ -357,7 +363,7 @@ pub(super) fn decode_changes_to_inner_format(
     if start_vv > store.vv() {
         return Err(LoroError::DecodeError(
             format!(
-            "Warning: current Loro version is `{:?}`, but remote changes start at version `{:?}`. 
+            "Warning: current Loro version is `{:?}`, but remote changes start at version `{:?}`.
         These updates can not be applied",
             store.get_vv(),
             start_vv

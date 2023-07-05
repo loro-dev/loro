@@ -292,7 +292,7 @@ impl ContainerTrait for ListContainer {
                         let data = self.raw_data.slice(&slice.0);
                         smallvec::smallvec![RemoteContent::List(ListOp::Insert {
                             pos,
-                            slice: ListSlice::RawData(data.to_vec()),
+                            slice: ListSlice::RawData(std::borrow::Cow::Borrowed(data)),
                         })]
                     }
                 }
@@ -311,7 +311,7 @@ impl ContainerTrait for ListContainer {
             RemoteContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(data) => {
-                        let slice_range = self.raw_data.alloc_arr(data);
+                        let slice_range = self.raw_data.alloc_arr(data.to_vec());
                         let slice: SliceRange = slice_range.into();
                         InnerContent::List(InnerListOp::Insert { slice, pos })
                     }

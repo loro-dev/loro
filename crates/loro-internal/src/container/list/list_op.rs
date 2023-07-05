@@ -8,8 +8,8 @@ use crate::container::text::text_content::{ListSlice, SliceRange};
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ListOp {
-    Insert { slice: ListSlice, pos: usize },
+pub enum ListOp<'a> {
+    Insert { slice: ListSlice<'a>, pos: usize },
     Delete(DeleteSpan),
 }
 
@@ -32,7 +32,7 @@ pub struct DeleteSpan {
     pub len: isize,
 }
 
-impl ListOp {
+impl<'a> ListOp<'a> {
     pub fn new_del(pos: usize, len: usize) -> Self {
         assert!(len != 0);
         Self::Delete(DeleteSpan {
@@ -187,7 +187,7 @@ impl Sliceable for DeleteSpan {
     }
 }
 
-impl Mergable for ListOp {
+impl<'a> Mergable for ListOp<'a> {
     fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
@@ -228,7 +228,7 @@ impl Mergable for ListOp {
     }
 }
 
-impl HasLength for ListOp {
+impl<'a> HasLength for ListOp<'a> {
     fn content_len(&self) -> usize {
         match self {
             ListOp::Insert { slice, .. } => slice.content_len(),
@@ -237,7 +237,7 @@ impl HasLength for ListOp {
     }
 }
 
-impl Sliceable for ListOp {
+impl<'a> Sliceable for ListOp<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             ListOp::Insert { slice, pos } => ListOp::Insert {

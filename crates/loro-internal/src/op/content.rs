@@ -27,16 +27,31 @@ pub enum InnerContent {
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
-pub enum RemoteContent {
+pub enum RemoteContent<'a> {
     Map(MapSet),
-    List(ListOp),
+    List(ListOp<'a>),
 }
 
-impl Clone for RemoteContent {
+impl<'a> Clone for RemoteContent<'a> {
     fn clone(&self) -> Self {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
+        }
+    }
+}
+
+impl<'a> RemoteContent<'a> {
+    pub fn to_static(&self) -> RemoteContent<'static> {
+        match self {
+            Self::Map(arg0) => RemoteContent::Map(arg0.clone()),
+            Self::List(arg0) => match arg0 {
+                ListOp::Insert { slice, pos } => RemoteContent::List(ListOp::Insert {
+                    slice: slice.to_static(),
+                    pos: *pos,
+                }),
+                ListOp::Delete(x) => RemoteContent::List(ListOp::Delete(*x)),
+            },
         }
     }
 }
@@ -89,7 +104,7 @@ impl<T: Mergable + Any> MergeableContent for T {
     }
 }
 
-impl HasLength for RemoteContent {
+impl<'a> HasLength for RemoteContent<'a> {
     fn content_len(&self) -> usize {
         match self {
             RemoteContent::Map(x) => x.content_len(),
@@ -98,7 +113,7 @@ impl HasLength for RemoteContent {
     }
 }
 
-impl Sliceable for RemoteContent {
+impl<'a> Sliceable for RemoteContent<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             RemoteContent::Map(x) => RemoteContent::Map(x.slice(from, to)),
@@ -107,7 +122,7 @@ impl Sliceable for RemoteContent {
     }
 }
 
-impl Mergable for RemoteContent {
+impl<'a> Mergable for RemoteContent<'a> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,

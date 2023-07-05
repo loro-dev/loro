@@ -24,10 +24,10 @@ pub struct Op {
 }
 
 #[derive(Debug, Clone)]
-pub struct RemoteOp {
+pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) contents: RleVec<[RemoteContent; 1]>,
+    pub(crate) contents: RleVec<[RemoteContent<'a>; 1]>,
 }
 
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
@@ -69,7 +69,7 @@ impl Op {
     }
 }
 
-impl RemoteOp {
+impl<'a> RemoteOp<'a> {
     pub(crate) fn convert(
         self,
         container: &mut ContainerInstance,
@@ -88,6 +88,14 @@ impl RemoteOp {
                 ans
             })
             .collect()
+    }
+
+    pub(crate) fn to_static(self) -> RemoteOp<'static> {
+        RemoteOp {
+            counter: self.counter,
+            container: self.container,
+            contents: self.contents.into_iter().map(|c| c.to_static()).collect(),
+        }
     }
 }
 
@@ -121,7 +129,7 @@ impl Sliceable for Op {
     }
 }
 
-impl Mergable for RemoteOp {
+impl<'a> Mergable for RemoteOp<'a> {
     fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
         self.counter + self.content_len() as Counter == other.counter
             && other.contents.len() == 1
@@ -140,13 +148,13 @@ impl Mergable for RemoteOp {
     }
 }
 
-impl HasLength for RemoteOp {
+impl<'a> HasLength for RemoteOp<'a> {
     fn content_len(&self) -> usize {
         self.contents.iter().map(|x| x.atom_len()).sum()
     }
 }
 
-impl Sliceable for RemoteOp {
+impl<'a> Sliceable for RemoteOp<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from);
         RemoteOp {
@@ -165,7 +173,7 @@ impl HasIndex for Op {
     }
 }
 
-impl HasIndex for RemoteOp {
+impl<'a> HasIndex for RemoteOp<'a> {
     type Int = Counter;
 
     fn get_start_index(&self) -> Self::Int {
@@ -179,7 +187,7 @@ impl HasCounter for Op {
     }
 }
 
-impl HasCounter for RemoteOp {
+impl<'a> HasCounter for RemoteOp<'a> {
     fn ctr_start(&self) -> Counter {
         self.counter
     }

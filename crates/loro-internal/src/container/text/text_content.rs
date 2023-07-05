@@ -1,20 +1,19 @@
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-use crate::{delta::DeltaValue, smstring::SmString, LoroValue};
+use crate::{delta::DeltaValue, LoroValue};
 
 use super::string_pool::PoolString;
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(PartialEq, Debug, EnumAsInner, Clone, Serialize, Deserialize)]
-pub enum ListSlice {
-    // TODO: use Box<[LoroValue]> ?
-    RawData(Vec<LoroValue>),
-    RawStr(SmString),
+pub enum ListSlice<'a> {
+    RawData(Cow<'a, [LoroValue]>),
+    RawStr(Cow<'a, str>),
     Unknown(usize),
 }
 
@@ -41,7 +40,7 @@ impl SliceRange {
     }
 }
 
-impl Default for ListSlice {
+impl<'a> Default for ListSlice<'a> {
     fn default() -> Self {
         ListSlice::Unknown(0)
     }
@@ -86,7 +85,7 @@ impl Mergable for SliceRange {
     }
 }
 
-impl ListSlice {
+impl<'a> ListSlice<'a> {
     #[inline(always)]
     pub fn unknown_range(len: usize) -> SliceRange {
         let start = UNKNOWN_START;
@@ -98,9 +97,17 @@ impl ListSlice {
     pub fn is_unknown(range: &SliceRange) -> bool {
         range.is_unknown()
     }
+
+    pub fn to_static(&self) -> ListSlice<'static> {
+        match self {
+            ListSlice::RawData(x) => ListSlice::RawData(Cow::Owned(x.to_vec())),
+            ListSlice::RawStr(x) => ListSlice::RawStr(Cow::Owned(x.to_string())),
+            ListSlice::Unknown(x) => ListSlice::Unknown(*x),
+        }
+    }
 }
 
-impl HasLength for ListSlice {
+impl<'a> HasLength for ListSlice<'a> {
     fn content_len(&self) -> usize {
         match self {
             ListSlice::RawStr(s) => s.len(),
@@ -110,21 +117,23 @@ impl HasLength for ListSlice {
     }
 }
 
-impl Sliceable for ListSlice {
+impl<'a> Sliceable for ListSlice<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            ListSlice::RawStr(s) => ListSlice::RawStr(s[from..to].into()),
+            ListSlice::RawStr(s) => ListSlice::RawStr(Cow::Owned(s[from..to].into())),
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
-            ListSlice::RawData(x) => ListSlice::RawData(x[from..to].to_vec()),
+            ListSlice::RawData(x) => match x {
+                Cow::Borrowed(x) => ListSlice::RawData(Cow::Borrowed(&x[from..to])),
+                Cow::Owned(x) => ListSlice::RawData(Cow::Owned(x[from..to].into())),
+            },
         }
     }
 }
 
-impl Mergable for ListSlice {
+impl<'a> Mergable for ListSlice<'a> {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
         match (self, other) {
             (ListSlice::Unknown(_), ListSlice::Unknown(_)) => true,
-            (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.is_mergable(b, &()),
             _ => false,
         }
     }
@@ -134,7 +143,6 @@ impl Mergable for ListSlice {
             (ListSlice::Unknown(x), ListSlice::Unknown(y)) => {
                 *x += y;
             }
-            (ListSlice::RawStr(a), ListSlice::RawStr(b)) => a.merge(b, &()),
             _ => unreachable!(),
         }
     }
@@ -187,7 +195,7 @@ mod test {
     #[test]
     fn fix_fields_order() {
         let list_slice = vec![
-            ListSlice::RawData(vec![LoroValue::Bool(true)]),
+            ListSlice::RawData(vec![LoroValue::Bool(true)].into()),
             ListSlice::RawStr("".into()),
             ListSlice::Unknown(0),
         ];

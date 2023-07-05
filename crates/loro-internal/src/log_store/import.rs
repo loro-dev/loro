@@ -86,7 +86,7 @@ impl LogStore {
     pub(crate) fn import(
         &mut self,
         hierarchy: &mut Hierarchy,
-        changes: RemoteClientChanges,
+        changes: RemoteClientChanges<'static>,
     ) -> Vec<EventDiff> {
         let changes = self.process_and_queue_changes(changes);
         if changes.is_empty() {
@@ -336,7 +336,10 @@ impl LogStore {
         }
     }
 
-    fn process_and_queue_changes(&mut self, changes: RemoteClientChanges) -> RemoteClientChanges {
+    fn process_and_queue_changes(
+        &mut self,
+        changes: RemoteClientChanges<'static>,
+    ) -> RemoteClientChanges<'static> {
         let mut latest_vv = self.get_vv().clone();
         let mut retain_changes = FxHashMap::default();
 
@@ -394,7 +397,7 @@ impl LogStore {
         &mut self,
         client_id: &PeerID,
         latest_vv: &mut VersionVector,
-        retain_changes: &mut RemoteClientChanges,
+        retain_changes: &mut RemoteClientChanges<'static>,
     ) {
         if let Some(may_apply_changes) = self.pending_changes.remove(client_id) {
             let mut may_apply_iter = may_apply_changes
