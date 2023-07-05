@@ -13,10 +13,27 @@ use super::ContainerState;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
-#[derive(Clone)]
 pub struct ListState {
     list: BTree<List>,
+    in_txn: bool,
+    undo_stack: Vec<UndoItem>,
     child_container_to_leaf: Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>,
+}
+
+impl Clone for ListState {
+    fn clone(&self) -> Self {
+        Self {
+            list: self.list.clone(),
+            in_txn: false,
+            undo_stack: Vec::new(),
+            child_container_to_leaf: Default::default(),
+        }
+    }
+}
+
+enum UndoItem {
+    Insert { index: usize, len: usize },
+    Delete { index: usize, value: LoroValue },
 }
 
 struct List;
@@ -99,6 +116,8 @@ impl ListState {
 
         Self {
             list: tree,
+            in_txn: false,
+            undo_stack: Vec::new(),
             child_container_to_leaf: mapping,
         }
     }
@@ -190,6 +209,30 @@ impl ContainerState for ListState {
                 }
             }
         }
+    }
+
+    #[doc = " Start a transaction"]
+    #[doc = ""]
+    #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
+    fn start_txn(&mut self) {
+        self.in_txn = true;
+    }
+
+    fn abort_txn(&mut self) {
+        self.in_txn = false;
+        while let Some(op) = self.undo_stack.pop() {
+            match op {
+                UndoItem::Insert { index, len } => {
+                    self.delete_range(index..index + len);
+                }
+                UndoItem::Delete { index, value } => self.insert(index, value),
+            }
+        }
+    }
+
+    fn commit_txn(&mut self) {
+        self.undo_stack.clear();
+        self.in_txn = false;
     }
 }
 

@@ -24,6 +24,13 @@ pub struct AppState {
 #[enum_dispatch]
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: Diff);
+
+    /// Start a transaction
+    ///
+    /// The transaction may be aborted later, then all the ops during this transaction need to be undone.
+    fn start_txn(&mut self);
+    fn abort_txn(&mut self);
+    fn commit_txn(&mut self);
 }
 
 #[enum_dispatch(ContainerState)]

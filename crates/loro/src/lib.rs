@@ -6,8 +6,7 @@ use loro_internal::{
 };
 
 pub use loro_internal::{
-    container::ContainerIdx, event, id::PeerID, EncodeMode, List, LoroError, LoroValue, Map, Text,
-    VersionVector,
+    event, id::PeerID, EncodeMode, List, LoroError, LoroValue, Map, Text, VersionVector,
 };
 
 #[repr(transparent)]
