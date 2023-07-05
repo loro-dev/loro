@@ -28,6 +28,12 @@ use super::{
     ContainerID, ContainerTrait, ContainerType,
 };
 
+/// Inner representation for ContainerID.
+///
+/// It's only used inside this crate and should not be exposed to the user.
+///
+/// TODO: make this type pub(crate)
+///
 /// During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
 /// So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
 /// An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one

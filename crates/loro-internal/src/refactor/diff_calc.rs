@@ -5,7 +5,7 @@ use crate::container::ContainerID;
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
 #[derive(Default)]
-pub(super) struct DiffCalculator {
+pub struct DiffCalculator {
     calc: FxHashMap<ContainerID, ContainerDiffCalculator>,
 }
 impl DiffCalculator {

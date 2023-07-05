@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::id::PeerID;
+use crate::id::{PeerID, ID};
 
 #[derive(Error, Debug)]
 pub enum LoroError {
@@ -26,6 +26,8 @@ pub enum LoroError {
     TempContainerError,
     #[error("Index out of bound. The given pos is {pos}, but the length is {len}")]
     OutOfBound { pos: usize, len: usize },
+    #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
+    UsedOpID { id: ID },
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

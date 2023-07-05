@@ -31,7 +31,7 @@ pub mod map;
 mod pool;
 pub mod text;
 
-pub use registry::ContainerIdx;
+use registry::ContainerIdx;
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
