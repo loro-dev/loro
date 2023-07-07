@@ -7,8 +7,8 @@ use crate::{
 };
 
 /// This is shared between [OpLog] and [AppState].
-/// It uses a immutable data structure inside so that we have O(1) clone time.
-/// It can make sharing data between threads easier.
+/// It only takes O(1) to have a readonly view cloned.
+/// It makes ownership problem easier.
 ///
 #[derive(Clone, Default)]
 pub(super) struct SharedArena {
@@ -17,6 +17,15 @@ pub(super) struct SharedArena {
     /// The parent of each container.
     parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
     bytes: AppendOnlyBytes,
+    values: Vector<LoroValue>,
+}
+
+pub(super) struct ReadonlyArena {
+    container_idx_to_id: Vector<ContainerID>,
+    container_id_to_idx: im::HashMap<ContainerID, ContainerIdx>,
+    /// The parent of each container.
+    parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
+    bytes: BytesSlice,
     values: Vector<LoroValue>,
 }
 
@@ -59,5 +68,57 @@ impl SharedArena {
         }
 
         (start, self.values.len())
+    }
+
+    pub fn to_readonly(&self) -> ReadonlyArena {
+        ReadonlyArena {
+            container_idx_to_id: self.container_idx_to_id.clone(),
+            container_id_to_idx: self.container_id_to_idx.clone(),
+            parents: self.parents.clone(),
+            bytes: self.bytes.slice(..),
+            values: self.values.clone(),
+        }
+    }
+
+    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        self.parents.insert(child, parent);
+    }
+
+    pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        self.parents.get(&child).copied().flatten()
+    }
+
+    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.bytes[range]
+    }
+
+    pub fn get_value(&self, idx: usize) -> Option<&LoroValue> {
+        self.values.get(idx)
+    }
+
+    pub fn get_value_mut(&mut self, idx: usize) -> Option<&mut LoroValue> {
+        self.values.get_mut(idx)
+    }
+}
+
+impl ReadonlyArena {
+    pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
+        self.container_id_to_idx.get(id).copied()
+    }
+
+    pub fn idx_to_id(&self, id: ContainerIdx) -> Option<&ContainerID> {
+        self.container_idx_to_id.get(id.to_u32() as usize)
+    }
+
+    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.bytes[range]
+    }
+
+    pub fn get_value(&self, idx: usize) -> Option<&LoroValue> {
+        self.values.get(idx)
+    }
+
+    pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        self.parents.get(&child).copied().flatten()
     }
 }
