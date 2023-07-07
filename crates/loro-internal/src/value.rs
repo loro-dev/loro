@@ -13,7 +13,9 @@ use crate::{
 
 /// [LoroValue] is used to represents the state of CRDT at a given version
 #[derive(Debug, PartialEq, Clone, EnumAsInner)]
+#[derive(Default)]
 pub enum LoroValue {
+    #[default]
     Null,
     Bool(bool),
     Double(f64),
@@ -110,11 +112,7 @@ impl LoroValue {
     }
 }
 
-impl Default for LoroValue {
-    fn default() -> Self {
-        LoroValue::Null
-    }
-}
+
 
 impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     fn from(map: HashMap<S, LoroValue, M>) -> Self {

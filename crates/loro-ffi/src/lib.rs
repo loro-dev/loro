@@ -1,11 +1,11 @@
-use std::ffi::{c_char, c_uint, CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 
 use loro_internal::{LoroCore, Text};
 
 /// create Loro with a random unique client id
 #[no_mangle]
 pub extern "C" fn loro_new() -> *mut LoroCore {
-    Box::into_raw(Box::new(LoroCore::default()))
+    Box::into_raw(Box::default())
 }
 
 /// Release all memory of Loro

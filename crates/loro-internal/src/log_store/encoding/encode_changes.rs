@@ -237,9 +237,9 @@ pub(super) fn decode_changes(
     decode_changes_to_inner_format(input, store).map(|changes| store.import(hierarchy, changes))
 }
 
-pub(super) fn decode_changes_to_inner_format<'a, 'b>(
-    input: &'a [u8],
-    store: &'b LogStore,
+pub(super) fn decode_changes_to_inner_format(
+    input: &[u8],
+    store: &LogStore,
 ) -> Result<RemoteClientChanges<'static>, LoroError> {
     let encoded: DocEncoding =
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
@@ -437,7 +437,7 @@ fn get_value_from_range_map(
     v: &[(Range<Counter>, Lamport)],
     key: Counter,
 ) -> Option<(Lamport, u32)> {
-    let index = match v.binary_search_by_key(&key, |&(ref range, _)| range.start) {
+    let index = match v.binary_search_by_key(&key, |(range, _)| range.start) {
         Ok(index) => Some(index),
 
         // If the requested key is smaller than the smallest range in the slice,

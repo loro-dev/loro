@@ -10,7 +10,7 @@ use crate::span::IdSpan;
 use fxhash::FxHashMap;
 use rle::HasLength;
 use rle::RleVec;
-use rle::RleVecWithLen;
+
 
 use crate::change::Change;
 

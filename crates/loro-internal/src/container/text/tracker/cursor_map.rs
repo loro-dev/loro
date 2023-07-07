@@ -41,8 +41,8 @@ impl ZeroElement for Marker {
 }
 
 impl Marker {
-    pub(super) fn as_cursor_mut<'a, 'b>(
-        &'a mut self,
+    pub(super) fn as_cursor_mut<'b>(
+        &mut self,
         id: ID,
     ) -> Option<SafeCursorMut<'b, YSpan, YSpanTreeTrait>> {
         match self {
@@ -68,8 +68,8 @@ impl Marker {
             Marker::Delete(_) => None,
         }
     }
-    pub(super) fn as_cursor<'a, 'b>(
-        &'a self,
+    pub(super) fn as_cursor<'b>(
+        &self,
         id: ID,
     ) -> Option<SafeCursor<'b, YSpan, YSpanTreeTrait>> {
         match self {

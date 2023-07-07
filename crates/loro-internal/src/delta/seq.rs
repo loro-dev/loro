@@ -57,13 +57,13 @@ impl Meta for () {
         true
     }
 
-    fn compose(&mut self, other: &Self, type_pair: (DeltaType, DeltaType)) {}
+    fn compose(&mut self, _other: &Self, _type_pair: (DeltaType, DeltaType)) {}
 
-    fn is_mergeable(&self, other: &Self) -> bool {
+    fn is_mergeable(&self, _other: &Self) -> bool {
         true
     }
 
-    fn merge(&mut self, other: &Self) {}
+    fn merge(&mut self, _other: &Self) {}
 }
 
 /// The value of [DeltaItem::Insert]
@@ -641,7 +641,7 @@ mod test {
             self == other
         }
 
-        fn merge(&mut self, other: &Self) {}
+        fn merge(&mut self, _other: &Self) {}
     }
 
     type TestDelta = Delta<String, TestMeta>;

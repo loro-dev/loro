@@ -1,7 +1,7 @@
 mod dag;
 
 use fxhash::FxHashMap;
-use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
+use rle::RleVec;
 use smallvec::SmallVec;
 
 use crate::change::{Change, Lamport, Timestamp};
@@ -11,7 +11,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, PeerID, ID};
 use crate::log_store::ClientChanges;
 use crate::op::{Op, RemoteOp};
-use crate::span::{HasId, HasLamport};
+use crate::span::HasLamport;
 use crate::text::text_content::SliceRange;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -144,7 +144,7 @@ impl OpLog {
         }
     }
 
-    fn convert_op<'a, 'b>(&'a mut self, op: RemoteOp<'b>) -> SmallVec<[Op; 3]> {
+    fn convert_op(&mut self, op: RemoteOp<'_>) -> SmallVec<[Op; 3]> {
         let container = self.arena.register_container(&op.container);
         let counter = op.counter;
         op.contents

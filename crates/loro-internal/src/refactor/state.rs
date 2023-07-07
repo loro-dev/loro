@@ -60,7 +60,7 @@ impl AppState {
         }
     }
 
-    pub fn apply_diff(&mut self, diff: &AppStateDiff) {
+    pub fn apply_diff(&mut self, _diff: &AppStateDiff) {
         todo!()
     }
 }

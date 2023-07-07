@@ -242,7 +242,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 } else {
                     in_degrees.entry(id).and_modify(|i| *i += 1).or_insert(1);
                 }
-                succ.entry(*dep).or_default().push(id.into());
+                succ.entry(*dep).or_default().push(id);
             }
             let mut target_span = *target.get(&client).unwrap();
             let last_counter = node.id_last().counter;

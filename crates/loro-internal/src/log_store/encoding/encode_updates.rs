@@ -74,8 +74,8 @@ pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static
     Ok(changes)
 }
 
-pub(super) fn decode_updates_to_inner_format<'a>(
-    input: &'a [u8],
+pub(super) fn decode_updates_to_inner_format(
+    input: &[u8],
 ) -> Result<RemoteClientChanges<'static>, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;

@@ -25,9 +25,9 @@ pub struct DiffCalculator {
 impl DiffCalculator {
     pub(crate) fn calc(
         &self,
-        oplog: &super::oplog::OpLog,
-        before: &crate::VersionVector,
-        after: &crate::VersionVector,
+        _oplog: &super::oplog::OpLog,
+        _before: &crate::VersionVector,
+        _after: &crate::VersionVector,
     ) -> AppStateDiff {
         todo!()
     }
@@ -181,7 +181,7 @@ struct ListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for ListDiffCalculator {
-    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector) {
         if matches!(
             self.tracker.start_vv().partial_cmp(vv),
             None | Some(Ordering::Less)
@@ -192,18 +192,18 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         self.tracker.checkout(vv);
     }
 
-    fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector) {
+    fn apply_change(&mut self, _oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector) {
         self.tracker.checkout(vv);
         self.tracker.track_apply(&op);
     }
 
-    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {
         todo!()
     }
 
     fn calculate_diff(
         &mut self,
-        oplog: &OpLog,
+        _oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
     ) -> Diff {
