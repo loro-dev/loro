@@ -1,9 +1,17 @@
 use enum_dispatch::enum_dispatch;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
+use ring::rand::SystemRandom;
 
-use crate::{container::ContainerID, event::Diff, version::Frontiers, VersionVector};
+use crate::{
+    change::Lamport,
+    configure::SecureRandomGenerator,
+    container::{registry::ContainerIdx, ContainerID},
+    event::Diff,
+    id::{PeerID, ID},
+    version::{Frontiers, ImVersionVector},
+};
 
-use super::arena::SharedArena;
+use super::arena::ReadonlyArena;
 
 mod list_state;
 mod map_state;
@@ -15,10 +23,14 @@ use text_state::TextState;
 
 #[derive(Clone)]
 pub struct AppState {
-    vv: VersionVector,
-    frontiers: Frontiers,
-    state: FxHashMap<ContainerID, State>,
-    arena: SharedArena,
+    pub(super) peer: PeerID,
+
+    pub(super) frontiers: Frontiers,
+    state: FxHashMap<ContainerIdx, State>,
+    arena: Option<ReadonlyArena>,
+
+    in_txn: bool,
+    changed_in_txn: FxHashSet<ContainerIdx>,
 }
 
 #[enum_dispatch]
@@ -43,6 +55,9 @@ pub enum State {
 
 pub struct AppStateDiff {
     pub changes: Vec<ContainerStateDiff>,
+    pub new_arena: ReadonlyArena,
+    pub new_frontiers: Frontiers,
+    pub new_vv: ImVersionVector,
 }
 
 pub struct ContainerStateDiff {
@@ -52,15 +67,46 @@ pub struct ContainerStateDiff {
 
 impl AppState {
     pub fn new() -> Self {
+        let peer = SystemRandom::new().next_u64();
         Self {
-            vv: VersionVector::default(),
+            peer,
             frontiers: Frontiers::default(),
             state: FxHashMap::default(),
-            arena: SharedArena::default(),
+            arena: None,
+            in_txn: false,
+            changed_in_txn: FxHashSet::default(),
         }
+    }
+
+    pub fn set_peer_id(&mut self, peer: PeerID) {
+        self.peer = peer;
     }
 
     pub fn apply_diff(&mut self, _diff: &AppStateDiff) {
         todo!()
+    }
+
+    pub(crate) fn start_txn(&mut self) {
+        self.in_txn = true;
+    }
+
+    pub(crate) fn abort_txn(&mut self) {
+        for container_idx in std::mem::take(&mut self.changed_in_txn) {
+            self.state.get_mut(&container_idx).unwrap().abort_txn();
+        }
+
+        self.in_txn = false;
+    }
+
+    pub(crate) fn commit_txn(&mut self) {
+        for container_idx in std::mem::take(&mut self.changed_in_txn) {
+            self.state.get_mut(&container_idx).unwrap().commit_txn();
+        }
+
+        self.in_txn = false;
+    }
+
+    pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
+        self.state.get_mut(&idx)
     }
 }

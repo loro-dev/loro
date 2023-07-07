@@ -272,7 +272,7 @@ pub(super) fn decode_changes_to_inner_format(
             } = change_encoding;
 
             let client_id = clients[client_idx as usize];
-            let mut ops = RleVec::<[RemoteOp; 2]>::new();
+            let mut ops = RleVec::<[RemoteOp; 1]>::new();
             let mut delta = 0;
             for op in op_iter.by_ref().take(op_len as usize) {
                 let OpEncoding {

@@ -22,6 +22,7 @@ pub struct DiffCalculator {
     end_vv: VersionVector,
     calc: FxHashMap<ContainerID, ContainerDiffCalculator>,
 }
+
 impl DiffCalculator {
     pub(crate) fn calc(
         &self,

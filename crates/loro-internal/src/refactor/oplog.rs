@@ -3,6 +3,7 @@ mod dag;
 use fxhash::FxHashMap;
 use rle::RleVec;
 use smallvec::SmallVec;
+use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op::{InnerListOp, ListOp};
@@ -202,5 +203,18 @@ impl OpLog {
                 },
             })
             .collect()
+    }
+
+    pub fn get_timestamp(&self) -> Timestamp {
+        unimplemented!()
+    }
+
+    pub fn next_lamport(&self) -> Lamport {
+        self.latest_lamport + 1
+    }
+
+    pub fn next_id(&self, peer: PeerID) -> ID {
+        let cnt = self.dag.vv.get(&peer).copied().unwrap_or(0);
+        ID::new(peer, cnt)
     }
 }

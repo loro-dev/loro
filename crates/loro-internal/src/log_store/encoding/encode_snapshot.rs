@@ -370,7 +370,7 @@ pub(super) fn decode_snapshot(
             } = change_encoding;
 
             let client_id = clients[client_idx as usize];
-            let mut ops = RleVec::<[Op; 2]>::new();
+            let mut ops = RleVec::<[Op; 1]>::new();
             let mut delta = 0;
             for op in op_iter.by_ref().take(op_len as usize) {
                 let SnapshotOpEncoding {

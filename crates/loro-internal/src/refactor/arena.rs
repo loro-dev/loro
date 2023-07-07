@@ -24,6 +24,7 @@ pub(super) struct SharedArena {
     values: Vector<Arc<LoroValue>>,
 }
 
+#[derive(Clone)]
 pub(super) struct ReadonlyArena {
     container_idx_to_id: Vector<ContainerID>,
     container_id_to_idx: im::HashMap<ContainerID, ContainerIdx>,

@@ -23,7 +23,7 @@ pub type Lamport = u32;
 /// When undo/redo we should always undo/redo a whole [Change].
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 2]>,
+    pub(crate) ops: RleVec<[O; 1]>,
     pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
@@ -36,7 +36,7 @@ pub struct Change<O = Op> {
 
 impl<O> Change<O> {
     pub fn new(
-        ops: RleVec<[O; 2]>,
+        ops: RleVec<[O; 1]>,
         deps: Frontiers,
         id: ID,
         lamport: Lamport,
