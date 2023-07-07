@@ -5,6 +5,7 @@ use im::Vector;
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
+    text::utf16::count_utf16_chars,
     LoroValue,
 };
 
@@ -18,7 +19,8 @@ pub(super) struct SharedArena {
     container_id_to_idx: im::HashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
     parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
-    bytes: AppendOnlyBytes,
+    text: AppendOnlyBytes,
+    text_utf16_len: usize,
     values: Vector<Arc<LoroValue>>,
 }
 
@@ -28,7 +30,14 @@ pub(super) struct ReadonlyArena {
     /// The parent of each container.
     parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
     bytes: BytesSlice,
+    text_utf16_len: usize,
     values: Vector<Arc<LoroValue>>,
+}
+
+pub(crate) struct StrAllocResult {
+    pub start: usize,
+    pub end: usize,
+    pub utf16_len: usize,
 }
 
 impl SharedArena {
@@ -52,10 +61,21 @@ impl SharedArena {
         self.container_idx_to_id.get(id.to_u32() as usize)
     }
 
-    pub fn alloc_bytes(&mut self, bytes: &[u8]) -> BytesSlice {
-        let start = self.bytes.len();
-        self.bytes.push_slice(bytes);
-        self.bytes.slice(start..self.bytes.len())
+    /// return utf16 len
+    pub fn alloc_str(&mut self, str: &str) -> StrAllocResult {
+        let start = self.text.len();
+        let utf16_len = count_utf16_chars(str.as_bytes());
+        self.text.push_slice(str.as_bytes());
+        self.text_utf16_len += utf16_len;
+        StrAllocResult {
+            start,
+            end: self.text.len(),
+            utf16_len,
+        }
+    }
+
+    pub fn utf16_len(&self) -> usize {
+        self.text_utf16_len
     }
 
     pub fn alloc_value(&mut self, value: LoroValue) -> usize {
@@ -77,8 +97,9 @@ impl SharedArena {
             container_idx_to_id: self.container_idx_to_id.clone(),
             container_id_to_idx: self.container_id_to_idx.clone(),
             parents: self.parents.clone(),
-            bytes: self.bytes.slice(..),
+            bytes: self.text.slice(..),
             values: self.values.clone(),
+            text_utf16_len: self.text_utf16_len,
         }
     }
 
@@ -91,7 +112,7 @@ impl SharedArena {
     }
 
     pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> &[u8] {
-        &self.bytes[range]
+        &self.text[range]
     }
 
     pub fn get_value(&self, idx: usize) -> Option<&Arc<LoroValue>> {

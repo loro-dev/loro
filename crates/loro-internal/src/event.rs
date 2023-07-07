@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     container::ContainerID,
     delta::{Delta, DeltaType, MapDelta, MapDiff, Meta},
+    text::text_content::{SliceRange, SliceRanges},
     transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,
@@ -121,6 +122,7 @@ impl Utf16Meta {
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
+    TextRaw(Delta<SliceRanges>),
     Text(Delta<String, Utf16Meta>),
     /// @deprecated
     Map(MapDiff<LoroValue>),

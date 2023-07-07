@@ -2,7 +2,7 @@ use std::{borrow::Cow, ops::Range};
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{delta::DeltaValue, LoroValue};
@@ -18,7 +18,7 @@ pub enum ListSlice<'a> {
 }
 
 #[repr(transparent)]
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize)]
 pub struct SliceRange(pub Range<u32>);
 
 const UNKNOWN_START: u32 = u32::MAX / 2;
@@ -150,6 +150,19 @@ impl<'a> Mergable for ListSlice<'a> {
 
 #[derive(Debug, Clone)]
 pub struct SliceRanges(pub SmallVec<[SliceRange; 2]>);
+
+impl Serialize for SliceRanges {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_seq(Some(self.0.len()))?;
+        for item in self.0.iter() {
+            s.serialize_element(item);
+        }
+        s.end()
+    }
+}
 
 impl From<SliceRange> for SliceRanges {
     fn from(value: SliceRange) -> Self {

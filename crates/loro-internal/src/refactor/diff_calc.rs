@@ -1,22 +1,18 @@
-use std::collections::BinaryHeap;
+use std::{cmp::Ordering, collections::BinaryHeap};
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use im::HashSet;
 
 use crate::{
-    change::Change,
     container::ContainerID,
     delta::{MapDelta, MapValue},
     event::Diff,
-    op::{Op, RichOp},
     span::{HasId, HasLamport},
     text::tracker::Tracker,
-    version::VersionVectorDiff,
     InternalString, VersionVector,
 };
 
-use super::state::AppStateDiff;
+use super::{oplog::OpLog, state::AppStateDiff};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
@@ -46,15 +42,15 @@ impl DiffCalculator {
 ///
 #[enum_dispatch]
 pub trait DiffCalculatorTrait: Default {
-    fn start_tracking(&mut self, oplog: &super::oplog::OpLog, vv: &crate::VersionVector);
-    fn apply_change(
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
+    fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector);
+    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
+    fn calculate_diff(
         &mut self,
-        op: crate::op::RichOp,
-        oplog: &super::oplog::OpLog,
-        vv: &crate::VersionVector,
-    );
-    fn stop_tracking(&mut self, oplog: &super::oplog::OpLog, vv: &crate::VersionVector);
-    fn calculate_diff(&mut self, from: &crate::VersionVector, to: &crate::VersionVector) -> Diff;
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff;
 }
 
 // #[enum_dispatch(DiffCalculatorTrait)]
@@ -118,8 +114,8 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn apply_change(
         &mut self,
-        op: crate::op::RichOp,
         oplog: &super::oplog::OpLog,
+        op: crate::op::RichOp,
         _vv: &crate::VersionVector,
     ) {
         let map = op.op().content.as_map().unwrap();
@@ -133,7 +129,12 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
 
-    fn calculate_diff(&mut self, from: &crate::VersionVector, to: &crate::VersionVector) -> Diff {
+    fn calculate_diff(
+        &mut self,
+        _oplog: &super::oplog::OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff {
         let mut changed = Vec::new();
         self.checkout(from);
         for (k, g) in self.grouped.iter_mut() {
@@ -180,5 +181,39 @@ struct ListDiffCalculator {}
 impl TextDiffCalculator {
     fn new(tracker: Tracker) -> Self {
         Self { tracker }
+    }
+}
+
+impl DiffCalculatorTrait for TextDiffCalculator {
+    fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
+        if matches!(
+            self.tracker.start_vv().partial_cmp(vv),
+            None | Some(Ordering::Less)
+        ) {
+            self.tracker = Tracker::new(vv.clone(), 0);
+        }
+
+        self.tracker.checkout(vv);
+    }
+
+    fn apply_change(
+        &mut self,
+        _oplog: &super::oplog::OpLog,
+        op: crate::op::RichOp,
+        vv: &crate::VersionVector,
+    ) {
+        self.tracker.checkout(vv);
+        self.tracker.track_apply(&op);
+    }
+
+    fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
+
+    fn calculate_diff(
+        &mut self,
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff {
+        Diff::TextRaw(self.tracker.diff(from, to))
     }
 }

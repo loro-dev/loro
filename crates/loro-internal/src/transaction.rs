@@ -333,6 +333,11 @@ fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
             let diff = inner.compose(x);
             Diff::NewMap(diff)
         }
+        Diff::TextRaw(x) => {
+            let inner = std::mem::take(this_diff.as_text_raw_mut().unwrap());
+            let diff = inner.compose(x);
+            Diff::TextRaw(diff)
+        }
     };
     *this_diff = diff;
 }

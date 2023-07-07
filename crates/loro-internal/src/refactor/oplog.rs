@@ -175,14 +175,12 @@ impl OpLog {
                             }
                         }
                         crate::text::text_content::ListSlice::RawStr(str) => {
-                            let bytes = self.arena.alloc_bytes(str.as_bytes());
+                            let bytes = self.arena.alloc_str(&str);
                             Op {
                                 counter,
                                 container,
                                 content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                    slice: SliceRange::from(
-                                        bytes.start() as u32..bytes.end() as u32,
-                                    ),
+                                    slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
                                     pos,
                                 }),
                             }

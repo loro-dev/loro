@@ -1,6 +1,14 @@
 use std::cmp::Ordering;
 
-use super::*;
+use crate::change::Lamport;
+use crate::dag::{Dag, DagNode};
+use crate::id::{Counter, ID};
+use crate::span::{HasId, HasLamport};
+use crate::version::{ImVersionVector, VersionVector};
+use rle::{HasIndex, HasLength, Mergable, Sliceable};
+
+use super::{AppDag, AppDagNode};
+
 impl HasIndex for AppDagNode {
     type Int = Counter;
     fn get_start_index(&self) -> Self::Int {
