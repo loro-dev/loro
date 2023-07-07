@@ -164,12 +164,12 @@ impl OpLog {
                 crate::op::RemoteContent::List(list) => match list {
                     ListOp::Insert { slice, pos } => match slice {
                         crate::text::text_content::ListSlice::RawData(values) => {
-                            let (from, to) = self.arena.alloc_values(values.iter().cloned());
+                            let range = self.arena.alloc_values(values.iter().cloned());
                             Op {
                                 counter,
                                 container,
                                 content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                    slice: SliceRange::from(from as u32..to as u32),
+                                    slice: SliceRange::from(range.start as u32..range.end as u32),
                                     pos,
                                 }),
                             }

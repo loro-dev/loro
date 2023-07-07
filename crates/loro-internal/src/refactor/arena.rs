@@ -83,13 +83,16 @@ impl SharedArena {
         self.values.len() - 1
     }
 
-    pub fn alloc_values(&mut self, values: impl Iterator<Item = LoroValue>) -> (usize, usize) {
+    pub fn alloc_values(
+        &mut self,
+        values: impl Iterator<Item = LoroValue>,
+    ) -> std::ops::Range<usize> {
         let start = self.values.len();
         for value in values {
             self.values.push_back(Arc::new(value));
         }
 
-        (start, self.values.len())
+        start..self.values.len()
     }
 
     pub fn to_readonly(&self) -> ReadonlyArena {

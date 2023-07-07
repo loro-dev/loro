@@ -41,7 +41,7 @@ impl DiffCalculator {
 /// So there may be some ops that cannot be seen by the container.
 ///
 #[enum_dispatch]
-pub trait DiffCalculatorTrait: Default {
+pub trait DiffCalculatorTrait {
     fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
     fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector);
     fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
@@ -53,11 +53,11 @@ pub trait DiffCalculatorTrait: Default {
     ) -> Diff;
 }
 
-// #[enum_dispatch(DiffCalculatorTrait)]
+#[enum_dispatch(DiffCalculatorTrait)]
 enum ContainerDiffCalculator {
     Text(TextDiffCalculator),
     Map(MapDiffCalculator),
-    List(MapDiffCalculator),
+    List(ListDiffCalculator),
 }
 
 #[derive(Default)]
@@ -176,7 +176,40 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 }
 
 #[derive(Default)]
-struct ListDiffCalculator {}
+struct ListDiffCalculator {
+    tracker: Tracker,
+}
+
+impl DiffCalculatorTrait for ListDiffCalculator {
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+        if matches!(
+            self.tracker.start_vv().partial_cmp(vv),
+            None | Some(Ordering::Less)
+        ) {
+            self.tracker = Tracker::new(vv.clone(), 0);
+        }
+
+        self.tracker.checkout(vv);
+    }
+
+    fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector) {
+        self.tracker.checkout(vv);
+        self.tracker.track_apply(&op);
+    }
+
+    fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector) {
+        todo!()
+    }
+
+    fn calculate_diff(
+        &mut self,
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff {
+        Diff::SeqRaw(self.tracker.diff(from, to))
+    }
+}
 
 impl TextDiffCalculator {
     fn new(tracker: Tracker) -> Self {
@@ -210,10 +243,10 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        oplog: &OpLog,
+        _oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
     ) -> Diff {
-        Diff::TextRaw(self.tracker.diff(from, to))
+        Diff::SeqRaw(self.tracker.diff(from, to))
     }
 }

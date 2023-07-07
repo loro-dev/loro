@@ -122,7 +122,7 @@ impl Utf16Meta {
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
-    TextRaw(Delta<SliceRanges>),
+    SeqRaw(Delta<SliceRanges>),
     Text(Delta<String, Utf16Meta>),
     /// @deprecated
     Map(MapDiff<LoroValue>),
