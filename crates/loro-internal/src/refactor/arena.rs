@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use im::Vector;
 
@@ -17,7 +19,7 @@ pub(super) struct SharedArena {
     /// The parent of each container.
     parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
     bytes: AppendOnlyBytes,
-    values: Vector<LoroValue>,
+    values: Vector<Arc<LoroValue>>,
 }
 
 pub(super) struct ReadonlyArena {
@@ -26,7 +28,7 @@ pub(super) struct ReadonlyArena {
     /// The parent of each container.
     parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
     bytes: BytesSlice,
-    values: Vector<LoroValue>,
+    values: Vector<Arc<LoroValue>>,
 }
 
 impl SharedArena {
@@ -57,14 +59,14 @@ impl SharedArena {
     }
 
     pub fn alloc_value(&mut self, value: LoroValue) -> usize {
-        self.values.push_back(value);
+        self.values.push_back(Arc::new(value));
         self.values.len() - 1
     }
 
     pub fn alloc_values(&mut self, values: impl Iterator<Item = LoroValue>) -> (usize, usize) {
         let start = self.values.len();
         for value in values {
-            self.values.push_back(value);
+            self.values.push_back(Arc::new(value));
         }
 
         (start, self.values.len())
@@ -92,12 +94,8 @@ impl SharedArena {
         &self.bytes[range]
     }
 
-    pub fn get_value(&self, idx: usize) -> Option<&LoroValue> {
+    pub fn get_value(&self, idx: usize) -> Option<&Arc<LoroValue>> {
         self.values.get(idx)
-    }
-
-    pub fn get_value_mut(&mut self, idx: usize) -> Option<&mut LoroValue> {
-        self.values.get_mut(idx)
     }
 }
 
@@ -114,7 +112,7 @@ impl ReadonlyArena {
         &self.bytes[range]
     }
 
-    pub fn get_value(&self, idx: usize) -> Option<&LoroValue> {
+    pub fn get_value(&self, idx: usize) -> Option<&Arc<LoroValue>> {
         self.values.get(idx)
     }
 

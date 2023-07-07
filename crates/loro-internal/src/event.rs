@@ -122,6 +122,7 @@ impl Utf16Meta {
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     Text(Delta<String, Utf16Meta>),
+    /// @deprecated
     Map(MapDiff<LoroValue>),
     NewMap(MapDelta),
 }

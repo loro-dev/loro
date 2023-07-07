@@ -1,9 +1,14 @@
-use std::sync::Arc;
+use std::{hash::Hash, sync::Arc};
 
 use fxhash::FxHashMap;
 use serde::{ser::SerializeStruct, Serialize};
 
-use crate::{change::Lamport, id::PeerID, InternalString, LoroValue};
+use crate::{
+    change::Lamport,
+    id::{Counter, PeerID, ID},
+    span::{HasId, HasLamport},
+    InternalString, LoroValue,
+};
 
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct MapDelta {
@@ -28,8 +33,49 @@ impl MapDelta {
 
 #[derive(Debug, Clone)]
 pub struct MapValue {
+    pub counter: Counter,
     pub value: Option<Arc<LoroValue>>,
-    pub lamport: (Lamport, PeerID),
+    lamport: (Lamport, PeerID),
+}
+
+impl Hash for MapValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // value is not being hashed
+        self.counter.hash(state);
+        self.lamport.hash(state);
+    }
+}
+
+impl HasId for MapValue {
+    fn id_start(&self) -> crate::id::ID {
+        ID::new(self.lamport.1, self.counter)
+    }
+}
+
+impl HasLamport for MapValue {
+    fn lamport(&self) -> Lamport {
+        self.lamport.0
+    }
+}
+
+impl PartialEq for MapValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.lamport == other.lamport
+    }
+}
+
+impl Eq for MapValue {}
+
+impl PartialOrd for MapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.lamport.partial_cmp(&other.lamport)
+    }
+}
+
+impl Ord for MapValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.lamport.cmp(&other.lamport)
+    }
 }
 
 impl Serialize for MapValue {
@@ -41,5 +87,15 @@ impl Serialize for MapValue {
         s.serialize_field("value", &self.value.as_deref())?;
         s.serialize_field("lamport", &self.lamport)?;
         s.end()
+    }
+}
+
+impl MapValue {
+    pub fn new(id: ID, lamport: Lamport, value: Option<Arc<LoroValue>>) -> Self {
+        MapValue {
+            counter: id.counter,
+            value,
+            lamport: (lamport, id.peer),
+        }
     }
 }

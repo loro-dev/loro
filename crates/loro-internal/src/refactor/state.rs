@@ -49,3 +49,18 @@ pub struct ContainerStateDiff {
     pub idx: ContainerID,
     pub diff: Diff,
 }
+
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            vv: VersionVector::default(),
+            frontiers: Frontiers::default(),
+            state: FxHashMap::default(),
+            arena: SharedArena::default(),
+        }
+    }
+
+    pub fn apply_diff(&mut self, diff: &AppStateDiff) {
+        todo!()
+    }
+}

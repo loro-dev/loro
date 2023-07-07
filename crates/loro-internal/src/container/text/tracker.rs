@@ -41,7 +41,7 @@ pub mod yata_impl;
 /// - [YSpan] never gets removed in both [ContentMap] and [CursorMap]
 ///     - The deleted contents are marked with deleted, but still lives on the [ContentMap] with length of 0
 ///
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Tracker {
     #[cfg(feature = "test_utils")]
     client_id: PeerID,

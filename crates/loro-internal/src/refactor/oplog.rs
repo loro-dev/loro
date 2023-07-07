@@ -25,7 +25,7 @@ use super::arena::SharedArena;
 ///
 pub struct OpLog {
     pub(crate) dag: AppDag,
-    arena: SharedArena,
+    pub(super) arena: SharedArena,
     pub(crate) changes: ClientChanges,
     pub(crate) latest_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
