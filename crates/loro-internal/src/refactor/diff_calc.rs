@@ -125,7 +125,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             .entry(map.key.clone())
             .or_default()
             .pending
-            .insert(MapValue::new(op.id_start(), op.lamport(), value.cloned()));
+            .insert(MapValue::new(op.id_start(), op.lamport(), value));
     }
 
     fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}

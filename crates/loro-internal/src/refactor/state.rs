@@ -3,15 +3,12 @@ use fxhash::{FxHashMap, FxHashSet};
 use ring::rand::SystemRandom;
 
 use crate::{
-    change::Lamport,
     configure::SecureRandomGenerator,
     container::{registry::ContainerIdx, ContainerID},
     event::Diff,
-    id::{PeerID, ID},
+    id::PeerID,
     version::{Frontiers, ImVersionVector},
 };
-
-use super::arena::ReadonlyArena;
 
 mod list_state;
 mod map_state;
@@ -21,13 +18,15 @@ use list_state::ListState;
 use map_state::MapState;
 use text_state::TextState;
 
+use super::{arena::SharedArena, oplog::OpLog};
+
 #[derive(Clone)]
 pub struct AppState {
     pub(super) peer: PeerID,
 
     pub(super) frontiers: Frontiers,
     state: FxHashMap<ContainerIdx, State>,
-    arena: Option<ReadonlyArena>,
+    arena: SharedArena,
 
     in_txn: bool,
     changed_in_txn: FxHashSet<ContainerIdx>,
@@ -55,7 +54,6 @@ pub enum State {
 
 pub struct AppStateDiff {
     pub changes: Vec<ContainerStateDiff>,
-    pub new_arena: ReadonlyArena,
     pub new_frontiers: Frontiers,
     pub new_vv: ImVersionVector,
 }
@@ -66,13 +64,13 @@ pub struct ContainerStateDiff {
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(oplog: &OpLog) -> Self {
         let peer = SystemRandom::new().next_u64();
         Self {
             peer,
             frontiers: Frontiers::default(),
             state: FxHashMap::default(),
-            arena: None,
+            arena: oplog.arena.clone(),
             in_txn: false,
             changed_in_txn: FxHashSet::default(),
         }

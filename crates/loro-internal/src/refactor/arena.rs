@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
-use im::Vector;
+use fxhash::FxHashMap;
 
 use crate::{
     container::{registry::ContainerIdx, ContainerID},
@@ -10,29 +10,18 @@ use crate::{
 };
 
 /// This is shared between [OpLog] and [AppState].
-/// It only takes O(1) to have a readonly view cloned.
-/// It makes ownership problem easier.
 ///
 #[derive(Clone, Default)]
 pub(super) struct SharedArena {
-    container_idx_to_id: Vector<ContainerID>,
-    container_id_to_idx: im::HashMap<ContainerID, ContainerIdx>,
+    // The locks should not be exposed outside this file.
+    // It might be better to use RwLock in the future
+    container_idx_to_id: Arc<Mutex<Vec<ContainerID>>>,
+    container_id_to_idx: Arc<Mutex<FxHashMap<ContainerID, ContainerIdx>>>,
     /// The parent of each container.
-    parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
-    text: AppendOnlyBytes,
-    text_utf16_len: usize,
-    values: Vector<Arc<LoroValue>>,
-}
-
-#[derive(Clone)]
-pub(super) struct ReadonlyArena {
-    container_idx_to_id: Vector<ContainerID>,
-    container_id_to_idx: im::HashMap<ContainerID, ContainerIdx>,
-    /// The parent of each container.
-    parents: im::HashMap<ContainerIdx, Option<ContainerIdx>>,
-    bytes: BytesSlice,
-    text_utf16_len: usize,
-    values: Vector<Arc<LoroValue>>,
+    parents: Arc<Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>>,
+    text: Arc<Mutex<AppendOnlyBytes>>,
+    text_utf16_len: Arc<AtomicUsize>,
+    values: Arc<Mutex<Vec<Arc<LoroValue>>>>,
 }
 
 pub(crate) struct StrAllocResult {
@@ -42,106 +31,78 @@ pub(crate) struct StrAllocResult {
 }
 
 impl SharedArena {
-    pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
-        if let Some(&idx) = self.container_id_to_idx.get(id) {
+    pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
+        let mut container_id_to_idx = self.container_id_to_idx.lock().unwrap();
+        if let Some(&idx) = container_id_to_idx.get(id) {
             return idx;
         }
 
-        let idx = self.container_idx_to_id.len();
-        self.container_idx_to_id.push_back(id.clone());
+        let mut container_idx_to_id = self.container_idx_to_id.lock().unwrap();
+        let idx = container_idx_to_id.len();
+        container_idx_to_id.push(id.clone());
         let ans = ContainerIdx::from_u32(idx as u32);
-        self.container_id_to_idx.insert(id.clone(), ans);
+        container_id_to_idx.insert(id.clone(), ans);
         ans
     }
 
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.container_id_to_idx.get(id).copied()
+        self.container_id_to_idx.lock().unwrap().get(id).copied()
     }
 
-    pub fn idx_to_id(&self, id: ContainerIdx) -> Option<&ContainerID> {
-        self.container_idx_to_id.get(id.to_u32() as usize)
+    pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
+        let lock = self.container_idx_to_id.lock().unwrap();
+        lock.get(id.to_u32() as usize).cloned()
     }
 
     /// return utf16 len
-    pub fn alloc_str(&mut self, str: &str) -> StrAllocResult {
-        let start = self.text.len();
+    pub fn alloc_str(&self, str: &str) -> StrAllocResult {
+        let mut text_lock = self.text.lock().unwrap();
+        let start = text_lock.len();
         let utf16_len = count_utf16_chars(str.as_bytes());
-        self.text.push_slice(str.as_bytes());
-        self.text_utf16_len += utf16_len;
+        text_lock.push_slice(str.as_bytes());
+        self.text_utf16_len
+            .fetch_add(utf16_len, std::sync::atomic::Ordering::SeqCst);
         StrAllocResult {
             start,
-            end: self.text.len(),
+            end: text_lock.len(),
             utf16_len,
         }
     }
 
     pub fn utf16_len(&self) -> usize {
         self.text_utf16_len
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn alloc_value(&mut self, value: LoroValue) -> usize {
-        self.values.push_back(Arc::new(value));
-        self.values.len() - 1
+    pub fn alloc_value(&self, value: LoroValue) -> usize {
+        let mut values_lock = self.values.lock().unwrap();
+        values_lock.push(Arc::new(value));
+        values_lock.len() - 1
     }
 
-    pub fn alloc_values(
-        &mut self,
-        values: impl Iterator<Item = LoroValue>,
-    ) -> std::ops::Range<usize> {
-        let start = self.values.len();
+    pub fn alloc_values(&self, values: impl Iterator<Item = LoroValue>) -> std::ops::Range<usize> {
+        let mut values_lock = self.values.lock().unwrap();
+        let start = values_lock.len();
         for value in values {
-            self.values.push_back(Arc::new(value));
+            values_lock.push(Arc::new(value));
         }
 
-        start..self.values.len()
+        start..values_lock.len()
     }
 
-    pub fn to_readonly(&self) -> ReadonlyArena {
-        ReadonlyArena {
-            container_idx_to_id: self.container_idx_to_id.clone(),
-            container_id_to_idx: self.container_id_to_idx.clone(),
-            parents: self.parents.clone(),
-            bytes: self.text.slice(..),
-            values: self.values.clone(),
-            text_utf16_len: self.text_utf16_len,
-        }
-    }
-
-    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        self.parents.insert(child, parent);
+    pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        self.parents.lock().unwrap().insert(child, parent);
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        self.parents.get(&child).copied().flatten()
+        self.parents.lock().unwrap().get(&child).copied().flatten()
     }
 
-    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> &[u8] {
-        &self.text[range]
+    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> BytesSlice {
+        self.text.lock().unwrap().slice(range)
     }
 
-    pub fn get_value(&self, idx: usize) -> Option<&Arc<LoroValue>> {
-        self.values.get(idx)
-    }
-}
-
-impl ReadonlyArena {
-    pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.container_id_to_idx.get(id).copied()
-    }
-
-    pub fn idx_to_id(&self, id: ContainerIdx) -> Option<&ContainerID> {
-        self.container_idx_to_id.get(id.to_u32() as usize)
-    }
-
-    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> &[u8] {
-        &self.bytes[range]
-    }
-
-    pub fn get_value(&self, idx: usize) -> Option<&Arc<LoroValue>> {
-        self.values.get(idx)
-    }
-
-    pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        self.parents.get(&child).copied().flatten()
+    pub fn get_value(&self, idx: usize) -> Option<Arc<LoroValue>> {
+        self.values.lock().unwrap().get(idx).cloned()
     }
 }
