@@ -6,12 +6,9 @@ use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
-use crate::container::list::list_op::{InnerListOp, ListOp};
-use crate::container::map::InnerMapSet;
 use crate::id::{Counter, PeerID, ID};
 use crate::log_store::ClientChanges;
-use crate::op::{Op, RemoteOp};
-use crate::text::text_content::SliceRange;
+use crate::op::RemoteOp;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 

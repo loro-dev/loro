@@ -12,7 +12,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use super::{oplog::OpLog, state::AppStateDiff};
+use super::{oplog::OpLog, state::ContainerStateDiff};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
@@ -29,7 +29,7 @@ impl DiffCalculator {
         _oplog: &super::oplog::OpLog,
         _before: &crate::VersionVector,
         _after: &crate::VersionVector,
-    ) -> AppStateDiff {
+    ) -> Vec<ContainerStateDiff> {
         todo!()
     }
 }

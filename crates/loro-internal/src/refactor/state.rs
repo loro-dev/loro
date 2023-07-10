@@ -52,14 +52,8 @@ pub enum State {
     TextState,
 }
 
-pub struct AppStateDiff {
-    pub changes: Vec<ContainerStateDiff>,
-    pub new_frontiers: Frontiers,
-    pub new_vv: ImVersionVector,
-}
-
 pub struct ContainerStateDiff {
-    pub idx: ContainerID,
+    pub idx: ContainerIdx,
     pub diff: Diff,
 }
 
@@ -80,7 +74,7 @@ impl AppState {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, _diff: &AppStateDiff) {
+    pub fn apply_diff(&mut self, _diff: &ContainerStateDiff) {
         todo!()
     }
 
@@ -96,12 +90,13 @@ impl AppState {
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(&mut self) {
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers) {
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
             self.state.get_mut(&container_idx).unwrap().commit_txn();
         }
 
         self.in_txn = false;
+        self.frontiers = new_frontiers;
     }
 
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {

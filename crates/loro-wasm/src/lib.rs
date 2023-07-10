@@ -8,7 +8,7 @@ use loro_internal::{
     version::Frontiers,
     ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
 };
-use std::{cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
 use wasm_bindgen::{
     __rt::{IntoJsResult, RefMut},
     prelude::*,

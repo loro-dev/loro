@@ -1,16 +1,26 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    mem::take,
+    sync::{Arc, Mutex},
+};
 
 use rle::RleVec;
 
-use crate::{change::Change, op::Op, LoroError};
+use crate::{
+    change::Change,
+    container::ContainerID,
+    op::{Op, RemoteContent, RemoteOp},
+    version::Frontiers,
+    LoroError,
+};
 
 use super::{arena::SharedArena, oplog::OpLog, state::AppState};
 
 pub struct Transaction {
     finished: bool,
     state: Arc<Mutex<AppState>>,
-    ops: RleVec<[Op; 1]>,
     oplog: Arc<Mutex<OpLog>>,
+    next_frontiers: Frontiers,
+    local_ops: RleVec<[Op; 1]>,
     arena: SharedArena,
 }
 
@@ -19,13 +29,15 @@ impl Transaction {
         let mut state_lock = state.lock().unwrap();
         state_lock.start_txn();
         let arena = state_lock.arena.clone();
+        let frontiers = state_lock.frontiers.clone();
         drop(state_lock);
         Self {
             state,
             arena,
             oplog,
+            next_frontiers: frontiers,
             finished: false,
-            ops: RleVec::new(),
+            local_ops: RleVec::new(),
         }
     }
 
@@ -36,7 +48,7 @@ impl Transaction {
 
     pub fn commit(&mut self, oplog: &mut OpLog) -> Result<(), LoroError> {
         let mut state = self.state.lock().unwrap();
-        let ops = std::mem::take(&mut self.ops);
+        let ops = std::mem::take(&mut self.local_ops);
         let change = Change {
             ops,
             deps: state.frontiers.clone(),
@@ -51,14 +63,12 @@ impl Transaction {
             return Err(err);
         }
 
-        state.commit_txn();
+        state.commit_txn(take(&mut self.next_frontiers));
         self.finished = true;
         Ok(())
     }
 
-    pub fn decode(&mut self, updates: &[u8]) -> Result<(), LoroError> {
-        unimplemented!()
-    }
+    pub fn import_local_op(&mut self, container: ContainerID, op: RemoteContent) {}
 }
 
 impl Drop for Transaction {
