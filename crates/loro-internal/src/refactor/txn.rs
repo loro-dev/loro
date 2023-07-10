@@ -8,7 +8,7 @@ use rle::RleVec;
 use crate::{
     change::Change,
     container::ContainerID,
-    op::{Op, RemoteContent, RemoteOp},
+    op::{Op, RawOpContent, RemoteOp},
     version::Frontiers,
     LoroError,
 };
@@ -68,7 +68,7 @@ impl Transaction {
         Ok(())
     }
 
-    pub fn import_local_op(&mut self, container: ContainerID, op: RemoteContent) {}
+    pub fn import_local_op(&mut self, container: ContainerID, op: RawOpContent) {}
 }
 
 impl Drop for Transaction {

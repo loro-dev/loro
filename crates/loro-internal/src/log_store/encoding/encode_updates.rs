@@ -8,7 +8,7 @@ use crate::{
     container::ContainerID,
     id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
-    op::{RemoteContent, RemoteOp},
+    op::{RawOpContent, RemoteOp},
     version::Frontiers,
     LogStore, LoroError, VersionVector,
 };
@@ -36,7 +36,7 @@ struct FirstChangeInfo {
 #[derive(Serialize, Deserialize, Debug)]
 struct EncodedOp {
     pub(crate) container: ContainerID,
-    pub(crate) contents: Vec<RemoteContent<'static>>,
+    pub(crate) contents: Vec<RawOpContent<'static>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

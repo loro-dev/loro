@@ -27,12 +27,12 @@ pub enum InnerContent {
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, PartialEq, Serialize, Deserialize)]
-pub enum RemoteContent<'a> {
+pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
 }
 
-impl<'a> Clone for RemoteContent<'a> {
+impl<'a> Clone for RawOpContent<'a> {
     fn clone(&self) -> Self {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
@@ -41,16 +41,16 @@ impl<'a> Clone for RemoteContent<'a> {
     }
 }
 
-impl<'a> RemoteContent<'a> {
-    pub fn to_static(&self) -> RemoteContent<'static> {
+impl<'a> RawOpContent<'a> {
+    pub fn to_static(&self) -> RawOpContent<'static> {
         match self {
-            Self::Map(arg0) => RemoteContent::Map(arg0.clone()),
+            Self::Map(arg0) => RawOpContent::Map(arg0.clone()),
             Self::List(arg0) => match arg0 {
-                ListOp::Insert { slice, pos } => RemoteContent::List(ListOp::Insert {
+                ListOp::Insert { slice, pos } => RawOpContent::List(ListOp::Insert {
                     slice: slice.to_static(),
                     pos: *pos,
                 }),
-                ListOp::Delete(x) => RemoteContent::List(ListOp::Delete(*x)),
+                ListOp::Delete(x) => RawOpContent::List(ListOp::Delete(*x)),
             },
         }
     }
@@ -104,32 +104,32 @@ impl<T: Mergable + Any> MergeableContent for T {
     }
 }
 
-impl<'a> HasLength for RemoteContent<'a> {
+impl<'a> HasLength for RawOpContent<'a> {
     fn content_len(&self) -> usize {
         match self {
-            RemoteContent::Map(x) => x.content_len(),
-            RemoteContent::List(x) => x.content_len(),
+            RawOpContent::Map(x) => x.content_len(),
+            RawOpContent::List(x) => x.content_len(),
         }
     }
 }
 
-impl<'a> Sliceable for RemoteContent<'a> {
+impl<'a> Sliceable for RawOpContent<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            RemoteContent::Map(x) => RemoteContent::Map(x.slice(from, to)),
-            RemoteContent::List(x) => RemoteContent::List(x.slice(from, to)),
+            RawOpContent::Map(x) => RawOpContent::Map(x.slice(from, to)),
+            RawOpContent::List(x) => RawOpContent::List(x.slice(from, to)),
         }
     }
 }
 
-impl<'a> Mergable for RemoteContent<'a> {
+impl<'a> Mergable for RawOpContent<'a> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
         match (self, other) {
-            (RemoteContent::Map(x), RemoteContent::Map(y)) => x.is_mergable(y, &()),
-            (RemoteContent::List(x), RemoteContent::List(y)) => x.is_mergable(y, &()),
+            (RawOpContent::Map(x), RawOpContent::Map(y)) => x.is_mergable(y, &()),
+            (RawOpContent::List(x), RawOpContent::List(y)) => x.is_mergable(y, &()),
             _ => false,
         }
     }
@@ -139,12 +139,12 @@ impl<'a> Mergable for RemoteContent<'a> {
         Self: Sized,
     {
         match self {
-            RemoteContent::Map(x) => match _other {
-                RemoteContent::Map(y) => x.merge(y, &()),
+            RawOpContent::Map(x) => match _other {
+                RawOpContent::Map(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
-            RemoteContent::List(x) => match _other {
-                RemoteContent::List(y) => x.merge(y, &()),
+            RawOpContent::List(x) => match _other {
+                RawOpContent::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
         }
@@ -215,20 +215,20 @@ mod test {
         map::MapSet,
     };
 
-    use super::RemoteContent;
+    use super::RawOpContent;
 
     #[test]
     fn fix_fields_order() {
         let remote_content = vec![
-            RemoteContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
-            RemoteContent::Map(MapSet {
+            RawOpContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
+            RawOpContent::Map(MapSet {
                 key: "a".to_string().into(),
                 value: "b".to_string().into(),
             }),
         ];
         let remote_content_buf = vec![2, 1, 1, 0, 2, 0, 1, 97, 4, 1, 98];
         assert_eq!(
-            postcard::from_bytes::<Vec<RemoteContent>>(&remote_content_buf).unwrap(),
+            postcard::from_bytes::<Vec<RawOpContent>>(&remote_content_buf).unwrap(),
             remote_content
         );
     }

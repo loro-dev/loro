@@ -27,7 +27,7 @@ pub struct Op {
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) contents: RleVec<[RemoteContent<'a>; 1]>,
+    pub(crate) contents: RleVec<[RawOpContent<'a>; 1]>,
 }
 
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.

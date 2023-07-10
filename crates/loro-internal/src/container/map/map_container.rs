@@ -23,7 +23,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::PeerID,
     log_store::ImportContext,
-    op::{InnerContent, Op, RemoteContent, RichOp},
+    op::{InnerContent, Op, RawOpContent, RichOp},
     prelim::Prelim,
     span::HasLamport,
     value::LoroValue,
@@ -242,11 +242,11 @@ impl ContainerTrait for MapContainer {
 
     fn tracker_checkout(&mut self, _vv: &VersionVector) {}
 
-    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
+    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RawOpContent; 1]> {
         if let Ok(set) = content.into_map() {
             let index = set.value;
             let value = self.pool.slice(&(index..index + 1))[0].clone();
-            return smallvec![RemoteContent::Map(MapSet {
+            return smallvec![RawOpContent::Map(MapSet {
                 key: set.key,
                 value,
             })];
@@ -255,7 +255,7 @@ impl ContainerTrait for MapContainer {
         unreachable!()
     }
 
-    fn to_import(&mut self, mut content: RemoteContent) -> InnerContent {
+    fn to_import(&mut self, mut content: RawOpContent) -> InnerContent {
         if let Some(set) = content.as_map_mut() {
             let index = self.pool.alloc(std::mem::take(&mut set.value));
             return InnerContent::Map(InnerMapSet {

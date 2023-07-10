@@ -17,7 +17,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::{Counter, PeerID},
     log_store::ImportContext,
-    op::{InnerContent, Op, RemoteContent, RichOp},
+    op::{InnerContent, Op, RawOpContent, RichOp},
     transaction::Transaction,
     value::LoroValue,
     LoroError, Transact, VersionVector,
@@ -229,7 +229,7 @@ impl ContainerTrait for TextContainer {
         LoroValue::String(ans_str.into_boxed_str())
     }
 
-    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]> {
+    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RawOpContent; 1]> {
         if gc && self.raw_str.should_update_aliveness(self.text_len()) {
             self.raw_str
                 .update_aliveness(self.state.iter().filter_map(|x| {
@@ -246,7 +246,7 @@ impl ContainerTrait for TextContainer {
                 InnerListOp::Insert { slice, pos } => {
                     let r = slice;
                     if r.is_unknown() {
-                        let v = RemoteContent::List(ListOp::Insert {
+                        let v = RawOpContent::List(ListOp::Insert {
                             slice: ListSlice::Unknown(r.atom_len()),
                             pos,
                         });
@@ -259,7 +259,7 @@ impl ContainerTrait for TextContainer {
                             for span in self.raw_str.get_aliveness(&r.0) {
                                 match span {
                                     Alive::True(span) => {
-                                        ans.push(RemoteContent::List(ListOp::Insert {
+                                        ans.push(RawOpContent::List(ListOp::Insert {
                                             slice: ListSlice::RawStr(std::borrow::Cow::Owned(
                                                 s[start..start + span].to_string(),
                                             )),
@@ -267,7 +267,7 @@ impl ContainerTrait for TextContainer {
                                         }));
                                     }
                                     Alive::False(span) => {
-                                        let v = RemoteContent::List(ListOp::Insert {
+                                        let v = RawOpContent::List(ListOp::Insert {
                                             slice: ListSlice::Unknown(span),
                                             pos: pos_start,
                                         });
@@ -280,14 +280,14 @@ impl ContainerTrait for TextContainer {
                             }
                             assert_eq!(start, r.atom_len());
                         } else {
-                            ans.push(RemoteContent::List(ListOp::Insert {
+                            ans.push(RawOpContent::List(ListOp::Insert {
                                 slice: ListSlice::RawStr(std::borrow::Cow::Owned(s)),
                                 pos,
                             }))
                         }
                     }
                 }
-                InnerListOp::Delete(del) => ans.push(RemoteContent::List(ListOp::Delete(del))),
+                InnerListOp::Delete(del) => ans.push(RawOpContent::List(ListOp::Delete(del))),
             },
             InnerContent::Map(_) => unreachable!(),
         }
@@ -296,9 +296,9 @@ impl ContainerTrait for TextContainer {
         ans
     }
 
-    fn to_import(&mut self, content: RemoteContent) -> InnerContent {
+    fn to_import(&mut self, content: RawOpContent) -> InnerContent {
         match content {
-            RemoteContent::List(list) => match list {
+            RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr(s) => {
                         let range = self.raw_str.alloc(&s);

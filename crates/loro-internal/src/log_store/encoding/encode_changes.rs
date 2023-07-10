@@ -20,7 +20,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
-    op::{RemoteContent, RemoteOp},
+    op::{RawOpContent, RemoteOp},
     span::HasIdSpan,
     version::Frontiers,
     InternalString, LogStore, LoroError, LoroValue, VersionVector,
@@ -166,7 +166,7 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
             let op = store.to_remote_op(op);
             for content in op.contents.into_iter() {
                 let (prop, gc, value) = match content {
-                    crate::op::RemoteContent::Map(MapSet { key, value }) => (
+                    crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
                             keys.push(key);
                             keys.len() - 1
@@ -174,7 +174,7 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
                         0,
                         value,
                     ),
-                    crate::op::RemoteContent::List(list) => match list {
+                    crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => (
                             pos,
                             match &slice {
@@ -287,7 +287,7 @@ pub(super) fn decode_changes_to_inner_format(
                 let content = match container_type {
                     ContainerType::Map => {
                         let key = keys[prop].clone();
-                        RemoteContent::Map(MapSet { key, value })
+                        RawOpContent::Map(MapSet { key, value })
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
@@ -313,7 +313,7 @@ pub(super) fn decode_changes_to_inner_format(
                                 ListOp::Insert { slice, pos }
                             }
                         };
-                        RemoteContent::List(list_op)
+                        RawOpContent::List(list_op)
                     }
                 };
                 let remote_op = RemoteOp {

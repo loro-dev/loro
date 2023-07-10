@@ -18,7 +18,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::PeerID,
     log_store::ImportContext,
-    op::{RemoteContent, RichOp},
+    op::{RawOpContent, RichOp},
     transaction::Transaction,
     LoroError, LoroValue, Transact, VersionVector,
 };
@@ -162,7 +162,7 @@ impl ContainerTrait for ContainerInstance {
         &mut self,
         content: crate::op::InnerContent,
         gc: bool,
-    ) -> SmallVec<[RemoteContent; 1]> {
+    ) -> SmallVec<[RawOpContent; 1]> {
         match self {
             ContainerInstance::Map(x) => x.to_export(content, gc),
             ContainerInstance::Text(x) => x.to_export(content, gc),
@@ -172,7 +172,7 @@ impl ContainerTrait for ContainerInstance {
     }
 
     #[instrument(skip_all)]
-    fn to_import(&mut self, content: crate::op::RemoteContent) -> crate::op::InnerContent {
+    fn to_import(&mut self, content: crate::op::RawOpContent) -> crate::op::InnerContent {
         match self {
             ContainerInstance::Map(x) => x.to_import(content),
             ContainerInstance::Text(x) => x.to_import(content),

@@ -9,7 +9,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::{Counter, PeerID},
     log_store::ImportContext,
-    op::{InnerContent, RemoteContent, RichOp},
+    op::{InnerContent, RawOpContent, RichOp},
     InternalString, LoroError, LoroValue, VersionVector, ID,
 };
 
@@ -97,10 +97,10 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     );
 
     /// convert an op content to exported format that includes the raw data
-    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RemoteContent; 1]>;
+    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RawOpContent; 1]>;
 
     /// convert an op content to compact imported format
-    fn to_import(&mut self, content: RemoteContent) -> InnerContent;
+    fn to_import(&mut self, content: RawOpContent) -> InnerContent;
 
     /// Initialize tracker at the target version
     fn tracker_init(&mut self, vv: &VersionVector);
@@ -112,7 +112,7 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     ///
     /// Here we have not updated the container state yet. Because we
     /// need to calculate the effect of the op for [crate::List] and
-    /// [crate::Text] by using tracker.  
+    /// [crate::Text] by using tracker.
     fn track_apply(
         &mut self,
         hierarchy: &mut Hierarchy,

@@ -23,7 +23,7 @@ use crate::{
     hierarchy::Hierarchy,
     id::{Counter, PeerID},
     log_store::ImportContext,
-    op::{InnerContent, Op, RemoteContent, RichOp},
+    op::{InnerContent, Op, RawOpContent, RichOp},
     prelim::Prelim,
     transaction::Transaction,
     value::LoroValue,
@@ -278,26 +278,26 @@ impl ContainerTrait for ListContainer {
         values.into()
     }
 
-    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RemoteContent; 1]> {
+    fn to_export(&mut self, content: InnerContent, _gc: bool) -> SmallVec<[RawOpContent; 1]> {
         match content {
             InnerContent::List(list) => match list {
                 InnerListOp::Insert { slice, pos } => {
                     if slice.is_unknown() {
-                        let v = RemoteContent::List(ListOp::Insert {
+                        let v = RawOpContent::List(ListOp::Insert {
                             slice: ListSlice::Unknown(slice.atom_len()),
                             pos,
                         });
                         smallvec::smallvec![v]
                     } else {
                         let data = self.raw_data.slice(&slice.0);
-                        smallvec::smallvec![RemoteContent::List(ListOp::Insert {
+                        smallvec::smallvec![RawOpContent::List(ListOp::Insert {
                             pos,
                             slice: ListSlice::RawData(std::borrow::Cow::Borrowed(data)),
                         })]
                     }
                 }
                 InnerListOp::Delete(del) => {
-                    smallvec::smallvec![RemoteContent::List(ListOp::Delete(del))]
+                    smallvec::smallvec![RawOpContent::List(ListOp::Delete(del))]
                 }
             },
             InnerContent::Map(_) => {
@@ -306,9 +306,9 @@ impl ContainerTrait for ListContainer {
         }
     }
 
-    fn to_import(&mut self, content: RemoteContent) -> InnerContent {
+    fn to_import(&mut self, content: RawOpContent) -> InnerContent {
         match content {
-            RemoteContent::List(list) => match list {
+            RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(data) => {
                         let slice_range = self.raw_data.alloc_arr(data.to_vec());

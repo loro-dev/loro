@@ -13,7 +13,7 @@ use crate::{
         ContainerID,
     },
     id::Counter,
-    op::{Op, RemoteContent, RemoteOp},
+    op::{Op, RawOpContent, RemoteOp},
     text::utf16::count_utf16_chars,
     LoroValue,
 };
@@ -119,11 +119,11 @@ impl SharedArena {
         &mut self,
         container: &ContainerID,
         counter: Counter,
-        content: RemoteContent,
+        content: RawOpContent,
     ) -> Op {
         let container = self.register_container(container);
         match content {
-            crate::op::RemoteContent::Map(map) => {
+            crate::op::RawOpContent::Map(map) => {
                 let value = self.alloc_value(map.value) as u32;
                 Op {
                     counter,
@@ -134,7 +134,7 @@ impl SharedArena {
                     }),
                 }
             }
-            crate::op::RemoteContent::List(list) => match list {
+            crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
                     crate::text::text_content::ListSlice::RawData(values) => {
                         let range = self.alloc_values(values.iter().cloned());
