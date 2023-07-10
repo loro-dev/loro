@@ -17,9 +17,9 @@ mod list_state;
 mod map_state;
 mod text_state;
 
-use list_state::ListState;
-use map_state::MapState;
-use text_state::TextState;
+use list_state::List;
+use map_state::Map;
+use text_state::Text;
 
 use super::{arena::SharedArena, oplog::OpLog};
 
@@ -53,9 +53,9 @@ pub trait ContainerState: Clone {
 #[enum_dispatch(ContainerState)]
 #[derive(Clone)]
 pub enum State {
-    ListState,
-    MapState,
-    TextState,
+    List,
+    Map,
+    Text,
 }
 
 pub struct ContainerStateDiff {
@@ -126,8 +126,8 @@ impl AppState {
 
 pub fn create_state(kind: ContainerType) -> State {
     match kind {
-        ContainerType::Text => State::TextState(TextState::new()),
-        ContainerType::Map => State::MapState(MapState::new()),
-        ContainerType::List => State::ListState(ListState::new()),
+        ContainerType::Text => State::Text(Text::new()),
+        ContainerType::Map => State::Map(Map::new()),
+        ContainerType::List => State::List(List::new()),
     }
 }

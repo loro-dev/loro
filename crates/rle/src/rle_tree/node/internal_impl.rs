@@ -33,6 +33,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
 
     /// return result need to update cache
     #[inline]
+    #[allow(clippy::type_complexity)]
     fn _split(
         &mut self,
     ) -> (
@@ -421,6 +422,7 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> InternalNode<'a, T, A> {
         -update
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn apply_updates(
         &mut self,
         mut updates: Vec<(usize, A::CacheInParent, Vec<ArenaBoxedNode<'a, T, A>>)>,

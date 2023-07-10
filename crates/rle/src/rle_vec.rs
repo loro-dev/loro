@@ -625,14 +625,14 @@ where
     let end = end - index(&vec[0]);
     let mut ans = Vec::new();
     let mut index = 0;
-    for i in 0..vec.len() {
+    for item in vec.iter() {
         if index >= end {
             break;
         }
 
-        let len = vec[i].atom_len();
+        let len = item.atom_len();
         if start < index + len {
-            ans.push(vec[i].slice(start.saturating_sub(index), (end - index).min(len)))
+            ans.push(item.slice(start.saturating_sub(index), (end - index).min(len)))
         }
 
         index += len;

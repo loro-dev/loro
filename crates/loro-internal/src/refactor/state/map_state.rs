@@ -12,13 +12,13 @@ use crate::{
 use super::ContainerState;
 
 #[derive(Clone)]
-pub struct MapState {
+pub struct Map {
     map: FxHashMap<InternalString, MapValue>,
     in_txn: bool,
     map_when_txn_start: FxHashMap<InternalString, Option<MapValue>>,
 }
 
-impl ContainerState for MapState {
+impl ContainerState for Map {
     fn apply_diff(&mut self, diff: Diff) {
         if let Diff::NewMap(delta) = diff {
             for (key, value) in delta.updated {
@@ -64,7 +64,7 @@ impl ContainerState for MapState {
     }
 }
 
-impl MapState {
+impl Map {
     pub fn new() -> Self {
         Self {
             map: FxHashMap::default(),

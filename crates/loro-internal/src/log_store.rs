@@ -200,7 +200,7 @@ impl LogStore {
         let mut container = container.try_lock().unwrap();
         op.clone()
             .convert(&mut container, self.cfg.gc.gc)
-            .to_static()
+            .into_static()
     }
 
     pub(crate) fn create_container(

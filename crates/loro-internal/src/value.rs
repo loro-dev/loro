@@ -930,9 +930,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             }
             (LoroValueFields::List, v) => v.newtype_variant().map(|x| LoroValue::List(Arc::new(x))),
             (LoroValueFields::Map, v) => v.newtype_variant().map(|x| LoroValue::Map(Arc::new(x))),
-            (LoroValueFields::Unresolved, v) => {
-                v.newtype_variant().map(|x| LoroValue::Container(x))
-            }
+            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Container),
         }
     }
 }

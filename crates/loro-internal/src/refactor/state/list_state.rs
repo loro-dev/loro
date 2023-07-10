@@ -18,14 +18,14 @@ use super::ContainerState;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
-pub struct ListState {
-    list: BTree<List>,
+pub struct List {
+    list: BTree<ListImpl>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
     child_container_to_leaf: Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>,
 }
 
-impl Clone for ListState {
+impl Clone for List {
     fn clone(&self) -> Self {
         Self {
             list: self.list.clone(),
@@ -41,8 +41,8 @@ enum UndoItem {
     Delete { index: usize, value: LoroValue },
 }
 
-struct List;
-impl BTreeTrait for List {
+struct ListImpl;
+impl BTreeTrait for ListImpl {
     type Elem = LoroValue;
 
     type Cache = isize;
@@ -89,7 +89,7 @@ impl BTreeTrait for List {
     }
 }
 
-impl UseLengthFinder<List> for List {
+impl UseLengthFinder<ListImpl> for ListImpl {
     fn get_len(cache: &isize) -> usize {
         *cache as usize
     }
@@ -103,7 +103,7 @@ impl UseLengthFinder<List> for List {
     }
 }
 
-impl ListState {
+impl List {
     pub fn new() -> Self {
         let mut tree = BTree::new();
         let mapping: ContainerMapping = Arc::new(Mutex::new(Default::default()));
@@ -214,7 +214,7 @@ impl ListState {
     }
 }
 
-impl ContainerState for ListState {
+impl ContainerState for List {
     fn apply_diff(&mut self, diff: Diff) {
         if let Diff::List(delta) = diff {
             let mut index = 0;
@@ -289,7 +289,7 @@ mod test {
 
     #[test]
     fn test() {
-        let mut list = ListState::new();
+        let mut list = List::new();
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }

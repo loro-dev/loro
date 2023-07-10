@@ -27,6 +27,7 @@ impl DerefMut for SmString {
 }
 
 impl SmString {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         SmString(SmartString::new())
     }

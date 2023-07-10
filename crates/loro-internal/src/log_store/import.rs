@@ -432,6 +432,7 @@ impl LogStore {
         }
     }
 
+    #[allow(dead_code)]
     fn tailor_changes(&mut self, changes: &mut RemoteClientChanges) {
         changes.retain(|_, v| !v.is_empty());
         for (client_id, changes) in changes.iter_mut() {

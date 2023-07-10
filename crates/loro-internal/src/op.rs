@@ -100,7 +100,7 @@ impl<'a> RemoteOp<'a> {
             .collect()
     }
 
-    pub(crate) fn to_static(self) -> RemoteOp<'static> {
+    pub(crate) fn into_static(self) -> RemoteOp<'static> {
         RemoteOp {
             counter: self.counter,
             container: self.container,

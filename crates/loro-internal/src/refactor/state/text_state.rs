@@ -11,14 +11,14 @@ use crate::{
 use super::ContainerState;
 
 #[derive(Default)]
-pub struct TextState {
+pub struct Text {
     pub(crate) rope: JumpRope,
     in_txn: bool,
     deleted_bytes: Vec<u8>,
     undo_stack: Vec<UndoItem>,
 }
 
-impl Clone for TextState {
+impl Clone for Text {
     fn clone(&self) -> Self {
         Self {
             rope: self.rope.clone(),
@@ -41,7 +41,7 @@ enum UndoItem {
     },
 }
 
-impl ContainerState for TextState {
+impl ContainerState for Text {
     fn apply_diff(&mut self, diff: Diff) {
         if let Diff::Text(delta) = diff {
             let mut index = 0;
@@ -119,7 +119,7 @@ impl ContainerState for TextState {
     }
 }
 
-impl TextState {
+impl Text {
     pub fn new() -> Self {
         Self {
             rope: JumpRope::new(),
@@ -175,7 +175,7 @@ mod test {
 
     #[test]
     fn abort_txn() {
-        let mut state = TextState::new();
+        let mut state = Text::new();
         state.insert(0, "haha");
         state.start_txn();
         state.insert(4, "1234");

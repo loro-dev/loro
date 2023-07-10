@@ -185,6 +185,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         false
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn insert<F>(
         &mut self,
         raw_index: A::Int,
@@ -478,6 +479,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
     }
 
     // TODO: refactor
+    #[allow(clippy::type_complexity)]
     pub(crate) fn apply_updates<F>(
         &mut self,
         mut updates: Vec<(usize, SmallVec<[T; 4]>)>,
@@ -578,6 +580,7 @@ impl<'bump, T: Rle, A: RleTreeTrait<T>> LeafNode<'bump, T, A> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn with_cache_updated(
         &mut self,
         result: Result<(), <A::Arena as Arena>::Boxed<'bump, Node<'bump, T, A>>>,
