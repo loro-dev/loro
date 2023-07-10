@@ -66,7 +66,7 @@ impl ListContainer {
         if let Some(prelim) = maybe_container {
             let type_ = value.into_container().unwrap();
             let (id, idx) = txn.register_container(&self.id, type_);
-            let value = LoroValue::Container(id.into());
+            let value = LoroValue::Container(id);
             self.insert_value(txn, pos, value);
             prelim.integrate(txn, idx)?;
             Ok(Some(idx))
@@ -220,7 +220,7 @@ impl ListContainer {
         for values in self.state.iter() {
             let value = values.as_ref();
             for v in self.raw_data.slice(&value.0) {
-                if v.as_container().map(|x| &*x == child).unwrap_or(false) {
+                if v.as_container().map(|x| x == child).unwrap_or(false) {
                     return Some(Index::Seq(idx));
                 }
 

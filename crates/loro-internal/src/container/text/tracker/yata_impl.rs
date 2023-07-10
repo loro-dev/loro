@@ -225,7 +225,6 @@ pub mod fuzz {
                 self.atom_len().to_string().into(),
                 self.status.future.to_string().into(),
                 self.status.delete_times.to_string().into(),
-                self.status.undo_times.to_string().into(),
                 self.origin_left
                     .map(|id| id.to_string())
                     .unwrap_or_default()
@@ -243,7 +242,6 @@ pub mod fuzz {
                 "len".into(),
                 "future".into(),
                 "del".into(),
-                "undo".into(),
                 "origin\nleft".into(),
                 "origin\nright".into(),
             ]

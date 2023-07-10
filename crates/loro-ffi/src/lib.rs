@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use std::ffi::{c_char, CStr, CString};
 
 use loro_internal::{LoroCore, Text};

@@ -23,6 +23,7 @@ pub(super) struct Rope {
 
 impl Rope {
     /// convert index from utf16 to utf8
+
     pub fn utf16_to_utf8(&self, index: usize) -> usize {
         self.process_cursor_at(
             index,
@@ -208,6 +209,7 @@ impl Rope {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn debug_inspect(&mut self) {
         self.inner.debug_inspect()
     }
@@ -297,6 +299,7 @@ impl Utf16Cache {
         None
     }
 
+    #[allow(dead_code)]
     pub fn get_utf16_from_utf8(&self, utf8: usize) -> Option<usize> {
         for item in self.caches.iter() {
             if item.utf8_pos == utf8 {

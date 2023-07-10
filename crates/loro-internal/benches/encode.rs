@@ -126,6 +126,7 @@ mod import {
     use criterion::Criterion;
     use loro_internal::{configure::Configure, LoroCore};
 
+    #[allow(dead_code)]
     pub fn causal_iter(c: &mut Criterion) {
         let mut b = c.benchmark_group("causal_iter");
         b.sample_size(10);

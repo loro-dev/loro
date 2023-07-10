@@ -32,7 +32,6 @@ pub struct Status {
     /// is this span from a future operation
     pub future: bool,
     pub delete_times: u16,
-    pub undo_times: u16,
 }
 
 pub enum StatusDiff {
@@ -48,8 +47,8 @@ impl Display for Status {
         } else {
             write!(
                 f,
-                "unapplied: {}, delete_times: {}, undo_times: {}",
-                self.future, self.delete_times, self.undo_times
+                "unapplied: {}, delete_times: {}",
+                self.future, self.delete_times
             )
         }
     }
@@ -61,13 +60,12 @@ impl Status {
         Status {
             future: false,
             delete_times: 0,
-            undo_times: 0,
         }
     }
 
     #[inline]
     pub fn is_activated(&self) -> bool {
-        !self.future && self.delete_times == 0 && self.undo_times == 0
+        !self.future && self.delete_times == 0
     }
 
     /// Return whether the activation changed
@@ -77,8 +75,7 @@ impl Status {
         match change {
             StatusChange::SetAsCurrent => self.future = false,
             StatusChange::SetAsFuture => self.future = true,
-            StatusChange::Redo => self.undo_times -= 1,
-            StatusChange::Undo => self.undo_times += 1,
+
             StatusChange::Delete => self.delete_times += 1,
             StatusChange::UndoDelete => self.delete_times -= 1,
         }
@@ -96,8 +93,7 @@ fn y_span_size() {
 pub enum StatusChange {
     SetAsCurrent,
     SetAsFuture,
-    Redo,
-    Undo,
+
     Delete,
     UndoDelete,
 }

@@ -83,7 +83,7 @@ impl MapContainer {
         if let Some(prelim) = maybe_container {
             let type_ = value.into_container().unwrap();
             let (id, idx) = txn.register_container(self.id(), type_);
-            self.insert_value(txn, key, LoroValue::Container(id.into()));
+            self.insert_value(txn, key, LoroValue::Container(id));
             prelim.integrate(txn, idx)?;
             Ok(Some(idx))
         } else {

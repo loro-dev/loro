@@ -152,20 +152,6 @@ pub(crate) struct Observer {
 }
 
 impl Observer {
-    pub fn new(
-        handler: ObserverHandler,
-        container: Option<ContainerID>,
-        once: bool,
-        deep: bool,
-    ) -> Self {
-        let options = ObserverOptions {
-            container,
-            once,
-            deep,
-        };
-        Self { handler, options }
-    }
-
     pub fn new_root(handler: ObserverHandler) -> Self {
         Self {
             handler,

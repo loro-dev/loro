@@ -2,6 +2,7 @@ use bench_utils::{get_automerge_actions, TextAction};
 use loro_internal::{EncodeMode, LoroCore, VersionVector};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
+#[allow(dead_code)]
 fn parallel() {
     let mut rng: StdRng = SeedableRng::seed_from_u64(1);
 
@@ -34,6 +35,7 @@ fn parallel() {
     println!("parallel doc size {} bytes", encoded.len());
 }
 
+#[allow(dead_code)]
 fn real_time() {
     let actions = get_automerge_actions();
     let mut c1 = LoroCore::new(Default::default(), Some(0));

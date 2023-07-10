@@ -1,4 +1,4 @@
-use std::{mem, sync::Arc};
+use std::mem;
 
 use fxhash::FxHashMap;
 

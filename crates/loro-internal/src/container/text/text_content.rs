@@ -132,10 +132,10 @@ impl<'a> Sliceable for ListSlice<'a> {
 
 impl<'a> Mergable for ListSlice<'a> {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        match (self, other) {
-            (ListSlice::Unknown(_), ListSlice::Unknown(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self, other),
+            (ListSlice::Unknown(_), ListSlice::Unknown(_))
+        )
     }
 
     fn merge(&mut self, other: &Self, _: &()) {
@@ -158,7 +158,7 @@ impl Serialize for SliceRanges {
     {
         let mut s = serializer.serialize_seq(Some(self.0.len()))?;
         for item in self.0.iter() {
-            s.serialize_element(item);
+            s.serialize_element(item)?;
         }
         s.end()
     }
