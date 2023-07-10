@@ -29,7 +29,7 @@ pub(super) struct SharedArena {
     parents: Arc<Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>>,
     text: Arc<Mutex<AppendOnlyBytes>>,
     text_utf16_len: Arc<AtomicUsize>,
-    values: Arc<Mutex<Vec<Arc<LoroValue>>>>,
+    values: Arc<Mutex<Vec<LoroValue>>>,
 }
 
 pub(crate) struct StrAllocResult {
@@ -89,7 +89,7 @@ impl SharedArena {
 
     pub fn alloc_value(&self, value: LoroValue) -> usize {
         let mut values_lock = self.values.lock().unwrap();
-        values_lock.push(Arc::new(value));
+        values_lock.push(value);
         values_lock.len() - 1
     }
 
@@ -97,7 +97,7 @@ impl SharedArena {
         let mut values_lock = self.values.lock().unwrap();
         let start = values_lock.len();
         for value in values {
-            values_lock.push(Arc::new(value));
+            values_lock.push(value);
         }
 
         start..values_lock.len()
@@ -115,7 +115,7 @@ impl SharedArena {
         self.text.lock().unwrap().slice(range)
     }
 
-    pub fn get_value(&self, idx: usize) -> Option<Arc<LoroValue>> {
+    pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
         self.values.lock().unwrap().get(idx).cloned()
     }
 

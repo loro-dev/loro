@@ -1,4 +1,4 @@
-use std::{hash::Hash, sync::Arc};
+use std::hash::Hash;
 
 use fxhash::FxHashMap;
 use serde::{ser::SerializeStruct, Serialize};
@@ -34,7 +34,7 @@ impl MapDelta {
 #[derive(Debug, Clone)]
 pub struct MapValue {
     pub counter: Counter,
-    pub value: Option<Arc<LoroValue>>,
+    pub value: Option<LoroValue>,
     pub lamport: (Lamport, PeerID),
 }
 
@@ -84,14 +84,14 @@ impl Serialize for MapValue {
         S: serde::Serializer,
     {
         let mut s = serializer.serialize_struct("MapValue", 2)?;
-        s.serialize_field("value", &self.value.as_deref())?;
+        s.serialize_field("value", &self.value)?;
         s.serialize_field("lamport", &self.lamport)?;
         s.end()
     }
 }
 
 impl MapValue {
-    pub fn new(id: ID, lamport: Lamport, value: Option<Arc<LoroValue>>) -> Self {
+    pub fn new(id: ID, lamport: Lamport, value: Option<LoroValue>) -> Self {
         MapValue {
             counter: id.counter,
             value,

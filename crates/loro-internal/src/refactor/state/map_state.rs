@@ -56,7 +56,7 @@ impl ContainerState for MapState {
                 MapValue {
                     lamport: (op.lamport, op.id.peer),
                     counter: op.id.counter,
-                    value: Some(Arc::new(map.value)),
+                    value: Some(map.value),
                 },
             ),
             RawOpContent::List(_) => unreachable!(),
