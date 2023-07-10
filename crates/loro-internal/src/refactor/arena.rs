@@ -2,7 +2,6 @@ use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHashMap;
-use smallvec::SmallVec;
 
 use crate::{
     container::{
@@ -13,7 +12,7 @@ use crate::{
         ContainerID,
     },
     id::Counter,
-    op::{Op, RawOpContent, RemoteOp},
+    op::{Op, RawOpContent},
     text::utf16::count_utf16_chars,
     LoroValue,
 };

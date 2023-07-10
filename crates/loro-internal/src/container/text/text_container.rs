@@ -1,4 +1,4 @@
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use append_only_bytes::AppendOnlyBytes;
 use rle::HasLength;
@@ -226,7 +226,7 @@ impl ContainerTrait for TextContainer {
             ans_str.push_str(content.as_str_unchecked());
         }
 
-        LoroValue::String(ans_str.into_boxed_str())
+        LoroValue::String(Arc::new(ans_str.to_string()))
     }
 
     fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RawOpContent; 1]> {

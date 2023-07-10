@@ -112,7 +112,7 @@ impl ListState {
             if let LoroValue::Container(container_id) = event.elem {
                 let mut mapping = mapping_clone.lock().unwrap();
                 if let Some(leaf) = event.target_leaf {
-                    mapping.insert((**container_id).clone(), leaf);
+                    mapping.insert((*container_id).clone(), leaf);
                 } else {
                     mapping.remove(container_id);
                 }
@@ -134,7 +134,7 @@ impl ListState {
         let elem_index = node
             .elements()
             .iter()
-            .position(|x| x.as_container().map(|x| &**x) == Some(id))?;
+            .position(|x| x.as_container() == Some(id))?;
         let mut index = 0;
         self.list.visit_previous_caches(
             QueryResult {
@@ -293,8 +293,8 @@ mod test {
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }
-        list.insert(0, LoroValue::Container(Box::new(id("abc"))));
-        list.insert(0, LoroValue::Container(Box::new(id("x"))));
+        list.insert(0, LoroValue::Container(id("abc")));
+        list.insert(0, LoroValue::Container(id("x")));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(1));
         list.insert(1, LoroValue::Bool(false));

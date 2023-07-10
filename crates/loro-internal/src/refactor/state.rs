@@ -5,11 +5,11 @@ use ring::rand::SystemRandom;
 use crate::{
     change::Lamport,
     configure::SecureRandomGenerator,
-    container::{registry::ContainerIdx, ContainerID},
+    container::registry::ContainerIdx,
     event::Diff,
     id::{Counter, PeerID},
-    op::{RawOp, RawOpContent},
-    version::{Frontiers, ImVersionVector},
+    op::RawOp,
+    version::Frontiers,
     ContainerType,
 };
 

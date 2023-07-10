@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, ops::Range};
+use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -183,10 +183,8 @@ pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec
                             },
                             // TODO: perf may be optimized by using borrow type instead
                             match slice {
-                                ListSlice::RawData(v) => LoroValue::List(Box::new(v.to_vec())),
-                                ListSlice::RawStr(s) => {
-                                    LoroValue::String(s.to_string().into_boxed_str())
-                                }
+                                ListSlice::RawData(v) => LoroValue::List(Arc::new(v.to_vec())),
+                                ListSlice::RawStr(s) => LoroValue::String(Arc::new(s.to_string())),
                                 ListSlice::Unknown(_) => LoroValue::Null,
                             },
                         ),
@@ -306,7 +304,7 @@ pub(super) fn decode_changes_to_inner_format(
                                         ListSlice::RawStr(std::borrow::Cow::Owned(s.to_string()))
                                     }
                                     LoroValue::List(v) => {
-                                        ListSlice::RawData(std::borrow::Cow::Owned(*v))
+                                        ListSlice::RawData(std::borrow::Cow::Owned((*v).clone()))
                                     }
                                     _ => unreachable!(),
                                 };

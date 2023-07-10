@@ -1,9 +1,7 @@
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    change::Lamport, id::PeerID, ContentType, InsertContentTrait, InternalString, LoroValue,
-};
+use crate::{ContentType, InsertContentTrait, InternalString, LoroValue};
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

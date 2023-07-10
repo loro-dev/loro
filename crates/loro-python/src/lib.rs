@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use loro_internal::{LoroCore, Text};
 use pyo3::prelude::*;
 
@@ -28,7 +30,7 @@ impl LoroText {
     }
 
     pub fn value(&self) -> String {
-        self.0.get_value().into_string().unwrap().into_string()
+        Arc::try_unwrap(self.0.get_value().into_string().unwrap()).unwrap_or_else(|x| (*x).clone())
     }
 }
 

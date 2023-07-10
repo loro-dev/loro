@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -11,9 +11,9 @@ use crate::{
     ContainerTrait,
 };
 
-/// [LoroValue] is used to represents the state of CRDT at a given version
-#[derive(Debug, PartialEq, Clone, EnumAsInner)]
-#[derive(Default)]
+/// [LoroValue] is used to represents the state of CRDT at a given version.
+/// This struct is cheap to clone, the time complexity is O(1)
+#[derive(Debug, PartialEq, Clone, EnumAsInner, Default)]
 pub enum LoroValue {
     #[default]
     Null,
@@ -21,10 +21,10 @@ pub enum LoroValue {
     Double(f64),
     I32(i32),
     // i64?
-    String(Box<str>),
-    List(Box<Vec<LoroValue>>),
-    Map(Box<FxHashMap<String, LoroValue>>),
-    Container(Box<ContainerID>),
+    String(Arc<String>),
+    List(Arc<Vec<LoroValue>>),
+    Map(Arc<FxHashMap<String, LoroValue>>),
+    Container(ContainerID),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +37,7 @@ impl LoroValue {
     pub(crate) fn resolve_deep(mut self, reg: &ContainerRegistry) -> LoroValue {
         match &mut self {
             LoroValue::List(list) => {
+                let list = Arc::make_mut(list);
                 for v in list.iter_mut() {
                     if v.as_container().is_some() {
                         *v = v.clone().resolve_deep(reg)
@@ -44,6 +45,7 @@ impl LoroValue {
                 }
             }
             LoroValue::Map(map) => {
+                let map = Arc::make_mut(map);
                 for v in map.values_mut() {
                     if v.as_container().is_some() {
                         *v = v.clone().resolve_deep(reg)
@@ -59,6 +61,7 @@ impl LoroValue {
 
                         match &mut value {
                             LoroValue::List(list) => {
+                                let list = Arc::make_mut(list);
                                 for v in list.iter_mut() {
                                     if v.as_container().is_some() {
                                         *v = v.clone().resolve_deep(reg)
@@ -66,6 +69,7 @@ impl LoroValue {
                                 }
                             }
                             LoroValue::Map(map) => {
+                                let map = Arc::make_mut(map);
                                 for v in map.values_mut() {
                                     if v.as_container().is_some() {
                                         *v = v.clone().resolve_deep(reg)
@@ -112,8 +116,6 @@ impl LoroValue {
     }
 }
 
-
-
 impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     fn from(map: HashMap<S, LoroValue, M>) -> Self {
         let mut new_map = FxHashMap::default();
@@ -121,13 +123,13 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
             new_map.insert(k.into(), v);
         }
 
-        LoroValue::Map(Box::new(new_map))
+        LoroValue::Map(Arc::new(new_map))
     }
 }
 
 impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
     fn from(vec: Vec<T>) -> Self {
-        LoroValue::List(Box::new(vec.into_iter().map(|v| v.into()).collect()))
+        LoroValue::List(Arc::new(vec.into_iter().map(|v| v.into()).collect()))
     }
 }
 
@@ -169,7 +171,7 @@ impl From<bool> for LoroValue {
 
 impl From<&str> for LoroValue {
     fn from(v: &str) -> Self {
-        LoroValue::String(v.into())
+        LoroValue::String(Arc::new(v.to_string()))
     }
 }
 
@@ -181,7 +183,7 @@ impl From<String> for LoroValue {
 
 impl From<ContainerID> for LoroValue {
     fn from(v: ContainerID) -> Self {
-        LoroValue::Container(Box::new(v))
+        LoroValue::Container(v)
     }
 }
 
@@ -207,18 +209,18 @@ impl LoroValue {
         for (item, hint) in path.iter().zip(hints.iter()) {
             match item {
                 Index::Key(key) => {
-                    value = value
-                        .as_map_mut()
-                        .unwrap()
-                        .entry(key.to_string())
-                        .or_insert_with(|| match hint {
-                            TypeHint::Map => LoroValue::Map(Default::default()),
-                            TypeHint::Text => LoroValue::String(Default::default()),
-                            TypeHint::List => LoroValue::List(Default::default()),
-                        })
+                    let m = value.as_map_mut().unwrap();
+                    let map = Arc::make_mut(m);
+                    value = map.entry(key.to_string()).or_insert_with(|| match hint {
+                        TypeHint::Map => LoroValue::Map(Default::default()),
+                        TypeHint::Text => LoroValue::String(Arc::new(String::new())),
+                        TypeHint::List => LoroValue::List(Default::default()),
+                    })
                 }
                 Index::Seq(index) => {
-                    value = value.as_list_mut().unwrap().get_mut(*index).unwrap();
+                    let l = value.as_list_mut().unwrap();
+                    let list = Arc::make_mut(l);
+                    value = list.get_mut(*index).unwrap();
                 }
             }
         }
@@ -248,9 +250,10 @@ impl LoroValue {
                         }
                     }
                 }
-                *value = s.into_boxed_str();
+                *value = Arc::new(s);
             }
             LoroValue::List(seq) => {
+                let seq = Arc::make_mut(seq);
                 for item in diff.iter() {
                     let delta = item.as_list().unwrap();
                     let mut index = 0;
@@ -276,6 +279,7 @@ impl LoroValue {
             LoroValue::Map(map) => {
                 for item in diff.iter() {
                     let diff = item.as_map().unwrap();
+                    let map = Arc::make_mut(map);
                     for v in diff.added.iter() {
                         map.insert(v.0.to_string(), unresolved_to_collection(v.1));
                     }
@@ -322,6 +326,8 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
+    use std::sync::Arc;
+
     use fxhash::FxHashMap;
     use js_sys::{Array, Object};
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
@@ -341,6 +347,7 @@ pub mod wasm {
             LoroValue::I32(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::List(list) => {
+                let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());
                 let arr = Array::new_with_length(list.len() as u32);
                 for (i, v) in list.into_iter().enumerate() {
                     arr.set(i as u32, convert(v));
@@ -348,6 +355,7 @@ pub mod wasm {
                 arr.into_js_result().unwrap()
             }
             LoroValue::Map(m) => {
+                let m = Arc::try_unwrap(m).unwrap_or_else(|m| (*m).clone());
                 let map = Object::new();
                 for (k, v) in m.into_iter() {
                     let str: &str = &k;
@@ -356,7 +364,7 @@ pub mod wasm {
 
                 map.into_js_result().unwrap()
             }
-            LoroValue::Container(container_id) => JsValue::from(*container_id),
+            LoroValue::Container(container_id) => JsValue::from(container_id),
         }
     }
 
@@ -380,7 +388,7 @@ pub mod wasm {
                     LoroValue::Double(num)
                 }
             } else if js_value.is_string() {
-                LoroValue::String(js_value.as_string().unwrap().into_boxed_str())
+                LoroValue::String(Arc::new(js_value.as_string().unwrap()))
             } else if js_value.has_type::<Array>() {
                 let array = js_value.unchecked_into::<Array>();
                 let mut list = Vec::new();
@@ -388,7 +396,7 @@ pub mod wasm {
                     list.push(LoroValue::from(array.get(i)));
                 }
 
-                LoroValue::List(Box::new(list))
+                LoroValue::List(Arc::new(list))
             } else if js_value.is_object() {
                 let object = js_value.unchecked_into::<Object>();
                 let mut map = FxHashMap::default();
@@ -760,12 +768,14 @@ impl Serialize for LoroValue {
                 }
                 LoroValue::I32(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
                 LoroValue::String(s) => {
-                    serializer.serialize_newtype_variant("LoroValue", 4, "String", s)
+                    serializer.serialize_newtype_variant("LoroValue", 4, "String", &**s)
                 }
                 LoroValue::List(l) => {
-                    serializer.serialize_newtype_variant("LoroValue", 5, "List", l)
+                    serializer.serialize_newtype_variant("LoroValue", 5, "List", &**l)
                 }
-                LoroValue::Map(m) => serializer.serialize_newtype_variant("LoroValue", 6, "Map", m),
+                LoroValue::Map(m) => {
+                    serializer.serialize_newtype_variant("LoroValue", 6, "Map", &**m)
+                }
                 LoroValue::Container(id) => {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Unresolved", id)
                 }
@@ -848,7 +858,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(LoroValue::String(v.into()))
+        Ok(LoroValue::String(Arc::new(v.to_owned())))
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
@@ -915,10 +925,14 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::Bool, v) => v.newtype_variant().map(LoroValue::Bool),
             (LoroValueFields::Double, v) => v.newtype_variant().map(LoroValue::Double),
             (LoroValueFields::I32, v) => v.newtype_variant().map(LoroValue::I32),
-            (LoroValueFields::String, v) => v.newtype_variant().map(LoroValue::String),
-            (LoroValueFields::List, v) => v.newtype_variant().map(LoroValue::List),
-            (LoroValueFields::Map, v) => v.newtype_variant().map(LoroValue::Map),
-            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Container),
+            (LoroValueFields::String, v) => {
+                v.newtype_variant().map(|x| LoroValue::String(Arc::new(x)))
+            }
+            (LoroValueFields::List, v) => v.newtype_variant().map(|x| LoroValue::List(Arc::new(x))),
+            (LoroValueFields::Map, v) => v.newtype_variant().map(|x| LoroValue::Map(Arc::new(x))),
+            (LoroValueFields::Unresolved, v) => {
+                v.newtype_variant().map(|x| LoroValue::Container(x))
+            }
         }
     }
 }

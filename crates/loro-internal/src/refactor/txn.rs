@@ -7,9 +7,9 @@ use rle::RleVec;
 
 use crate::{
     change::{Change, Lamport},
-    container::{registry::ContainerIdx, ContainerID},
+    container::registry::ContainerIdx,
     id::{Counter, PeerID, ID},
-    op::{Op, RawOp, RawOpContent, RemoteOp},
+    op::{Op, RawOp, RawOpContent},
     version::Frontiers,
     LoroError,
 };

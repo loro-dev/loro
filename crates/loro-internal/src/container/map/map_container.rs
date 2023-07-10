@@ -152,7 +152,7 @@ impl MapContainer {
             let v = &self.pool[old_value.value];
             if let Some(container) = v.as_container() {
                 h.remove_child(&self.id, container);
-                return Some(container.as_ref().clone());
+                return Some(container.clone());
             }
         }
         None
@@ -162,7 +162,7 @@ impl MapContainer {
         for (key, value) in self.state.iter() {
             if self.pool[value.value]
                 .as_container()
-                .map(|x| &**x == child)
+                .map(|x| x == child)
                 .unwrap_or(false)
             {
                 return Some(Index::Key(key.clone()));
@@ -403,7 +403,7 @@ impl ContainerTrait for MapContainer {
         if let StateContent::Map { pool, keys, values } = state_content {
             for v in pool.iter() {
                 if let LoroValue::Container(child_container_id) = v {
-                    hierarchy.add_child(self.id(), child_container_id.as_ref());
+                    hierarchy.add_child(self.id(), child_container_id);
                 }
             }
             self.pool = pool.into();

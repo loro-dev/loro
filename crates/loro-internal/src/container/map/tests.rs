@@ -21,7 +21,7 @@ fn basic() {
         "haha".into() => LoroValue::I32(1)
     );
 
-    assert_eq!(container.get_value(), LoroValue::Map(Box::new(ans)));
+    assert_eq!(container.get_value(), LoroValue::Map(Arc::new(ans)));
 }
 
 mod map_proptest {

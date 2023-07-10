@@ -383,7 +383,7 @@ impl ContainerRegistry {
                 }
             }
         }
-        LoroValue::Map(Box::new(map))
+        LoroValue::Map(Arc::new(map))
     }
 
     pub(crate) fn export_by_sorted_idx(&self) -> Vec<ContainerID> {
@@ -458,6 +458,7 @@ pub trait ContainerWrapper {
         let mut value = self.get_value();
         match &mut value {
             LoroValue::List(list) => {
+                let list = Arc::make_mut(list);
                 list.iter_mut().for_each(|x| {
                     if x.as_container().is_some() {
                         *x = x.clone().resolve_deep(reg)
@@ -465,6 +466,7 @@ pub trait ContainerWrapper {
                 });
             }
             LoroValue::Map(map) => {
+                let map = Arc::make_mut(map);
                 map.iter_mut().for_each(|(_, x)| {
                     if x.as_container().is_some() {
                         *x = x.clone().resolve_deep(reg)

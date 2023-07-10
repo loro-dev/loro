@@ -187,7 +187,7 @@ impl ListContainer {
                 if let LoroValue::Container(container_id) = value {
                     debug_log::debug_log!("Deleted {:?}", container_id);
                     hierarchy.remove_child(&self.id, container_id);
-                    ans.push(container_id.as_ref().clone());
+                    ans.push(container_id.clone());
                 }
             }
         }
@@ -220,7 +220,7 @@ impl ListContainer {
         for values in self.state.iter() {
             let value = values.as_ref();
             for v in self.raw_data.slice(&value.0) {
-                if v.as_container().map(|x| &**x == child).unwrap_or(false) {
+                if v.as_container().map(|x| &*x == child).unwrap_or(false) {
                     return Some(Index::Seq(idx));
                 }
 
@@ -528,7 +528,7 @@ impl ContainerTrait for ListContainer {
         if let StateContent::List { pool, state_len } = state_content {
             for v in pool.iter() {
                 if let LoroValue::Container(child_container_id) = v {
-                    hierarchy.add_child(self.id(), child_container_id.as_ref());
+                    hierarchy.add_child(self.id(), child_container_id);
                 }
             }
             self.raw_data = pool.into();
