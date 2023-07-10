@@ -3,11 +3,14 @@ use fxhash::{FxHashMap, FxHashSet};
 use ring::rand::SystemRandom;
 
 use crate::{
+    change::Lamport,
     configure::SecureRandomGenerator,
     container::{registry::ContainerIdx, ContainerID},
     event::Diff,
-    id::PeerID,
+    id::{Counter, PeerID},
+    op::{RawOp, RawOpContent},
     version::{Frontiers, ImVersionVector},
+    ContainerType,
 };
 
 mod list_state;
@@ -23,9 +26,11 @@ use super::{arena::SharedArena, oplog::OpLog};
 #[derive(Clone)]
 pub struct AppState {
     pub(super) peer: PeerID,
+    pub(super) next_lamport: Lamport,
+    pub(super) next_counter: Counter,
 
     pub(super) frontiers: Frontiers,
-    state: FxHashMap<ContainerIdx, State>,
+    states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
 
     in_txn: bool,
@@ -35,6 +40,7 @@ pub struct AppState {
 #[enum_dispatch]
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: Diff);
+    fn apply_op(&mut self, op: RawOp);
 
     /// Start a transaction
     ///
@@ -60,10 +66,13 @@ pub struct ContainerStateDiff {
 impl AppState {
     pub fn new(oplog: &OpLog) -> Self {
         let peer = SystemRandom::new().next_u64();
+        // TODO: maybe we should switch to certain version in oplog
         Self {
             peer,
+            next_counter: 0,
+            next_lamport: oplog.latest_lamport + 1,
             frontiers: Frontiers::default(),
-            state: FxHashMap::default(),
+            states: FxHashMap::default(),
             arena: oplog.arena.clone(),
             in_txn: false,
             changed_in_txn: FxHashSet::default(),
@@ -78,13 +87,24 @@ impl AppState {
         todo!()
     }
 
+    pub fn apply_local_op(&mut self, op: RawOp) {
+        let state = self.states.entry(op.container).or_insert_with(|| {
+            let id = self.arena.get_container_id(op.container).unwrap();
+            create_state(id.container_type())
+        });
+        if self.in_txn {
+            self.changed_in_txn.insert(op.container);
+        }
+        state.apply_op(op);
+    }
+
     pub(crate) fn start_txn(&mut self) {
         self.in_txn = true;
     }
 
     pub(crate) fn abort_txn(&mut self) {
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
-            self.state.get_mut(&container_idx).unwrap().abort_txn();
+            self.states.get_mut(&container_idx).unwrap().abort_txn();
         }
 
         self.in_txn = false;
@@ -92,7 +112,7 @@ impl AppState {
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers) {
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
-            self.state.get_mut(&container_idx).unwrap().commit_txn();
+            self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
 
         self.in_txn = false;
@@ -100,6 +120,14 @@ impl AppState {
     }
 
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
-        self.state.get_mut(&idx)
+        self.states.get_mut(&idx)
+    }
+}
+
+pub fn create_state(kind: ContainerType) -> State {
+    match kind {
+        ContainerType::Text => State::TextState(TextState::new()),
+        ContainerType::Map => State::MapState(MapState::new()),
+        ContainerType::List => State::ListState(ListState::new()),
     }
 }

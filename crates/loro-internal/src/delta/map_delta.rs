@@ -35,7 +35,7 @@ impl MapDelta {
 pub struct MapValue {
     pub counter: Counter,
     pub value: Option<Arc<LoroValue>>,
-    lamport: (Lamport, PeerID),
+    pub lamport: (Lamport, PeerID),
 }
 
 impl Hash for MapValue {

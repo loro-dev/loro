@@ -6,9 +6,10 @@ use std::{
 use rle::RleVec;
 
 use crate::{
-    change::Change,
-    container::ContainerID,
-    op::{Op, RawOpContent, RemoteOp},
+    change::{Change, Lamport},
+    container::{registry::ContainerIdx, ContainerID},
+    id::{Counter, PeerID, ID},
+    op::{Op, RawOp, RawOpContent, RemoteOp},
     version::Frontiers,
     LoroError,
 };
@@ -16,10 +17,13 @@ use crate::{
 use super::{arena::SharedArena, oplog::OpLog, state::AppState};
 
 pub struct Transaction {
+    peer: PeerID,
+    next_counter: Counter,
+    next_lamport: Lamport,
     finished: bool,
     state: Arc<Mutex<AppState>>,
     oplog: Arc<Mutex<OpLog>>,
-    next_frontiers: Frontiers,
+    frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>,
     arena: SharedArena,
 }
@@ -30,12 +34,18 @@ impl Transaction {
         state_lock.start_txn();
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
+        let peer = state_lock.peer;
+        let next_counter = state_lock.next_counter;
+        let next_lamport = state_lock.next_lamport;
         drop(state_lock);
         Self {
+            peer,
+            next_lamport,
+            next_counter,
             state,
             arena,
             oplog,
-            next_frontiers: frontiers,
+            frontiers,
             finished: false,
             local_ops: RleVec::new(),
         }
@@ -63,12 +73,25 @@ impl Transaction {
             return Err(err);
         }
 
-        state.commit_txn(take(&mut self.next_frontiers));
+        state.commit_txn(take(&mut self.frontiers));
         self.finished = true;
         Ok(())
     }
 
-    pub fn import_local_op(&mut self, container: ContainerID, op: RawOpContent) {}
+    pub fn apply_local_op(&mut self, container: ContainerIdx, content: RawOpContent) {
+        let mut state = self.state.lock().unwrap();
+        state.apply_local_op(RawOp {
+            id: ID {
+                peer: self.peer,
+                counter: self.next_counter,
+            },
+            lamport: self.next_lamport,
+            container,
+            content,
+        });
+        self.next_counter += 1;
+        self.next_lamport += 1;
+    }
 }
 
 impl Drop for Transaction {

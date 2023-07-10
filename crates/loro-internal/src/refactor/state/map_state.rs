@@ -1,8 +1,13 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 use fxhash::FxHashMap;
 
-use crate::{delta::MapValue, event::Diff, InternalString};
+use crate::{
+    delta::MapValue,
+    event::Diff,
+    op::{RawOp, RawOpContent},
+    InternalString,
+};
 
 use super::ContainerState;
 
@@ -43,12 +48,41 @@ impl ContainerState for MapState {
         self.map_when_txn_start.clear();
         self.in_txn = false;
     }
+
+    fn apply_op(&mut self, op: RawOp) {
+        match op.content {
+            RawOpContent::Map(map) => self.insert(
+                map.key,
+                MapValue {
+                    lamport: (op.lamport, op.id.peer),
+                    counter: op.id.counter,
+                    value: Some(Arc::new(map.value)),
+                },
+            ),
+            RawOpContent::List(_) => unreachable!(),
+        }
+    }
 }
 
 impl MapState {
+    pub fn new() -> Self {
+        Self {
+            map: FxHashMap::default(),
+            in_txn: false,
+            map_when_txn_start: FxHashMap::default(),
+        }
+    }
+
     fn store_txn_snapshot(&mut self, key: InternalString, old: Option<MapValue>) {
         if self.in_txn && !self.map_when_txn_start.contains_key(&key) {
             self.map_when_txn_start.insert(key, old);
+        }
+    }
+
+    pub fn insert(&mut self, key: InternalString, value: MapValue) {
+        let old = self.map.insert(key.clone(), value);
+        if self.in_txn {
+            self.store_txn_snapshot(key, old);
         }
     }
 }

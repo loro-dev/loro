@@ -54,6 +54,11 @@ impl SharedArena {
         ans
     }
 
+    pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
+        let lock = self.container_idx_to_id.lock().unwrap();
+        lock.get(idx.to_u32() as usize).cloned()
+    }
+
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.container_id_to_idx.lock().unwrap().get(id).copied()
     }

@@ -3,7 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{container::ContainerID, event::Diff, LoroValue};
+use crate::{
+    container::ContainerID,
+    event::Diff,
+    op::{RawOp, RawOpContent},
+    LoroValue,
+};
 use fxhash::FxHashMap;
 use generic_btree::{
     ArenaIndex, BTree, BTreeTrait, FindResult, LengthFinder, QueryResult, UseLengthFinder,
@@ -154,10 +159,16 @@ impl ListState {
 
     pub fn insert(&mut self, index: usize, value: LoroValue) {
         self.list.insert::<LengthFinder>(&index, value);
+        if self.in_txn {
+            self.undo_stack.push(UndoItem::Insert { index, len: 1 });
+        }
     }
 
-    pub fn delete(&mut self, index: usize) -> Option<LoroValue> {
-        self.list.delete::<LengthFinder>(&index)
+    pub fn delete(&mut self, index: usize) {
+        let value = self.list.delete::<LengthFinder>(&index).unwrap();
+        if self.in_txn {
+            self.undo_stack.push(UndoItem::Delete { index, value });
+        }
     }
 
     pub fn delete_range(&mut self, range: impl RangeBounds<usize>) {
@@ -176,12 +187,26 @@ impl ListState {
             return;
         }
 
-        self.list.drain::<LengthFinder>(start..end);
+        if self.in_txn {
+            for value in self.list.drain::<LengthFinder>(start..end) {
+                self.undo_stack.push(UndoItem::Delete {
+                    index: start,
+                    value,
+                })
+            }
+        } else {
+            self.list.drain::<LengthFinder>(start..end);
+        }
     }
 
     pub fn insert_batch(&mut self, index: usize, values: impl IntoIterator<Item = LoroValue>) {
         let q = self.list.query::<LengthFinder>(&index);
+        let old_len = self.len();
         self.list.insert_many_by_query_result(&q, values);
+        if self.in_txn {
+            let len = self.len() - old_len;
+            self.undo_stack.push(UndoItem::Insert { index, len });
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -233,6 +258,28 @@ impl ContainerState for ListState {
     fn commit_txn(&mut self) {
         self.undo_stack.clear();
         self.in_txn = false;
+    }
+
+    fn apply_op(&mut self, op: RawOp) {
+        match op.content {
+            RawOpContent::Map(_) => unreachable!(),
+            RawOpContent::List(list) => match list {
+                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                    crate::container::text::text_content::ListSlice::RawData(list) => match list {
+                        std::borrow::Cow::Borrowed(list) => {
+                            self.insert_batch(pos, list.iter().cloned());
+                        }
+                        std::borrow::Cow::Owned(list) => {
+                            self.insert_batch(pos, list);
+                        }
+                    },
+                    _ => unreachable!(),
+                },
+                crate::container::list::list_op::ListOp::Delete(del) => {
+                    self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
+                }
+            },
+        }
     }
 }
 

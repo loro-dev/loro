@@ -30,6 +30,16 @@ pub struct RemoteOp<'a> {
     pub(crate) contents: RleVec<[RawOpContent<'a>; 1]>,
 }
 
+/// This is used to propagate messages between inner module.
+/// It's a temporary struct, and will be converted to Op when it's persisted.
+#[derive(Debug, Clone)]
+pub struct RawOp<'a> {
+    pub id: ID,
+    pub lamport: Lamport,
+    pub container: ContainerIdx,
+    pub content: RawOpContent<'a>,
+}
+
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {

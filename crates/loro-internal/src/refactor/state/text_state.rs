@@ -2,7 +2,11 @@ use std::ops::Range;
 
 use jumprope::JumpRope;
 
-use crate::{delta::DeltaItem, event::Diff};
+use crate::{
+    delta::DeltaItem,
+    event::Diff,
+    op::{RawOp, RawOpContent},
+};
 
 use super::ContainerState;
 
@@ -47,17 +51,11 @@ impl ContainerState for TextState {
                         index += len;
                     }
                     DeltaItem::Insert { value, .. } => {
-                        self.rope.insert(index, value);
-                        if self.in_txn {
-                            self.record_insert(index, value.len());
-                        }
+                        self.insert(index, value);
                         index += value.len();
                     }
                     DeltaItem::Delete { len, .. } => {
-                        if self.in_txn {
-                            self.record_del(index, *len);
-                        }
-                        self.rope.remove(index..index + len);
+                        self.delete(index..index + len);
                     }
                 }
             }
@@ -101,6 +99,23 @@ impl ContainerState for TextState {
         self.deleted_bytes.clear();
         self.undo_stack.clear();
         self.in_txn = false;
+    }
+
+    fn apply_op(&mut self, op: RawOp) {
+        match op.content {
+            RawOpContent::List(list) => match list {
+                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                    crate::container::text::text_content::ListSlice::RawStr(s) => {
+                        self.insert(pos, &s);
+                    }
+                    _ => unreachable!(),
+                },
+                crate::container::list::list_op::ListOp::Delete(del) => {
+                    self.delete(del.pos as usize..del.pos as usize + del.len as usize);
+                }
+            },
+            _ => unreachable!(),
+        }
     }
 }
 
