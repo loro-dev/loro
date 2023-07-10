@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use jumprope::JumpRope;
 
@@ -6,6 +6,7 @@ use crate::{
     delta::DeltaItem,
     event::Diff,
     op::{RawOp, RawOpContent},
+    LoroValue,
 };
 
 use super::ContainerState;
@@ -62,6 +63,23 @@ impl ContainerState for Text {
         }
     }
 
+    fn apply_op(&mut self, op: RawOp) {
+        match op.content {
+            RawOpContent::List(list) => match list {
+                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                    crate::container::text::text_content::ListSlice::RawStr(s) => {
+                        self.insert(pos, &s);
+                    }
+                    _ => unreachable!(),
+                },
+                crate::container::list::list_op::ListOp::Delete(del) => {
+                    self.delete(del.pos as usize..del.pos as usize + del.len as usize);
+                }
+            },
+            _ => unreachable!(),
+        }
+    }
+
     #[doc = " Start a transaction"]
     #[doc = ""]
     #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
@@ -101,21 +119,8 @@ impl ContainerState for Text {
         self.in_txn = false;
     }
 
-    fn apply_op(&mut self, op: RawOp) {
-        match op.content {
-            RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    crate::container::text::text_content::ListSlice::RawStr(s) => {
-                        self.insert(pos, &s);
-                    }
-                    _ => unreachable!(),
-                },
-                crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete(del.pos as usize..del.pos as usize + del.len as usize);
-                }
-            },
-            _ => unreachable!(),
-        }
+    fn get_value(&self) -> LoroValue {
+        LoroValue::String(Arc::new(self.rope.to_string()))
     }
 }
 

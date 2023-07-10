@@ -12,7 +12,7 @@ use crate::{
         ContainerID,
     },
     id::Counter,
-    op::{Op, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     text::utf16::count_utf16_chars,
     LoroValue,
 };
@@ -126,6 +126,15 @@ impl SharedArena {
         content: RawOpContent,
     ) -> Op {
         let container = self.register_container(container);
+        self.inner_convert_op(content, counter, container)
+    }
+
+    fn inner_convert_op(
+        &self,
+        content: RawOpContent<'_>,
+        counter: i32,
+        container: ContainerIdx,
+    ) -> Op {
         match content {
             crate::op::RawOpContent::Map(map) => {
                 let value = self.alloc_value(map.value) as u32;
@@ -178,5 +187,9 @@ impl SharedArena {
                 },
             },
         }
+    }
+
+    pub fn convert_raw_op(&self, op: &RawOp) -> Op {
+        self.inner_convert_op(op.content.clone(), op.id.counter, op.container)
     }
 }

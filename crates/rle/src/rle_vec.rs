@@ -154,6 +154,10 @@ impl<A: Array> RleVec<A> {
     pub fn reverse(&mut self) {
         self.vec.reverse()
     }
+
+    pub fn clear(&mut self) {
+        self.vec.clear()
+    }
 }
 
 impl<A: Array> IntoIterator for RleVec<A> {

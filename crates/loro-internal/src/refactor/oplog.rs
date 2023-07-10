@@ -146,7 +146,8 @@ impl OpLog {
     }
 
     pub fn get_timestamp(&self) -> Timestamp {
-        unimplemented!()
+        // TODO: get timestamp
+        0
     }
 
     pub fn next_lamport(&self) -> Lamport {

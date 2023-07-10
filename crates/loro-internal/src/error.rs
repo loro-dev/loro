@@ -16,6 +16,8 @@ pub enum LoroError {
     LockError,
     #[error("LoroValue::Unresolved cannot be converted to PrelimValue")]
     PrelimError,
+    #[error("Each AppState can only have one transaction at a time")]
+    DuplicatedTransactionError,
     #[error("Cannot find ({0}) ")]
     NotFoundError(Box<str>),
     // TODO: more details transaction error

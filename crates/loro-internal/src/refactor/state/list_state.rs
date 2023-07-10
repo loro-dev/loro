@@ -236,6 +236,28 @@ impl ContainerState for List {
         }
     }
 
+    fn apply_op(&mut self, op: RawOp) {
+        match op.content {
+            RawOpContent::Map(_) => unreachable!(),
+            RawOpContent::List(list) => match list {
+                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                    crate::container::text::text_content::ListSlice::RawData(list) => match list {
+                        std::borrow::Cow::Borrowed(list) => {
+                            self.insert_batch(pos, list.iter().cloned());
+                        }
+                        std::borrow::Cow::Owned(list) => {
+                            self.insert_batch(pos, list);
+                        }
+                    },
+                    _ => unreachable!(),
+                },
+                crate::container::list::list_op::ListOp::Delete(del) => {
+                    self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
+                }
+            },
+        }
+    }
+
     #[doc = " Start a transaction"]
     #[doc = ""]
     #[doc = " The transaction may be aborted later, then all the ops during this transaction need to be undone."]
@@ -260,26 +282,12 @@ impl ContainerState for List {
         self.in_txn = false;
     }
 
-    fn apply_op(&mut self, op: RawOp) {
-        match op.content {
-            RawOpContent::Map(_) => unreachable!(),
-            RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    crate::container::text::text_content::ListSlice::RawData(list) => match list {
-                        std::borrow::Cow::Borrowed(list) => {
-                            self.insert_batch(pos, list.iter().cloned());
-                        }
-                        std::borrow::Cow::Owned(list) => {
-                            self.insert_batch(pos, list);
-                        }
-                    },
-                    _ => unreachable!(),
-                },
-                crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
-                }
-            },
+    fn get_value(&self) -> LoroValue {
+        let mut ans = Vec::with_capacity(self.len());
+        for value in self.list.iter() {
+            ans.push(value.clone());
         }
+        LoroValue::List(Arc::new(ans))
     }
 }
 

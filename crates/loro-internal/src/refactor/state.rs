@@ -10,7 +10,7 @@ use crate::{
     id::{Counter, PeerID},
     op::RawOp,
     version::Frontiers,
-    ContainerType,
+    ContainerType, LoroValue,
 };
 
 mod list_state;
@@ -48,6 +48,8 @@ pub trait ContainerState: Clone {
     fn start_txn(&mut self);
     fn abort_txn(&mut self);
     fn commit_txn(&mut self);
+
+    fn get_value(&self) -> LoroValue;
 }
 
 #[enum_dispatch(ContainerState)]
@@ -92,9 +94,12 @@ impl AppState {
             let id = self.arena.get_container_id(op.container).unwrap();
             create_state(id.container_type())
         });
+
         if self.in_txn {
+            state.start_txn();
             self.changed_in_txn.insert(op.container);
         }
+
         state.apply_op(op);
     }
 
@@ -121,6 +126,14 @@ impl AppState {
 
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
         self.states.get_mut(&idx)
+    }
+
+    pub(crate) fn get_value_by_idx(&self, container_idx: ContainerIdx) -> LoroValue {
+        self.states.get(&container_idx).unwrap().get_value()
+    }
+
+    pub(super) fn is_in_txn(&self) -> bool {
+        self.in_txn
     }
 }
 

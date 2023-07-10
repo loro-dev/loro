@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 use fxhash::FxHashMap;
 
@@ -6,7 +6,7 @@ use crate::{
     delta::MapValue,
     event::Diff,
     op::{RawOp, RawOpContent},
-    InternalString,
+    InternalString, LoroValue,
 };
 
 use super::ContainerState;
@@ -28,27 +28,6 @@ impl ContainerState for Map {
         }
     }
 
-    fn abort_txn(&mut self) {
-        for (key, value) in mem::take(&mut self.map_when_txn_start) {
-            if let Some(value) = value {
-                self.map.insert(key, value);
-            } else {
-                self.map.remove(&key);
-            }
-        }
-
-        self.in_txn = false;
-    }
-
-    fn start_txn(&mut self) {
-        self.in_txn = true;
-    }
-
-    fn commit_txn(&mut self) {
-        self.map_when_txn_start.clear();
-        self.in_txn = false;
-    }
-
     fn apply_op(&mut self, op: RawOp) {
         match op.content {
             RawOpContent::Map(map) => self.insert(
@@ -61,6 +40,40 @@ impl ContainerState for Map {
             ),
             RawOpContent::List(_) => unreachable!(),
         }
+    }
+
+    fn start_txn(&mut self) {
+        self.in_txn = true;
+    }
+
+    fn abort_txn(&mut self) {
+        for (key, value) in mem::take(&mut self.map_when_txn_start) {
+            if let Some(value) = value {
+                self.map.insert(key, value);
+            } else {
+                self.map.remove(&key);
+            }
+        }
+
+        self.in_txn = false;
+    }
+
+    fn commit_txn(&mut self) {
+        self.map_when_txn_start.clear();
+        self.in_txn = false;
+    }
+
+    fn get_value(&self) -> LoroValue {
+        let mut ans = FxHashMap::with_capacity_and_hasher(self.len(), Default::default());
+        for (key, value) in self.map.iter() {
+            if value.value.is_none() {
+                continue;
+            }
+
+            ans.insert(key.to_string(), value.value.as_ref().cloned().unwrap());
+        }
+
+        LoroValue::Map(Arc::new(ans))
     }
 }
 
@@ -84,5 +97,9 @@ impl Map {
         if self.in_txn {
             self.store_txn_snapshot(key, old);
         }
+    }
+
+    fn len(&self) -> usize {
+        self.map.len()
     }
 }

@@ -7,14 +7,14 @@ use rle::RleVec;
 
 use crate::{
     change::{Change, Lamport},
-    container::registry::ContainerIdx,
+    container::{registry::ContainerIdx, ContainerIdRaw},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     version::Frontiers,
-    LoroError,
+    LoroError, LoroValue,
 };
 
-use super::{arena::SharedArena, oplog::OpLog, state::AppState};
+use super::{arena::SharedArena, handler::Text, oplog::OpLog, state::AppState};
 
 pub struct Transaction {
     peer: PeerID,
@@ -53,12 +53,14 @@ impl Transaction {
 
     pub fn abort(&mut self) {
         self.state.lock().unwrap().abort_txn();
+        self.local_ops.clear();
         self.finished = true;
     }
 
-    pub fn commit(&mut self, oplog: &mut OpLog) -> Result<(), LoroError> {
+    pub fn commit(&mut self) -> Result<(), LoroError> {
         let mut state = self.state.lock().unwrap();
         let ops = std::mem::take(&mut self.local_ops);
+        let mut oplog = self.oplog.lock().unwrap();
         let change = Change {
             ops,
             deps: state.frontiers.clone(),
@@ -69,6 +71,7 @@ impl Transaction {
 
         if let Err(err) = oplog.import_change(change) {
             drop(state);
+            drop(oplog);
             self.abort();
             return Err(err);
         }
@@ -79,8 +82,7 @@ impl Transaction {
     }
 
     pub fn apply_local_op(&mut self, container: ContainerIdx, content: RawOpContent) {
-        let mut state = self.state.lock().unwrap();
-        state.apply_local_op(RawOp {
+        let op = RawOp {
             id: ID {
                 peer: self.peer,
                 counter: self.next_counter,
@@ -88,16 +90,49 @@ impl Transaction {
             lamport: self.next_lamport,
             container,
             content,
-        });
+        };
+        self.push_local_op_to_log(&op);
+        let mut state = self.state.lock().unwrap();
+        state.apply_local_op(op);
         self.next_counter += 1;
         self.next_lamport += 1;
+    }
+
+    fn push_local_op_to_log(&mut self, op: &RawOp) {
+        let op = self.arena.convert_raw_op(op);
+        self.local_ops.push(op);
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<Text> {
+        let id: ContainerIdRaw = id.into();
+        let idx = match id {
+            ContainerIdRaw::Root { name } => Some(self.arena.register_container(
+                &crate::container::ContainerID::Root {
+                    name,
+                    container_type: crate::ContainerType::Text,
+                },
+            )),
+            ContainerIdRaw::Normal { id: _ } => self
+                .arena
+                .id_to_idx(&id.with_type(crate::ContainerType::Text)),
+        };
+
+        idx.map(|x| x.into())
+    }
+
+    pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
+        self.state.lock().unwrap().get_value_by_idx(idx)
     }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
         if !self.finished {
-            self.abort();
+            // TODO: should we abort here or commit here?
+            // what if commit fails?
+            self.commit().unwrap_or_default();
         }
     }
 }

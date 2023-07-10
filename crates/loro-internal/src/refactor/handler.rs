@@ -1,9 +1,12 @@
 use std::borrow::Cow;
 
-use crate::container::{
-    list::list_op::{DeleteSpan, ListOp},
-    registry::ContainerIdx,
-    text::text_content::ListSlice,
+use crate::{
+    container::{
+        list::list_op::{DeleteSpan, ListOp},
+        registry::ContainerIdx,
+        text::text_content::ListSlice,
+    },
+    LoroValue,
 };
 
 use super::txn::Transaction;
@@ -37,5 +40,32 @@ impl Text {
                 len: len as isize,
             })),
         );
+    }
+
+    pub fn get_value(&self, txn: &Transaction) -> LoroValue {
+        txn.get_value_by_idx(self.container_idx)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::refactor::loro::LoroApp;
+
+    #[test]
+    fn test() {
+        let loro = LoroApp::new();
+        let mut txn = loro.txn().unwrap();
+        let text = txn.get_text("hello").unwrap();
+        text.insert(&mut txn, 0, "hello");
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello");
+        text.insert(&mut txn, 2, " kk ");
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "he kk llo");
+        txn.abort();
+        let mut txn = loro.txn().unwrap();
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "");
+        text.insert(&mut txn, 0, "hi");
+        txn.commit().unwrap();
+        let txn = loro.txn().unwrap();
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hi");
     }
 }
