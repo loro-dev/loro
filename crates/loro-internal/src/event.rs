@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     container::ContainerID,
     delta::{Delta, DeltaType, MapDelta, MapDiff, Meta},
-    text::text_content::{SliceRanges},
+    text::text_content::SliceRanges,
     transaction::Origin,
     version::Frontiers,
     InternalString, LoroValue,

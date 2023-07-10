@@ -26,7 +26,7 @@ pub struct AppState {
 
     pub(super) frontiers: Frontiers,
     state: FxHashMap<ContainerIdx, State>,
-    arena: SharedArena,
+    pub(super) arena: SharedArena,
 
     in_txn: bool,
     changed_in_txn: FxHashSet<ContainerIdx>,

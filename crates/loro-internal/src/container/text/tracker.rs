@@ -41,9 +41,27 @@ pub mod yata_impl;
 /// - [YSpan] never gets removed in both [ContentMap] and [CursorMap]
 ///     - The deleted contents are marked with deleted, but still lives on the [ContentMap] with length of 0
 ///
+
+#[cfg(not(feature = "test_utils"))]
 #[derive(Default, Debug)]
 pub struct Tracker {
-    #[cfg(feature = "test_utils")]
+    /// from start_vv to latest vv are applied
+    start_vv: VersionVector,
+    /// latest applied ops version vector
+    all_vv: VersionVector,
+    /// current content version vector
+    current_vv: VersionVector,
+    /// The pretend current content version vector.
+    ///
+    /// Because sometimes we don't actually need to checkout to the version.
+    /// So we may cache the changes then applying them when we really need to.
+    content: ContentMap,
+    id_to_cursor: CursorMap,
+}
+
+#[cfg(feature = "test_utils")]
+#[derive(Default, Debug)]
+pub struct Tracker {
     client_id: PeerID,
     /// from start_vv to latest vv are applied
     start_vv: VersionVector,
@@ -143,7 +161,7 @@ impl Tracker {
     }
 
     /// for_diff = true should be called after the tracker checkout to A version with for_diff = false.
-    /// Then we can calculate the diff between A and vv.  
+    /// Then we can calculate the diff between A and vv.
     fn _checkout(&mut self, vv: &VersionVector, for_diff: bool) {
         // clear after_status as it may be outdated
         if for_diff {

@@ -1,52 +1,67 @@
+use std::sync::{Arc, Mutex};
+
 use rle::RleVec;
 
-use crate::{change::Change, op::RemoteOp, LoroError};
+use crate::{change::Change, op::Op, LoroError};
 
-use super::{oplog::OpLog, state::AppState};
+use super::{arena::SharedArena, oplog::OpLog, state::AppState};
 
-pub struct Transaction<'a> {
+pub struct Transaction {
     finished: bool,
-    state: &'a mut AppState,
-    ops: RleVec<[RemoteOp<'a>; 1]>,
+    state: Arc<Mutex<AppState>>,
+    ops: RleVec<[Op; 1]>,
+    oplog: Arc<Mutex<OpLog>>,
+    arena: SharedArena,
 }
 
-impl<'a> Transaction<'a> {
-    pub fn new(state: &'a mut AppState) -> Self {
-        state.start_txn();
+impl Transaction {
+    pub fn new(state: Arc<Mutex<AppState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
+        let mut state_lock = state.lock().unwrap();
+        state_lock.start_txn();
+        let arena = state_lock.arena.clone();
+        drop(state_lock);
         Self {
             state,
+            arena,
+            oplog,
             finished: false,
             ops: RleVec::new(),
         }
     }
 
     pub fn abort(&mut self) {
-        self.state.abort_txn();
+        self.state.lock().unwrap().abort_txn();
         self.finished = true;
     }
 
     pub fn commit(&mut self, oplog: &mut OpLog) -> Result<(), LoroError> {
+        let mut state = self.state.lock().unwrap();
         let ops = std::mem::take(&mut self.ops);
         let change = Change {
             ops,
-            deps: self.state.frontiers.clone(),
-            id: oplog.next_id(self.state.peer),
+            deps: state.frontiers.clone(),
+            id: oplog.next_id(state.peer),
             lamport: oplog.next_lamport(),
             timestamp: oplog.get_timestamp(),
         };
 
         if let Err(err) = oplog.import_change(change) {
+            drop(state);
             self.abort();
             return Err(err);
         }
 
-        self.state.commit_txn();
+        state.commit_txn();
         self.finished = true;
         Ok(())
     }
+
+    pub fn decode(&mut self, updates: &[u8]) -> Result<(), LoroError> {
+        unimplemented!()
+    }
 }
 
-impl<'a> Drop for Transaction<'a> {
+impl Drop for Transaction {
     fn drop(&mut self) {
         if !self.finished {
             self.abort();

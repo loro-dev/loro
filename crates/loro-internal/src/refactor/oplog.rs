@@ -1,9 +1,9 @@
-mod dag;
+pub(crate) mod dag;
 
 use fxhash::FxHashMap;
 use rle::RleVec;
 use smallvec::SmallVec;
-use tabled::measurment::Percent;
+// use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op::{InnerListOp, ListOp};
@@ -100,9 +100,8 @@ impl OpLog {
     /// # Err
     ///
     /// Return Err(LoroError::UsedOpID) when the change's id is occupied
-    pub fn import_change(&mut self, change: Change<RemoteOp>) -> Result<(), LoroError> {
+    pub fn import_change(&mut self, change: Change) -> Result<(), LoroError> {
         self.check_id_valid(change.id)?;
-        let change = self.convert_change(change);
         if let Err(id) = self.check_deps(&change.deps) {
             self.pending_changes.entry(id).or_default().push(change);
             return Ok(());

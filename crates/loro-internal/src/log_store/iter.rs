@@ -11,7 +11,6 @@ use fxhash::FxHashMap;
 use rle::HasLength;
 use rle::RleVec;
 
-
 use crate::change::Change;
 
 pub struct ClientOpIter<'a> {
