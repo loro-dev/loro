@@ -8,11 +8,9 @@ use smallvec::SmallVec;
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op::{InnerListOp, ListOp};
 use crate::container::map::InnerMapSet;
-use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, PeerID, ID};
 use crate::log_store::ClientChanges;
 use crate::op::{Op, RemoteOp};
-use crate::span::HasLamport;
 use crate::text::text_content::SliceRange;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -131,77 +129,23 @@ impl OpLog {
     }
 
     fn convert_change(&mut self, change: Change<RemoteOp>) -> Change {
+        let mut ops = RleVec::new();
+        for op in change.ops {
+            for content in op.contents.into_iter() {
+                ops.push(
+                    self.arena
+                        .convert_single_op(&op.container, op.counter, content),
+                );
+            }
+        }
+
         Change {
+            ops,
             id: change.id,
             deps: change.deps,
             lamport: change.lamport,
             timestamp: change.timestamp,
-            ops: change
-                .ops
-                .into_iter()
-                .flat_map(|op| self.convert_op(op))
-                .collect(),
         }
-    }
-
-    fn convert_op(&mut self, op: RemoteOp<'_>) -> SmallVec<[Op; 3]> {
-        let container = self.arena.register_container(&op.container);
-        let counter = op.counter;
-        op.contents
-            .into_iter()
-            .map(move |content| match content {
-                crate::op::RemoteContent::Map(map) => {
-                    let value = self.arena.alloc_value(map.value) as u32;
-                    Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::Map(InnerMapSet {
-                            key: map.key,
-                            value,
-                        }),
-                    }
-                }
-                crate::op::RemoteContent::List(list) => match list {
-                    ListOp::Insert { slice, pos } => match slice {
-                        crate::text::text_content::ListSlice::RawData(values) => {
-                            let range = self.arena.alloc_values(values.iter().cloned());
-                            Op {
-                                counter,
-                                container,
-                                content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                    slice: SliceRange::from(range.start as u32..range.end as u32),
-                                    pos,
-                                }),
-                            }
-                        }
-                        crate::text::text_content::ListSlice::RawStr(str) => {
-                            let bytes = self.arena.alloc_str(&str);
-                            Op {
-                                counter,
-                                container,
-                                content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                    slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
-                                    pos,
-                                }),
-                            }
-                        }
-                        crate::text::text_content::ListSlice::Unknown(u) => Op {
-                            counter,
-                            container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::new_unknown(u as u32),
-                                pos,
-                            }),
-                        },
-                    },
-                    ListOp::Delete(span) => Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
-                    },
-                },
-            })
-            .collect()
     }
 
     pub fn get_timestamp(&self) -> Timestamp {

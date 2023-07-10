@@ -2,9 +2,18 @@ use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::{
-    container::{registry::ContainerIdx, ContainerID},
+    container::{
+        list::list_op::{InnerListOp, ListOp},
+        map::InnerMapSet,
+        registry::ContainerIdx,
+        text::text_content::SliceRange,
+        ContainerID,
+    },
+    id::Counter,
+    op::{Op, RemoteContent, RemoteOp},
     text::utf16::count_utf16_chars,
     LoroValue,
 };
@@ -104,5 +113,66 @@ impl SharedArena {
 
     pub fn get_value(&self, idx: usize) -> Option<Arc<LoroValue>> {
         self.values.lock().unwrap().get(idx).cloned()
+    }
+
+    pub fn convert_single_op(
+        &mut self,
+        container: &ContainerID,
+        counter: Counter,
+        content: RemoteContent,
+    ) -> Op {
+        let container = self.register_container(container);
+        match content {
+            crate::op::RemoteContent::Map(map) => {
+                let value = self.alloc_value(map.value) as u32;
+                Op {
+                    counter,
+                    container,
+                    content: crate::op::InnerContent::Map(InnerMapSet {
+                        key: map.key,
+                        value,
+                    }),
+                }
+            }
+            crate::op::RemoteContent::List(list) => match list {
+                ListOp::Insert { slice, pos } => match slice {
+                    crate::text::text_content::ListSlice::RawData(values) => {
+                        let range = self.alloc_values(values.iter().cloned());
+                        Op {
+                            counter,
+                            container,
+                            content: crate::op::InnerContent::List(InnerListOp::Insert {
+                                slice: SliceRange::from(range.start as u32..range.end as u32),
+                                pos,
+                            }),
+                        }
+                    }
+                    crate::text::text_content::ListSlice::RawStr(str) => {
+                        let bytes = self.alloc_str(&str);
+                        Op {
+                            counter,
+                            container,
+                            content: crate::op::InnerContent::List(InnerListOp::Insert {
+                                slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
+                                pos,
+                            }),
+                        }
+                    }
+                    crate::text::text_content::ListSlice::Unknown(u) => Op {
+                        counter,
+                        container,
+                        content: crate::op::InnerContent::List(InnerListOp::Insert {
+                            slice: SliceRange::new_unknown(u as u32),
+                            pos,
+                        }),
+                    },
+                },
+                ListOp::Delete(span) => Op {
+                    counter,
+                    container,
+                    content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
+                },
+            },
+        }
     }
 }
