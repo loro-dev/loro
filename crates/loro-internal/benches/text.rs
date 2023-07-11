@@ -8,6 +8,7 @@ mod run {
     use bench_utils::TextAction;
     use loro_internal::fuzz::test_multi_sites;
     use loro_internal::fuzz::Action;
+    use loro_internal::refactor::loro::LoroApp;
     use loro_internal::LoroCore;
     use loro_internal::Transact;
     use rand::Rng;
@@ -50,6 +51,21 @@ mod run {
                     text.delete(&loro, *pos, *del).unwrap();
                     text.insert(&loro, *pos, ins).unwrap();
                 }
+            })
+        });
+
+        b.bench_function("refactor-B4", |b| {
+            b.iter(|| {
+                let loro = LoroApp::new();
+                let mut txn = loro.txn().unwrap();
+                let text = txn.get_text("text").unwrap();
+
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&mut txn, *pos, *del);
+                    text.insert(&mut txn, *pos, ins);
+                }
+
+                txn.commit().unwrap();
             })
         });
 

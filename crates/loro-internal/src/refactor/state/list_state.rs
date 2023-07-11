@@ -7,6 +7,7 @@ use crate::{
     container::ContainerID,
     event::Diff,
     op::{RawOp, RawOpContent},
+    refactor::arena::SharedArena,
     LoroValue,
 };
 use fxhash::FxHashMap;
@@ -215,24 +216,28 @@ impl List {
 }
 
 impl ContainerState for List {
-    fn apply_diff(&mut self, diff: Diff) {
-        if let Diff::List(delta) = diff {
-            let mut index = 0;
-            for span in delta {
-                match span {
-                    crate::delta::DeltaItem::Retain { len, .. } => {
-                        index += len;
-                    }
-                    crate::delta::DeltaItem::Insert { value, .. } => {
-                        let len = value.len();
-                        self.insert_batch(index, value);
-                        index += len;
-                    }
-                    crate::delta::DeltaItem::Delete { len, .. } => {
-                        self.delete_range(index..index + len)
+    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+        match diff {
+            Diff::List(delta) => {
+                let mut index = 0;
+                for span in delta.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Insert { value, .. } => {
+                            let len = value.len();
+                            self.insert_batch(index, value.clone());
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Delete { len, .. } => {
+                            self.delete_range(index..index + len)
+                        }
                     }
                 }
             }
+            Diff::SeqRaw(_) => todo!(),
+            _ => unreachable!(),
         }
     }
 

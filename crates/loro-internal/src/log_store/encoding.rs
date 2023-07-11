@@ -6,11 +6,17 @@ use fxhash::FxHashMap;
 use rle::HasLength;
 
 use crate::{
-    context::Context, dag::Dag, event::EventDiff, hierarchy::Hierarchy, LogStore, LoroError,
-    VersionVector,
+    context::Context, dag::Dag, event::EventDiff, hierarchy::Hierarchy, refactor::oplog::OpLog,
+    LogStore, LoroError, VersionVector,
+};
+
+use self::{
+    encode_changes::encode_oplog_changes,
+    encode_updates::{decode_oplog_changes, decode_oplog_updates},
 };
 
 use super::RemoteClientChanges;
+pub(crate) use encode_updates::encode_oplog_updates;
 
 // TODO: Test this threshold
 const UPDATE_ENCODE_THRESHOLD: usize = 512;
@@ -52,6 +58,61 @@ impl From<u8> for ConcreteEncodeMode {
 }
 
 pub struct LoroEncoder;
+
+pub(crate) fn encode_oplog(oplog: &OpLog, mode: EncodeMode) -> Vec<u8> {
+    let version = ENCODE_SCHEMA_VERSION;
+    let mut ans = Vec::from(MAGIC_BYTES);
+    // maybe u8 is enough
+    ans.push(version);
+    let mode = match mode {
+        EncodeMode::Auto(vv) => {
+            let self_vv = oplog.vv();
+            let diff = self_vv.diff(&vv);
+            let update_total_len = diff
+                .left
+                .values()
+                .map(|value| value.atom_len())
+                .sum::<usize>();
+            if update_total_len > UPDATE_ENCODE_THRESHOLD {
+                debug_log::debug_log!("Encode RleUpdates");
+                EncodeMode::RleUpdates(vv)
+            } else {
+                debug_log::debug_log!("Encode Updates");
+                EncodeMode::Updates(vv)
+            }
+        }
+        mode => mode,
+    };
+    let encoded = match &mode {
+        EncodeMode::Updates(vv) => encode_oplog_updates(oplog, vv),
+        EncodeMode::RleUpdates(vv) => encode_oplog_changes(oplog, vv),
+        EncodeMode::Snapshot => unimplemented!(),
+        _ => unreachable!(),
+    };
+    ans.push(mode.to_byte());
+    ans.extend(encoded);
+    ans
+}
+
+pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
+    let (magic_bytes, input) = input.split_at(4);
+    let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
+    if magic_bytes != MAGIC_BYTES {
+        return Err(LoroError::DecodeError("Invalid header bytes".into()));
+    }
+    let (version, input) = input.split_at(1);
+    if version != [ENCODE_SCHEMA_VERSION] {
+        return Err(LoroError::DecodeError("Invalid version".into()));
+    }
+
+    let mode: ConcreteEncodeMode = input[0].into();
+    let decoded = &input[1..];
+    match mode {
+        ConcreteEncodeMode::Updates => decode_oplog_updates(oplog, decoded),
+        ConcreteEncodeMode::RleUpdates => decode_oplog_changes(oplog, decoded),
+        ConcreteEncodeMode::Snapshot => unimplemented!(),
+    }
+}
 
 impl LoroEncoder {
     pub(crate) fn encode_context<C: Context>(ctx: &C, mode: EncodeMode) -> Vec<u8> {

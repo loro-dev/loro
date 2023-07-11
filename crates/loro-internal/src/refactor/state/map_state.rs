@@ -6,6 +6,7 @@ use crate::{
     delta::MapValue,
     event::Diff,
     op::{RawOp, RawOpContent},
+    refactor::arena::SharedArena,
     InternalString, LoroValue,
 };
 
@@ -19,11 +20,11 @@ pub struct Map {
 }
 
 impl ContainerState for Map {
-    fn apply_diff(&mut self, diff: Diff) {
+    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
         if let Diff::NewMap(delta) = diff {
-            for (key, value) in delta.updated {
-                let old = self.map.insert(key.clone(), value);
-                self.store_txn_snapshot(key, old);
+            for (key, value) in delta.updated.iter() {
+                let old = self.map.insert(key.clone(), value.clone());
+                self.store_txn_snapshot(key.clone(), old);
             }
         }
     }

@@ -340,6 +340,7 @@ where
 
     let f_ref: *const _ = &f;
     let f_ref: usize = f_ref as usize;
+    #[allow(clippy::redundant_clone)]
     let actions_clone = actions.clone();
     let action_ref: usize = (&actions_clone) as *const _ as usize;
     #[allow(clippy::blocks_in_if_conditions)]

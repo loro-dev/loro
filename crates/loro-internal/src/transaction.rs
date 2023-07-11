@@ -334,9 +334,7 @@ fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
             Diff::NewMap(diff)
         }
         Diff::SeqRaw(x) => {
-            let inner = std::mem::take(this_diff.as_seq_raw_mut().unwrap());
-            let diff = inner.compose(x);
-            Diff::SeqRaw(diff)
+            unimplemented!();
         }
     };
     *this_diff = diff;

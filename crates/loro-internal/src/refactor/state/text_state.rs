@@ -3,9 +3,11 @@ use std::{ops::Range, sync::Arc};
 use jumprope::JumpRope;
 
 use crate::{
+    container::text::text_content::ListSlice,
     delta::DeltaItem,
     event::Diff,
     op::{RawOp, RawOpContent},
+    refactor::arena::SharedArena,
     LoroValue,
 };
 
@@ -43,23 +45,27 @@ enum UndoItem {
 }
 
 impl ContainerState for Text {
-    fn apply_diff(&mut self, diff: Diff) {
-        if let Diff::Text(delta) = diff {
-            let mut index = 0;
-            for span in delta.iter() {
-                match span {
-                    DeltaItem::Retain { len, meta: _ } => {
-                        index += len;
-                    }
-                    DeltaItem::Insert { value, .. } => {
-                        self.insert(index, value);
-                        index += value.len();
-                    }
-                    DeltaItem::Delete { len, .. } => {
-                        self.delete(index..index + len);
+    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+        match diff {
+            Diff::SeqRaw(_) => todo!(),
+            Diff::Text(delta) => {
+                let mut index = 0;
+                for span in delta.iter() {
+                    match span {
+                        DeltaItem::Retain { len, meta: _ } => {
+                            index += len;
+                        }
+                        DeltaItem::Insert { value, .. } => {
+                            self.insert(index, value);
+                            index += value.len();
+                        }
+                        DeltaItem::Delete { len, .. } => {
+                            self.delete(index..index + len);
+                        }
                     }
                 }
             }
+            _ => unreachable!(),
         }
     }
 
@@ -67,7 +73,7 @@ impl ContainerState for Text {
         match op.content {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    crate::container::text::text_content::ListSlice::RawStr(s) => {
+                    ListSlice::RawStr(s) => {
                         self.insert(pos, &s);
                     }
                     _ => unreachable!(),
@@ -143,6 +149,14 @@ impl Text {
     }
 
     pub fn delete(&mut self, range: Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+
+        if range.end > self.len() {
+            panic!("delete range out of bound");
+        }
+
         if self.in_txn {
             self.record_del(range.start, range.len());
         }
@@ -171,6 +185,10 @@ impl Text {
             index: index as u32,
             len: len as u32,
         });
+    }
+
+    fn len(&self) -> usize {
+        self.rope.len_bytes()
     }
 }
 

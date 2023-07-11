@@ -14,7 +14,7 @@ pub mod dag;
 pub mod id;
 pub mod log_store;
 pub mod op;
-mod refactor;
+pub mod refactor;
 pub mod version;
 
 mod error;

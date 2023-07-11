@@ -92,6 +92,8 @@ impl ImVersionVector {
     }
 }
 
+// TODO: use a better data structure that is Array when small
+// and hashmap when it's big
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Frontiers(SmallVec<[ID; 2]>);
 
@@ -124,6 +126,14 @@ impl Frontiers {
         postcard::from_bytes(bytes).map_err(|_| {
             LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
         })
+    }
+
+    pub fn retain_non_included(&mut self, other: &Frontiers) {
+        self.retain(|id| !other.contains(id));
+    }
+
+    pub fn filter_included(&mut self, end_id: ID) {
+        self.retain(|id| id.peer != end_id.peer || id.counter >= end_id.counter);
     }
 }
 
@@ -593,8 +603,11 @@ impl VersionVector {
         None
     }
 
-    pub fn extend_to_include_vv(&mut self, vv: &VersionVector) {
-        for (&client_id, &counter) in vv.iter() {
+    pub fn extend_to_include_vv<'a>(
+        &mut self,
+        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
+    ) {
+        for (&client_id, &counter) in vv {
             if let Some(my_counter) = self.get_mut(&client_id) {
                 if *my_counter < counter {
                     *my_counter = counter;
@@ -612,6 +625,16 @@ impl VersionVector {
             }
         } else {
             self.set_last(id)
+        }
+    }
+
+    pub fn extend_to_include_end_id(&mut self, id: ID) {
+        if let Some(counter) = self.get_mut(&id.peer) {
+            if *counter < id.counter {
+                *counter = id.counter;
+            }
+        } else {
+            self.set_end(id)
         }
     }
 

@@ -4,7 +4,7 @@ use crate::change::Lamport;
 use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
-use crate::version::{ImVersionVector, VersionVector};
+use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -23,7 +23,7 @@ impl HasIndex for AppDagNode {
 impl Sliceable for AppDagNode {
     fn slice(&self, from: usize, to: usize) -> Self {
         AppDagNode {
-            client: self.client,
+            peer: self.peer,
             cnt: self.cnt + from as Counter,
             lamport: self.lamport + from as Lamport,
             parents: Default::default(),
@@ -36,7 +36,7 @@ impl Sliceable for AppDagNode {
 impl HasId for AppDagNode {
     fn id_start(&self) -> ID {
         ID {
-            peer: self.client,
+            peer: self.peer,
             counter: self.cnt,
         }
     }
@@ -95,7 +95,7 @@ impl AppDag {
         self.map.get(&id.peer).and_then(|rle| {
             rle.get_by_atom_index(id.counter).map(|x| {
                 let mut vv = x.element.vv.clone();
-                vv.insert(id.peer, id.counter);
+                vv.insert(id.peer, id.counter + 1);
                 vv
             })
         })
@@ -118,5 +118,22 @@ impl AppDag {
             rle.get_by_atom_index(id.counter)
                 .map(|x| x.element.lamport + (id.counter - x.element.cnt) as Lamport)
         })
+    }
+
+    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> VersionVector {
+        let mut vv: VersionVector = Default::default();
+        for id in frontiers.iter() {
+            let Some(rle) = self.map.get(&id.peer) else { continue };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { continue };
+            vv.extend_to_include_vv(x.element.vv.iter());
+            vv.extend_to_include_last_id(*id);
+        }
+
+        vv
+    }
+
+    #[inline(always)]
+    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
+        vv.to_frontiers(self)
     }
 }

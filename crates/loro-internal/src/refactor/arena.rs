@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicUsize, Arc, Mutex};
+use std::{
+    ops::RangeBounds,
+    sync::{atomic::AtomicUsize, Arc, Mutex},
+};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHashMap;
@@ -20,7 +23,7 @@ use crate::{
 /// This is shared between [OpLog] and [AppState].
 ///
 #[derive(Clone, Default)]
-pub(super) struct SharedArena {
+pub struct SharedArena {
     // The locks should not be exposed outside this file.
     // It might be better to use RwLock in the future
     container_idx_to_id: Arc<Mutex<Vec<ContainerID>>>,
@@ -32,7 +35,7 @@ pub(super) struct SharedArena {
     values: Arc<Mutex<Vec<LoroValue>>>,
 }
 
-pub(crate) struct StrAllocResult {
+pub struct StrAllocResult {
     pub start: usize,
     pub end: usize,
     pub utf16_len: usize,
@@ -111,7 +114,7 @@ impl SharedArena {
         self.parents.lock().unwrap().get(&child).copied().flatten()
     }
 
-    pub fn slice_bytes(&self, range: std::ops::Range<usize>) -> BytesSlice {
+    pub fn slice_bytes(&self, range: impl RangeBounds<usize>) -> BytesSlice {
         self.text.lock().unwrap().slice(range)
     }
 
@@ -120,7 +123,7 @@ impl SharedArena {
     }
 
     pub fn convert_single_op(
-        &mut self,
+        &self,
         container: &ContainerID,
         counter: Counter,
         content: RawOpContent,
@@ -179,6 +182,17 @@ impl SharedArena {
                             pos,
                         }),
                     },
+                    crate::text::text_content::ListSlice::RawBytes(x) => {
+                        let bytes = self.alloc_str(std::str::from_utf8(&x).unwrap());
+                        Op {
+                            counter,
+                            container,
+                            content: crate::op::InnerContent::List(InnerListOp::Insert {
+                                slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
+                                pos,
+                            }),
+                        }
+                    }
                 },
                 ListOp::Delete(span) => Op {
                     counter,

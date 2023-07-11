@@ -6,6 +6,7 @@ mod import;
 mod iter;
 
 use crate::{version::Frontiers, LoroValue};
+pub(crate) use encoding::{decode_oplog, encode_oplog, encode_oplog_updates};
 pub use encoding::{EncodeMode, LoroEncoder};
 pub(crate) use import::ImportContext;
 use std::{

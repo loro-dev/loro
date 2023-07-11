@@ -1,14 +1,21 @@
 pub(crate) mod dag;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use fxhash::FxHashMap;
 use rle::RleVec;
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
+use crate::container::list::list_op;
+use crate::dag::DagUtils;
 use crate::id::{Counter, PeerID, ID};
-use crate::log_store::ClientChanges;
-use crate::op::RemoteOp;
+use crate::log_store::{decode_oplog, encode_oplog, encode_oplog_updates};
+use crate::log_store::{ClientChanges, RemoteClientChanges};
+use crate::op::{RawOpContent, RemoteOp};
+use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
@@ -19,9 +26,11 @@ use super::arena::SharedArena;
 /// So you can derive different versions of the state from the [OpLog].
 /// It allows us to build a version control system.
 ///
+/// The causal graph should always be a DAG and complete. So we can always find the LCA.
+/// If deps are missing, we can't import the change. It will be put into the `pending_changes`.
 pub struct OpLog {
     pub(crate) dag: AppDag,
-    pub(super) arena: SharedArena,
+    pub(crate) arena: SharedArena,
     pub(crate) changes: ClientChanges,
     pub(crate) latest_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -42,7 +51,7 @@ pub struct AppDag {
 
 #[derive(Debug, Clone)]
 pub struct AppDagNode {
-    client: PeerID,
+    peer: PeerID,
     cnt: Counter,
     lamport: Lamport,
     parents: SmallVec<[ID; 2]>,
@@ -95,13 +104,18 @@ impl OpLog {
     /// # Err
     ///
     /// Return Err(LoroError::UsedOpID) when the change's id is occupied
-    pub fn import_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
         self.check_id_valid(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
             self.pending_changes.entry(id).or_default().push(change);
             return Ok(());
         }
 
+        self.dag.vv.extend_to_include_last_id(change.id_last());
+        self.latest_lamport = self.latest_lamport.max(change.lamport_last());
+        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
+        self.dag.frontiers.retain_non_included(&change.deps);
+        self.dag.frontiers.filter_included(change.id);
         self.changes.entry(change.id.peer).or_default().push(change);
         Ok(())
     }
@@ -157,5 +171,210 @@ impl OpLog {
     pub fn next_id(&self, peer: PeerID) -> ID {
         let cnt = self.dag.vv.get(&peer).copied().unwrap_or(0);
         ID::new(peer, cnt)
+    }
+
+    pub fn encode_from(&self, vv: &VersionVector) -> Vec<u8> {
+        encode_oplog_updates(self, vv)
+    }
+
+    pub(crate) fn vv(&self) -> &VersionVector {
+        &self.dag.vv
+    }
+
+    pub(crate) fn frontiers(&self) -> &Frontiers {
+        &self.dag.frontiers
+    }
+
+    pub(crate) fn export_changes(&self, from: &VersionVector) -> RemoteClientChanges {
+        let mut changes = RemoteClientChanges::default();
+        for (&peer, &cnt) in from.iter() {
+            let mut temp = Vec::new();
+            if let Some(peer_changes) = self.changes.get(&peer) {
+                if let Some(result) = peer_changes.get_by_atom_index(cnt) {
+                    for change in &peer_changes.vec()[result.merged_index..] {
+                        temp.push(self.convert_change_to_remote(change))
+                    }
+                }
+            }
+
+            if !temp.is_empty() {
+                changes.insert(peer, temp);
+            }
+        }
+
+        changes
+    }
+
+    pub(crate) fn get_change_since(&self, id: ID) -> Vec<Change> {
+        let mut changes = Vec::new();
+        if let Some(peer_changes) = self.changes.get(&id.peer) {
+            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
+                for change in &peer_changes.vec()[result.merged_index..] {
+                    changes.push(change.clone())
+                }
+            }
+        }
+
+        changes
+    }
+
+    fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
+        let mut ops = RleVec::new();
+        for op in change.ops.iter() {
+            let raw_op = self.local_op_to_remote(op);
+            ops.push(raw_op);
+        }
+
+        Change {
+            ops,
+            id: change.id,
+            deps: change.deps.clone(),
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+        }
+    }
+
+    fn convert_change_to_local(&self, change: Change<RemoteOp>) -> Change {
+        let mut ops = RleVec::new();
+        for op in change.ops {
+            for content in op.contents.into_iter() {
+                let op = self
+                    .arena
+                    .convert_single_op(&op.container, op.counter, content);
+                ops.push(op);
+            }
+        }
+
+        Change {
+            ops,
+            id: change.id,
+            deps: change.deps,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+        }
+    }
+
+    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> RemoteOp<'_> {
+        let container = self.arena.get_container_id(op.container).unwrap();
+        let mut contents = RleVec::new();
+        match &op.content {
+            crate::op::InnerContent::List(list) => match list {
+                list_op::InnerListOp::Insert { slice, pos } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                        slice: crate::container::text::text_content::ListSlice::RawBytes(
+                            self.arena
+                                .slice_bytes(slice.0.start as usize..slice.0.end as usize),
+                        ),
+                        pos: *pos,
+                    }))
+                }
+                list_op::InnerListOp::Delete(del) => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
+                }
+            },
+            crate::op::InnerContent::Map(map) => {
+                let value = self.arena.get_value(map.value as usize);
+                contents.push(RawOpContent::Map(crate::container::map::MapSet {
+                    key: map.key.clone(),
+                    value: value.unwrap_or(crate::LoroValue::Null), // TODO: decide map delete value
+                }))
+            }
+        };
+
+        RemoteOp {
+            container,
+            contents,
+            counter: op.counter,
+        }
+    }
+
+    pub(crate) fn import_remote_changes(
+        &mut self,
+        changes: RemoteClientChanges,
+    ) -> Result<(), LoroError> {
+        let len = changes.iter().fold(0, |last, this| last + this.1.len());
+        let mut change_causal_arr = Vec::with_capacity(len);
+        for (peer, changes) in changes {
+            let cur_end_cnt = self.changes.get(&peer).map(|x| x.atom_len()).unwrap_or(0);
+            for change in changes {
+                if change.id.counter < cur_end_cnt {
+                    continue;
+                }
+
+                let change = self.convert_change_to_local(change);
+                change_causal_arr.push(change);
+            }
+        }
+
+        // TODO: Perf
+        change_causal_arr.sort_by_key(|x| x.lamport);
+        for change in change_causal_arr {
+            self.import_local_change(change)?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn lookup_change(&self, id: ID) -> Option<&Change> {
+        self.changes
+            .get(&id.peer)
+            .and_then(|x| x.get_by_atom_index(id.counter).map(|x| x.element))
+    }
+
+    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
+        encode_oplog(self, crate::EncodeMode::Auto(vv.clone()))
+    }
+
+    pub fn decode(&mut self, data: &[u8]) -> Result<(), LoroError> {
+        decode_oplog(self, data)
+    }
+
+    /// iterates over all changes that are causally after `from` and before `to`
+    ///
+    /// it will include a version vector when the change is applied
+    pub(crate) fn iter_causal(
+        &self,
+        from: &VersionVector,
+        to: &VersionVector,
+    ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
+        let frontiers = from.to_frontiers(&self.dag);
+        let diff = to.diff(from).right;
+        let mut iter = self.dag.iter_causal(&frontiers, diff);
+        let mut node = iter.next();
+        let mut cur_cnt = 0;
+        let vv = Rc::new(RefCell::new(VersionVector::default()));
+        std::iter::from_fn(move || {
+            if let Some(inner) = &node {
+                let mut inner_vv = vv.borrow_mut();
+                inner_vv.clear();
+                inner_vv.extend_to_include_vv(inner.data.vv.iter());
+                let peer = inner.data.peer;
+                let cnt = inner.data.cnt.max(cur_cnt);
+                let end = inner.data.cnt + inner.data.len as Counter;
+                let change = self
+                    .changes
+                    .get(&peer)
+                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
+                    .unwrap();
+
+                if change.ctr_end() < end {
+                    cur_cnt = change.ctr_end();
+                } else {
+                    node = iter.next();
+                    cur_cnt = 0;
+                }
+
+                inner_vv.extend_to_include_end_id(change.id);
+                Some((change, vv.clone()))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl Default for OpLog {
+    fn default() -> Self {
+        Self::new()
     }
 }

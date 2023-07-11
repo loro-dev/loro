@@ -1,5 +1,6 @@
 use std::{borrow::Cow, ops::Range};
 
+use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
@@ -14,6 +15,7 @@ use super::string_pool::PoolString;
 pub enum ListSlice<'a> {
     RawData(Cow<'a, [LoroValue]>),
     RawStr(Cow<'a, str>),
+    RawBytes(BytesSlice),
     Unknown(usize),
 }
 
@@ -102,6 +104,7 @@ impl<'a> ListSlice<'a> {
         match self {
             ListSlice::RawData(x) => ListSlice::RawData(Cow::Owned(x.to_vec())),
             ListSlice::RawStr(x) => ListSlice::RawStr(Cow::Owned(x.to_string())),
+            ListSlice::RawBytes(x) => ListSlice::RawBytes(x.clone()),
             ListSlice::Unknown(x) => ListSlice::Unknown(*x),
         }
     }
@@ -113,6 +116,7 @@ impl<'a> HasLength for ListSlice<'a> {
             ListSlice::RawStr(s) => s.len(),
             ListSlice::Unknown(x) => *x,
             ListSlice::RawData(x) => x.len(),
+            ListSlice::RawBytes(x) => x.len(),
         }
     }
 }
@@ -126,6 +130,7 @@ impl<'a> Sliceable for ListSlice<'a> {
                 Cow::Borrowed(x) => ListSlice::RawData(Cow::Borrowed(&x[from..to])),
                 Cow::Owned(x) => ListSlice::RawData(Cow::Owned(x[from..to].into())),
             },
+            ListSlice::RawBytes(x) => ListSlice::RawBytes(x.slice(from, to)),
         }
     }
 }

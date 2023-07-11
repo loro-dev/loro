@@ -4,9 +4,10 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::ContainerID,
+    container::registry::ContainerIdx,
     delta::{MapDelta, MapValue},
     event::Diff,
+    op::RichOp,
     span::{HasId, HasLamport},
     text::tracker::Tracker,
     InternalString, VersionVector,
@@ -16,21 +17,64 @@ use super::{oplog::OpLog, state::ContainerStateDiff};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
+///
+/// TODO: persist diffCalculator and skip processed version
 #[derive(Default)]
 pub struct DiffCalculator {
     start_vv: VersionVector,
     end_vv: VersionVector,
-    calc: FxHashMap<ContainerID, ContainerDiffCalculator>,
+    calculators: FxHashMap<ContainerIdx, ContainerDiffCalculator>,
 }
 
 impl DiffCalculator {
+    pub fn new() -> Self {
+        Self {
+            start_vv: Default::default(),
+            end_vv: Default::default(),
+            calculators: Default::default(),
+        }
+    }
+
     pub(crate) fn calc(
-        &self,
-        _oplog: &super::oplog::OpLog,
-        _before: &crate::VersionVector,
-        _after: &crate::VersionVector,
+        &mut self,
+        oplog: &super::oplog::OpLog,
+        before: &crate::VersionVector,
+        after: &crate::VersionVector,
     ) -> Vec<ContainerStateDiff> {
-        todo!()
+        let mut diffs = Vec::new();
+        let arena = &oplog.arena;
+        for (change, vv) in oplog.iter_causal(before, after) {
+            for op in change.ops.iter() {
+                let container_id = arena.get_container_id(op.container).unwrap();
+                let calculator = self.calculators.entry(op.container).or_insert_with(|| {
+                    let mut new = match container_id.container_type() {
+                        crate::ContainerType::Text => {
+                            ContainerDiffCalculator::Text(TextDiffCalculator::default())
+                        }
+                        crate::ContainerType::Map => {
+                            ContainerDiffCalculator::Map(MapDiffCalculator::default())
+                        }
+                        crate::ContainerType::List => {
+                            ContainerDiffCalculator::List(ListDiffCalculator::default())
+                        }
+                    };
+                    new.start_tracking(oplog, before);
+                    new
+                });
+
+                calculator.apply_change(oplog, RichOp::new_by_change(change, op), &vv.borrow());
+            }
+        }
+
+        for (&idx, calculator) in self.calculators.iter_mut() {
+            calculator.stop_tracking(oplog, after);
+            diffs.push(ContainerStateDiff {
+                idx,
+                diff: calculator.calculate_diff(oplog, before, after),
+            });
+        }
+
+        diffs
     }
 }
 

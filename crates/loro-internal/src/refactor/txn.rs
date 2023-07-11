@@ -69,7 +69,7 @@ impl Transaction {
             timestamp: oplog.get_timestamp(),
         };
 
-        if let Err(err) = oplog.import_change(change) {
+        if let Err(err) = oplog.import_local_change(change) {
             drop(state);
             drop(oplog);
             self.abort();

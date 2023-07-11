@@ -39,7 +39,7 @@ pub struct AppState {
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
-    fn apply_diff(&mut self, diff: Diff);
+    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena);
     fn apply_op(&mut self, op: RawOp);
 
     /// Start a transaction
@@ -65,6 +65,11 @@ pub struct ContainerStateDiff {
     pub diff: Diff,
 }
 
+pub struct AppStateDiff<'a> {
+    pub(crate) diff: &'a [ContainerStateDiff],
+    pub(crate) frontiers: &'a Frontiers,
+}
+
 impl AppState {
     pub fn new(oplog: &OpLog) -> Self {
         let peer = SystemRandom::new().next_u64();
@@ -85,8 +90,22 @@ impl AppState {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, _diff: &ContainerStateDiff) {
-        todo!()
+    pub fn apply_diff(&mut self, AppStateDiff { diff, frontiers }: AppStateDiff) {
+        for diff in diff {
+            let state = self.states.entry(diff.idx).or_insert_with(|| {
+                let id = self.arena.get_container_id(diff.idx).unwrap();
+                create_state(id.container_type())
+            });
+
+            if self.in_txn {
+                state.start_txn();
+                self.changed_in_txn.insert(diff.idx);
+            }
+
+            state.apply_diff(&diff.diff, &self.arena);
+        }
+
+        self.frontiers = frontiers.clone();
     }
 
     pub fn apply_local_op(&mut self, op: RawOp) {

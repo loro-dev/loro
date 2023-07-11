@@ -9,9 +9,12 @@ use crate::{
     id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
     op::{RawOpContent, RemoteOp},
+    refactor::oplog::OpLog,
     version::Frontiers,
     LogStore, LoroError, VersionVector,
 };
+
+use super::encode_changes::decode_changes_to_inner_format_oplog;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Updates {
@@ -61,6 +64,31 @@ pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<V
 
     postcard::to_allocvec(&updates)
         .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
+}
+
+pub(crate) fn encode_oplog_updates(oplog: &OpLog, from: &VersionVector) -> Vec<u8> {
+    let changes = oplog.export_changes(from);
+    let mut updates = Updates {
+        changes: Vec::with_capacity(changes.len()),
+    };
+    for (_, changes) in changes {
+        let encoded = convert_changes_to_encoded(changes.into_iter());
+        updates.changes.push(encoded);
+    }
+
+    postcard::to_allocvec(&updates).unwrap()
+}
+
+pub(crate) fn decode_oplog_updates(oplog: &mut OpLog, updates: &[u8]) -> Result<(), LoroError> {
+    let changes = decode_updates(updates)?;
+    oplog.import_remote_changes(changes)?;
+    Ok(())
+}
+
+pub(crate) fn decode_oplog_changes(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
+    let changes = decode_changes_to_inner_format_oplog(input, oplog)?;
+    oplog.import_remote_changes(changes)?;
+    Ok(())
 }
 
 pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static>, LoroError> {
