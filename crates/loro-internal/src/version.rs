@@ -727,6 +727,38 @@ impl VersionVector {
     }
 }
 
+impl ImVersionVector {
+    pub fn extend_to_include_vv<'a>(
+        &mut self,
+        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
+    ) {
+        for (&client_id, &counter) in vv {
+            if let Some(my_counter) = self.0.get_mut(&client_id) {
+                if *my_counter < counter {
+                    *my_counter = counter;
+                }
+            } else {
+                self.0.insert(client_id, counter);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn set_last(&mut self, id: ID) {
+        self.0.insert(id.peer, id.counter + 1);
+    }
+
+    pub fn extend_to_include_last_id(&mut self, id: ID) {
+        if let Some(counter) = self.0.get_mut(&id.peer) {
+            if *counter <= id.counter {
+                *counter = id.counter + 1;
+            }
+        } else {
+            self.set_last(id)
+        }
+    }
+}
+
 /// Use minimal set of ids to represent the frontiers
 fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
     // it only keep the ids of ops that are concurrent to each other

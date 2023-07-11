@@ -67,7 +67,7 @@ pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<V
 }
 
 pub(crate) fn encode_oplog_updates(oplog: &OpLog, from: &VersionVector) -> Vec<u8> {
-    let changes = oplog.export_changes(from);
+    let changes = oplog.export_changes_from(from);
     let mut updates = Updates {
         changes: Vec::with_capacity(changes.len()),
     };

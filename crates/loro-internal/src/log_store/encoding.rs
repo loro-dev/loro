@@ -74,10 +74,8 @@ pub(crate) fn encode_oplog(oplog: &OpLog, mode: EncodeMode) -> Vec<u8> {
                 .map(|value| value.atom_len())
                 .sum::<usize>();
             if update_total_len > UPDATE_ENCODE_THRESHOLD {
-                debug_log::debug_log!("Encode RleUpdates");
                 EncodeMode::RleUpdates(vv)
             } else {
-                debug_log::debug_log!("Encode Updates");
                 EncodeMode::Updates(vv)
             }
         }

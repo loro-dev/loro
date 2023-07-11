@@ -333,7 +333,7 @@ fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
             let diff = inner.compose(x);
             Diff::NewMap(diff)
         }
-        Diff::SeqRaw(x) => {
+        Diff::SeqRaw(_) => {
             unimplemented!();
         }
     };

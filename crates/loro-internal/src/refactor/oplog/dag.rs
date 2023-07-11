@@ -26,7 +26,7 @@ impl Sliceable for AppDagNode {
             peer: self.peer,
             cnt: self.cnt + from as Counter,
             lamport: self.lamport + from as Lamport,
-            parents: Default::default(),
+            deps: Default::default(),
             vv: Default::default(),
             len: to - from,
         }
@@ -62,7 +62,7 @@ impl HasLamport for AppDagNode {
 
 impl DagNode for AppDagNode {
     fn deps(&self) -> &[ID] {
-        &self.parents
+        &self.deps
     }
 }
 
@@ -123,6 +123,28 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> VersionVector {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
+            let Some(rle) = self.map.get(&id.peer) else { continue };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { continue };
+            vv.extend_to_include_vv(x.element.vv.iter());
+            vv.extend_to_include_last_id(*id);
+        }
+
+        vv
+    }
+
+    pub fn frontiers_to_im_vv(&self, frontiers: &Frontiers) -> ImVersionVector {
+        if frontiers.is_empty() {
+            return Default::default();
+        }
+
+        let mut vv = {
+            let id = frontiers[0];
+            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            x.element.vv.clone()
+        };
+
+        for id in frontiers[1..].iter() {
             let Some(rle) = self.map.get(&id.peer) else { continue };
             let Some(x) = rle.get_by_atom_index(id.counter) else { continue };
             vv.extend_to_include_vv(x.element.vv.iter());

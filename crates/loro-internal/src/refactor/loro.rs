@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use crate::{LoroError, VersionVector};
+use debug_log::debug_dbg;
+
+use crate::{id::PeerID, LoroError, VersionVector};
 
 use super::{
     diff_calc::DiffCalculator,
@@ -41,6 +43,10 @@ impl LoroApp {
         }
     }
 
+    pub fn set_peer_id(&self, peer: PeerID) {
+        self.state.lock().unwrap().peer = peer;
+    }
+
     pub fn detach(&mut self) {
         self.detached = true;
     }
@@ -74,24 +80,27 @@ impl LoroApp {
         &self.oplog
     }
 
-    pub fn encode_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.oplog.lock().unwrap().encode_from(vv)
+    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
+        self.oplog.lock().unwrap().export_from(vv)
     }
 
-    pub fn decode(&self, bytes: &[u8]) -> Result<Vec<ContainerStateDiff>, LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<Vec<ContainerStateDiff>, LoroError> {
+        // TODO: need to throw error if state is in transaction
+        debug_log::group!("import");
         let mut oplog = self.oplog.lock().unwrap();
         let old_vv = oplog.vv().clone();
         oplog.decode(bytes)?;
         let mut diff = DiffCalculator::new();
         let diff = diff.calc(&oplog, &old_vv, oplog.vv());
-        if self.detached {
+        if !self.detached {
             let mut state = self.state.lock().unwrap();
             state.apply_diff(AppStateDiff {
                 diff: &diff,
                 frontiers: oplog.frontiers(),
-            })
+            });
         }
 
+        debug_log::group_end!();
         Ok(diff)
     }
 

@@ -49,6 +49,8 @@ impl Text {
 
 #[cfg(test)]
 mod test {
+    use debug_log::debug_dbg;
+
     use crate::refactor::loro::LoroApp;
 
     #[test]
@@ -67,5 +69,31 @@ mod test {
         txn.commit().unwrap();
         let txn = loro.txn().unwrap();
         assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hi");
+    }
+
+    #[test]
+    fn import() {
+        let loro = LoroApp::new();
+        loro.set_peer_id(1);
+        let loro2 = LoroApp::new();
+        loro2.set_peer_id(2);
+
+        let mut txn = loro.txn().unwrap();
+        let text = txn.get_text("hello").unwrap();
+        text.insert(&mut txn, 0, "hello");
+        txn.commit().unwrap();
+        let exported = loro.export_from(&Default::default());
+        loro2.import(&exported).unwrap();
+        let mut txn = loro2.txn().unwrap();
+        let text = txn.get_text("hello").unwrap();
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello");
+        text.insert(&mut txn, 5, " world");
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello world");
+        txn.commit().unwrap();
+        loro.import(&loro2.export_from(&Default::default()))
+            .unwrap();
+        let mut txn = loro.txn().unwrap();
+        let text = txn.get_text("hello").unwrap();
+        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello world");
     }
 }

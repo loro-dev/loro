@@ -20,7 +20,7 @@ pub struct Map {
 }
 
 impl ContainerState for Map {
-    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &Diff, _arena: &SharedArena) {
         if let Diff::NewMap(delta) = diff {
             for (key, value) in delta.updated.iter() {
                 let old = self.map.insert(key.clone(), value.clone());

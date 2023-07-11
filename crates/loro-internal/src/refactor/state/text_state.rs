@@ -47,7 +47,27 @@ enum UndoItem {
 impl ContainerState for Text {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
         match diff {
-            Diff::SeqRaw(_) => todo!(),
+            Diff::SeqRaw(delta) => {
+                let mut index = 0;
+                for span in delta.iter() {
+                    match span {
+                        DeltaItem::Retain { len, meta: _ } => {
+                            index += len;
+                        }
+                        DeltaItem::Insert { value, .. } => {
+                            for value in value.0.iter() {
+                                let s =
+                                    arena.slice_bytes(value.0.start as usize..value.0.end as usize);
+                                self.insert(index, std::str::from_utf8(&s).unwrap());
+                                index += s.len();
+                            }
+                        }
+                        DeltaItem::Delete { len, .. } => {
+                            self.delete(index..index + len);
+                        }
+                    }
+                }
+            }
             Diff::Text(delta) => {
                 let mut index = 0;
                 for span in delta.iter() {

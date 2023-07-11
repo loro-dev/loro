@@ -60,6 +60,7 @@ pub enum State {
     Text,
 }
 
+#[derive(Debug)]
 pub struct ContainerStateDiff {
     pub idx: ContainerIdx,
     pub diff: Diff,

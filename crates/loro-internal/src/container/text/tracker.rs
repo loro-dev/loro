@@ -176,7 +176,6 @@ impl Tracker {
             return;
         }
 
-        debug_dbg!(&self.current_vv, &vv);
         let self_vv = std::mem::take(&mut self.current_vv);
         {
             let diff = self_vv.diff_iter(vv);
@@ -190,8 +189,6 @@ impl Tracker {
         } else {
             self.current_vv = vv.clone();
         }
-
-        debug_dbg!(&self.current_vv, &vv);
     }
 
     pub fn diff(&mut self, from: &VersionVector, to: &VersionVector) -> Delta<SliceRanges, ()> {
@@ -200,7 +197,6 @@ impl Tracker {
         let mut ans = Delta::new();
         for span in self.content.iter() {
             let s = span.as_ref();
-            debug_dbg!(&s);
             match s.status_diff() {
                 y_span::StatusDiff::New => {
                     let v: SliceRanges = s.slice.clone().into();
@@ -269,7 +265,6 @@ impl Tracker {
             let IdSpanQueryResult { inserts, deletes } = self.id_to_cursor.get_cursors_at_id_span(
                 IdSpan::new(span.client_id, span.counter.start, span.counter.end),
             );
-            debug_dbg!(&deletes);
             for (_, delete) in deletes {
                 for deleted_span in delete.iter() {
                     for span in self
@@ -279,7 +274,6 @@ impl Tracker {
                         .into_iter()
                         .map(|x| x.1)
                     {
-                        debug_dbg!(&span);
                         cursors.push(span);
                         args.push(StatusChange::Delete);
                     }
@@ -297,7 +291,6 @@ impl Tracker {
             &cursors,
             &args,
             &mut |v: &mut YSpan, arg| {
-                debug_dbg!(&v);
                 if !for_diff {
                     v.status.apply(*arg);
                 } else {
@@ -307,7 +300,6 @@ impl Tracker {
 
                     v.after_status.as_mut().unwrap().apply(*arg);
                 }
-                debug_dbg!(&v);
             },
             &mut make_notify(&mut self.id_to_cursor),
         )
@@ -317,7 +309,6 @@ impl Tracker {
         let mut cursors = Vec::new();
         let mut args = Vec::new();
         for span in spans {
-            debug_dbg!("retreat", &span);
             let span_start = ID::new(span.client_id, span.counter.start);
             if !for_diff {
                 self.current_vv.set_end(span_start);

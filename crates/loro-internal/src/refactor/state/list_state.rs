@@ -236,7 +236,30 @@ impl ContainerState for List {
                     }
                 }
             }
-            Diff::SeqRaw(_) => todo!(),
+            Diff::SeqRaw(delta) => {
+                let mut index = 0;
+                for span in delta.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Insert { value, .. } => {
+                            let mut arr = Vec::new();
+                            for value in value.0.iter() {
+                                for i in value.0.start..value.0.end {
+                                    arr.push(arena.get_value(i as usize).unwrap());
+                                }
+                            }
+                            let len = arr.len();
+                            self.insert_batch(index, arr);
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Delete { len, .. } => {
+                            self.delete_range(index..index + len)
+                        }
+                    }
+                }
+            }
             _ => unreachable!(),
         }
     }

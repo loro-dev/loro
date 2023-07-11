@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
+use debug_log::{debug_dbg, debug_log};
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -7,6 +8,7 @@ use crate::{
     container::registry::ContainerIdx,
     delta::{MapDelta, MapValue},
     event::Diff,
+    id::Counter,
     op::RichOp,
     span::{HasId, HasLamport},
     text::tracker::Tracker,
@@ -268,7 +270,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
             self.tracker.start_vv().partial_cmp(vv),
             None | Some(Ordering::Less)
         ) {
-            self.tracker = Tracker::new(vv.clone(), 0);
+            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
 
         self.tracker.checkout(vv);

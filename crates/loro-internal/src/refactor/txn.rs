@@ -10,6 +10,7 @@ use crate::{
     container::{registry::ContainerIdx, ContainerIdRaw},
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
+    span::HasIdSpan,
     version::Frontiers,
     LoroError, LoroValue,
 };
@@ -61,22 +62,23 @@ impl Transaction {
         let mut state = self.state.lock().unwrap();
         let ops = std::mem::take(&mut self.local_ops);
         let mut oplog = self.oplog.lock().unwrap();
+        let deps = take(&mut self.frontiers);
         let change = Change {
             ops,
-            deps: state.frontiers.clone(),
+            deps,
             id: oplog.next_id(state.peer),
             lamport: oplog.next_lamport(),
             timestamp: oplog.get_timestamp(),
         };
 
+        let last_id = change.id_last();
         if let Err(err) = oplog.import_local_change(change) {
             drop(state);
             drop(oplog);
             self.abort();
             return Err(err);
         }
-
-        state.commit_txn(take(&mut self.frontiers));
+        state.commit_txn(Frontiers::from_id(last_id));
         self.finished = true;
         Ok(())
     }

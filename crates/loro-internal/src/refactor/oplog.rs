@@ -3,8 +3,9 @@ pub(crate) mod dag;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use debug_log::debug_dbg;
 use fxhash::FxHashMap;
-use rle::RleVec;
+use rle::{HasLength, RleVec};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
@@ -12,7 +13,7 @@ use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
 use crate::id::{Counter, PeerID, ID};
-use crate::log_store::{decode_oplog, encode_oplog, encode_oplog_updates};
+use crate::log_store::{decode_oplog, encode_oplog};
 use crate::log_store::{ClientChanges, RemoteClientChanges};
 use crate::op::{RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
@@ -54,7 +55,7 @@ pub struct AppDagNode {
     peer: PeerID,
     cnt: Counter,
     lamport: Lamport,
-    parents: SmallVec<[ID; 2]>,
+    deps: Frontiers,
     vv: ImVersionVector,
     len: usize,
 }
@@ -108,7 +109,9 @@ impl OpLog {
         self.check_id_valid(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
             self.pending_changes.entry(id).or_default().push(change);
-            return Ok(());
+            return Err(LoroError::DecodeError(
+                format!("Missing dep {:?}", id).into_boxed_str(),
+            ));
         }
 
         self.dag.vv.extend_to_include_last_id(change.id_last());
@@ -116,6 +119,21 @@ impl OpLog {
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_included(change.id);
+        self.dag.frontiers.push(change.id_last());
+        let vv = self.dag.frontiers_to_im_vv(&change.deps);
+        let len = change.content_len();
+        self.dag
+            .map
+            .entry(change.id.peer)
+            .or_default()
+            .push(AppDagNode {
+                vv,
+                peer: change.id.peer,
+                cnt: change.id.counter,
+                lamport: change.lamport,
+                deps: change.deps.clone(),
+                len,
+            });
         self.changes.entry(change.id.peer).or_default().push(change);
         Ok(())
     }
@@ -173,10 +191,6 @@ impl OpLog {
         ID::new(peer, cnt)
     }
 
-    pub fn encode_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog_updates(self, vv)
-    }
-
     pub(crate) fn vv(&self) -> &VersionVector {
         &self.dag.vv
     }
@@ -185,12 +199,17 @@ impl OpLog {
         &self.dag.frontiers
     }
 
-    pub(crate) fn export_changes(&self, from: &VersionVector) -> RemoteClientChanges {
+    pub(crate) fn export_changes_from(&self, from: &VersionVector) -> RemoteClientChanges {
         let mut changes = RemoteClientChanges::default();
-        for (&peer, &cnt) in from.iter() {
+        for (&peer, &cnt) in self.vv().iter() {
+            let start_cnt = from.get(&peer).copied().unwrap_or(0);
+            if cnt <= start_cnt {
+                continue;
+            }
+
             let mut temp = Vec::new();
             if let Some(peer_changes) = self.changes.get(&peer) {
-                if let Some(result) = peer_changes.get_by_atom_index(cnt) {
+                if let Some(result) = peer_changes.get_by_atom_index(start_cnt) {
                     for change in &peer_changes.vec()[result.merged_index..] {
                         temp.push(self.convert_change_to_remote(change))
                     }
@@ -338,7 +357,7 @@ impl OpLog {
         to: &VersionVector,
     ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
         let frontiers = from.to_frontiers(&self.dag);
-        let diff = to.diff(from).right;
+        let diff = from.diff(to).right;
         let mut iter = self.dag.iter_causal(&frontiers, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;

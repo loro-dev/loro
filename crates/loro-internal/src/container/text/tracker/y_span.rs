@@ -34,6 +34,7 @@ pub struct Status {
     pub delete_times: u16,
 }
 
+#[derive(Debug)]
 pub enum StatusDiff {
     New,
     Delete,
