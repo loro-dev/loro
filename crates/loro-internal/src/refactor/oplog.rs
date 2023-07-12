@@ -32,7 +32,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     pub(crate) changes: ClientChanges,
-    pub(crate) latest_lamport: Lamport, //TODO use next lamport instead
+    pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
@@ -65,7 +65,7 @@ impl Clone for OpLog {
             dag: self.dag.clone(),
             arena: Default::default(),
             changes: self.changes.clone(),
-            latest_lamport: self.latest_lamport,
+            next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
         }
@@ -77,7 +77,7 @@ impl std::fmt::Debug for OpLog {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("changes", &self.changes)
-            .field("latest_lamport", &self.latest_lamport)
+            .field("next_lamport", &self.next_lamport)
             .field("latest_timestamp", &self.latest_timestamp)
             .finish()
     }
@@ -89,7 +89,7 @@ impl OpLog {
             dag: AppDag::default(),
             arena: Default::default(),
             changes: ClientChanges::default(),
-            latest_lamport: Lamport::default(),
+            next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
         }
@@ -114,7 +114,7 @@ impl OpLog {
         }
 
         self.dag.vv.extend_to_include_last_id(change.id_last());
-        self.latest_lamport = self.latest_lamport.max(change.lamport_last());
+        self.next_lamport = self.next_lamport.max(change.lamport_end());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_included(change.id);
@@ -182,7 +182,7 @@ impl OpLog {
     }
 
     pub fn next_lamport(&self) -> Lamport {
-        self.latest_lamport + 1
+        self.next_lamport
     }
 
     pub fn next_id(&self, peer: PeerID) -> ID {
