@@ -328,7 +328,9 @@ mod test {
             },
             ListOp::Delete(DeleteSpan::new(0, 3)),
         ];
-        let list_op_buf = vec![2, 0, 2, 0, 0, 1, 0, 6];
+        // let vec = postcard::to_allocvec(&list_op);
+        // dbg!(&vec);
+        let list_op_buf = vec![2, 0, 3, 0, 0, 1, 0, 6];
         assert_eq!(
             postcard::from_bytes::<Vec<ListOp>>(&list_op_buf).unwrap(),
             list_op
