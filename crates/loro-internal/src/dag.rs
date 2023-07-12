@@ -12,6 +12,7 @@ use std::{
     fmt::Debug,
 };
 
+use debug_log::debug_dbg;
 use fxhash::{FxHashMap, FxHashSet};
 use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};
@@ -352,6 +353,7 @@ where
     let mut b_count = b_ids.len();
     let mut min = None;
     while let Some((node, mut node_type)) = queue.pop() {
+        debug_dbg!(&node);
         match node_type {
             NodeType::A => a_count -= 1,
             NodeType::B => b_count -= 1,

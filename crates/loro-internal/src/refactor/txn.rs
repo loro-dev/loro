@@ -37,15 +37,19 @@ impl Transaction {
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer;
         let next_counter = state_lock.next_counter;
-        let next_lamport = state_lock.next_lamport;
+        let next_lamport = oplog
+            .lock()
+            .unwrap()
+            .dag
+            .frontiers_to_next_lamport(&frontiers);
         drop(state_lock);
         Self {
             peer,
-            next_lamport,
             next_counter,
             state,
             arena,
             oplog,
+            next_lamport,
             frontiers,
             local_ops: RleVec::new(),
             finished: false,
@@ -86,10 +90,10 @@ impl Transaction {
         let mut oplog = self.oplog.lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
+            lamport: self.next_lamport - ops.atom_len() as Lamport,
             ops,
             deps,
             id: oplog.next_id(state.peer),
-            lamport: self.next_lamport,
             timestamp: oplog.get_timestamp(),
         };
 
@@ -100,11 +104,7 @@ impl Transaction {
             self._abort();
             return Err(err);
         }
-        state.commit_txn(
-            Frontiers::from_id(last_id),
-            self.next_lamport,
-            self.next_counter,
-        );
+        state.commit_txn(Frontiers::from_id(last_id), self.next_counter);
         Ok(())
     }
 

@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use crate::change::Lamport;
 use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
-use crate::span::{HasId, HasLamport};
+use crate::span::{HasId, HasLamport, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
@@ -159,5 +159,26 @@ impl AppDag {
     #[inline(always)]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         vv.to_frontiers(self)
+    }
+
+    pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {
+        if frontiers.is_empty() {
+            return 0;
+        }
+
+        let mut lamport = {
+            let id = frontiers[0];
+            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            x.element.lamport_end()
+        };
+
+        for id in frontiers[1..].iter() {
+            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            lamport = lamport.max(x.element.lamport_end());
+        }
+
+        lamport
     }
 }

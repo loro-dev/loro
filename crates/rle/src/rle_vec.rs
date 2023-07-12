@@ -413,7 +413,7 @@ where
     pub fn atom_len(&self) -> <A::Item as HasIndex>::Int {
         self.vec
             .last()
-            .map(|x| x.get_end_index())
+            .map(|x| x.get_end_index() - self.vec.first().unwrap().get_start_index())
             .unwrap_or(<A::Item as HasIndex>::Int::from_usize(0).unwrap())
     }
 }

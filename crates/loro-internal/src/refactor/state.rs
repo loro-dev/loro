@@ -1,4 +1,3 @@
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -28,7 +27,6 @@ use super::{arena::SharedArena, oplog::OpLog};
 #[derive(Clone)]
 pub struct AppState {
     pub(super) peer: PeerID,
-    pub(super) next_lamport: Lamport,
     pub(super) next_counter: Counter,
 
     pub(super) frontiers: Frontiers,
@@ -96,7 +94,6 @@ impl AppState {
         Self {
             peer,
             next_counter: 0,
-            next_lamport: oplog.latest_lamport + 1,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
             arena: oplog.arena.clone(),
@@ -135,7 +132,6 @@ impl AppState {
             state.apply_diff(&diff.diff, &self.arena);
         }
 
-        self.next_lamport = next_lamport.max(self.next_lamport);
         self.frontiers = frontiers.clone();
     }
 
@@ -165,13 +161,7 @@ impl AppState {
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(
-        &mut self,
-        new_frontiers: Frontiers,
-        next_lamport: Lamport,
-        next_counter: Counter,
-    ) {
-        debug_dbg!(&self.next_lamport, next_lamport);
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, next_counter: Counter) {
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
@@ -179,7 +169,6 @@ impl AppState {
         self.in_txn = false;
         self.frontiers = new_frontiers;
         self.next_counter = next_counter;
-        self.next_lamport = next_lamport;
     }
 
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {

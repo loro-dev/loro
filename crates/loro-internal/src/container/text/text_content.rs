@@ -217,7 +217,7 @@ mod test {
             ListSlice::RawStr("".into()),
             ListSlice::Unknown(0),
         ];
-        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 2, 0];
+        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 3, 0];
         assert_eq!(
             postcard::from_bytes::<Vec<ListSlice>>(&list_slice_buf).unwrap(),
             list_slice

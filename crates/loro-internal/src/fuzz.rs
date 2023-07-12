@@ -938,6 +938,36 @@ mod test {
     }
 
     #[test]
+    fn fuzz_r1() {
+        test_multi_sites_refactored(
+            8,
+            &mut [
+                Ins {
+                    content: 3871,
+                    pos: 20971570,
+                    site: 0,
+                },
+                Sync { from: 0, to: 31 },
+                Ins {
+                    content: 0,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 58502001197056,
+                    site: 0,
+                },
+                Ins {
+                    content: 13599,
+                    pos: 36261893487333151,
+                    site: 31,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn fuzz_r() {
         test_multi_sites_refactored(
             8,
