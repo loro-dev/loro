@@ -181,4 +181,8 @@ impl AppDag {
 
         lamport
     }
+
+    pub fn get_frontiers(&self) -> &Frontiers {
+        &self.frontiers
+    }
 }

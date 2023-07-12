@@ -11,6 +11,7 @@ use crate::{
     op::RichOp,
     span::{HasId, HasLamport},
     text::tracker::Tracker,
+    version::Frontiers,
     InternalString, VersionVector,
 };
 
@@ -36,15 +37,27 @@ impl DiffCalculator {
         }
     }
 
-    pub(crate) fn calc(
+    pub fn calc_diff(
         &mut self,
         oplog: &super::oplog::OpLog,
         before: &crate::VersionVector,
         after: &crate::VersionVector,
     ) -> Vec<ContainerStateDiff> {
+        self.calc_diff_internal(oplog, before, None, after, None)
+    }
+
+    pub(crate) fn calc_diff_internal(
+        &mut self,
+        oplog: &super::oplog::OpLog,
+        before: &crate::VersionVector,
+        before_frontiers: Option<&Frontiers>,
+        after: &crate::VersionVector,
+        after_frontiers: Option<&Frontiers>,
+    ) -> Vec<ContainerStateDiff> {
         let mut diffs = Vec::new();
         let arena = &oplog.arena;
-        let (lca, iter) = oplog.iter_from_lca_causally(before, after);
+        let (lca, iter) =
+            oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
         for (change, vv) in iter {
             for op in change.ops.iter() {
                 let container_id = arena.get_container_id(op.container).unwrap();

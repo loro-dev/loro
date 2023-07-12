@@ -55,7 +55,13 @@ impl LoroApp {
         let oplog = self.oplog.lock().unwrap();
         let state_vv = oplog.dag.frontiers_to_vv(&state.frontiers);
         let mut diff = DiffCalculator::new();
-        let diff = diff.calc(&oplog, &state_vv, oplog.vv());
+        let diff = diff.calc_diff_internal(
+            &oplog,
+            &state_vv,
+            Some(&state.frontiers),
+            oplog.vv(),
+            Some(oplog.frontiers()),
+        );
         state.apply_diff(AppStateDiff {
             diff: &diff,
             frontiers: oplog.frontiers(),
@@ -88,9 +94,16 @@ impl LoroApp {
         debug_log::group!("import");
         let mut oplog = self.oplog.lock().unwrap();
         let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
         oplog.decode(bytes)?;
         let mut diff = DiffCalculator::new();
-        let diff = diff.calc(&oplog, &old_vv, oplog.vv());
+        let diff = diff.calc_diff_internal(
+            &oplog,
+            &old_vv,
+            Some(&old_frontiers),
+            oplog.vv(),
+            Some(oplog.dag.get_frontiers()),
+        );
         if !self.detached {
             let mut state = self.state.lock().unwrap();
             state.apply_diff(AppStateDiff {

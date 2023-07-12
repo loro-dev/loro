@@ -361,32 +361,54 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
-    /// iterates over all changes between LCA(common ancestors) to `to` causally
+    /// iterates over all changes between LCA(common ancestors) to the merged version of (`from` and `to`) causally
     ///
-    /// This method assumes to > from
+    /// Tht iterator will include a version vector when the change is applied
     ///
-    /// it will include a version vector when the change is applied
-    // TODO: refactor
+    /// returns: (common_ancestor_vv, iterator)
+    ///
+    /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
     pub(crate) fn iter_from_lca_causally(
         &self,
         from: &VersionVector,
+        from_frontiers: Option<&Frontiers>,
         to: &VersionVector,
+        to_frontiers: Option<&Frontiers>,
     ) -> (
         VersionVector,
         impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)>,
     ) {
         debug_log::group!("iter_from_lca_causally");
-        let from_frontiers = from.to_frontiers(&self.dag);
-        let to_frontiers = to.to_frontiers(&self.dag);
-        let common_ancestors = self
-            .dag
-            .find_common_ancestor(&from_frontiers, &to_frontiers);
+        let mut merged_vv = from.clone();
+        merged_vv.merge(to);
+        let from_frontiers_inner;
+        let to_frontiers_inner;
+
+        let from_frontiers = match from_frontiers {
+            Some(f) => f,
+            None => {
+                from_frontiers_inner = Some(from.to_frontiers(&self.dag));
+                from_frontiers_inner.as_ref().unwrap()
+            }
+        };
+
+        let to_frontiers = match to_frontiers {
+            Some(t) => t,
+            None => {
+                to_frontiers_inner = Some(to.to_frontiers(&self.dag));
+                to_frontiers_inner.as_ref().unwrap()
+            }
+        };
+
+        let common_ancestors = self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
-        let diff = common_ancestors_vv.diff(to).right;
+        // go from lca to merged_vv
+        let diff = common_ancestors_vv.diff(&merged_vv).right;
         let mut iter = self.dag.iter_causal(&common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
-        let vv = Rc::new(RefCell::new(VersionVector::default()));
+        // reuse the allocated memory in merged_vv...
+        let vv = Rc::new(RefCell::new(merged_vv));
         (
             common_ancestors_vv,
             std::iter::from_fn(move || {
