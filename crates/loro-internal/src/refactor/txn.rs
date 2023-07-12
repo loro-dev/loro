@@ -21,12 +21,12 @@ pub struct Transaction {
     peer: PeerID,
     next_counter: Counter,
     next_lamport: Lamport,
-    finished: bool,
     state: Arc<Mutex<AppState>>,
     oplog: Arc<Mutex<OpLog>>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>,
     arena: SharedArena,
+    finished: bool,
 }
 
 impl Transaction {
@@ -47,22 +47,30 @@ impl Transaction {
             arena,
             oplog,
             frontiers,
-            finished: false,
             local_ops: RleVec::new(),
+            finished: false,
         }
     }
 
-    pub fn abort(&mut self) {
-        self.state.lock().unwrap().abort_txn();
-        self.local_ops.clear();
-        self.finished = true;
+    pub fn abort(mut self) {
+        self._abort();
     }
 
-    pub fn commit(&mut self) -> Result<(), LoroError> {
+    fn _abort(&mut self) {
+        self.finished = true;
+        self.state.lock().unwrap().abort_txn();
+        self.local_ops.clear();
+    }
+
+    pub fn commit(mut self) -> Result<(), LoroError> {
+        self._commit()
+    }
+
+    fn _commit(&mut self) -> Result<(), LoroError> {
+        self.finished = true;
         let mut state = self.state.lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
-            self.finished = true;
             return Ok(());
         }
 
@@ -81,7 +89,7 @@ impl Transaction {
         if let Err(err) = oplog.import_local_change(change) {
             drop(state);
             drop(oplog);
-            self.abort();
+            self._abort();
             return Err(err);
         }
         state.commit_txn(
@@ -89,7 +97,6 @@ impl Transaction {
             self.next_lamport,
             self.next_counter,
         );
-        self.finished = true;
         Ok(())
     }
 
@@ -145,7 +152,7 @@ impl Drop for Transaction {
         if !self.finished {
             // TODO: should we abort here or commit here?
             // what if commit fails?
-            self.commit().unwrap_or_default();
+            self._commit().unwrap_or_default();
         }
     }
 }
