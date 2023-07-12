@@ -59,6 +59,7 @@ impl LoroApp {
         state.apply_diff(AppStateDiff {
             diff: &diff,
             frontiers: oplog.frontiers(),
+            next_lamport: oplog.latest_lamport + 1,
         });
     }
 
@@ -95,6 +96,7 @@ impl LoroApp {
             state.apply_diff(AppStateDiff {
                 diff: &diff,
                 frontiers: oplog.frontiers(),
+                next_lamport: oplog.latest_lamport + 1,
             });
         }
 

@@ -720,11 +720,11 @@ pub(super) fn decode_changes_to_inner_format(
 pub(crate) fn get_lamport_by_deps_oplog(
     deps: &Frontiers,
     lamport_map: &FxHashMap<PeerID, Vec<(Range<Counter>, Lamport)>>,
-    store: Option<&OpLog>,
+    oplog: Option<&OpLog>,
 ) -> Result<Lamport, PeerID> {
     let mut ans = Vec::new();
     for id in deps.iter() {
-        if let Some(c) = store.and_then(|x| x.lookup_change(*id)) {
+        if let Some(c) = oplog.and_then(|x| x.lookup_change(*id)) {
             let offset = id.counter - c.id.counter;
             ans.push(c.lamport + offset as u32);
         } else if let Some(v) = lamport_map.get(&id.peer) {

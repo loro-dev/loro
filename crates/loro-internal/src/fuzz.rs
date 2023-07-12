@@ -552,7 +552,9 @@ pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
         sites.preprocess(action);
         applied.push(action.clone());
         debug_log!("\n{}", (&applied).table());
+        debug_log::group!("ApplyAction {:?}", &action);
         sites.apply_action(action);
+        debug_log::group_end!();
     }
 
     debug_log::group!("CheckSynced");
@@ -941,20 +943,250 @@ mod test {
             8,
             &mut [
                 Ins {
-                    content: 9728,
+                    content: 5225,
                     pos: 0,
-                    site: 57,
+                    site: 4,
                 },
                 Ins {
-                    content: 205,
+                    content: 53,
+                    pos: 4,
+                    site: 4,
+                },
+                Ins {
+                    content: 10284,
                     pos: 0,
-                    site: 37,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 8234,
+                    pos: 0,
+                    site: 6,
+                },
+                Ins {
+                    content: 7710,
+                    pos: 1,
+                    site: 6,
+                },
+                Ins {
+                    content: 0,
+                    pos: 7,
+                    site: 2,
+                },
+                Ins {
+                    content: 127,
+                    pos: 0,
+                    site: 7,
+                },
+                Ins {
+                    content: 2560,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 4,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 1,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 30,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 29,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 4,
+                    site: 6,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 4626,
+                    pos: 2,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 54826,
+                    pos: 0,
+                    site: 0,
+                },
+                Ins {
+                    content: 12800,
+                    pos: 9,
+                    site: 6,
+                },
+                Ins {
+                    content: 3598,
+                    pos: 0,
+                    site: 4,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 2,
+                    site: 4,
+                },
+                Ins {
+                    content: 10284,
+                    pos: 3,
+                    site: 4,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 10,
+                    site: 4,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 24,
+                    site: 4,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 28,
+                    site: 4,
+                },
+                Ins {
+                    content: 11312,
+                    pos: 16,
+                    site: 4,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 5,
+                    site: 4,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 9,
+                    site: 2,
+                },
+                Ins {
+                    content: 12800,
+                    pos: 0,
+                    site: 5,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 21,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 34,
+                    site: 2,
+                },
+                Ins {
+                    content: 12850,
+                    pos: 10,
+                    site: 2,
+                },
+                Ins {
+                    content: 12850,
+                    pos: 0,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 21,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 56,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 2,
+                    site: 6,
+                },
+                Ins {
+                    content: 7710,
+                    pos: 2,
+                    site: 6,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 27,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 70,
+                    site: 2,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 69,
+                    site: 2,
                 },
                 SyncAll,
                 Ins {
-                    content: 52487,
-                    pos: 5,
-                    site: 54,
+                    content: 0,
+                    pos: 184,
+                    site: 0,
+                },
+                Del {
+                    pos: 18,
+                    len: 191,
+                    site: 0,
+                },
+                Del {
+                    pos: 4,
+                    len: 204,
+                    site: 4,
+                },
+                Del {
+                    pos: 90,
+                    len: 118,
+                    site: 5,
                 },
             ],
         );
@@ -962,7 +1194,7 @@ mod test {
 
     #[test]
     fn mini_r() {
-        minify_error(2, vec![], test_multi_sites_refactored, normalize)
+        minify_error(8, vec![], test_multi_sites_refactored, normalize)
     }
 
     #[test]

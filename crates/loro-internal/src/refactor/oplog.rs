@@ -220,6 +220,8 @@ impl OpLog {
             }
         }
 
+        debug_dbg!(&changes);
+
         changes
     }
 
@@ -326,17 +328,29 @@ impl OpLog {
 
         // TODO: Perf
         change_causal_arr.sort_by_key(|x| x.lamport);
+        debug_dbg!(&change_causal_arr);
         for change in change_causal_arr {
+            debug_dbg!(&change);
             self.import_local_change(change)?;
         }
 
         Ok(())
     }
 
+    /// lookup change by id.
+    ///
+    /// if id does not included in this oplog, return None
     pub(crate) fn lookup_change(&self, id: ID) -> Option<&Change> {
-        self.changes
-            .get(&id.peer)
-            .and_then(|x| x.get_by_atom_index(id.counter).map(|x| x.element))
+        self.changes.get(&id.peer).and_then(|changes| {
+            // Because get_by_atom_index would return Some if counter is at the end,
+            // we cannot use it directly.
+            // TODO: maybe we should refactor this
+            if id.counter <= changes.last().unwrap().id_last().counter {
+                Some(changes.get_by_atom_index(id.counter).unwrap().element)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {

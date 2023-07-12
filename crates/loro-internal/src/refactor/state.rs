@@ -1,3 +1,4 @@
+use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -85,6 +86,7 @@ pub struct ContainerStateDiff {
 pub struct AppStateDiff<'a> {
     pub(crate) diff: &'a [ContainerStateDiff],
     pub(crate) frontiers: &'a Frontiers,
+    pub(crate) next_lamport: Lamport,
 }
 
 impl AppState {
@@ -107,7 +109,18 @@ impl AppState {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, AppStateDiff { diff, frontiers }: AppStateDiff) {
+    pub fn apply_diff(
+        &mut self,
+        AppStateDiff {
+            diff,
+            frontiers,
+            next_lamport,
+        }: AppStateDiff,
+    ) {
+        if self.in_txn {
+            panic!("apply_diff should not be called in a transaction");
+        }
+
         for diff in diff {
             let state = self.states.entry(diff.idx).or_insert_with(|| {
                 let id = self.arena.get_container_id(diff.idx).unwrap();
@@ -122,6 +135,7 @@ impl AppState {
             state.apply_diff(&diff.diff, &self.arena);
         }
 
+        self.next_lamport = next_lamport.max(self.next_lamport);
         self.frontiers = frontiers.clone();
     }
 
@@ -157,6 +171,7 @@ impl AppState {
         next_lamport: Lamport,
         next_counter: Counter,
     ) {
+        debug_dbg!(&self.next_lamport, next_lamport);
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }

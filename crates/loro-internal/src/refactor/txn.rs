@@ -57,6 +57,10 @@ impl Transaction {
     }
 
     fn _abort(&mut self) {
+        if self.finished {
+            return;
+        }
+
         self.finished = true;
         self.state.lock().unwrap().abort_txn();
         self.local_ops.clear();
@@ -67,6 +71,10 @@ impl Transaction {
     }
 
     fn _commit(&mut self) -> Result<(), LoroError> {
+        if self.finished {
+            return Ok(());
+        }
+
         self.finished = true;
         let mut state = self.state.lock().unwrap();
         if self.local_ops.is_empty() {
@@ -81,7 +89,7 @@ impl Transaction {
             ops,
             deps,
             id: oplog.next_id(state.peer),
-            lamport: oplog.next_lamport(),
+            lamport: self.next_lamport,
             timestamp: oplog.get_timestamp(),
         };
 

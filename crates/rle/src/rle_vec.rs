@@ -325,8 +325,9 @@ where
     }
 
     /// Get the element at the given atom index.
+    ///
     /// If the index is larger than the end index, return None.
-    /// return: (element, merged_index, offset)
+    /// Otherwise, return: Some((element, merged_index, offset))
     pub fn get_by_atom_index(
         &self,
         index: <A::Item as HasIndex>::Int,
