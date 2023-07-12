@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rle::RleVec;
+use rle::{HasLength, RleVec};
 
 use crate::{
     change::{Change, Lamport},
@@ -60,6 +60,12 @@ impl Transaction {
 
     pub fn commit(&mut self) -> Result<(), LoroError> {
         let mut state = self.state.lock().unwrap();
+        if self.local_ops.is_empty() {
+            state.abort_txn();
+            self.finished = true;
+            return Ok(());
+        }
+
         let ops = std::mem::take(&mut self.local_ops);
         let mut oplog = self.oplog.lock().unwrap();
         let deps = take(&mut self.frontiers);
@@ -78,12 +84,17 @@ impl Transaction {
             self.abort();
             return Err(err);
         }
-        state.commit_txn(Frontiers::from_id(last_id));
+        state.commit_txn(
+            Frontiers::from_id(last_id),
+            self.next_lamport,
+            self.next_counter,
+        );
         self.finished = true;
         Ok(())
     }
 
     pub fn apply_local_op(&mut self, container: ContainerIdx, content: RawOpContent) {
+        let len = content.content_len();
         let op = RawOp {
             id: ID {
                 peer: self.peer,
@@ -96,8 +107,8 @@ impl Transaction {
         self.push_local_op_to_log(&op);
         let mut state = self.state.lock().unwrap();
         state.apply_local_op(op);
-        self.next_counter += 1;
-        self.next_lamport += 1;
+        self.next_counter += len as Counter;
+        self.next_lamport += len as Lamport;
     }
 
     fn push_local_op_to_log(&mut self, op: &RawOp) {
@@ -107,7 +118,7 @@ impl Transaction {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<Text> {
+    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<Text> {
         let id: ContainerIdRaw = id.into();
         let idx = match id {
             ContainerIdRaw::Root { name } => Some(self.arena.register_container(

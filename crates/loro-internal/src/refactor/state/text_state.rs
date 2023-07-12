@@ -14,14 +14,14 @@ use crate::{
 use super::ContainerState;
 
 #[derive(Default)]
-pub struct Text {
+pub struct TextState {
     pub(crate) rope: JumpRope,
     in_txn: bool,
     deleted_bytes: Vec<u8>,
     undo_stack: Vec<UndoItem>,
 }
 
-impl Clone for Text {
+impl Clone for TextState {
     fn clone(&self) -> Self {
         Self {
             rope: self.rope.clone(),
@@ -44,7 +44,7 @@ enum UndoItem {
     },
 }
 
-impl ContainerState for Text {
+impl ContainerState for TextState {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
         match diff {
             Diff::SeqRaw(delta) => {
@@ -150,7 +150,7 @@ impl ContainerState for Text {
     }
 }
 
-impl Text {
+impl TextState {
     pub fn new() -> Self {
         Self {
             rope: JumpRope::new(),
@@ -207,8 +207,21 @@ impl Text {
         });
     }
 
-    fn len(&self) -> usize {
+    pub fn len_wchars(&self) -> usize {
+        self.rope.len_wchars()
+    }
+
+    pub fn len_chars(&self) -> usize {
+        self.rope.len_chars()
+    }
+
+    pub fn len(&self) -> usize {
         self.rope.len_bytes()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -218,7 +231,7 @@ mod test {
 
     #[test]
     fn abort_txn() {
-        let mut state = Text::new();
+        let mut state = TextState::new();
         state.insert(0, "haha");
         state.start_txn();
         state.insert(4, "1234");

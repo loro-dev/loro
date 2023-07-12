@@ -71,3 +71,9 @@ name = "unicode"
 path = "fuzz_targets/unicode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "text_refactored"
+path = "fuzz_targets/text_refactored.rs"
+test = false
+doc = false

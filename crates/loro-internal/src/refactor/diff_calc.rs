@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use debug_log::{debug_dbg, debug_log};
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -45,7 +44,8 @@ impl DiffCalculator {
     ) -> Vec<ContainerStateDiff> {
         let mut diffs = Vec::new();
         let arena = &oplog.arena;
-        for (change, vv) in oplog.iter_causal(before, after) {
+        let (lca, iter) = oplog.iter_from_lca_causally(before, after);
+        for (change, vv) in iter {
             for op in change.ops.iter() {
                 let container_id = arena.get_container_id(op.container).unwrap();
                 let calculator = self.calculators.entry(op.container).or_insert_with(|| {
@@ -60,7 +60,7 @@ impl DiffCalculator {
                             ContainerDiffCalculator::List(ListDiffCalculator::default())
                         }
                     };
-                    new.start_tracking(oplog, before);
+                    new.start_tracking(oplog, &lca);
                     new
                 });
 

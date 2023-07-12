@@ -6,7 +6,9 @@ use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
 pub mod recursive_txn;
 
-use crate::{array_mut_ref, id::PeerID, LoroCore, Transact, VersionVector};
+use crate::{
+    array_mut_ref, id::PeerID, refactor::loro::LoroApp, LoroCore, Transact, VersionVector,
+};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -203,6 +205,70 @@ impl Actionable for Vec<LoroCore> {
     }
 }
 
+impl Actionable for Vec<LoroApp> {
+    fn apply_action(&mut self, action: &Action) {
+        match action {
+            Action::Ins { content, pos, site } => {
+                let site = &mut self[*site as usize];
+                let mut txn = site.txn().unwrap();
+                let text = txn.get_text("text").unwrap();
+                text.insert(&mut txn, *pos, &content.to_string());
+            }
+            Action::Del { pos, len, site } => {
+                let site = &mut self[*site as usize];
+                let mut txn = site.txn().unwrap();
+                let text = txn.get_text("text").unwrap();
+                text.delete(&mut txn, *pos, *len);
+            }
+            Action::Sync { from, to } => {
+                if from != to {
+                    let (from, to) = arref::array_mut_ref!(self, [*from as usize, *to as usize]);
+                    let to_vv = to.vv_cloned();
+                    to.import(&from.export_from(&to_vv)).unwrap();
+                }
+            }
+            Action::SyncAll => {
+                for i in 1..self.len() {
+                    let (a, b) = array_mut_ref!(self, [0, i]);
+                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                }
+                for i in 1..self.len() {
+                    let (a, b) = array_mut_ref!(self, [0, i]);
+                    b.import(&a.export_from(&b.vv_cloned())).unwrap();
+                }
+            }
+        }
+    }
+
+    fn preprocess(&mut self, action: &mut Action) {
+        match action {
+            Action::Ins { pos, site, .. } => {
+                *site %= self.len() as u8;
+                let app_state = &mut self[*site as usize].app_state().lock().unwrap();
+                let text = app_state.get_text("text").unwrap();
+                change_pos_to_char_boundary(pos, text.len());
+            }
+            Action::Del { pos, len, site } => {
+                *site %= self.len() as u8;
+                let app_state = &mut self[*site as usize].app_state().lock().unwrap();
+                let text = app_state.get_text("text").unwrap();
+                if text.is_empty() {
+                    *len = 0;
+                    *pos = 0;
+                    return;
+                }
+
+                change_delete_to_char_boundary(pos, len, text.len());
+            }
+            Action::Sync { from, to } => {
+                *from %= self.len() as u8;
+                *to %= self.len() as u8;
+            }
+            Action::SyncAll => {}
+        }
+    }
+}
+
 pub fn change_delete_to_char_boundary(pos: &mut usize, len: &mut usize, str_len: usize) {
     *pos %= str_len + 1;
     *len = (*len).min(str_len - (*pos));
@@ -239,6 +305,37 @@ fn check_synced(sites: &mut [LoroCore]) {
             debug_log::group_end!();
         }
     }
+}
+
+fn check_synced_refactored(sites: &mut [LoroApp]) {
+    for i in 0..sites.len() - 1 {
+        for j in i + 1..sites.len() {
+            debug_log::group!("checking {} with {}", i, j);
+            let (a, b) = array_mut_ref!(sites, [i, j]);
+            {
+                debug_log::group!("Import {}", i);
+                a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                debug_log::group_end!();
+            }
+            {
+                debug_log::group!("Import {}", j);
+                b.import(&a.export_from(&b.vv_cloned())).unwrap();
+                debug_log::group_end!();
+            }
+            check_eq_refactored(a, b);
+            debug_log::group_end!();
+        }
+    }
+}
+
+fn check_eq_refactored(site_a: &mut LoroApp, site_b: &mut LoroApp) {
+    let a = site_a.txn().unwrap();
+    let text_a = a.get_text("text").unwrap();
+    let b = site_b.txn().unwrap();
+    let text_b = b.get_text("text").unwrap();
+    let value_a = text_a.get_value(&a);
+    let value_b = text_b.get_value(&b);
+    assert_eq!(value_a, value_b);
 }
 
 pub fn test_single_client(mut actions: Vec<Action>) {
@@ -440,6 +537,28 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 
     println!("{}", applied.clone().table());
     applied
+}
+
+pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        let loro = LoroApp::new();
+        loro.set_peer_id(i as u64);
+        sites.push(loro);
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        debug_log!("\n{}", (&applied).table());
+        sites.apply_action(action);
+    }
+
+    debug_log::group!("CheckSynced");
+    // println!("{}", actions.table());
+    check_synced_refactored(&mut sites);
+    debug_log::group_end!();
 }
 
 pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
@@ -814,6 +933,36 @@ mod test {
                 },
             ],
         )
+    }
+
+    #[test]
+    fn fuzz_r() {
+        test_multi_sites_refactored(
+            8,
+            &mut [
+                Ins {
+                    content: 9728,
+                    pos: 0,
+                    site: 57,
+                },
+                Ins {
+                    content: 205,
+                    pos: 0,
+                    site: 37,
+                },
+                SyncAll,
+                Ins {
+                    content: 52487,
+                    pos: 5,
+                    site: 54,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn mini_r() {
+        minify_error(2, vec![], test_multi_sites_refactored, normalize)
     }
 
     #[test]

@@ -1,4 +1,3 @@
-use debug_log::debug_dbg;
 use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
@@ -383,6 +382,10 @@ impl Tracker {
         let text_content = content.as_list().expect("Content is not for list");
         match text_content {
             InnerListOp::Insert { slice, pos } => {
+                if *pos > self.len() {
+                    panic!("pos is out of range (pos={}, len={})", pos, self.len());
+                }
+
                 let yspan =
                     self.content
                         .get_yspan_at_pos(id, *pos, slice.content_len(), slice.clone());
@@ -391,6 +394,10 @@ impl Tracker {
                 });
             }
             InnerListOp::Delete(span) => {
+                if span.end() as usize > self.len() {
+                    panic!("pos is out of range");
+                }
+
                 let mut spans = self
                     .content
                     .get_active_id_spans(span.start() as usize, span.atom_len());

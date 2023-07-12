@@ -6,7 +6,6 @@ use std::rc::Rc;
 use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec};
-use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
@@ -33,7 +32,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     pub(crate) changes: ClientChanges,
-    pub(crate) latest_lamport: Lamport,
+    pub(crate) latest_lamport: Lamport, //TODO use next lamport instead
     pub(crate) latest_timestamp: Timestamp,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
@@ -348,47 +347,64 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
-    /// iterates over all changes that are causally after `from` and before `to`
+    /// iterates over all changes between LCA(common ancestors) to `to` causally
+    ///
+    /// This method assumes to > from
     ///
     /// it will include a version vector when the change is applied
-    pub(crate) fn iter_causal(
+    // TODO: refactor
+    pub(crate) fn iter_from_lca_causally(
         &self,
         from: &VersionVector,
         to: &VersionVector,
-    ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
-        let frontiers = from.to_frontiers(&self.dag);
-        let diff = from.diff(to).right;
-        let mut iter = self.dag.iter_causal(&frontiers, diff);
+    ) -> (
+        VersionVector,
+        impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)>,
+    ) {
+        debug_log::group!("iter_from_lca_causally");
+        let from_frontiers = from.to_frontiers(&self.dag);
+        let to_frontiers = to.to_frontiers(&self.dag);
+        let common_ancestors = self
+            .dag
+            .find_common_ancestor(&from_frontiers, &to_frontiers);
+        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
+        let diff = common_ancestors_vv.diff(to).right;
+        let mut iter = self.dag.iter_causal(&common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
         let vv = Rc::new(RefCell::new(VersionVector::default()));
-        std::iter::from_fn(move || {
-            if let Some(inner) = &node {
-                let mut inner_vv = vv.borrow_mut();
-                inner_vv.clear();
-                inner_vv.extend_to_include_vv(inner.data.vv.iter());
-                let peer = inner.data.peer;
-                let cnt = inner.data.cnt.max(cur_cnt);
-                let end = inner.data.cnt + inner.data.len as Counter;
-                let change = self
-                    .changes
-                    .get(&peer)
-                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
-                    .unwrap();
+        (
+            common_ancestors_vv,
+            std::iter::from_fn(move || {
+                if let Some(inner) = &node {
+                    let mut inner_vv = vv.borrow_mut();
+                    inner_vv.clear();
+                    inner_vv.extend_to_include_vv(inner.data.vv.iter());
+                    let peer = inner.data.peer;
+                    let cnt = inner.data.cnt.max(cur_cnt);
+                    let end = inner.data.cnt + inner.data.len as Counter;
+                    let change = self
+                        .changes
+                        .get(&peer)
+                        .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
+                        .unwrap();
 
-                if change.ctr_end() < end {
-                    cur_cnt = change.ctr_end();
+                    if change.ctr_end() < end {
+                        cur_cnt = change.ctr_end();
+                    } else {
+                        node = iter.next();
+                        cur_cnt = 0;
+                    }
+
+                    inner_vv.extend_to_include_end_id(change.id);
+                    // debug_log::debug_dbg!(&change, &inner_vv);
+                    Some((change, vv.clone()))
                 } else {
-                    node = iter.next();
-                    cur_cnt = 0;
+                    debug_log::group_end!();
+                    None
                 }
-
-                inner_vv.extend_to_include_end_id(change.id);
-                Some((change, vv.clone()))
-            } else {
-                None
-            }
-        })
+            }),
+        )
     }
 }
 

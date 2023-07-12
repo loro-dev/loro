@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     container::{
@@ -23,6 +23,10 @@ impl From<ContainerIdx> for Text {
 
 impl Text {
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
@@ -33,6 +37,10 @@ impl Text {
     }
 
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
@@ -43,13 +51,16 @@ impl Text {
     }
 
     pub fn get_value(&self, txn: &Transaction) -> LoroValue {
-        txn.get_value_by_idx(self.container_idx)
+        LoroValue::String(
+            txn.get_value_by_idx(self.container_idx)
+                .into_string()
+                .unwrap_or_else(|_| Arc::new(String::new())),
+        )
     }
 }
 
 #[cfg(test)]
 mod test {
-    use debug_log::debug_dbg;
 
     use crate::refactor::loro::LoroApp;
 
@@ -92,7 +103,7 @@ mod test {
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
-        let mut txn = loro.txn().unwrap();
+        let txn = loro.txn().unwrap();
         let text = txn.get_text("hello").unwrap();
         assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello world");
     }

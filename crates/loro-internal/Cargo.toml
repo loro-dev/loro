@@ -33,7 +33,7 @@ append-only-bytes = { version = "0.1.8", features = ["u32_range", "serde"] }
 itertools = "0.10.5"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
-jumprope = "1.1.2"
+jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
 generic-btree = "0.3.1"
 
 [dev-dependencies]

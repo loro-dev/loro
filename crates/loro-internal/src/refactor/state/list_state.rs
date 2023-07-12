@@ -19,14 +19,14 @@ use super::ContainerState;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
-pub struct List {
+pub struct ListState {
     list: BTree<ListImpl>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
     child_container_to_leaf: Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>,
 }
 
-impl Clone for List {
+impl Clone for ListState {
     fn clone(&self) -> Self {
         Self {
             list: self.list.clone(),
@@ -104,7 +104,7 @@ impl UseLengthFinder<ListImpl> for ListImpl {
     }
 }
 
-impl List {
+impl ListState {
     pub fn new() -> Self {
         let mut tree = BTree::new();
         let mapping: ContainerMapping = Arc::new(Mutex::new(Default::default()));
@@ -215,7 +215,13 @@ impl List {
     }
 }
 
-impl ContainerState for List {
+impl Default for ListState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ContainerState for ListState {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
         match diff {
             Diff::List(delta) => {
@@ -325,7 +331,7 @@ mod test {
 
     #[test]
     fn test() {
-        let mut list = List::new();
+        let mut list = ListState::new();
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }

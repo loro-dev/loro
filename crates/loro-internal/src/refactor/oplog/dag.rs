@@ -141,12 +141,14 @@ impl AppDag {
             let id = frontiers[0];
             let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
             let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
-            x.element.vv.clone()
+            let mut vv = x.element.vv.clone();
+            vv.extend_to_include_last_id(id);
+            vv
         };
 
         for id in frontiers[1..].iter() {
-            let Some(rle) = self.map.get(&id.peer) else { continue };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { continue };
+            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
             vv.extend_to_include_vv(x.element.vv.iter());
             vv.extend_to_include_last_id(*id);
         }

@@ -1,7 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use debug_log::debug_dbg;
-
 use crate::{id::PeerID, LoroError, VersionVector};
 
 use super::{
@@ -106,6 +104,10 @@ impl LoroApp {
 
     pub fn encode_snapshot(&self) -> Vec<u8> {
         unimplemented!();
+    }
+
+    pub(crate) fn vv_cloned(&self) -> VersionVector {
+        self.oplog.lock().unwrap().vv().clone()
     }
 }
 
