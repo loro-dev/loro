@@ -4,7 +4,6 @@ use fxhash::{FxHashMap, FxHashSet};
 use ring::rand::SystemRandom;
 
 use crate::{
-    change::Lamport,
     configure::SecureRandomGenerator,
     container::{registry::ContainerIdx, ContainerIdRaw},
     event::Diff,
@@ -84,7 +83,6 @@ pub struct ContainerStateDiff {
 pub struct AppStateDiff<'a> {
     pub(crate) diff: &'a [ContainerStateDiff],
     pub(crate) frontiers: &'a Frontiers,
-    pub(crate) next_lamport: Lamport,
 }
 
 impl AppState {
@@ -106,14 +104,7 @@ impl AppState {
         self.peer = peer;
     }
 
-    pub fn apply_diff(
-        &mut self,
-        AppStateDiff {
-            diff,
-            frontiers,
-            next_lamport,
-        }: AppStateDiff,
-    ) {
+    pub fn apply_diff(&mut self, AppStateDiff { diff, frontiers }: AppStateDiff) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
