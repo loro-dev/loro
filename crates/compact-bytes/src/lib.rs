@@ -5,21 +5,15 @@ use fxhash::FxHasher32;
 use std::{hash::Hasher, num::NonZeroU32, ops::Range};
 
 /// it must be a power of 2
-const DEFAULT_CAPACITY: usize = 1 << 17;
-const MASK: usize = DEFAULT_CAPACITY - 1;
+const DEFAULT_CAPACITY: usize = 1 << 16;
 const MAX_TRIED: usize = 4;
 
 /// # Memory Usage
 ///
-/// One entry in the hash table will take 36 bytes. And we need one entry for every position in the document.
-/// So the size of the hash table will be (36 ~ 72) * document_size.
+/// The memory usage is capacity * 12 bytes.
+/// The default capacity is 65536 (2^16), so the default memory usage is 0.75MB
 ///
-/// However, you can set the maximum size of the hashtable to reduce the memory usage.
-/// It will drop the old entries when the size of the hashtable reaches the maximum size.
-///
-/// By default the maximum size of the hash table is 2 * 1024, which means the memory usage will be 72 * 2 * 1024 = 144KB.
-/// It can fit L2 cache of most CPUs. This behavior is subjected to change in the future as we do more optimization.
-///
+/// You can set the capacity by calling `with_capacity`. The capacity must be a power of 2.
 pub struct CompactBytes {
     bytes: AppendOnlyBytes,
     map: Box<[Option<NonZeroU32>]>,
@@ -27,6 +21,7 @@ pub struct CompactBytes {
     /// next write index fr pos_and_next
     index: usize,
     capacity: usize,
+    mask: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -45,16 +40,24 @@ impl CompactBytes {
             pos_and_next: vec![Default::default(); DEFAULT_CAPACITY].into_boxed_slice(),
             index: 1,
             capacity: DEFAULT_CAPACITY,
+            mask: DEFAULT_CAPACITY - 1,
         }
     }
 
-    /// Set the maximum size of the hash table
-    /// When the size of the hash table reaches the maximum size, it will drop the old entries.
-    /// When it's zero, it will never drop the old entries.
-    pub fn set_capacity(&mut self, capacity: usize) {
-        self.capacity = capacity;
+    /// cap must be a power of 2
+    pub fn with_capacity(cap: usize) -> Self {
+        let cap = cap.max(1024).next_power_of_two();
+        CompactBytes {
+            bytes: AppendOnlyBytes::with_capacity(cap),
+            map: vec![None; cap].into_boxed_slice(),
+            pos_and_next: vec![Default::default(); cap].into_boxed_slice(),
+            index: 1,
+            capacity: cap,
+            mask: cap - 1,
+        }
     }
 
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -74,6 +77,7 @@ impl CompactBytes {
         self.append(bytes)
     }
 
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes.as_bytes()
     }
@@ -125,7 +129,7 @@ impl CompactBytes {
         // if old doc = "0123", append "x", then we need to add "123x" entry to the map
         // if old doc = "0123", append "xyz", then we need to add "123x", "23xy", "3xyz" entries to the map
         for i in old_len.saturating_sub(3)..self.bytes.len().saturating_sub(3) {
-            let key = hash(self.bytes.as_bytes(), i);
+            let key = hash(self.bytes.as_bytes(), i, self.mask);
             // Override the min position in entry with the current position
             let old = self.map[key];
             self.pos_and_next[self.index] = PosLinkList {
@@ -133,7 +137,7 @@ impl CompactBytes {
                 next: old,
             };
             self.map[key] = Some(NonZeroU32::new(self.index as u32).unwrap());
-            self.index = (self.index + 1) & MASK;
+            self.index = (self.index + 1) & self.mask;
             if self.index == 0 {
                 self.index = 1;
             }
@@ -149,7 +153,7 @@ impl CompactBytes {
             return None;
         }
 
-        let key = hash(bytes, 0);
+        let key = hash(bytes, 0, self.mask);
         match self.map[key] {
             Some(pointer) => {
                 let mut node = self.pos_and_next[pointer.get() as usize];
@@ -195,14 +199,14 @@ impl Default for CompactBytes {
     }
 }
 
-#[inline]
-fn hash(bytes: &[u8], n: usize) -> usize {
+#[inline(always)]
+fn hash(bytes: &[u8], n: usize, mask: usize) -> usize {
     let mut hasher = FxHasher32::default();
     hasher.write_u8(bytes[n]);
     hasher.write_u8(bytes[n + 1]);
     hasher.write_u8(bytes[n + 2]);
     hasher.write_u8(bytes[n + 3]);
-    hasher.finish() as usize & MASK
+    hasher.finish() as usize & mask
 }
 
 #[cfg(test)]
