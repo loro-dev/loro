@@ -57,3 +57,7 @@ let bytes1 = arena.alloc(b"hello");
 let bytes2 = arena.append(b"hello");
 assert_ne!(bytes1.start(), bytes2.start());
 ```
+
+# TODO
+
+- More memory efficient implementation
