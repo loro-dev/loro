@@ -9,3 +9,10 @@ edition = "2021"
 append-only-bytes = "0.1.8"
 fxhash = "0.2.1"
 linked-hash-map = "0.5.6"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "bench"
+harness = false

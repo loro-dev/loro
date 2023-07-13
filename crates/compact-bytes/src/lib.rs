@@ -1,12 +1,14 @@
 #![doc = include_str!("../README.md")]
 
-use std::{hash::BuildHasherDefault, ops::Range};
+use std::{
+    collections::{HashMap, VecDeque},
+    hash::BuildHasherDefault,
+    ops::Range,
+};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
-use linked_hash_map::LinkedHashMap;
 
 const DEFAULT_CAPACITY: usize = 2 * 1024;
-const NUM_POS_PER_ENTRY: usize = 4;
 
 type Hasher = BuildHasherDefault<fxhash::FxHasher32>;
 
@@ -25,16 +27,30 @@ pub struct CompactBytes {
     bytes: AppendOnlyBytes,
     /// Map 4 bytes to positions in the document.
     /// The actual position is value - 1, and 0 means the position is not found.
-    map: LinkedHashMap<u32, [u32; NUM_POS_PER_ENTRY], Hasher>,
+    map: HashMap<u32, u32, Hasher>,
+    pos_and_next: Vec<PosLinkList>,
+    /// Least Recently Used keys
+    lru: VecDeque<u32>,
+    last_key: u32,
     capacity: usize,
+}
+
+struct PosLinkList {
+    /// position in the doc
+    value: u32,
+    /// next pos in the list, it will form a cyclic linked list
+    next: u32,
 }
 
 impl CompactBytes {
     pub fn new() -> Self {
         CompactBytes {
             bytes: AppendOnlyBytes::new(),
-            map: LinkedHashMap::with_hasher(Default::default()),
+            map: Default::default(),
+            lru: Default::default(),
+            pos_and_next: Default::default(),
             capacity: DEFAULT_CAPACITY,
+            last_key: 0,
         }
     }
 
@@ -50,12 +66,14 @@ impl CompactBytes {
     }
 
     fn drop_old_entry_if_reach_maximum_capacity(&mut self) {
-        if self.capacity == 0 {
+        if self.capacity == 0 || self.lru.len() < self.capacity {
             return;
         }
 
-        while self.map.len() > self.capacity {
-            self.map.pop_front();
+        let target = self.capacity.saturating_sub(16);
+        while self.lru.len() > target {
+            let key = self.lru.pop_front().unwrap();
+            self.map.remove(&key);
         }
     }
 
@@ -79,7 +97,6 @@ impl CompactBytes {
     }
 
     pub fn alloc_advance(&mut self, bytes: &[u8]) -> Vec<Range<usize>> {
-        let old_len = self.bytes.len();
         let mut ans: Vec<Range<usize>> = vec![];
         // this push will try to merge the new range with the last range in the ans
         fn push_with_merge(ans: &mut Vec<Range<usize>>, new: Range<usize>) {
@@ -101,14 +118,15 @@ impl CompactBytes {
                     index += len;
                 }
                 None => {
+                    let old_len = self.bytes.len();
                     push_with_merge(&mut ans, self.bytes.len()..self.bytes.len() + 1);
                     self.bytes.push(bytes[index]);
+                    self.record_new_prefix(old_len);
                     index += 1;
                 }
             }
         }
 
-        self.record_new_prefix(old_len);
         ans
     }
 
@@ -124,7 +142,7 @@ impl CompactBytes {
         // if old doc = "", append "0123", then we need to add "0123" entry to the map
         // if old doc = "0123", append "x", then we need to add "123x" entry to the map
         // if old doc = "0123", append "xyz", then we need to add "123x", "23xy", "3xyz" entries to the map
-        let mut key = 0;
+        let mut key = self.last_key;
         let mut is_first = true;
         for i in old_len.saturating_sub(3)..self.bytes.len().saturating_sub(3) {
             if is_first {
@@ -135,12 +153,17 @@ impl CompactBytes {
             }
 
             // Override the min position in entry with the current position
-            let entry = self.map.entry(key).or_insert([0; NUM_POS_PER_ENTRY]);
-            entry
-                .iter_mut()
-                .min()
-                .map(|min| *min = i as u32 + 1)
-                .unwrap();
+            let value = self.pos_and_next.len() as u32;
+            self.pos_and_next.push(PosLinkList {
+                value: i as u32,
+                next: i as u32,
+            });
+            let old_value = self.map.insert(key, value);
+            if let Some(old_value) = old_value {
+                let next = self.pos_and_next[old_value as usize].next;
+                self.pos_and_next[old_value as usize].next = value;
+                self.pos_and_next[value as usize].next = next;
+            }
         }
 
         self.drop_old_entry_if_reach_maximum_capacity()
@@ -156,16 +179,14 @@ impl CompactBytes {
         }
 
         let key = to_key(bytes);
-        match self.map.get_refresh(&key).copied() {
-            Some(poses) => {
+        match self.map.get(&key).copied() {
+            Some(start_pointer) => {
+                let mut pointer = start_pointer;
                 let mut max_len = 0;
                 let mut ans_pos = 0;
-                for &pos in poses.iter() {
-                    if pos == 0 {
-                        continue;
-                    }
-
-                    let pos = pos as usize - 1;
+                while pointer != start_pointer || max_len == 0 {
+                    let pos = self.pos_and_next[pointer as usize].value as usize;
+                    pointer = self.pos_and_next[pointer as usize].next;
                     let mut len = 4;
                     while pos + len < self.bytes.len()
                         && len < bytes.len()
