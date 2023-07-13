@@ -1,16 +1,13 @@
 #![doc = include_str!("../README.md")]
 
-use std::{
-    collections::{HashMap, VecDeque},
-    hash::BuildHasherDefault,
-    ops::Range,
-};
-
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
+use fxhash::FxHasher32;
+use std::{hash::Hasher, num::NonZeroU32, ops::Range};
 
-const DEFAULT_CAPACITY: usize = 2 * 1024;
-
-type Hasher = BuildHasherDefault<fxhash::FxHasher32>;
+/// it must be a power of 2
+const DEFAULT_CAPACITY: usize = 1 << 17;
+const MASK: usize = DEFAULT_CAPACITY - 1;
+const MAX_TRIED: usize = 4;
 
 /// # Memory Usage
 ///
@@ -25,32 +22,29 @@ type Hasher = BuildHasherDefault<fxhash::FxHasher32>;
 ///
 pub struct CompactBytes {
     bytes: AppendOnlyBytes,
-    /// Map 4 bytes to positions in the document.
-    /// The actual position is value - 1, and 0 means the position is not found.
-    map: HashMap<u32, u32, Hasher>,
-    pos_and_next: Vec<PosLinkList>,
-    /// Least Recently Used keys
-    lru: VecDeque<u32>,
-    last_key: u32,
+    map: Box<[Option<NonZeroU32>]>,
+    pos_and_next: Box<[PosLinkList]>,
+    /// next write index fr pos_and_next
+    index: usize,
     capacity: usize,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
 struct PosLinkList {
-    /// position in the doc
-    value: u32,
-    /// next pos in the list, it will form a cyclic linked list
-    next: u32,
+    /// position in the doc + 1
+    value: Option<NonZeroU32>,
+    /// next pos in the list
+    next: Option<NonZeroU32>,
 }
 
 impl CompactBytes {
     pub fn new() -> Self {
         CompactBytes {
             bytes: AppendOnlyBytes::new(),
-            map: Default::default(),
-            lru: Default::default(),
-            pos_and_next: Default::default(),
+            map: vec![None; DEFAULT_CAPACITY].into_boxed_slice(),
+            pos_and_next: vec![Default::default(); DEFAULT_CAPACITY].into_boxed_slice(),
+            index: 1,
             capacity: DEFAULT_CAPACITY,
-            last_key: 0,
         }
     }
 
@@ -63,18 +57,6 @@ impl CompactBytes {
 
     pub fn capacity(&self) -> usize {
         self.capacity
-    }
-
-    fn drop_old_entry_if_reach_maximum_capacity(&mut self) {
-        if self.capacity == 0 || self.lru.len() < self.capacity {
-            return;
-        }
-
-        let target = self.capacity.saturating_sub(16);
-        while self.lru.len() > target {
-            let key = self.lru.pop_front().unwrap();
-            self.map.remove(&key);
-        }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
@@ -113,11 +95,11 @@ impl CompactBytes {
         let mut index = 0;
         while index < bytes.len() {
             match self.lookup(&bytes[index..]) {
-                Some((pos, len)) => {
+                Some((pos, len)) if len >= 4 => {
                     push_with_merge(&mut ans, pos..pos + len);
                     index += len;
                 }
-                None => {
+                _ => {
                     let old_len = self.bytes.len();
                     push_with_merge(&mut ans, self.bytes.len()..self.bytes.len() + 1);
                     self.bytes.push(bytes[index]);
@@ -142,31 +124,20 @@ impl CompactBytes {
         // if old doc = "", append "0123", then we need to add "0123" entry to the map
         // if old doc = "0123", append "x", then we need to add "123x" entry to the map
         // if old doc = "0123", append "xyz", then we need to add "123x", "23xy", "3xyz" entries to the map
-        let mut key = self.last_key;
-        let mut is_first = true;
         for i in old_len.saturating_sub(3)..self.bytes.len().saturating_sub(3) {
-            if is_first {
-                key = to_key(&self.bytes[i..i + 4]);
-                is_first = false;
-            } else {
-                key = (key << 8) | self.bytes[i + 3] as u32;
-            }
-
+            let key = hash(self.bytes.as_bytes(), i);
             // Override the min position in entry with the current position
-            let value = self.pos_and_next.len() as u32;
-            self.pos_and_next.push(PosLinkList {
-                value: i as u32,
-                next: i as u32,
-            });
-            let old_value = self.map.insert(key, value);
-            if let Some(old_value) = old_value {
-                let next = self.pos_and_next[old_value as usize].next;
-                self.pos_and_next[old_value as usize].next = value;
-                self.pos_and_next[value as usize].next = next;
+            let old = self.map[key];
+            self.pos_and_next[self.index] = PosLinkList {
+                value: Some(unsafe { NonZeroU32::new_unchecked(i as u32 + 1) }),
+                next: old,
+            };
+            self.map[key] = Some(NonZeroU32::new(self.index as u32).unwrap());
+            self.index = (self.index + 1) & MASK;
+            if self.index == 0 {
+                self.index = 1;
             }
         }
-
-        self.drop_old_entry_if_reach_maximum_capacity()
     }
 
     /// Given bytes, find the position with the longest match in the document
@@ -178,16 +149,21 @@ impl CompactBytes {
             return None;
         }
 
-        let key = to_key(bytes);
-        match self.map.get(&key).copied() {
-            Some(start_pointer) => {
-                let mut pointer = start_pointer;
+        let key = hash(bytes, 0);
+        match self.map[key] {
+            Some(pointer) => {
+                let mut node = self.pos_and_next[pointer.get() as usize];
                 let mut max_len = 0;
                 let mut ans_pos = 0;
-                while pointer != start_pointer || max_len == 0 {
-                    let pos = self.pos_and_next[pointer as usize].value as usize;
-                    pointer = self.pos_and_next[pointer as usize].next;
-                    let mut len = 4;
+                let mut tried = 0;
+                while let Some(pos) = node.value {
+                    let pos = pos.get() as usize - 1;
+                    node = node
+                        .next
+                        .map(|x| self.pos_and_next[x.get() as usize])
+                        .unwrap_or_default();
+
+                    let mut len = 0;
                     while pos + len < self.bytes.len()
                         && len < bytes.len()
                         && self.bytes[pos + len] == bytes[len]
@@ -198,6 +174,11 @@ impl CompactBytes {
                     if len > max_len {
                         max_len = len;
                         ans_pos = pos;
+                    }
+
+                    tried += 1;
+                    if tried > MAX_TRIED {
+                        break;
                     }
                 }
 
@@ -214,9 +195,14 @@ impl Default for CompactBytes {
     }
 }
 
-/// Convert the first 4 bytes into u32
-fn to_key(bytes: &[u8]) -> u32 {
-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+#[inline]
+fn hash(bytes: &[u8], n: usize) -> usize {
+    let mut hasher = FxHasher32::default();
+    hasher.write_u8(bytes[n]);
+    hasher.write_u8(bytes[n + 1]);
+    hasher.write_u8(bytes[n + 2]);
+    hasher.write_u8(bytes[n + 3]);
+    hasher.finish() as usize & MASK
 }
 
 #[cfg(test)]
