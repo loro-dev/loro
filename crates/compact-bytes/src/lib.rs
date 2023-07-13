@@ -2,7 +2,11 @@
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHasher32;
-use std::{hash::Hasher, num::NonZeroU32, ops::Range};
+use std::{
+    hash::Hasher,
+    num::{NonZeroU16, NonZeroU32},
+    ops::Range,
+};
 
 /// it must be a power of 2
 const DEFAULT_CAPACITY: usize = 1 << 16;
@@ -10,26 +14,19 @@ const MAX_TRIED: usize = 4;
 
 /// # Memory Usage
 ///
-/// The memory usage is capacity * 12 bytes.
+/// The memory usage is capacity * 8 bytes.
 /// The default capacity is 65536 (2^16), so the default memory usage is 0.75MB
 ///
 /// You can set the capacity by calling `with_capacity`. The capacity must be a power of 2.
 pub struct CompactBytes {
     bytes: AppendOnlyBytes,
-    map: Box<[Option<NonZeroU32>]>,
-    pos_and_next: Box<[PosLinkList]>,
+    map: Box<[Option<NonZeroU16>]>,
+    pos: Box<[Option<NonZeroU32>]>,
+    next: Box<[Option<NonZeroU16>]>,
     /// next write index fr pos_and_next
     index: usize,
     capacity: usize,
     mask: usize,
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-struct PosLinkList {
-    /// position in the doc + 1
-    value: Option<NonZeroU32>,
-    /// next pos in the list
-    next: Option<NonZeroU32>,
 }
 
 impl CompactBytes {
@@ -37,7 +34,8 @@ impl CompactBytes {
         CompactBytes {
             bytes: AppendOnlyBytes::new(),
             map: vec![None; DEFAULT_CAPACITY].into_boxed_slice(),
-            pos_and_next: vec![Default::default(); DEFAULT_CAPACITY].into_boxed_slice(),
+            pos: vec![None; DEFAULT_CAPACITY].into_boxed_slice(),
+            next: vec![None; DEFAULT_CAPACITY].into_boxed_slice(),
             index: 1,
             capacity: DEFAULT_CAPACITY,
             mask: DEFAULT_CAPACITY - 1,
@@ -50,7 +48,8 @@ impl CompactBytes {
         CompactBytes {
             bytes: AppendOnlyBytes::with_capacity(cap),
             map: vec![None; cap].into_boxed_slice(),
-            pos_and_next: vec![Default::default(); cap].into_boxed_slice(),
+            pos: vec![None; cap.min(DEFAULT_CAPACITY)].into_boxed_slice(),
+            next: vec![None; cap.min(DEFAULT_CAPACITY)].into_boxed_slice(),
             index: 1,
             capacity: cap,
             mask: cap - 1,
@@ -132,11 +131,9 @@ impl CompactBytes {
             let key = hash(self.bytes.as_bytes(), i, self.mask);
             // Override the min position in entry with the current position
             let old = self.map[key];
-            self.pos_and_next[self.index] = PosLinkList {
-                value: Some(unsafe { NonZeroU32::new_unchecked(i as u32 + 1) }),
-                next: old,
-            };
-            self.map[key] = Some(NonZeroU32::new(self.index as u32).unwrap());
+            self.pos[self.index] = Some(unsafe { NonZeroU32::new_unchecked(i as u32 + 1) });
+            self.next[self.index] = old;
+            self.map[key] = Some(NonZeroU16::new(self.index as u16).unwrap());
             self.index = (self.index + 1) & self.mask;
             if self.index == 0 {
                 self.index = 1;
@@ -156,15 +153,16 @@ impl CompactBytes {
         let key = hash(bytes, 0, self.mask);
         match self.map[key] {
             Some(pointer) => {
-                let mut node = self.pos_and_next[pointer.get() as usize];
+                let mut w_pos = self.pos[pointer.get() as usize];
+                let mut next = self.next[pointer.get() as usize];
                 let mut max_len = 0;
                 let mut ans_pos = 0;
                 let mut tried = 0;
-                while let Some(pos) = node.value {
+                while let Some(pos) = w_pos {
                     let pos = pos.get() as usize - 1;
-                    node = node
-                        .next
-                        .map(|x| self.pos_and_next[x.get() as usize])
+                    w_pos = next.map(|x| self.pos[x.get() as usize]).unwrap_or_default();
+                    next = next
+                        .map(|x| self.next[x.get() as usize])
                         .unwrap_or_default();
 
                     let mut len = 0;

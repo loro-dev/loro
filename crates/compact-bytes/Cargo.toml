@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ahash = "0.8.3"
 append-only-bytes = "0.1.8"
 fxhash = "0.2.1"
 linked-hash-map = "0.5.6"
