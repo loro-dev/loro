@@ -1,0 +1,6 @@
+{
+  "tasks": {
+    "fuzz": "cargo +nightly fuzz run match",
+    "test": "cargo nextest run && cargo test --doc"
+  }
+}
