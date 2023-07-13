@@ -44,7 +44,7 @@ impl CompactBytes {
         }
     }
 
-    /// cap must be a power of 2
+    /// cap will be adjusted to a power of 2
     pub fn with_capacity(cap: usize) -> Self {
         let cap = cap.max(1024).next_power_of_two();
         CompactBytes {
@@ -173,6 +173,10 @@ impl CompactBytes {
                         && self.bytes[pos + len] == bytes[len]
                     {
                         len += 1;
+                    }
+
+                    if len < 4 {
+                        break;
                     }
 
                     if len > max_len {

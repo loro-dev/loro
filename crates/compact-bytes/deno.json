@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "flame": "CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --example permuted --root",
+    "flame": "CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --example permuted_slow --root",
     "bench": "cargo bench",
     "fuzz": "cargo +nightly fuzz run match",
     "test": "cargo nextest run && cargo test --doc"
