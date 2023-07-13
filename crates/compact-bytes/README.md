@@ -39,12 +39,11 @@ So it will break the bytes into small pieces to reuse them.
 
 ```rust
 use compact_bytes::CompactBytes;
-use append_only_bytes::BytesSlice;
 
 let mut arena = CompactBytes::new();
 let bytes1 = arena.alloc(b"hello");
 // it breaks the bytes into 3 pieces "hi ", "hello", " world"
-let bytes2: Vec<BytesSlice> = arena.alloc_advance(b"hi hello world");
+let bytes2: Vec<Range<usize>> = arena.alloc_advance(b"hi hello world");
 ```
 
 Or you can use `append` to not reuse the old bytes at all.
