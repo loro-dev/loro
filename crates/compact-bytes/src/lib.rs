@@ -1,23 +1,61 @@
 #![doc = include_str!("../README.md")]
 
-use std::ops::Range;
+use std::{hash::BuildHasherDefault, ops::Range};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
-use fxhash::FxHashMap;
+use linked_hash_map::LinkedHashMap;
 
-// One entry in the hashtable will take 16 ~ 32 bytes. And we need one entry for every position in the document.
-// So the size of the hashtable will be (16 ~ 32) * document_size.
+const DEFAULT_CAPACITY: usize = 2 * 1024;
+const NUM_POS_PER_ENTRY: usize = 4;
+
+type Hasher = BuildHasherDefault<fxhash::FxHasher32>;
+
+/// # Memory Usage
+///
+/// One entry in the hash table will take 36 bytes. And we need one entry for every position in the document.
+/// So the size of the hash table will be (36 ~ 72) * document_size.
+///
+/// However, you can set the maximum size of the hashtable to reduce the memory usage.
+/// It will drop the old entries when the size of the hashtable reaches the maximum size.
+///
+/// By default the maximum size of the hash table is 2 * 1024, which means the memory usage will be 72 * 2 * 1024 = 144KB.
+/// It can fit L2 cache of most CPUs. This behavior is subjected to change in the future as we do more optimization.
+///
 pub struct CompactBytes {
     bytes: AppendOnlyBytes,
-    /// map 4 bytes to position in the document
-    map: FxHashMap<u32, u32>,
+    /// Map 4 bytes to positions in the document.
+    /// The actual position is value - 1, and 0 means the position is not found.
+    map: LinkedHashMap<u32, [u32; NUM_POS_PER_ENTRY], Hasher>,
+    capacity: usize,
 }
 
 impl CompactBytes {
     pub fn new() -> Self {
         CompactBytes {
             bytes: AppendOnlyBytes::new(),
-            map: FxHashMap::default(),
+            map: LinkedHashMap::with_hasher(Default::default()),
+            capacity: DEFAULT_CAPACITY,
+        }
+    }
+
+    /// Set the maximum size of the hash table
+    /// When the size of the hash table reaches the maximum size, it will drop the old entries.
+    /// When it's zero, it will never drop the old entries.
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity;
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn drop_old_entry_if_reach_maximum_capacity(&mut self) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        while self.map.len() > self.capacity {
+            self.map.pop_front();
         }
     }
 
@@ -70,20 +108,19 @@ impl CompactBytes {
             }
         }
 
-        self.append_new_entries_to_map(old_len);
-
+        self.record_new_prefix(old_len);
         ans
     }
 
     pub fn append(&mut self, bytes: &[u8]) -> BytesSlice {
         let old_len = self.bytes.len();
         self.bytes.push_slice(bytes);
-        self.append_new_entries_to_map(old_len);
+        self.record_new_prefix(old_len);
         self.bytes.slice(old_len..old_len + bytes.len())
     }
 
     /// Append the entries just created to the map
-    fn append_new_entries_to_map(&mut self, old_len: usize) {
+    fn record_new_prefix(&mut self, old_len: usize) {
         // if old doc = "", append "0123", then we need to add "0123" entry to the map
         // if old doc = "0123", append "x", then we need to add "123x" entry to the map
         // if old doc = "0123", append "xyz", then we need to add "123x", "23xy", "3xyz" entries to the map
@@ -97,30 +134,53 @@ impl CompactBytes {
                 key = (key << 8) | self.bytes[i + 3] as u32;
             }
 
-            self.map.insert(key, i as u32);
+            // Override the min position in entry with the current position
+            let entry = self.map.entry(key).or_insert([0; NUM_POS_PER_ENTRY]);
+            entry
+                .iter_mut()
+                .min()
+                .map(|min| *min = i as u32 + 1)
+                .unwrap();
         }
+
+        self.drop_old_entry_if_reach_maximum_capacity()
     }
 
-    /// given bytes, find the position with the longest match in the document
+    /// Given bytes, find the position with the longest match in the document
+    /// It need exclusive reference to refresh the LRU
+    ///
     /// return Option<(position, length)>
-    fn lookup(&self, bytes: &[u8]) -> Option<(usize, usize)> {
+    fn lookup(&mut self, bytes: &[u8]) -> Option<(usize, usize)> {
         if bytes.len() < 4 {
             return None;
         }
 
         let key = to_key(bytes);
-        match self.map.get(&key).copied() {
-            Some(pos) => {
-                let pos = pos as usize;
-                let mut len = 4;
-                while pos + len < self.bytes.len()
-                    && len < bytes.len()
-                    && self.bytes[pos + len] == bytes[len]
-                {
-                    len += 1;
+        match self.map.get_refresh(&key).copied() {
+            Some(poses) => {
+                let mut max_len = 0;
+                let mut ans_pos = 0;
+                for &pos in poses.iter() {
+                    if pos == 0 {
+                        continue;
+                    }
+
+                    let pos = pos as usize - 1;
+                    let mut len = 4;
+                    while pos + len < self.bytes.len()
+                        && len < bytes.len()
+                        && self.bytes[pos + len] == bytes[len]
+                    {
+                        len += 1;
+                    }
+
+                    if len > max_len {
+                        max_len = len;
+                        ans_pos = pos;
+                    }
                 }
 
-                Some((pos, len))
+                Some((ans_pos, max_len))
             }
             None => None,
         }
@@ -133,7 +193,7 @@ impl Default for CompactBytes {
     }
 }
 
-/// Convert the first 4 btyes into u32
+/// Convert the first 4 bytes into u32
 fn to_key(bytes: &[u8]) -> u32 {
     u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }

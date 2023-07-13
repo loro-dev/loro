@@ -39,6 +39,7 @@ So it will break the bytes into small pieces to reuse them.
 
 ```rust
 use compact_bytes::CompactBytes;
+use std::ops::Range;
 
 let mut arena = CompactBytes::new();
 let bytes1 = arena.alloc(b"hello");
