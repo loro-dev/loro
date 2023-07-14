@@ -4,12 +4,12 @@ use crate::hierarchy::Hierarchy;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::RemoteOp;
 use crate::span::{CounterSpan, HasCounter, HasCounterSpan};
-use crate::LogStore;
 use crate::{
     container::registry::ContainerIdx,
     event::Diff,
     version::{Frontiers, IdSpanVector},
 };
+use crate::{ContainerTrait, LogStore};
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 use std::{collections::VecDeque, sync::MutexGuard};
@@ -20,7 +20,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use rle::{slice_vec_by, HasLength, Sliceable};
 
 use crate::{
-    container::{registry::ContainerInstance, ContainerID, ContainerTrait},
+    container::{registry::ContainerInstance, ContainerID},
     dag::{remove_included_frontiers, DagUtils},
     op::RichOp,
     span::{HasIdSpan, HasLamportSpan, IdSpan},

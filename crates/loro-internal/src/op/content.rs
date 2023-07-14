@@ -9,6 +9,7 @@ use crate::container::{
     map::{InnerMapSet, MapSet},
 };
 
+/// @deprecated
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum ContentType {
     /// See [`crate::container::text::TextContent`]
@@ -56,19 +57,23 @@ impl<'a> RawOpContent<'a> {
     }
 }
 
+/// @deprecated
 pub trait MergeableContent {
     fn is_mergable_content(&self, other: &dyn InsertContentTrait) -> bool;
     fn merge_content(&mut self, other: &dyn InsertContentTrait);
 }
 
+/// @deprecated
 pub trait SliceableContent {
     fn slice_content(&self, from: usize, to: usize) -> Box<dyn InsertContentTrait>;
 }
 
+/// @deprecated
 pub trait CloneContent {
     fn clone_content(&self) -> Box<dyn InsertContentTrait>;
 }
 
+/// @deprecated
 pub trait InsertContentTrait:
     HasLength + std::fmt::Debug + Any + MergeableContent + SliceableContent + CloneContent
 {

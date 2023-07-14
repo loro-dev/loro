@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -27,10 +27,38 @@ pub enum LoroValue {
     Container(ContainerID),
 }
 
-#[derive(Serialize, Deserialize)]
-enum Test {
-    Unknown(ContainerID),
-    Map(FxHashMap<u32, usize>),
+impl Hash for LoroValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            LoroValue::Null => {}
+            LoroValue::Bool(v) => {
+                state.write_u8(*v as u8);
+            }
+            LoroValue::Double(v) => {
+                state.write_u64(v.to_bits());
+            }
+            LoroValue::I32(v) => {
+                state.write_i32(*v);
+            }
+            LoroValue::String(v) => {
+                v.hash(state);
+            }
+            LoroValue::List(v) => {
+                v.hash(state);
+            }
+            LoroValue::Map(v) => {
+                state.write_usize(v.len());
+                for (k, v) in v.iter() {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            LoroValue::Container(v) => {
+                v.hash(state);
+            }
+        }
+    }
 }
 
 impl LoroValue {

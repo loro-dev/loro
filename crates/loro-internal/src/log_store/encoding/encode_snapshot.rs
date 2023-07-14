@@ -380,7 +380,8 @@ pub(super) fn decode_snapshot(
                     value2,
                 } = op;
                 let container_type = container_idx2type[&container_idx];
-                let container_idx = ContainerIdx::from_u32(container_idx as u32);
+                let container_idx =
+                    ContainerIdx::from_index_and_type(container_idx as u32, container_type);
                 let content = match container_type {
                     ContainerType::Map => {
                         let key = keys[prop].clone();

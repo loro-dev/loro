@@ -27,27 +27,52 @@ use super::{
     list::ListContainer, map::MapContainer, pool_mapping::StateContent, text::TextContainer,
     ContainerID, ContainerTrait, ContainerType,
 };
+pub use container_idx::ContainerIdx;
 
-/// Inner representation for ContainerID.
-///
-/// It's only used inside this crate and should not be exposed to the user.
-///
-/// TODO: make this type pub(crate)
-///
-/// During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
-/// So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
-/// An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
-pub struct ContainerIdx(u32);
+mod container_idx {
+    use super::super::ContainerType;
 
-impl ContainerIdx {
-    #[allow(unused)]
-    pub(crate) fn to_u32(self) -> u32 {
-        self.0
-    }
+    /// Inner representation for ContainerID.
+    /// It contains the unique index for the container and the type of the container.
+    /// It uses top 4 bits to represent the type of the container.
+    ///
+    /// It's only used inside this crate and should not be exposed to the user.
+    ///
+    /// TODO: make this type private in this crate only
+    ///
+    // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
+    // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
+    // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
+    pub struct ContainerIdx(u32);
 
-    pub(crate) fn from_u32(idx: u32) -> Self {
-        Self(idx)
+    impl ContainerIdx {
+        pub(crate) const TYPE_MASK: u32 = 0b1111 << 28;
+        pub(crate) const INDEX_MASK: u32 = !Self::TYPE_MASK;
+
+        pub(crate) fn get_type(self) -> ContainerType {
+            match (self.0 & Self::TYPE_MASK) >> 28 {
+                0 => ContainerType::Map,
+                1 => ContainerType::List,
+                2 => ContainerType::Text,
+                _ => unreachable!(),
+            }
+        }
+
+        #[allow(unused)]
+        pub(crate) fn to_index(self) -> u32 {
+            self.0 & Self::INDEX_MASK
+        }
+
+        pub(crate) fn from_index_and_type(index: u32, container_type: ContainerType) -> Self {
+            let prefix: u32 = match container_type {
+                ContainerType::Map => 0,
+                ContainerType::List => 1,
+                ContainerType::Text => 2,
+            } << 28;
+
+            Self(prefix | index)
+        }
     }
 }
 
@@ -241,8 +266,8 @@ impl ContainerInstance {
 // if its creation op is not in the logStore
 #[derive(Debug)]
 pub struct ContainerRegistry {
-    container_to_idx: FxHashMap<ContainerID, ContainerIdx>,
-    containers: FxHashMap<ContainerIdx, ContainerAndId>,
+    container_to_idx: FxHashMap<ContainerID, u32>,
+    containers: FxHashMap<u32, ContainerAndId>,
     next_container_idx: Arc<AtomicU32>,
 }
 
@@ -285,28 +310,33 @@ impl ContainerRegistry {
 
     #[inline(always)]
     pub fn contains_idx(&self, idx: &ContainerIdx) -> bool {
-        self.containers.contains_key(idx)
+        self.containers.contains_key(&idx.to_index())
     }
 
     #[inline(always)]
     pub fn all_container_idx(&self) -> FxHashSet<ContainerIdx> {
-        self.containers.keys().copied().collect()
+        self.containers
+            .iter()
+            .map(|(key, value)| ContainerIdx::from_index_and_type(*key, value.id.container_type()))
+            .collect()
     }
 
     #[inline(always)]
     pub(crate) fn get_by_idx(&self, idx: &ContainerIdx) -> Option<Weak<Mutex<ContainerInstance>>> {
         self.containers
-            .get(idx)
+            .get(&idx.to_index())
             .map(|x| Arc::downgrade(&x.container))
     }
 
     #[inline(always)]
     pub(crate) fn get_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.container_to_idx.get(id).copied()
+        self.container_to_idx
+            .get(id)
+            .map(|x| ContainerIdx::from_index_and_type(*x, id.container_type()))
     }
 
     pub(crate) fn get_id(&self, idx: ContainerIdx) -> Option<&ContainerID> {
-        self.containers.get(&idx).map(|x| &x.id)
+        self.containers.get(&idx.to_index()).map(|x| &x.id)
     }
 
     #[inline(always)]
@@ -316,9 +346,9 @@ impl ContainerRegistry {
         idx: ContainerIdx,
         container: ContainerInstance,
     ) -> ContainerIdx {
-        self.container_to_idx.insert(id.clone(), idx);
+        self.container_to_idx.insert(id.clone(), idx.to_index());
         self.containers.insert(
-            idx,
+            idx.to_index(),
             ContainerAndId {
                 container: Arc::new(Mutex::new(container)),
                 id,
@@ -329,13 +359,12 @@ impl ContainerRegistry {
     }
 
     #[inline(always)]
-    pub(crate) fn next_idx_and_add_1(&self) -> ContainerIdx {
-        let idx = self.next_container_idx.fetch_add(1, Ordering::SeqCst);
-        ContainerIdx::from_u32(idx)
+    fn next_idx_and_add_1(&self) -> u32 {
+        self.next_container_idx.fetch_add(1, Ordering::SeqCst)
     }
 
     pub(crate) fn register(&mut self, id: &ContainerID) -> ContainerIdx {
-        let idx = self.next_idx_and_add_1();
+        let idx = ContainerIdx::from_index_and_type(self.next_idx_and_add_1(), id.container_type());
         let container = self.create(id.clone(), idx);
         self.insert(id.clone(), idx, container);
         idx

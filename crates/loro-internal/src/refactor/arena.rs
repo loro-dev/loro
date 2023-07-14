@@ -51,14 +51,14 @@ impl SharedArena {
         let mut container_idx_to_id = self.container_idx_to_id.lock().unwrap();
         let idx = container_idx_to_id.len();
         container_idx_to_id.push(id.clone());
-        let ans = ContainerIdx::from_u32(idx as u32);
+        let ans = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         container_id_to_idx.insert(id.clone(), ans);
         ans
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
         let lock = self.container_idx_to_id.lock().unwrap();
-        lock.get(idx.to_u32() as usize).cloned()
+        lock.get(idx.to_index() as usize).cloned()
     }
 
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
@@ -67,7 +67,7 @@ impl SharedArena {
 
     pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
         let lock = self.container_idx_to_id.lock().unwrap();
-        lock.get(id.to_u32() as usize).cloned()
+        lock.get(id.to_index() as usize).cloned()
     }
 
     /// return utf16 len
