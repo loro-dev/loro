@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 string_cache = "0.8.4"
 rle = { path = "../rle" }
+loro-preload = { path = "../loro-preload" }
+loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 smartstring = { version = "1.0.1" }
 fxhash = "0.2.1"

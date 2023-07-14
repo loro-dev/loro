@@ -206,4 +206,8 @@ impl SharedArena {
     pub fn convert_raw_op(&self, op: &RawOp) -> Op {
         self.inner_convert_op(op.content.clone(), op.id.counter, op.container)
     }
+
+    pub fn export_containers(&self) -> Vec<ContainerID> {
+        self.container_idx_to_id.lock().unwrap().clone()
+    }
 }

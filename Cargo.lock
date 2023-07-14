@@ -934,6 +934,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-common"
+version = "0.1.0"
+
+[[package]]
 name = "loro-ffi"
 version = "0.1.0"
 dependencies = [
@@ -976,6 +980,8 @@ dependencies = [
  "itertools",
  "js-sys",
  "jumprope",
+ "loro-common",
+ "loro-preload",
  "num",
  "postcard",
  "proptest",
@@ -1006,6 +1012,10 @@ dependencies = [
  "napi-build",
  "napi-derive",
 ]
+
+[[package]]
+name = "loro-preload"
+version = "0.1.0"
 
 [[package]]
 name = "loro-wasm"

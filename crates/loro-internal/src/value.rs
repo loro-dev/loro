@@ -779,8 +779,8 @@ impl Serialize for LoroValue {
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
                 LoroValue::Container(id) => {
-                    let mut state = serializer.serialize_struct("Unresolved", 1)?;
-                    state.serialize_field("Unresolved", id)?;
+                    let mut state = serializer.serialize_struct("Container", 1)?;
+                    state.serialize_field("Container", id)?;
                     state.end()
                 }
             }
@@ -805,7 +805,7 @@ impl Serialize for LoroValue {
                     serializer.serialize_newtype_variant("LoroValue", 6, "Map", &**m)
                 }
                 LoroValue::Container(id) => {
-                    serializer.serialize_newtype_variant("LoroValue", 7, "Unresolved", id)
+                    serializer.serialize_newtype_variant("LoroValue", 7, "Container", id)
                 }
             }
         }
@@ -830,7 +830,7 @@ impl<'de> Deserialize<'de> for LoroValue {
                     "String",
                     "List",
                     "Map",
-                    "Unresolved",
+                    "Container",
                 ],
                 LoroValueEnumVisitor,
             )
@@ -931,7 +931,7 @@ enum LoroValueFields {
     String,
     List,
     Map,
-    Unresolved,
+    Container,
 }
 
 struct LoroValueEnumVisitor;
@@ -958,7 +958,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             }
             (LoroValueFields::List, v) => v.newtype_variant().map(|x| LoroValue::List(Arc::new(x))),
             (LoroValueFields::Map, v) => v.newtype_variant().map(|x| LoroValue::Map(Arc::new(x))),
-            (LoroValueFields::Unresolved, v) => v.newtype_variant().map(LoroValue::Container),
+            (LoroValueFields::Container, v) => v.newtype_variant().map(LoroValue::Container),
         }
     }
 }
