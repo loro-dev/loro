@@ -1,3 +1,4 @@
+use loro_common::IdSpanVector;
 use rle::{rle_tree::UnsafeCursor, HasLength, Sliceable};
 use smallvec::SmallVec;
 
@@ -7,7 +8,6 @@ use crate::{
     id::{Counter, ID},
     op::{InnerContent, RichOp},
     span::{HasId, HasIdSpan, IdSpan},
-    version::IdSpanVector,
     VersionVector,
 };
 
@@ -81,10 +81,8 @@ unsafe impl Send for Tracker {}
 // SAFETY: &Tracker is safe to be shared by threads
 unsafe impl Sync for Tracker {}
 
-impl From<ID> for u128 {
-    fn from(id: ID) -> Self {
-        ((id.peer as u128) << 64) | id.counter as u128
-    }
+pub fn id_to_u128(id: ID) -> u128 {
+    ((id.peer as u128) << 64) | id.counter as u128
 }
 
 impl Tracker {

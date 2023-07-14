@@ -17,7 +17,10 @@ use crate::{
     span::{HasId, HasIdSpan, IdSpan},
 };
 
-use super::y_span::{YSpan, YSpanTreeTrait};
+use super::{
+    id_to_u128,
+    y_span::{YSpan, YSpanTreeTrait},
+};
 
 // marker can only live while the bumpalo is alive. So we are safe to use 'static here
 #[non_exhaustive]
@@ -68,10 +71,7 @@ impl Marker {
             Marker::Delete(_) => None,
         }
     }
-    pub(super) fn as_cursor<'b>(
-        &self,
-        id: ID,
-    ) -> Option<SafeCursor<'b, YSpan, YSpanTreeTrait>> {
+    pub(super) fn as_cursor<'b>(&self, id: ID) -> Option<SafeCursor<'b, YSpan, YSpanTreeTrait>> {
         match self {
             Marker::Insert { ptr, len: _ } => {
                 // SAFETY: tree data is always valid
@@ -215,7 +215,7 @@ pub(super) fn make_notify(
 ) -> impl for<'a> FnMut(&YSpan, *mut LeafNode<'a, YSpan, YSpanTreeTrait>) + '_ {
     |span, leaf| {
         map.set_small_range(
-            span.id.into(),
+            id_to_u128(span.id),
             Marker::Insert {
                 // SAFETY: marker can only live while the bumpalo is alive. so we are safe to change lifetime here
                 ptr: unsafe { NonNull::new_unchecked(std::mem::transmute(leaf)) },
@@ -246,7 +246,7 @@ impl CursorMap {
             Vec::with_capacity(span.atom_len() / 10);
         let mut inserted_set = fxhash::FxHashSet::default();
         for (id, marker) in
-            self.get_range_with_index(span.norm_id_start().into(), span.norm_id_end().into())
+            self.get_range_with_index(id_to_u128(span.norm_id_start()), span.norm_id_end().into())
         {
             let id: ID = id.into();
             match marker {

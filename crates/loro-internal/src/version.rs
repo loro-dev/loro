@@ -1,3 +1,4 @@
+use loro_common::IdSpanVector;
 use smallvec::smallvec;
 use std::{
     cmp::Ordering,
@@ -15,7 +16,7 @@ use crate::{
     change::Lamport,
     id::{Counter, ID},
     refactor::oplog::AppDag,
-    span::{CounterSpan, HasId, HasIdSpan, IdSpan},
+    span::{CounterSpan, HasIdSpan, IdSpan},
     LoroError, PeerID,
 };
 
@@ -206,27 +207,6 @@ impl Deref for VersionVector {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-// TODO: wrap this type?
-pub type IdSpanVector = FxHashMap<PeerID, CounterSpan>;
-
-impl HasId for (&PeerID, &CounterSpan) {
-    fn id_start(&self) -> ID {
-        ID {
-            peer: *self.0,
-            counter: self.1.min(),
-        }
-    }
-}
-
-impl HasId for (PeerID, CounterSpan) {
-    fn id_start(&self) -> ID {
-        ID {
-            peer: self.0,
-            counter: self.1.min(),
-        }
     }
 }
 

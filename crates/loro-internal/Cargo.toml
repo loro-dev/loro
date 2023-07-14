@@ -62,7 +62,7 @@ bench = false
 [features]
 default = []
 compress = ["serde_columnar/compress"]
-wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen"]
+wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
 test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]

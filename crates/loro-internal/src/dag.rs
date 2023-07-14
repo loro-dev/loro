@@ -14,6 +14,7 @@ use std::{
 
 use debug_log::debug_dbg;
 use fxhash::{FxHashMap, FxHashSet};
+use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};
 mod iter;
@@ -25,7 +26,7 @@ use crate::{
     change::Lamport,
     id::{Counter, PeerID, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
-    version::{Frontiers, IdSpanVector, VersionVector, VersionVectorDiff},
+    version::{Frontiers, VersionVector, VersionVectorDiff},
 };
 
 use self::{

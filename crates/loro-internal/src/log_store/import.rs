@@ -4,13 +4,10 @@ use crate::hierarchy::Hierarchy;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::RemoteOp;
 use crate::span::{CounterSpan, HasCounter, HasCounterSpan};
-use crate::{
-    container::registry::ContainerIdx,
-    event::Diff,
-    version::{Frontiers, IdSpanVector},
-};
+use crate::{container::registry::ContainerIdx, event::Diff, version::Frontiers};
 use crate::{ContainerTrait, LogStore};
 use itertools::Itertools;
+use loro_common::IdSpanVector;
 use smallvec::{smallvec, SmallVec};
 use std::{collections::VecDeque, sync::MutexGuard};
 use tracing::instrument;

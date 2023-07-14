@@ -1,12 +1,7 @@
-use num::Zero;
-
 use super::DagUtils;
-use std::{
-    collections::BTreeMap,
-    ops::{Range, RangeBounds},
-};
-
-use crate::version::{Frontiers, IdSpanVector};
+use crate::version::Frontiers;
+use num::Zero;
+use std::{collections::BTreeMap, ops::Range};
 
 use super::*;
 
@@ -178,16 +173,6 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
     }
 }
 
-impl RangeBounds<ID> for (ID, ID) {
-    fn start_bound(&self) -> std::ops::Bound<&ID> {
-        std::ops::Bound::Included(&self.0)
-    }
-
-    fn end_bound(&self) -> std::ops::Bound<&ID> {
-        std::ops::Bound::Excluded(&self.1)
-    }
-}
-
 /// Visit every span in the target IdSpanVector.
 /// It's guaranteed that the spans are visited in causal order, and each span is visited only once.
 /// When visiting a span, we will checkout to the version where the span was created
@@ -333,7 +318,7 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         let mut keys = Vec::new();
         let mut heap = BinaryHeap::new();
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
-        for (key, succ) in self.succ.range((node.id_start(), node.id_end())) {
+        for (key, succ) in self.succ.range(node.id_start()..node.id_end()) {
             keys.push(*key);
             for succ_id in succ.iter() {
                 self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);

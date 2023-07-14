@@ -6,3 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+serde = "1.0.171"
+thiserror = "1.0.43"
+rle = {path = "../rle"}
+wasm-bindgen = {version= "0.2.87", optional=true}
+fxhash = "0.2.1"
+
+[features]
+wasm = ["wasm-bindgen"]

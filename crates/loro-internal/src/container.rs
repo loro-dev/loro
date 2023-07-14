@@ -236,12 +236,6 @@ impl<T: Into<InternalString>> From<T> for ContainerIdRaw {
     }
 }
 
-impl From<ID> for ContainerIdRaw {
-    fn from(id: ID) -> Self {
-        ContainerIdRaw::Normal { id }
-    }
-}
-
 impl From<&ContainerID> for ContainerIdRaw {
     fn from(id: &ContainerID) -> Self {
         match id {
