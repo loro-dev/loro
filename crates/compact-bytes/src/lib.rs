@@ -97,9 +97,10 @@ impl CompactBytes {
         }
 
         let mut index = 0;
+        let min_match_size = 4.min(bytes.len());
         while index < bytes.len() {
             match self.lookup(&bytes[index..]) {
-                Some((pos, len)) if len >= 4 => {
+                Some((pos, len)) if len >= min_match_size => {
                     push_with_merge(&mut ans, pos..pos + len);
                     index += len;
                 }
