@@ -541,6 +541,8 @@ mod test {
         // a:   a1 <--- a2
         //        \    /
         // b:       b1
+
+        use crate::value::ToJson;
         let mut a = LoroCore::new(Default::default(), Some(1));
         let mut b = LoroCore::new(Default::default(), Some(2));
         let mut c = LoroCore::new(Default::default(), Some(3));
@@ -600,6 +602,8 @@ mod test {
         // a:  (a1 <-- a2 <-- a3) <-- a4       a1~a3 is a merged change
         //                \         /
         // b:                b1
+
+        use crate::value::ToJson;
         let mut a = LoroCore::new(Default::default(), Some(1));
         let mut b = LoroCore::new(Default::default(), Some(2));
         let mut c = LoroCore::new(Default::default(), Some(3));

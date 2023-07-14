@@ -61,9 +61,9 @@ dependencies = [
 
 [[package]]
 name = "arbitrary"
-version = "1.2.2"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0224938f92e7aef515fac2ff2d18bd1115c1394ddf4a092e0c87e8be9499ee5"
+checksum = "e2d098ff73c1ca148721f37baad5ea6a465a13f9573aba8641fbbbae8164a54e"
 dependencies = [
  "derive_arbitrary",
 ]
@@ -129,7 +129,7 @@ name = "bench-utils"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
- "enum-as-inner",
+ "enum-as-inner 0.5.1",
  "flate2",
  "rand",
  "serde_json",
@@ -560,13 +560,13 @@ checksum = "364ff57c5031fee39b026dcdfdc9c7dc1d1d79451bfdacba90f040524b766254"
 
 [[package]]
 name = "derive_arbitrary"
-version = "1.2.2"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf460bbff5f571bfc762da5102729f59f338be7db17a21fade44c5c4f5005350"
+checksum = "53e0efad4403bfc52dc201159c4b842a246a14b98c64b55dfd0f2d89729dfeb8"
 dependencies = [
  "proc-macro2 1.0.64",
  "quote 1.0.29",
- "syn 1.0.107",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -611,6 +611,18 @@ dependencies = [
  "proc-macro2 1.0.64",
  "quote 1.0.29",
  "syn 1.0.107",
+]
+
+[[package]]
+name = "enum-as-inner"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ffccbb6966c05b32ef8fbac435df276c4ae4d3dc55a8cd0eb9745e6c12f546a"
+dependencies = [
+ "heck",
+ "proc-macro2 1.0.64",
+ "quote 1.0.29",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -856,9 +868,9 @@ checksum = "fad582f4b9e86b6caa621cabeb0963332d92eea04729ab12892c2533951e6440"
 
 [[package]]
 name = "js-sys"
-version = "0.3.61"
+version = "0.3.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "445dde2150c55e483f3d8416706b97ec8e8237c307e5b7b4b8dd15e6af2a0730"
+checksum = "c5f195fe497f702db0f318b07fdd68edb16955aed830df8363d837542f8f935a"
 dependencies = [
  "wasm-bindgen",
 ]
@@ -937,9 +949,13 @@ dependencies = [
 name = "loro-common"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.0",
  "fxhash",
+ "js-sys",
  "rle",
  "serde",
+ "string_cache",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -978,7 +994,7 @@ dependencies = [
  "ctor",
  "debug-log",
  "dhat",
- "enum-as-inner",
+ "enum-as-inner 0.5.1",
  "enum_dispatch",
  "flate2",
  "fxhash",
@@ -1677,7 +1693,7 @@ dependencies = [
  "crdt-list",
  "ctor",
  "debug-log",
- "enum-as-inner",
+ "enum-as-inner 0.5.1",
  "fxhash",
  "heapless",
  "num",
@@ -1912,9 +1928,9 @@ checksum = "5f026164926842ec52deb1938fae44f83dfdb82d0a5b0270c5bd5935ab74d6dd"
 
 [[package]]
 name = "string_cache"
-version = "0.8.4"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213494b7a2b503146286049378ce02b482200519accc31872ee8be91fa820a08"
+checksum = "f91138e76242f575eb1d3b38b4f1362f10d3a43f47d182a5b359af488a02293b"
 dependencies = [
  "new_debug_unreachable",
  "once_cell",

@@ -18,7 +18,11 @@ use crate::{
     id::PeerID,
     ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
 };
-use crate::{container::registry::ContainerIdx, EncodeMode};
+use crate::{
+    container::registry::ContainerIdx,
+    value::{ApplyDiff, ToJson},
+    EncodeMode,
+};
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {

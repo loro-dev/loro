@@ -20,6 +20,7 @@ use crate::{
     log_store::ImportContext,
     op::{RawOpContent, RichOp},
     transaction::Transaction,
+    value::ResolveDeep,
     LoroError, LoroValue, Transact, VersionVector,
 };
 

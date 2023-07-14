@@ -40,7 +40,7 @@ fn text_utf16() {
 #[test]
 #[cfg(feature = "json")]
 fn example() {
-    use loro_internal::ContainerType;
+    use loro_internal::{ContainerType, ToJson};
 
     let mut doc = LoroCore::default();
     let mut list = doc.get_list("list");
@@ -75,7 +75,7 @@ fn subscribe_deep() {
 fn text_observe() {
     use std::sync::{Arc, Mutex};
 
-    use loro_internal::LoroValue;
+    use loro_internal::{ApplyDiff, LoroValue, ToJson};
 
     let mut doc = LoroCore::default();
     let track_value = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
@@ -108,6 +108,8 @@ fn text_observe() {
 #[test]
 #[cfg(feature = "json")]
 fn list() {
+    use loro_internal::ToJson;
+
     let mut loro_a = LoroCore::default();
     let mut loro_b = LoroCore::default();
     let mut list_a = loro_a.get_list("list");
@@ -136,7 +138,7 @@ fn list() {
 #[test]
 #[cfg(feature = "json")]
 fn map() {
-    use loro_internal::LoroValue;
+    use loro_internal::{LoroValue, ToJson};
 
     let mut loro = LoroCore::new(Default::default(), Some(10));
     let mut root = loro.get_map("root");

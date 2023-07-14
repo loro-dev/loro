@@ -32,10 +32,10 @@ pub use transaction::{Origin, Transact, Transaction, TransactionWrap};
 pub mod delta;
 pub mod event;
 pub mod prelim;
-mod value;
 
 pub use error::LoroError;
 pub(crate) mod macros;
+pub(crate) mod value;
 pub(crate) use change::{Lamport, Timestamp};
 pub(crate) use id::{PeerID, ID};
 pub(crate) use op::{ContentType, InsertContentTrait, Op};
@@ -48,7 +48,7 @@ pub use container::{list::List, map::Map, text::Text, ContainerType};
 pub use fxhash::FxHashMap;
 pub use log_store::{EncodeMode, LogStore};
 pub use loro::LoroCore;
-pub use value::LoroValue;
+pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;

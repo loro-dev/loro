@@ -7,19 +7,14 @@
 use crate::{
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
-    id::{Counter, PeerID},
     log_store::ImportContext,
     op::{InnerContent, RawOpContent, RichOp},
-    InternalString, LoroError, LoroValue, VersionVector, ID,
+    InternalString, LoroValue, VersionVector, ID,
 };
 
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use std::{
-    any::Any,
-    fmt::{Debug, Display},
-};
+use std::{any::Any, fmt::Debug};
 
 use self::pool_mapping::StateContent;
 
@@ -32,42 +27,8 @@ mod pool;
 pub mod text;
 
 use registry::ContainerIdx;
-// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[cfg_attr(feature = "test_utils", derive(arbitrary::Arbitrary))]
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub enum ContainerType {
-    /// See [`crate::text::TextContent`]
-    Text,
-    Map,
-    List,
-    // TODO: Users can define their own container types.
-    // Custom(u16),
-}
 
-impl Display for ContainerType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            ContainerType::Text => "Text",
-            ContainerType::Map => "Map",
-            ContainerType::List => "List",
-        })
-    }
-}
-
-impl TryFrom<&str> for ContainerType {
-    type Error = LoroError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "Text" => Ok(ContainerType::Text),
-            "Map" => Ok(ContainerType::Map),
-            "List" => Ok(ContainerType::List),
-            _ => Err(LoroError::DecodeError(
-                ("Unknown container type".to_string() + value).into(),
-            )),
-        }
-    }
-}
+pub use loro_common::ContainerType;
 
 pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     fn id(&self) -> &ContainerID;
@@ -153,85 +114,21 @@ pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
     }
 }
 
-/// [ContainerID] includes the Op's [ID] and the type. So it's impossible to have
-/// the same [ContainerID] with conflict [ContainerType].
-///
-/// This structure is really cheap to clone.
-///
-/// String representation:
-///
-/// - Root Container: `/<name>:<type>`
-/// - Normal Container: `<counter>@<client>:<type>`
-///
-/// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
-pub enum ContainerID {
-    /// Root container does not need an op to create. It can be created implicitly.
-    Root {
-        name: InternalString,
-        container_type: ContainerType,
-    },
-    Normal {
-        peer: PeerID,
-        counter: Counter,
-        container_type: ContainerType,
-    },
-}
-
-impl Display for ContainerID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ContainerID::Root {
-                name,
-                container_type,
-            } => f.write_fmt(format_args!("/{}:{}", name, container_type))?,
-            ContainerID::Normal {
-                peer,
-                counter,
-                container_type,
-            } => f.write_fmt(format_args!(
-                "{}:{}",
-                ID::new(*peer, *counter),
-                container_type
-            ))?,
-        };
-        Ok(())
-    }
-}
-
-impl TryFrom<&str> for ContainerID {
-    type Error = ();
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut parts = value.split(':');
-        let id = parts.next().ok_or(())?;
-        let container_type = parts.next().ok_or(())?;
-        let container_type = ContainerType::try_from(container_type).map_err(|_| ())?;
-        if let Some(id) = id.strip_prefix('/') {
-            Ok(ContainerID::Root {
-                name: id.into(),
-                container_type,
-            })
-        } else {
-            let mut parts = id.split('@');
-            let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-            let client = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-            Ok(ContainerID::Normal {
-                counter,
-                peer: client,
-                container_type,
-            })
-        }
-    }
-}
+pub use loro_common::ContainerID;
 
 pub enum ContainerIdRaw {
     Root { name: InternalString },
     Normal { id: ID },
 }
 
-impl<T: Into<InternalString>> From<T> for ContainerIdRaw {
-    fn from(value: T) -> Self {
+impl From<String> for ContainerIdRaw {
+    fn from(value: String) -> Self {
+        ContainerIdRaw::Root { name: value.into() }
+    }
+}
+
+impl<'a> From<&'a str> for ContainerIdRaw {
+    fn from(value: &'a str) -> Self {
         ContainerIdRaw::Root { name: value.into() }
     }
 }
@@ -270,51 +167,6 @@ impl ContainerIdRaw {
                 counter: id.counter,
                 container_type,
             },
-        }
-    }
-}
-
-impl ContainerID {
-    #[inline]
-    pub fn new_normal(id: ID, container_type: ContainerType) -> Self {
-        ContainerID::Normal {
-            peer: id.peer,
-            counter: id.counter,
-            container_type,
-        }
-    }
-
-    #[inline]
-    pub fn new_root(name: &str, container_type: ContainerType) -> Self {
-        ContainerID::Root {
-            name: name.into(),
-            container_type,
-        }
-    }
-
-    #[inline]
-    pub fn is_root(&self) -> bool {
-        matches!(self, ContainerID::Root { .. })
-    }
-
-    #[inline]
-    pub fn is_normal(&self) -> bool {
-        matches!(self, ContainerID::Normal { .. })
-    }
-
-    #[inline]
-    pub fn name(&self) -> &InternalString {
-        match self {
-            ContainerID::Root { name, .. } => name,
-            ContainerID::Normal { .. } => unreachable!(),
-        }
-    }
-
-    #[inline]
-    pub fn container_type(&self) -> ContainerType {
-        match self {
-            ContainerID::Root { container_type, .. } => *container_type,
-            ContainerID::Normal { container_type, .. } => *container_type,
         }
     }
 }

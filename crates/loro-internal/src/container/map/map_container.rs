@@ -9,6 +9,7 @@ use crate::{
     delta::{MapDiff, ValuePair},
     op::OwnedRichOp,
     transaction::Transaction,
+    value::ResolveDeep,
     LoroError, Transact, VersionVector,
 };
 use fxhash::FxHashMap;

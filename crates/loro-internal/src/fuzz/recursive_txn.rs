@@ -16,6 +16,7 @@ use crate::{
     event::{Diff, Observer},
     id::PeerID,
     transaction::TransactionWrap,
+    value::{ApplyDiff, ToJson},
     ContainerType, EncodeMode, List, LoroCore, LoroValue, Map, Text, Transact,
 };
 

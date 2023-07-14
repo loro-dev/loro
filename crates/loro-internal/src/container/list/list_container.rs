@@ -26,7 +26,7 @@ use crate::{
     op::{InnerContent, Op, RawOpContent, RichOp},
     prelim::Prelim,
     transaction::Transaction,
-    value::LoroValue,
+    value::{LoroValue, ResolveDeep},
     LoroError, Transact, VersionVector,
 };
 
@@ -769,6 +769,8 @@ mod test {
     #[test]
     #[cfg(feature = "json")]
     fn collection() {
+        use crate::value::ToJson;
+
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
         list.insert(&loro, 0, "ab").unwrap();
@@ -793,6 +795,8 @@ mod test {
     #[test]
     #[cfg(feature = "json")]
     fn for_each() {
+        use crate::value::ToJson;
+
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
         list.insert(&loro, 0, "a").unwrap();
@@ -812,6 +816,8 @@ mod test {
     #[test]
     #[cfg(feature = "json")]
     fn map() {
+        use crate::value::ToJson;
+
         let mut loro = LoroCore::default();
         let mut list = loro.get_list("list");
         list.insert(&loro, 0, "a").unwrap();

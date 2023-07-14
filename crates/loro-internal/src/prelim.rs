@@ -29,24 +29,24 @@ pub enum PrelimValue {
 
 impl<T> Prelim for T
 where
-    T: Into<LoroValue>,
+    T: Into<LoroValue> + Clone,
 {
     fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        let value: LoroValue = self.into();
-        if let LoroValue::Container(_) = value {
-            return Err(LoroError::PrelimError);
+        let value: LoroValue = self.clone().into();
+        if let LoroValue::Container(id) = value {
+            match id {
+                loro_common::ContainerID::Normal {
+                    peer,
+                    counter,
+                    container_type,
+                } if peer == 0 && counter == 0 => {
+                    return Ok((PrelimValue::Container(container_type), Some(self)))
+                }
+                _ => return Err(LoroError::PrelimError),
+            }
         }
+
         Ok((PrelimValue::Value(value), None))
-    }
-
-    fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
-        Ok(())
-    }
-}
-
-impl Prelim for ContainerType {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        Ok((PrelimValue::Container(self), Some(self)))
     }
 
     fn integrate(self, _txn: &mut Transaction, _container: ContainerIdx) -> Result<(), LoroError> {
