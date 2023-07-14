@@ -62,6 +62,10 @@ impl CompactBytes {
         self.capacity
     }
 
+    pub fn take(self) -> AppendOnlyBytes {
+        self.bytes
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut compact_bytes = CompactBytes::new();
         compact_bytes.append(bytes);
