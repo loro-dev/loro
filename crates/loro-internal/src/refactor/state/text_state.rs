@@ -234,6 +234,10 @@ impl TextState {
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.rope.slice_substrings(0..self.len())
     }
+
+    pub(crate) fn utf16_to_utf8(&self, pos: usize) -> usize {
+        self.rope.wchars_to_chars(pos)
+    }
 }
 
 impl std::fmt::Display for TextState {

@@ -186,7 +186,7 @@ impl LoroApp {
         ans
     }
 
-    pub(crate) fn vv_cloned(&self) -> VersionVector {
+    pub fn vv_cloned(&self) -> VersionVector {
         self.oplog.lock().unwrap().vv().clone()
     }
 

@@ -468,6 +468,7 @@ impl Actionable for Vec<Actor> {
     }
 }
 
+#[allow(unused)]
 fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     match (a, b) {
         (LoroValue::Map(a), LoroValue::Map(b)) => {

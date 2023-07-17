@@ -73,6 +73,10 @@ name = "text"
 harness = false
 
 [[bench]]
+name = "text_r"
+harness = false
+
+[[bench]]
 name = "list"
 harness = false
 

@@ -96,6 +96,36 @@ impl TextHandler {
             .idx_to_id(self.container_idx)
             .unwrap()
     }
+
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
+        let (start, end) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let text_state = &state.as_text_state();
+                    let text = text_state.as_ref().unwrap();
+                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
+                });
+        self.delete(txn, start, end - start);
+    }
+
+    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        let start =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let text_state = &state.as_text_state();
+                    let text = text_state.as_ref().unwrap();
+                    text.utf16_to_utf8(pos)
+                });
+        self.insert(txn, start, s);
+    }
 }
 
 impl ListHandler {
