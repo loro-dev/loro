@@ -277,7 +277,7 @@ impl AppState {
                 for item in list_mut.iter_mut() {
                     if item.is_container() {
                         let container = item.as_container().unwrap();
-                        let container_idx = self.arena.id_to_idx(container).unwrap();
+                        let container_idx = self.arena.register_container(container);
                         let value = self.get_container_deep_value(container_idx);
                         *item = value;
                     }
@@ -294,7 +294,7 @@ impl AppState {
                 for (_key, value) in map_mut.iter_mut() {
                     if value.is_container() {
                         let container = value.as_container().unwrap();
-                        let container_idx = self.arena.id_to_idx(container).unwrap();
+                        let container_idx = self.arena.register_container(container);
                         let new_value = self.get_container_deep_value(container_idx);
                         *value = new_value;
                     }

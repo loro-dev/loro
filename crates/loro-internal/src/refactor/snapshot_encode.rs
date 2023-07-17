@@ -99,7 +99,7 @@ enum SnapshotOp {
     ListInsert { pos: usize, start: u32, end: u32 },
     ListDelete { pos: usize, len: isize },
     ListUnknown { pos: usize, len: usize },
-    Map { key: usize, value: u32 },
+    Map { key: usize, value_idx_plus_one: u32 },
 }
 
 impl EncodedSnapshotOp {
@@ -126,7 +126,7 @@ impl EncodedSnapshotOp {
     pub fn get_map(&self) -> SnapshotOp {
         SnapshotOp::Map {
             key: self.prop,
-            value: self.value as u32,
+            value_idx_plus_one: self.value as u32,
         }
     }
 
@@ -150,7 +150,10 @@ impl EncodedSnapshotOp {
                 value: len as i64,
                 value2: -2,
             },
-            SnapshotOp::Map { key, value } => Self {
+            SnapshotOp::Map {
+                key,
+                value_idx_plus_one: value,
+            } => Self {
                 container,
                 prop: key,
                 value: value as i64,
@@ -469,7 +472,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                     encoded_ops.push(EncodedSnapshotOp::from(
                         SnapshotOp::Map {
                             key,
-                            value: value as u32,
+                            value_idx_plus_one: value as u32,
                         },
                         op.container.to_index(),
                     ));
@@ -598,11 +601,14 @@ pub fn decode_oplog(
                 loro_common::ContainerType::Map => {
                     let op = encoded_op.get_map();
                     match op {
-                        SnapshotOp::Map { key, value } => Op::new(
+                        SnapshotOp::Map {
+                            key,
+                            value_idx_plus_one,
+                        } => Op::new(
                             id,
                             InnerContent::Map(InnerMapSet {
                                 key: (&*keys[key]).into(),
-                                value,
+                                value: value_idx_plus_one - 1,
                             }),
                             container_idx,
                         ),

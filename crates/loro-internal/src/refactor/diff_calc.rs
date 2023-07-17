@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
+use debug_log::debug_dbg;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -194,6 +195,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     ) {
         let map = op.op().content.as_map().unwrap();
         let value = oplog.arena.get_value(map.value as usize);
+        debug_dbg!(&value);
         self.grouped
             .entry(map.key.clone())
             .or_default()
@@ -260,7 +262,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             self.tracker.start_vv().partial_cmp(vv),
             None | Some(Ordering::Less)
         ) {
-            self.tracker = Tracker::new(vv.clone(), 0);
+            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
         }
 
         self.tracker.checkout(vv);

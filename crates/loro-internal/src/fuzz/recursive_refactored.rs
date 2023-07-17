@@ -560,15 +560,23 @@ fn check_synced(sites: &mut [Actor]) {
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
             if i % 2 == 0 {
+                debug_log::group!("Updates {} to {}", j, i);
                 a_doc
                     .import(&b_doc.export_from(&a_doc.vv_cloned()))
                     .unwrap();
+                debug_log::group_end!();
+                debug_log::group!("Updates {} to {}", i, j);
                 b_doc
                     .import(&a_doc.export_from(&b_doc.vv_cloned()))
                     .unwrap();
+                debug_log::group_end!();
             } else {
+                debug_log::group!("Snapshot {} to {}", j, i);
                 a_doc.import(&b_doc.export_snapshot()).unwrap();
+                debug_log::group_end!();
+                debug_log::group!("Snapshot {} to {}", i, j);
                 b_doc.import(&a_doc.export_snapshot()).unwrap();
+                debug_log::group_end!();
             }
 
             check_eq(a, b);
@@ -670,6 +678,54 @@ mod failed_tests {
     #[test]
     fn empty() {
         test_multi_sites(2, &mut [])
+    }
+
+    #[test]
+    fn insert_container() {
+        test_multi_sites(
+            2,
+            &mut [List {
+                site: 171,
+                container_idx: 171,
+                key: 171,
+                value: Container(C::Text),
+            }],
+        )
+    }
+
+    #[test]
+    fn insert_container_1() {
+        test_multi_sites(
+            3,
+            &mut [Map {
+                site: 2,
+                container_idx: 1,
+                key: 2,
+                value: Container(C::List),
+            }],
+        )
+    }
+
+    #[test]
+    fn list_insert_del() {
+        test_multi_sites(
+            3,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 78,
+                    key: 0,
+                    value: I32(16),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 78,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        );
     }
 
     #[test]
