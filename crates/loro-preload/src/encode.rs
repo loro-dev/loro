@@ -24,6 +24,14 @@ impl<'a> FinalPhase<'a> {
         serde_columnar::from_bytes(bytes)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
+
+    pub fn diagnose_size(&self) {
+        println!("common: {}", self.common.len());
+        println!("app_state: {}", self.app_state.len());
+        println!("state_arena: {}", self.state_arena.len());
+        println!("additional_arena: {}", self.additional_arena.len());
+        println!("oplog: {}", self.oplog.len());
+    }
 }
 
 #[columnar(ser, de)]

@@ -38,6 +38,7 @@ impl DiffCalculator {
         }
     }
 
+    // PERF: if the causal order is linear, we can skip some of the calculation
     pub fn calc_diff(
         &mut self,
         oplog: &super::oplog::OpLog,

@@ -88,6 +88,14 @@ impl CompactBytes {
 
     // PERF: may use iterator to speed up
     pub fn alloc_advance(&mut self, bytes: &[u8]) -> Vec<Range<usize>> {
+        self.alloc_advance_with_min_match_size(bytes, 4)
+    }
+
+    pub fn alloc_advance_with_min_match_size(
+        &mut self,
+        bytes: &[u8],
+        min_match_size: usize,
+    ) -> Vec<Range<usize>> {
         let mut ans: Vec<Range<usize>> = vec![];
         // this push will try to merge the new range with the last range in the ans
         fn push_with_merge(ans: &mut Vec<Range<usize>>, new: Range<usize>) {
@@ -102,7 +110,7 @@ impl CompactBytes {
         }
 
         let mut index = 0;
-        let min_match_size = 4.min(bytes.len());
+        let min_match_size = min_match_size.min(bytes.len());
         while index < bytes.len() {
             match self.lookup(&bytes[index..]) {
                 Some((pos, len)) if len >= min_match_size => {

@@ -96,7 +96,7 @@ struct EncodedSnapshotOp {
 }
 
 enum SnapshotOp {
-    ListInsert { pos: usize, start: u32, end: u32 },
+    ListInsert { pos: usize, start: u32, len: u32 },
     ListDelete { pos: usize, len: isize },
     ListUnknown { pos: usize, len: usize },
     Map { key: usize, value_idx_plus_one: u32 },
@@ -118,7 +118,7 @@ impl EncodedSnapshotOp {
             SnapshotOp::ListInsert {
                 pos: self.prop,
                 start: self.value as u32,
-                end: self.value2 as u32,
+                len: self.value2 as u32,
             }
         }
     }
@@ -132,11 +132,11 @@ impl EncodedSnapshotOp {
 
     pub fn from(value: SnapshotOp, container: u32) -> Self {
         match value {
-            SnapshotOp::ListInsert { pos, start, end } => Self {
+            SnapshotOp::ListInsert { pos, start, len } => Self {
                 container,
                 prop: pos,
                 value: start as i64,
-                value2: end as i64,
+                value2: len as i64,
             },
             SnapshotOp::ListDelete { pos, len } => Self {
                 container,
@@ -183,12 +183,15 @@ impl DepsEncoding {
 
 pub fn encode_app_snapshot(app: &LoroApp) -> Vec<u8> {
     let pre_encoded_state = preprocess_app_state(&app.app_state().lock().unwrap());
-    encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state)).encode()
+    let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
+    // f.diagnose_size();
+    miniz_oxide::deflate::compress_to_vec(&f.encode(), 6)
 }
 
 pub fn decode_app_snapshot(app: &LoroApp, bytes: &[u8]) -> Result<(), LoroError> {
     assert!(app.is_empty());
-    let data = FinalPhase::decode(bytes)?;
+    let bytes = miniz_oxide::inflate::decompress_to_vec(bytes).unwrap();
+    let data = FinalPhase::decode(&bytes)?;
     let mut app_state = app.app_state().lock().unwrap();
     decode_state(&mut app_state, &data)?;
     let arena = app_state.arena.clone();
@@ -370,14 +373,14 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     };
 
     let mut record_str = |s: &[u8], mut pos: usize, container_idx: u32| {
-        let slices = bytes.alloc_advance(s);
+        let slices = bytes.alloc_advance_with_min_match_size(s, 8);
         slices
             .into_iter()
             .map(|range| {
                 let ans = SnapshotOp::ListInsert {
                     pos,
                     start: range.start as u32,
-                    end: range.end as u32,
+                    len: range.len() as u32,
                 };
                 pos += range.len();
                 EncodedSnapshotOp::from(ans, container_idx)
@@ -439,7 +442,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                                             SnapshotOp::ListInsert {
                                                 pos,
                                                 start: idx as u32,
-                                                end: idx as u32 + 1,
+                                                len: 1,
                                             },
                                             op.container.to_index(),
                                         ));
@@ -508,6 +511,16 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     common.peer_ids = Cow::Owned(peers);
     let bytes = bytes.take();
     let mut extra_text = (&bytes[arena.text.len()..]).to_vec();
+    let oplog_encoded = OplogEncoded {
+        changes: encoded_changes,
+        ops: encoded_ops,
+        deps,
+    };
+    // println!("OplogEncoded:");
+    // println!("changes {}", oplog_encoded.changes.len());
+    // println!("ops {}", oplog_encoded.ops.len());
+    // println!("deps {}", oplog_encoded.deps.len());
+    // println!("\n");
     let ans = FinalPhase {
         common: Cow::Owned(common.encode()),
         app_state: Cow::Owned(app_state.encode()),
@@ -520,14 +533,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
             }
             .encode(),
         ),
-        oplog: Cow::Owned(
-            OplogEncoded {
-                changes: encoded_changes,
-                ops: encoded_ops,
-                deps,
-            }
-            .encode(),
-        ),
+        oplog: Cow::Owned(oplog_encoded.encode()),
     };
 
     ans
@@ -578,9 +584,9 @@ pub fn decode_oplog(
                 loro_common::ContainerType::Text | loro_common::ContainerType::List => {
                     let op = encoded_op.get_list();
                     match op {
-                        SnapshotOp::ListInsert { start, end, pos } => Op::new(
+                        SnapshotOp::ListInsert { start, len, pos } => Op::new(
                             id,
-                            InnerContent::List(InnerListOp::new_insert(start..end, pos)),
+                            InnerContent::List(InnerListOp::new_insert(start..start + len, pos)),
                             container_idx,
                         ),
                         SnapshotOp::ListDelete { len, pos } => Op::new(

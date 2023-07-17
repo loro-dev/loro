@@ -211,6 +211,10 @@ impl LoroApp {
         MapHandler::new(idx, Arc::downgrade(&self.state))
     }
 
+    pub fn diagnose_size(&self) {
+        self.oplog().lock().unwrap().diagnose_size();
+    }
+
     fn get_container_idx<I: Into<ContainerIdRaw>>(
         &self,
         id: I,

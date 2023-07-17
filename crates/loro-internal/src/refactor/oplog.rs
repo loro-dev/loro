@@ -482,6 +482,25 @@ impl OpLog {
     pub(crate) fn len_changes(&self) -> usize {
         self.changes.values().map(|x| x.len()).sum()
     }
+
+    pub fn diagnose_size(&self) {
+        let mut total_changes = 0;
+        let mut total_ops = 0;
+        let mut total_atom_ops = 0;
+        let mut total_dag_node = self.dag.map.len();
+        for (_, changes) in &self.changes {
+            total_changes += changes.len();
+            for change in changes.iter() {
+                total_ops += change.ops.len();
+                total_atom_ops += change.atom_len();
+            }
+        }
+
+        println!("total changes: {}", total_changes);
+        println!("total ops: {}", total_ops);
+        println!("total atom ops: {}", total_atom_ops);
+        println!("total dag node: {}", total_dag_node);
+    }
 }
 
 impl Default for OpLog {

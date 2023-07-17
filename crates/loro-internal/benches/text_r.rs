@@ -23,6 +23,101 @@ mod run {
             })
         });
 
+        b.bench_function("B4 encode snapshot", |b| {
+            let loro = LoroApp::default();
+            let text = loro.get_text("text");
+
+            let mut n = 0;
+            let mut txn = loro.txn().unwrap();
+            for TextAction { pos, ins, del } in actions.iter() {
+                if n == 10 {
+                    n = 0;
+                    drop(txn);
+                    txn = loro.txn().unwrap();
+                }
+                n += 1;
+                text.delete(&mut txn, *pos, *del);
+                text.insert(&mut txn, *pos, ins);
+            }
+            txn.commit().unwrap();
+
+            b.iter(|| {
+                loro.export_snapshot();
+            });
+        });
+
+        b.bench_function("B4 encode updates", |b| {
+            let loro = LoroApp::default();
+            let text = loro.get_text("text");
+
+            let mut n = 0;
+            let mut txn = loro.txn().unwrap();
+            for TextAction { pos, ins, del } in actions.iter() {
+                if n == 10 {
+                    n = 0;
+                    drop(txn);
+                    txn = loro.txn().unwrap();
+                }
+                n += 1;
+                text.delete(&mut txn, *pos, *del);
+                text.insert(&mut txn, *pos, ins);
+            }
+            txn.commit().unwrap();
+
+            b.iter(|| {
+                loro.export_from(&Default::default());
+            });
+        });
+
+        b.bench_function("B4 decode snapshot", |b| {
+            let loro = LoroApp::default();
+            let text = loro.get_text("text");
+            let mut n = 0;
+            let mut txn = loro.txn().unwrap();
+            for TextAction { pos, ins, del } in actions.iter() {
+                if n == 10 {
+                    n = 0;
+                    drop(txn);
+                    txn = loro.txn().unwrap();
+                }
+                n += 1;
+                text.delete(&mut txn, *pos, *del);
+                text.insert(&mut txn, *pos, ins);
+            }
+            txn.commit().unwrap();
+
+            let data = loro.export_snapshot();
+            b.iter(|| {
+                let l = LoroApp::new();
+                l.import(&data).unwrap();
+            });
+        });
+
+        b.bench_function("B4 import updates", |b| {
+            let loro = LoroApp::default();
+            let text = loro.get_text("text");
+
+            let mut n = 0;
+            let mut txn = loro.txn().unwrap();
+            for TextAction { pos, ins, del } in actions.iter() {
+                if n == 10 {
+                    n = 0;
+                    drop(txn);
+                    txn = loro.txn().unwrap();
+                }
+                n += 1;
+                text.delete(&mut txn, *pos, *del);
+                text.insert(&mut txn, *pos, ins);
+            }
+            txn.commit().unwrap();
+
+            let data = loro.export_from(&Default::default());
+            b.iter(|| {
+                let l = LoroApp::new();
+                l.import(&data).unwrap();
+            });
+        });
+
         b.bench_function("B4 utf16", |b| {
             b.iter(|| {
                 let loro = LoroApp::new();
