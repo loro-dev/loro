@@ -82,7 +82,7 @@ impl BTreeTrait for ListImpl {
         elements: &[Self::Elem],
         _diff: Option<Self::CacheDiff>,
     ) -> Self::CacheDiff {
-        let diff = *cache - elements.len() as isize;
+        let diff = elements.len() as isize - *cache;
         *cache = elements.len() as isize;
         diff
     }

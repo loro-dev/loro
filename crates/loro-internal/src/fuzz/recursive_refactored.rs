@@ -729,6 +729,75 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_0() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 63,
+                    container_idx: 61,
+                    key: 55,
+                    value: Null,
+                },
+                List {
+                    site: 55,
+                    container_idx: 55,
+                    key: 55,
+                    value: Null,
+                },
+                List {
+                    site: 98,
+                    container_idx: 45,
+                    key: 98,
+                    value: I32(1650614882),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: I32(761422434),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: I32(1650614882),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: I32(1650614882),
+                },
+                List {
+                    site: 98,
+                    container_idx: 96,
+                    key: 98,
+                    value: I32(1650614882),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: I32(761422434),
+                },
+                List {
+                    site: 98,
+                    container_idx: 98,
+                    key: 98,
+                    value: I32(1657699061),
+                },
+                List {
+                    site: 98,
+                    container_idx: 245,
+                    key: 65,
+                    value: Container(C::List),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,
