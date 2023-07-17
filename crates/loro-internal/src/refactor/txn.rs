@@ -24,7 +24,9 @@ use super::{
 
 pub struct Transaction {
     peer: PeerID,
+    start_counter: Counter,
     next_counter: Counter,
+    start_lamport: Lamport,
     next_lamport: Lamport,
     state: Arc<Mutex<AppState>>,
     oplog: Arc<Mutex<OpLog>>,
@@ -37,19 +39,19 @@ pub struct Transaction {
 impl Transaction {
     pub fn new(state: Arc<Mutex<AppState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
         let mut state_lock = state.lock().unwrap();
+        let oplog_lock = oplog.lock().unwrap();
         state_lock.start_txn();
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer;
-        let next_counter = state_lock.next_counter;
-        let next_lamport = oplog
-            .lock()
-            .unwrap()
-            .dag
-            .frontiers_to_next_lamport(&frontiers);
+        let next_counter = oplog_lock.next_id(peer).counter;
+        let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
         drop(state_lock);
+        drop(oplog_lock);
         Self {
             peer,
+            start_counter: next_counter,
+            start_lamport: next_lamport,
             next_counter,
             state,
             arena,
@@ -95,10 +97,10 @@ impl Transaction {
         let mut oplog = self.oplog.lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
-            lamport: self.next_lamport - ops.atom_len() as Lamport,
+            lamport: self.start_lamport,
             ops,
             deps,
-            id: oplog.next_id(state.peer),
+            id: ID::new(self.peer, self.start_counter),
             timestamp: oplog.get_timestamp(),
         };
 
@@ -109,7 +111,7 @@ impl Transaction {
             self._abort();
             return Err(err);
         }
-        state.commit_txn(Frontiers::from_id(last_id), self.next_counter);
+        state.commit_txn(Frontiers::from_id(last_id));
         Ok(())
     }
 
@@ -197,7 +199,7 @@ impl Drop for Transaction {
         if !self.finished {
             // TODO: should we abort here or commit here?
             // what if commit fails?
-            self._commit().unwrap_or_default();
+            self._commit().unwrap();
         }
     }
 }

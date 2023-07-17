@@ -85,12 +85,6 @@ pub(crate) fn decode_oplog_updates(oplog: &mut OpLog, updates: &[u8]) -> Result<
     Ok(())
 }
 
-pub(crate) fn decode_oplog_changes(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
-    let changes = decode_changes_to_inner_format_oplog(input, oplog)?;
-    oplog.import_remote_changes(changes)?;
-    Ok(())
-}
-
 pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static>, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;

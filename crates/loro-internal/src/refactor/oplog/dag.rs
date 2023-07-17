@@ -5,6 +5,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
+use debug_log::debug_dbg;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 
 use super::{AppDag, AppDagNode};
@@ -52,7 +53,21 @@ impl HasLength for AppDagNode {
     }
 }
 
-impl Mergable for AppDagNode {}
+impl Mergable for AppDagNode {
+    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
+    fn merge(&mut self, _other: &Self, _conf: &())
+    where
+        Self: Sized,
+    {
+        unreachable!()
+    }
+}
 
 impl HasLamport for AppDagNode {
     fn lamport(&self) -> Lamport {
@@ -169,7 +184,7 @@ impl AppDag {
         let mut lamport = {
             let id = frontiers[0];
             let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!("{} not found", id) };
             x.element.lamport_end()
         };
 

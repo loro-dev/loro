@@ -197,7 +197,7 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
-        debug_dbg!(&from, &target);
+        // debug_dbg!(&from, &target);
         let mut in_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Frontiers> = BTreeMap::default();
         let mut stack = Vec::new();
@@ -410,7 +410,7 @@ mod test {
         let store_c = loro_c.log_store.try_read().unwrap();
 
         for n in store_c.iter_causal(&from, loro_c.vv_cloned().diff(&from_vv).left) {
-            println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
+            // println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
             // println!("data: {:?}", store_c.change_to_export_format(n.data));
             vv.retreat(&n.retreat);
             vv.forward(&n.forward);

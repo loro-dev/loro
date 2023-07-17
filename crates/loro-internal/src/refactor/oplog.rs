@@ -32,6 +32,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     pub(crate) changes: ClientChanges,
+    /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
     /// Pending changes that haven't been applied to the dag.
@@ -129,6 +130,15 @@ impl OpLog {
         }
 
         self.dag.vv.extend_to_include_last_id(change.id_last());
+        if cfg!(debug_assertions) {
+            let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
+            assert_eq!(
+                lamport, change.lamport,
+                "{:#?}\nDAG={:#?}",
+                &change, &self.dag
+            );
+        }
+
         self.next_lamport = self.next_lamport.max(change.lamport_end());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.dag.frontiers.retain_non_included(&change.deps);
@@ -234,8 +244,6 @@ impl OpLog {
                 changes.insert(peer, temp);
             }
         }
-
-        debug_dbg!(&changes);
 
         changes
     }
@@ -343,9 +351,8 @@ impl OpLog {
 
         // TODO: Perf
         change_causal_arr.sort_by_key(|x| x.lamport);
-        debug_dbg!(&change_causal_arr);
+        // debug_dbg!(&change_causal_arr);
         for change in change_causal_arr {
-            debug_dbg!(&change);
             self.import_local_change(change)?;
         }
 
@@ -448,7 +455,7 @@ impl OpLog {
                     }
 
                     inner_vv.extend_to_include_end_id(change.id);
-                    debug_log::debug_dbg!(&change, &inner_vv);
+                    // debug_log::debug_dbg!(&change, &inner_vv);
                     Some((change, vv.clone()))
                 } else {
                     debug_log::group_end!();

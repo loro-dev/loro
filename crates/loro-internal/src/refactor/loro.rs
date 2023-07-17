@@ -175,12 +175,14 @@ impl LoroApp {
     }
 
     pub fn export_snapshot(&self) -> Vec<u8> {
+        debug_log::group!("export snapshot");
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
         // maybe u8 is enough
         ans.push(version);
         ans.push((EncodeMode::Snapshot).to_byte());
         ans.extend(encode_app_snapshot(self));
+        debug_log::group_end!();
         ans
     }
 

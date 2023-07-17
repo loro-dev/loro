@@ -469,7 +469,6 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
             }
         }
 
-        debug_dbg!(&change);
         let deps_len = deps.len() - dep_start;
         encoded_changes.push(EncodedChange {
             peer_idx,
@@ -618,7 +617,7 @@ pub fn decode_oplog(
     for mut change in changes {
         let lamport = oplog.dag.frontiers_to_next_lamport(&change.deps);
         change.lamport = lamport;
-        oplog.import_local_change(change);
+        oplog.import_local_change(change)?;
     }
 
     Ok(())
@@ -721,8 +720,6 @@ mod test {
             .unwrap()
             .to_string();
         assert_eq!("hello", &actual);
-        dbg!(&app.oplog().lock().unwrap());
-        dbg!(&app2.oplog().lock().unwrap());
 
         // test import snapshot to a LoroApp that is already changed
         let mut txn = app2.txn().unwrap();

@@ -240,7 +240,6 @@ impl Tracker {
         let mut cursors = Vec::new();
         let mut args = Vec::new();
         for span in spans {
-            debug_log::group!("forward {:?}", &span);
             let end_id = ID::new(span.client_id, span.counter.end);
             if !for_diff {
                 self.current_vv.set_end(end_id);
@@ -281,7 +280,6 @@ impl Tracker {
                 cursors.push(span);
                 args.push(StatusChange::SetAsCurrent);
             }
-            debug_log::group_end!();
         }
 
         self.content.update_at_cursors_with_args(
@@ -399,7 +397,6 @@ impl Tracker {
                 let mut spans = self
                     .content
                     .get_active_id_spans(span.start() as usize, span.atom_len());
-                debug_log::debug_log!("DELETED SPANS={}", format!("{:?}", &spans));
                 self.update_spans(&spans, StatusChange::Delete);
 
                 if span.is_reversed() && span.atom_len() > 1 {

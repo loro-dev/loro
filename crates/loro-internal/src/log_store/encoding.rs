@@ -11,8 +11,8 @@ use crate::{
 };
 
 use self::{
-    encode_changes::encode_oplog_changes,
-    encode_updates::{decode_oplog_changes, decode_oplog_updates},
+    encode_changes::{decode_oplog_changes, encode_oplog_changes},
+    encode_updates::decode_oplog_updates,
 };
 
 use super::RemoteClientChanges;

@@ -9,7 +9,7 @@ use crate::{
     configure::SecureRandomGenerator,
     container::{registry::ContainerIdx, ContainerIdRaw},
     event::Diff,
-    id::{Counter, PeerID},
+    id::PeerID,
     op::RawOp,
     version::Frontiers,
     ContainerType, LoroValue,
@@ -28,7 +28,6 @@ use super::{arena::SharedArena, oplog::OpLog};
 #[derive(Clone)]
 pub struct AppState {
     pub(super) peer: PeerID,
-    pub(super) next_counter: Counter,
 
     pub(super) frontiers: Frontiers,
     pub(super) states: FxHashMap<ContainerIdx, State>,
@@ -93,7 +92,6 @@ impl AppState {
         // TODO: maybe we should switch to certain version in oplog
         Self {
             peer,
-            next_counter: 0,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
             arena: oplog.arena.clone(),
@@ -108,7 +106,6 @@ impl AppState {
         Self {
             peer,
             arena,
-            next_counter: 0,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
             in_txn: false,
@@ -168,14 +165,13 @@ impl AppState {
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, next_counter: Counter) {
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers) {
         for container_idx in std::mem::take(&mut self.changed_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
 
         self.in_txn = false;
         self.frontiers = new_frontiers;
-        self.next_counter = next_counter;
     }
 
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
@@ -194,7 +190,10 @@ impl AppState {
     }
 
     pub(super) fn set_state(&mut self, idx: ContainerIdx, state: State) {
-        assert!(self.states.insert(idx, state).is_none(), "overiding states")
+        assert!(
+            self.states.insert(idx, state).is_none(),
+            "overriding states"
+        )
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

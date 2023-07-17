@@ -321,7 +321,6 @@ impl DiffCalculatorTrait for TextDiffCalculator {
             self.tracker.checkout(vv);
         }
 
-        debug_dbg!(&op, self.tracker.len());
         self.tracker.track_apply(&op);
     }
 

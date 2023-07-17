@@ -227,6 +227,12 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
     to_vec(&encoded).unwrap()
 }
 
+pub(crate) fn decode_oplog_changes(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
+    let changes = decode_changes_to_inner_format_oplog(input, oplog)?;
+    oplog.import_remote_changes(changes)?;
+    Ok(())
+}
+
 pub(super) fn encode_changes(store: &LogStore, vv: &VersionVector) -> Result<Vec<u8>, LoroError> {
     store.expose_local_change();
     let mut client_id_to_idx: FxHashMap<PeerID, ClientIdx> = FxHashMap::default();
@@ -722,14 +728,14 @@ pub(crate) fn get_lamport_by_deps_oplog(
     lamport_map: &FxHashMap<PeerID, Vec<(Range<Counter>, Lamport)>>,
     oplog: Option<&OpLog>,
 ) -> Result<Lamport, PeerID> {
-    let mut ans = Vec::new();
+    let mut ans = 0;
     for id in deps.iter() {
         if let Some(c) = oplog.and_then(|x| x.lookup_change(*id)) {
             let offset = id.counter - c.id.counter;
-            ans.push(c.lamport + offset as u32);
+            ans = ans.max(c.lamport + offset as u32 + 1);
         } else if let Some(v) = lamport_map.get(&id.peer) {
             if let Some((lamport, offset)) = get_value_from_range_map(v, id.counter) {
-                ans.push(lamport + offset);
+                ans = ans.max(lamport + offset + 1);
             } else {
                 return Err(id.peer);
             }
@@ -737,7 +743,7 @@ pub(crate) fn get_lamport_by_deps_oplog(
             return Err(id.peer);
         }
     }
-    Ok(ans.into_iter().max().unwrap_or(0) + 1)
+    Ok(ans)
 }
 
 pub(crate) fn get_lamport_by_deps(
