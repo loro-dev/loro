@@ -231,12 +231,14 @@ impl TextState {
         self.len() == 0
     }
 
-    pub fn to_string(&self) -> String {
-        self.rope.to_string()
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.rope.slice_substrings(0..self.len())
+    }
+}
+
+impl std::fmt::Display for TextState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.rope.fmt(f)
     }
 }
 

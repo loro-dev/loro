@@ -4,6 +4,7 @@ use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
+pub mod recursive_refactored;
 pub mod recursive_txn;
 
 use crate::{
@@ -339,8 +340,8 @@ fn check_eq_refactored(site_a: &mut LoroApp, site_b: &mut LoroApp) {
     let text_a = a.get_text("text").unwrap();
     let b = site_b.txn().unwrap();
     let text_b = b.get_text("text").unwrap();
-    let value_a = text_a.get_value(&a);
-    let value_b = text_b.get_value(&b);
+    let value_a = text_a.get_value();
+    let value_b = text_b.get_value();
     assert_eq!(value_a, value_b);
 }
 
@@ -1254,7 +1255,377 @@ mod test {
 
     #[test]
     fn mini_r() {
-        minify_error(8, vec![], test_multi_sites_refactored, normalize)
+        minify_error(
+            8,
+            vec![
+                Ins {
+                    content: 12850,
+                    pos: 13487397,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 1099511627776,
+                    site: 0,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3439329280,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038288174027254314,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3035472509432113706,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10833,
+                    pos: 3038287623563979306,
+                    site: 42,
+                },
+                Ins {
+                    content: 1,
+                    pos: 3038287959208624384,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259201776170,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220479,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 24106,
+                    pos: 6799976248087830110,
+                    site: 94,
+                },
+                Ins {
+                    content: 64001,
+                    pos: 3038287259199219749,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 2736500823800031786,
+                    site: 205,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3049264783290935850,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038288174027254314,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 255,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220256,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 18446508959319796266,
+                    site: 126,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3062166268047665745,
+                    site: 42,
+                },
+                Ins {
+                    content: 42,
+                    pos: 3084163075507486721,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287426702944810,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259213179434,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6800062008686173738,
+                    site: 94,
+                },
+                Del {
+                    pos: 3038285042188102238,
+                    len: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287959208624384,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259201776170,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220479,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038288174027254314,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3035472509432113706,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3037724309245798954,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10833,
+                    pos: 3038287623563979306,
+                    site: 42,
+                },
+                Ins {
+                    content: 1,
+                    pos: 3038287959208624384,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259853530410,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199274794,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6799976581786656350,
+                    site: 94,
+                },
+                Del {
+                    pos: 3038287250539020586,
+                    len: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 42,
+                    pos: 3038287261933632001,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199230250,
+                    site: 42,
+                },
+                Ins {
+                    content: 65322,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 5,
+                    pos: 3038240898614820864,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 6799918847960427050,
+                    site: 94,
+                },
+                Del {
+                    pos: 83983302462955102,
+                    len: 3038287259199088122,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 18446508959317240362,
+                    site: 255,
+                },
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                SyncAll,
+                Ins {
+                    content: 10794,
+                    pos: 225399883704874,
+                    site: 0,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3098241429238589994,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 32,
+                },
+            ],
+            test_multi_sites_refactored,
+            normalize,
+        )
     }
 
     #[test]

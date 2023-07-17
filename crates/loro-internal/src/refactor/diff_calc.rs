@@ -56,7 +56,6 @@ impl DiffCalculator {
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<ContainerStateDiff> {
         let mut diffs = Vec::new();
-        let arena = &oplog.arena;
         let (lca, iter) =
             oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
         for (change, vv) in iter {

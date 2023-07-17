@@ -15,7 +15,12 @@ use crate::{
     LoroError, LoroValue,
 };
 
-use super::{arena::SharedArena, handler::Text, oplog::OpLog, state::AppState};
+use super::{
+    arena::SharedArena,
+    handler::{ListHandler, MapHandler, TextHandler},
+    oplog::OpLog,
+    state::{AppState, State},
+};
 
 pub struct Transaction {
     peer: PeerID,
@@ -133,9 +138,28 @@ impl Transaction {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<Text> {
+    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<TextHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| TextHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ListHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| ListHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<MapHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| MapHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    fn get_container_idx<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ContainerIdx> {
         let id: ContainerIdRaw = id.into();
-        let idx = match id {
+        match id {
             ContainerIdRaw::Root { name } => Some(self.arena.register_container(
                 &crate::container::ContainerID::Root {
                     name,
@@ -145,13 +169,19 @@ impl Transaction {
             ContainerIdRaw::Normal { id: _ } => self
                 .arena
                 .id_to_idx(&id.with_type(crate::ContainerType::Text)),
-        };
-
-        idx.map(|x| x.into())
+        }
     }
 
     pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
         self.state.lock().unwrap().get_value_by_idx(idx)
+    }
+
+    pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
+    where
+        F: FnOnce(&State) -> R,
+    {
+        let state = self.state.lock().unwrap();
+        f(state.get_state(idx).unwrap())
     }
 }
 

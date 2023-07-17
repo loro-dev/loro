@@ -182,6 +182,10 @@ impl AppState {
         self.states.get_mut(&idx)
     }
 
+    pub(super) fn get_state(&self, idx: ContainerIdx) -> Option<&State> {
+        self.states.get(&idx)
+    }
+
     pub(crate) fn get_value_by_idx(&self, container_idx: ContainerIdx) -> LoroValue {
         self.states
             .get(&container_idx)
@@ -214,6 +218,13 @@ impl AppState {
             .entry(idx)
             .or_insert_with(State::new_text)
             .as_text_state()
+    }
+
+    pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
+    where
+        F: FnOnce(&State) -> R,
+    {
+        f(self.states.get(&idx).unwrap())
     }
 
     pub(super) fn is_in_txn(&self) -> bool {

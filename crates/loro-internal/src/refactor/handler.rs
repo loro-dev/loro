@@ -1,27 +1,39 @@
-use std::{borrow::Cow, sync::Arc};
-
-use crate::{
-    container::{
-        list::list_op::{DeleteSpan, ListOp},
-        registry::ContainerIdx,
-        text::text_content::ListSlice,
-    },
-    LoroValue,
+use super::{state::AppState, txn::Transaction};
+use crate::container::{
+    list::list_op::{DeleteSpan, ListOp},
+    registry::ContainerIdx,
+    text::text_content::ListSlice,
+};
+use loro_common::{ContainerID, ContainerType, LoroValue};
+use std::{
+    borrow::Cow,
+    sync::{Mutex, Weak},
 };
 
-use super::txn::Transaction;
-
-pub struct Text {
+pub struct TextHandler {
     container_idx: ContainerIdx,
+    state: Weak<Mutex<AppState>>,
 }
 
-impl From<ContainerIdx> for Text {
-    fn from(container_idx: ContainerIdx) -> Self {
-        Self { container_idx }
+pub struct MapHandler {
+    container_idx: ContainerIdx,
+    state: Weak<Mutex<AppState>>,
+}
+
+pub struct ListHandler {
+    container_idx: ContainerIdx,
+    state: Weak<Mutex<AppState>>,
+}
+
+impl TextHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::Text);
+        Self {
+            container_idx: idx,
+            state,
+        }
     }
-}
 
-impl Text {
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
         if s.is_empty() {
             return;
@@ -50,12 +62,163 @@ impl Text {
         );
     }
 
-    pub fn get_value(&self, txn: &Transaction) -> LoroValue {
-        LoroValue::String(
-            txn.get_value_by_idx(self.container_idx)
-                .into_string()
-                .unwrap_or_else(|_| Arc::new(String::new())),
-        )
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_text_state().as_ref().unwrap().len()
+            })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+}
+
+impl ListHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::List);
+        Self {
+            container_idx: idx,
+            state,
+        }
+    }
+
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                pos,
+            }),
+        );
+    }
+
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: pos as isize,
+                len: len as isize,
+            })),
+        );
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_list_state().as_ref().unwrap().len()
+            })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+}
+
+impl MapHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::Map);
+        Self {
+            container_idx: idx,
+            state,
+        }
+    }
+
+    pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Map(crate::container::map::MapSet {
+                key: key.into(),
+                value,
+            }),
+        );
+    }
+
+    pub fn delete(&self, txn: &mut Transaction, key: &str) {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Map(crate::container::map::MapSet {
+                key: key.into(),
+                // TODO: use another special value to delete?
+                value: LoroValue::Null,
+            }),
+        );
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
     }
 }
 
@@ -70,16 +233,15 @@ mod test {
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello").unwrap();
         text.insert(&mut txn, 0, "hello");
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
         text.insert(&mut txn, 2, " kk ");
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "he kk llo");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "he kk llo");
         txn.abort();
         let mut txn = loro.txn().unwrap();
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "");
         text.insert(&mut txn, 0, "hi");
         txn.commit().unwrap();
-        let txn = loro.txn().unwrap();
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hi");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hi");
     }
 
     #[test]
@@ -97,14 +259,14 @@ mod test {
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello").unwrap();
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
         text.insert(&mut txn, 5, " world");
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello world");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello").unwrap();
-        assert_eq!(&**text.get_value(&txn).as_string().unwrap(), "hello world");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
     }
 }

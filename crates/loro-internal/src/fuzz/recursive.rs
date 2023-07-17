@@ -712,6 +712,25 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     debug_log::group_end!();
 }
 
+pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
+    let mut sites = Vec::new();
+    for i in 0..site_num {
+        sites.push(Actor::new(i as u64));
+    }
+
+    let mut applied = Vec::new();
+    for action in actions.iter_mut() {
+        sites.preprocess(action);
+        applied.push(action.clone());
+        debug_log::debug_log!("\n{}", (&applied).table());
+        sites.apply_action(action);
+    }
+
+    debug_log::group!("check synced");
+    check_synced(&mut sites);
+    debug_log::group_end!();
+}
+
 #[cfg(test)]
 mod failed_tests {
     use crate::fuzz::minify_error;
