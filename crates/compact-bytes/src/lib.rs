@@ -86,6 +86,7 @@ impl CompactBytes {
         self.bytes.as_bytes()
     }
 
+    // PERF: may use iterator to speed up
     pub fn alloc_advance(&mut self, bytes: &[u8]) -> Vec<Range<usize>> {
         let mut ans: Vec<Range<usize>> = vec![];
         // this push will try to merge the new range with the last range in the ans

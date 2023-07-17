@@ -85,6 +85,14 @@ impl SharedArena {
         }
     }
 
+    pub fn alloc_str_fast(&self, bytes: &[u8]) {
+        let mut text_lock = self.text.lock().unwrap();
+        let utf16_len = count_utf16_chars(bytes);
+        self.text_utf16_len
+            .fetch_add(utf16_len, std::sync::atomic::Ordering::SeqCst);
+        text_lock.push_slice(bytes);
+    }
+
     pub fn utf16_len(&self) -> usize {
         self.text_utf16_len
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -130,6 +138,14 @@ impl SharedArena {
     ) -> Op {
         let container = self.register_container(container);
         self.inner_convert_op(content, counter, container)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.container_idx_to_id.lock().unwrap().is_empty()
+            && self.container_id_to_idx.lock().unwrap().is_empty()
+            && self.text.lock().unwrap().is_empty()
+            && self.values.lock().unwrap().is_empty()
+            && self.parents.lock().unwrap().is_empty()
     }
 
     fn inner_convert_op(
@@ -209,5 +225,19 @@ impl SharedArena {
 
     pub fn export_containers(&self) -> Vec<ContainerID> {
         self.container_idx_to_id.lock().unwrap().clone()
+    }
+
+    pub fn export_parents(&self) -> Vec<Option<ContainerIdx>> {
+        let parents = self.parents.lock().unwrap();
+        let containers = self.container_idx_to_id.lock().unwrap();
+        containers
+            .iter()
+            .enumerate()
+            .map(|(x, id)| {
+                let idx = ContainerIdx::from_index_and_type(x as u32, id.container_type());
+                let parent_idx = parents.get(&idx)?;
+                *parent_idx
+            })
+            .collect()
     }
 }

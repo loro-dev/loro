@@ -155,7 +155,7 @@ impl TextContainer {
             let id = store.next_id();
             let op = Op::new(
                 id,
-                InnerContent::List(InnerListOp::new_del(pos, len)),
+                InnerContent::List(InnerListOp::new_del(pos, len as isize)),
                 self.idx,
             );
             store.append_local_ops(&[op]);

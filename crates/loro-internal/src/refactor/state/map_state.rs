@@ -12,7 +12,7 @@ use crate::{
 
 use super::ContainerState;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MapState {
     map: FxHashMap<InternalString, MapValue>,
     in_txn: bool,
@@ -98,6 +98,10 @@ impl MapState {
         if self.in_txn {
             self.store_txn_snapshot(key, old);
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&InternalString, &MapValue)> {
+        self.map.iter()
     }
 
     fn len(&self) -> usize {

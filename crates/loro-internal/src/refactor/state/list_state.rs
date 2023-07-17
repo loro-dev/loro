@@ -19,6 +19,7 @@ use super::ContainerState;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
+#[derive(Debug)]
 pub struct ListState {
     list: BTree<ListImpl>,
     in_txn: bool,
@@ -37,6 +38,7 @@ impl Clone for ListState {
     }
 }
 
+#[derive(Debug)]
 enum UndoItem {
     Insert { index: usize, len: usize },
     Delete { index: usize, value: LoroValue },
@@ -208,6 +210,10 @@ impl ListState {
             let len = self.len() - old_len;
             self.undo_stack.push(UndoItem::Insert { index, len });
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
+        self.list.iter()
     }
 
     pub fn len(&self) -> usize {

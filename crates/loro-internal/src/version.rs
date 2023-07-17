@@ -133,8 +133,8 @@ impl Frontiers {
         self.retain(|id| !other.contains(id));
     }
 
-    pub fn filter_included(&mut self, end_id: ID) {
-        self.retain(|id| id.peer != end_id.peer || id.counter >= end_id.counter);
+    pub fn filter_peer(&mut self, peer: PeerID) {
+        self.retain(|id| id.peer != peer);
     }
 }
 
@@ -161,6 +161,13 @@ impl From<SmallVec<[ID; 2]>> for Frontiers {
 impl From<&[ID]> for Frontiers {
     fn from(value: &[ID]) -> Self {
         Self(value.into())
+    }
+}
+
+impl From<&Vec<ID>> for Frontiers {
+    fn from(value: &Vec<ID>) -> Self {
+        let ids: &[ID] = value;
+        Self(ids.into())
     }
 }
 

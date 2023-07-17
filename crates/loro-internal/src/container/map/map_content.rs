@@ -13,6 +13,7 @@ pub struct MapSet {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InnerMapSet {
     pub(crate) key: InternalString,
+    // FIXME: how to set None?
     pub(crate) value: u32,
 }
 

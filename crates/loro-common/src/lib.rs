@@ -7,7 +7,7 @@ mod id;
 mod span;
 mod value;
 
-pub use error::LoroError;
+pub use error::{LoroError, LoroResult};
 pub use span::*;
 pub use value::LoroValue;
 pub type PeerID = u64;

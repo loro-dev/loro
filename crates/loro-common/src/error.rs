@@ -2,6 +2,8 @@ use thiserror::Error;
 
 use crate::{PeerID, ID};
 
+pub type LoroResult<T> = Result<T, LoroError>;
+
 #[derive(Error, Debug)]
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]

@@ -13,7 +13,7 @@ use crate::{
 
 use super::ContainerState;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TextState {
     pub(crate) rope: JumpRope,
     in_txn: bool,
@@ -32,6 +32,7 @@ impl Clone for TextState {
     }
 }
 
+#[derive(Debug)]
 enum UndoItem {
     Insert {
         index: u32,
@@ -160,6 +161,12 @@ impl TextState {
         }
     }
 
+    pub fn from_str(s: &str) -> Self {
+        let mut state = Self::new();
+        state.insert(0, s);
+        state
+    }
+
     pub fn insert(&mut self, pos: usize, s: &str) {
         if self.in_txn {
             self.record_insert(pos, s.len());
@@ -222,6 +229,14 @@ impl TextState {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn to_string(&self) -> String {
+        self.rope.to_string()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.rope.slice_substrings(0..self.len())
     }
 }
 

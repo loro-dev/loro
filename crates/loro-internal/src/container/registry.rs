@@ -51,6 +51,7 @@ mod container_idx {
         pub(crate) const TYPE_MASK: u32 = 0b1111 << 28;
         pub(crate) const INDEX_MASK: u32 = !Self::TYPE_MASK;
 
+        #[allow(unused)]
         pub(crate) fn get_type(self) -> ContainerType {
             match (self.0 & Self::TYPE_MASK) >> 28 {
                 0 => ContainerType::Map,

@@ -989,6 +989,7 @@ dependencies = [
  "arref",
  "bench-utils",
  "color-backtrace",
+ "compact-bytes",
  "crdt-list",
  "criterion 0.4.0",
  "ctor",
@@ -1039,6 +1040,11 @@ dependencies = [
 [[package]]
 name = "loro-preload"
 version = "0.1.0"
+dependencies = [
+ "loro-common",
+ "serde",
+ "serde_columnar",
+]
 
 [[package]]
 name = "loro-wasm"

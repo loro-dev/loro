@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -17,9 +19,9 @@ mod list_state;
 mod map_state;
 mod text_state;
 
-use list_state::ListState;
-use map_state::MapState;
-use text_state::TextState;
+pub(crate) use list_state::ListState;
+pub(crate) use map_state::MapState;
+pub(crate) use text_state::TextState;
 
 use super::{arena::SharedArena, oplog::OpLog};
 
@@ -29,7 +31,7 @@ pub struct AppState {
     pub(super) next_counter: Counter,
 
     pub(super) frontiers: Frontiers,
-    states: FxHashMap<ContainerIdx, State>,
+    pub(super) states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
 
     in_txn: bool,
@@ -53,7 +55,7 @@ pub trait ContainerState: Clone {
 
 #[allow(clippy::enum_variant_names)]
 #[enum_dispatch(ContainerState)]
-#[derive(EnumAsInner, Clone)]
+#[derive(EnumAsInner, Clone, Debug)]
 pub enum State {
     ListState,
     MapState,
@@ -74,15 +76,15 @@ impl State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContainerStateDiff {
     pub idx: ContainerIdx,
     pub diff: Diff,
 }
 
 pub struct AppStateDiff<'a> {
-    pub(crate) diff: &'a [ContainerStateDiff],
-    pub(crate) frontiers: &'a Frontiers,
+    pub(crate) diff: Cow<'a, [ContainerStateDiff]>,
+    pub(crate) frontiers: Cow<'a, Frontiers>,
 }
 
 impl AppState {
@@ -100,6 +102,20 @@ impl AppState {
         }
     }
 
+    pub fn new_from_arena(arena: SharedArena) -> Self {
+        let peer = SystemRandom::new().next_u64();
+        // TODO: maybe we should switch to certain version in oplog
+        Self {
+            peer,
+            arena,
+            next_counter: 0,
+            frontiers: Frontiers::default(),
+            states: FxHashMap::default(),
+            in_txn: false,
+            changed_in_txn: FxHashSet::default(),
+        }
+    }
+
     pub fn set_peer_id(&mut self, peer: PeerID) {
         self.peer = peer;
     }
@@ -109,7 +125,7 @@ impl AppState {
             panic!("apply_diff should not be called in a transaction");
         }
 
-        for diff in diff {
+        for diff in diff.iter() {
             let state = self.states.entry(diff.idx).or_insert_with(|| {
                 let id = self.arena.get_container_id(diff.idx).unwrap();
                 create_state(id.container_type())
@@ -123,7 +139,7 @@ impl AppState {
             state.apply_diff(&diff.diff, &self.arena);
         }
 
-        self.frontiers = frontiers.clone();
+        self.frontiers = frontiers.into_owned();
     }
 
     pub fn apply_local_op(&mut self, op: RawOp) {
@@ -173,6 +189,10 @@ impl AppState {
             .unwrap_or(LoroValue::Null)
     }
 
+    pub(super) fn set_state(&mut self, idx: ContainerIdx, state: State) {
+        assert!(self.states.insert(idx, state).is_none(), "overiding states")
+    }
+
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&text_state::TextState> {
@@ -198,6 +218,10 @@ impl AppState {
 
     pub(super) fn is_in_txn(&self) -> bool {
         self.in_txn
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.in_txn && self.states.is_empty() && self.arena.is_empty()
     }
 }
 

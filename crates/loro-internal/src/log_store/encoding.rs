@@ -19,9 +19,9 @@ use super::RemoteClientChanges;
 pub(crate) use encode_updates::encode_oplog_updates;
 
 // TODO: Test this threshold
-const UPDATE_ENCODE_THRESHOLD: usize = 512;
-const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
-const ENCODE_SCHEMA_VERSION: u8 = 0;
+pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 512;
+pub(crate) const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
+pub(crate) const ENCODE_SCHEMA_VERSION: u8 = 0;
 pub enum EncodeMode {
     Auto(VersionVector),
     Updates(VersionVector),
@@ -30,7 +30,7 @@ pub enum EncodeMode {
 }
 
 impl EncodeMode {
-    fn to_byte(&self) -> u8 {
+    pub fn to_byte(&self) -> u8 {
         match self {
             EncodeMode::Auto(_) => unreachable!(),
             EncodeMode::Updates(_) => 0,
@@ -40,7 +40,7 @@ impl EncodeMode {
     }
 }
 
-enum ConcreteEncodeMode {
+pub enum ConcreteEncodeMode {
     Updates = 0,
     RleUpdates = 1,
     Snapshot = 2,

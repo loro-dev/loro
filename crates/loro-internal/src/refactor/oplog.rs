@@ -95,6 +95,21 @@ impl OpLog {
         }
     }
 
+    pub fn new_with_arena(arena: SharedArena) -> Self {
+        Self {
+            dag: AppDag::default(),
+            arena,
+            changes: ClientChanges::default(),
+            next_lamport: 0,
+            latest_timestamp: Timestamp::default(),
+            pending_changes: Default::default(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.dag.map.is_empty() && self.arena.is_empty()
+    }
+
     /// Import a change.
     ///
     /// Pending changes that haven't been applied to the dag.
@@ -117,7 +132,7 @@ impl OpLog {
         self.next_lamport = self.next_lamport.max(change.lamport_end());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.dag.frontiers.retain_non_included(&change.deps);
-        self.dag.frontiers.filter_included(change.id);
+        self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
         let vv = self.dag.frontiers_to_im_vv(&change.deps);
         let len = change.content_len();
@@ -441,6 +456,10 @@ impl OpLog {
                 }
             }),
         )
+    }
+
+    pub(crate) fn len_changes(&self) -> usize {
+        self.changes.values().map(|x| x.len()).sum()
     }
 }
 

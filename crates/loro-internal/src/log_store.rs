@@ -1,7 +1,7 @@
 //! [LogStore] stores all the [Change]s and [Op]s. It's also a [DAG][crate::dag];
 //!
 //!
-mod encoding;
+pub(crate) mod encoding;
 mod import;
 mod iter;
 
