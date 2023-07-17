@@ -3,7 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use loro_common::LoroValue;
+
 use crate::{
+    container::{registry::ContainerIdx, ContainerIdRaw},
     id::PeerID,
     log_store::encoding::{ConcreteEncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     EncodeMode, LoroError, VersionVector,
@@ -15,6 +18,7 @@ use super::{
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
     state::{AppState, AppStateDiff, ContainerStateDiff},
     txn::Transaction,
+    ListHandler, MapHandler, TextHandler,
 };
 
 /// `LoroApp` serves as the library's primary entry point.
@@ -103,6 +107,10 @@ impl LoroApp {
         &self.state
     }
 
+    pub fn get_state_deep_value(&self) -> LoroValue {
+        self.state.lock().unwrap().get_deep_value()
+    }
+
     pub fn oplog(&self) -> &Arc<Mutex<OpLog>> {
         &self.oplog
     }
@@ -178,6 +186,47 @@ impl LoroApp {
 
     pub(crate) fn vv_cloned(&self) -> VersionVector {
         self.oplog.lock().unwrap().vv().clone()
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<TextHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| TextHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ListHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| ListHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<MapHandler> {
+        let idx = self.get_container_idx(id);
+        idx.map(|x| MapHandler::new(x, Arc::downgrade(&self.state)))
+    }
+
+    fn get_container_idx<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ContainerIdx> {
+        let id: ContainerIdRaw = id.into();
+        match id {
+            ContainerIdRaw::Root { name } => {
+                Some(self.oplog().lock().unwrap().arena.register_container(
+                    &crate::container::ContainerID::Root {
+                        name,
+                        container_type: crate::ContainerType::Text,
+                    },
+                ))
+            }
+            ContainerIdRaw::Normal { id: _ } => self
+                .oplog()
+                .lock()
+                .unwrap()
+                .arena
+                .id_to_idx(&id.with_type(crate::ContainerType::Text)),
+        }
     }
 }
 

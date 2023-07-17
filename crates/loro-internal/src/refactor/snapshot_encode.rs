@@ -204,6 +204,7 @@ struct PreEncodedState {
 }
 
 fn preprocess_app_state(app_state: &AppState) -> PreEncodedState {
+    assert!(!app_state.is_in_txn());
     let mut peers = Vec::new();
     let mut peer_lookup = FxHashMap::default();
     let mut bytes = Vec::new();
@@ -625,6 +626,7 @@ pub fn decode_oplog(
 
 pub fn decode_state(app_state: &mut AppState, data: &FinalPhase) -> Result<(), LoroError> {
     assert!(app_state.is_empty());
+    assert!(!app_state.is_in_txn());
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(&data)?;
     let state_arena = TempArena::decode_state_arena(&data)?;

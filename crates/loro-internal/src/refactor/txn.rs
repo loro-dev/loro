@@ -30,7 +30,7 @@ pub struct Transaction {
     oplog: Arc<Mutex<OpLog>>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>,
-    arena: SharedArena,
+    pub(super) arena: SharedArena,
     finished: bool,
 }
 
@@ -182,6 +182,13 @@ impl Transaction {
     {
         let state = self.state.lock().unwrap();
         f(state.get_state(idx).unwrap())
+    }
+
+    pub fn next_id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.next_counter,
+        }
     }
 }
 

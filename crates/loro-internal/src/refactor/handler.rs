@@ -107,18 +107,40 @@ impl ListHandler {
         }
     }
 
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
-        if s.is_empty() {
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) {
+        if let Some(container) = v.as_container() {
+            self.insert_container(txn, pos, container.container_type());
             return;
         }
 
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                slice: ListSlice::RawData(Cow::Owned(vec![v])),
                 pos,
             }),
         );
+    }
+
+    pub fn insert_container(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        c_type: ContainerType,
+    ) -> ContainerIdx {
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let child_idx = txn.arena.id_to_idx(&container_id).unwrap();
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
+        let v = LoroValue::Container(container_id);
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(vec![v])),
+                pos,
+            }),
+        );
+        child_idx
     }
 
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
@@ -181,6 +203,11 @@ impl MapHandler {
     }
 
     pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) {
+        if let Some(value) = value.as_container() {
+            self.insert_container(txn, key, value.container_type());
+            return;
+        }
+
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
@@ -188,6 +215,26 @@ impl MapHandler {
                 value,
             }),
         );
+    }
+
+    pub fn insert_container(
+        &self,
+        txn: &mut Transaction,
+        key: &str,
+        c_type: ContainerType,
+    ) -> ContainerIdx {
+        let id = txn.next_id();
+        let container_id = ContainerID::new_normal(id, c_type);
+        let child_idx = txn.arena.id_to_idx(&container_id).unwrap();
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Map(crate::container::map::MapSet {
+                key: key.into(),
+                value: LoroValue::Container(container_id),
+            }),
+        );
+        child_idx
     }
 
     pub fn delete(&self, txn: &mut Transaction, key: &str) {

@@ -33,6 +33,7 @@ pub struct SharedArena {
     text: Arc<Mutex<AppendOnlyBytes>>,
     text_utf16_len: Arc<AtomicUsize>,
     values: Arc<Mutex<Vec<LoroValue>>>,
+    root_c_idx: Arc<Mutex<Vec<ContainerIdx>>>,
 }
 
 pub struct StrAllocResult {
@@ -53,6 +54,9 @@ impl SharedArena {
         container_idx_to_id.push(id.clone());
         let ans = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         container_id_to_idx.insert(id.clone(), ans);
+        if id.is_root() {
+            self.root_c_idx.lock().unwrap().push(ans);
+        }
         ans
     }
 
@@ -239,5 +243,9 @@ impl SharedArena {
                 *parent_idx
             })
             .collect()
+    }
+
+    pub fn root_containers(&self) -> Vec<ContainerIdx> {
+        self.root_c_idx.lock().unwrap().clone()
     }
 }
