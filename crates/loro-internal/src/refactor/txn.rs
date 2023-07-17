@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use loro_common::ContainerType;
 use rle::{HasLength, RleVec};
 
 use crate::{
@@ -140,37 +141,42 @@ impl Transaction {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<TextHandler> {
-        let idx = self.get_container_idx(id);
-        idx.map(|x| TextHandler::new(x, Arc::downgrade(&self.state)))
+    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> TextHandler {
+        let idx = self.get_container_idx(id, ContainerType::Text);
+        TextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ListHandler> {
-        let idx = self.get_container_idx(id);
-        idx.map(|x| ListHandler::new(x, Arc::downgrade(&self.state)))
+    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> ListHandler {
+        let idx = self.get_container_idx(id, ContainerType::List);
+        ListHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<MapHandler> {
-        let idx = self.get_container_idx(id);
-        idx.map(|x| MapHandler::new(x, Arc::downgrade(&self.state)))
+    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> MapHandler {
+        let idx = self.get_container_idx(id, ContainerType::Map);
+        MapHandler::new(idx, Arc::downgrade(&self.state))
     }
 
-    fn get_container_idx<I: Into<ContainerIdRaw>>(&self, id: I) -> Option<ContainerIdx> {
+    fn get_container_idx<I: Into<ContainerIdRaw>>(
+        &self,
+        id: I,
+        c_type: ContainerType,
+    ) -> ContainerIdx {
         let id: ContainerIdRaw = id.into();
         match id {
-            ContainerIdRaw::Root { name } => Some(self.arena.register_container(
-                &crate::container::ContainerID::Root {
-                    name,
-                    container_type: crate::ContainerType::Text,
-                },
-            )),
-            ContainerIdRaw::Normal { id: _ } => self
-                .arena
-                .id_to_idx(&id.with_type(crate::ContainerType::Text)),
+            ContainerIdRaw::Root { name } => {
+                self.arena
+                    .register_container(&crate::container::ContainerID::Root {
+                        name,
+                        container_type: c_type,
+                    })
+            }
+            ContainerIdRaw::Normal { id: _ } => {
+                self.arena.register_container(&id.with_type(c_type))
+            }
         }
     }
 

@@ -14,8 +14,6 @@ use crate::{
     LogStore, LoroError, VersionVector,
 };
 
-use super::encode_changes::decode_changes_to_inner_format_oplog;
-
 #[derive(Serialize, Deserialize, Debug)]
 struct Updates {
     changes: Vec<EncodedClientChanges>,

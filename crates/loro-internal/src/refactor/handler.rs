@@ -130,7 +130,7 @@ impl ListHandler {
     ) -> ContainerIdx {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
-        let child_idx = txn.arena.id_to_idx(&container_id).unwrap();
+        let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         let v = LoroValue::Container(container_id);
         txn.apply_local_op(
@@ -225,7 +225,7 @@ impl MapHandler {
     ) -> ContainerIdx {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
-        let child_idx = txn.arena.id_to_idx(&container_id).unwrap();
+        let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
             self.container_idx,
@@ -278,7 +278,7 @@ mod test {
     fn test() {
         let loro = LoroApp::new();
         let mut txn = loro.txn().unwrap();
-        let text = txn.get_text("hello").unwrap();
+        let text = txn.get_text("hello");
         text.insert(&mut txn, 0, "hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
         text.insert(&mut txn, 2, " kk ");
@@ -299,13 +299,13 @@ mod test {
         loro2.set_peer_id(2);
 
         let mut txn = loro.txn().unwrap();
-        let text = txn.get_text("hello").unwrap();
+        let text = txn.get_text("hello");
         text.insert(&mut txn, 0, "hello");
         txn.commit().unwrap();
         let exported = loro.export_from(&Default::default());
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
-        let text = txn.get_text("hello").unwrap();
+        let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
         text.insert(&mut txn, 5, " world");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
@@ -313,7 +313,7 @@ mod test {
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
-        let text = txn.get_text("hello").unwrap();
+        let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
     }
 }

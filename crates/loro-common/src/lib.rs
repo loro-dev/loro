@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use arbitrary::Arbitrary;
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,16 @@ pub enum ContainerType {
     List,
     // TODO: Users can define their own container types.
     // Custom(u16),
+}
+
+impl ContainerType {
+    pub fn default_value(&self) -> LoroValue {
+        match self {
+            ContainerType::Text => LoroValue::String(Arc::new(String::new())),
+            ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
+            ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+        }
+    }
 }
 
 // a weird dependency in Prelim in loro_internal need this convertion to work.

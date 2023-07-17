@@ -414,14 +414,37 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                                 op.container.to_index(),
                             ));
                         } else {
-                            let slice = oplog
-                                .arena
-                                .slice_bytes(slice.0.start as usize..slice.0.end as usize);
-                            encoded_ops.extend(record_str(
-                                &slice,
-                                *pos as usize,
-                                op.container.to_index(),
-                            ));
+                            match op.container.get_type() {
+                                loro_common::ContainerType::Text => {
+                                    let slice = oplog
+                                        .arena
+                                        .slice_bytes(slice.0.start as usize..slice.0.end as usize);
+                                    encoded_ops.extend(record_str(
+                                        &slice,
+                                        *pos as usize,
+                                        op.container.to_index(),
+                                    ));
+                                }
+                                loro_common::ContainerType::List => {
+                                    let values = oplog
+                                        .arena
+                                        .get_values(slice.0.start as usize..slice.0.end as usize);
+                                    let mut pos = *pos;
+                                    for value in values {
+                                        let idx = record_value(&value);
+                                        encoded_ops.push(EncodedSnapshotOp::from(
+                                            SnapshotOp::ListInsert {
+                                                pos,
+                                                start: idx as u32,
+                                                end: idx as u32 + 1,
+                                            },
+                                            op.container.to_index(),
+                                        ));
+                                        pos += 1;
+                                    }
+                                }
+                                loro_common::ContainerType::Map => unreachable!(),
+                            }
                         }
                     }
                     InnerListOp::Delete(del) => {
@@ -706,7 +729,7 @@ mod test {
         // test import snapshot directly
         let mut app = LoroApp::new();
         let mut txn = app.txn().unwrap();
-        let text = txn.get_text("id").unwrap();
+        let text = txn.get_text("id");
         text.insert(&mut txn, 0, "hello");
         txn.commit();
         let snapshot = app.export_snapshot();
@@ -723,7 +746,7 @@ mod test {
 
         // test import snapshot to a LoroApp that is already changed
         let mut txn = app2.txn().unwrap();
-        let text = txn.get_text("id").unwrap();
+        let text = txn.get_text("id");
         text.insert(&mut txn, 2, " ");
         txn.commit();
         debug_log::group!("app2 export");

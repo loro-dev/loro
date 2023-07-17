@@ -77,3 +77,9 @@ name = "text_refactored"
 path = "fuzz_targets/text_refactored.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "recursive_refactored"
+path = "fuzz_targets/recursive_refactored.rs"
+test = false
+doc = false

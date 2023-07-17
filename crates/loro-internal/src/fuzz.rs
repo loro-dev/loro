@@ -4,6 +4,7 @@ use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive;
+pub mod recursive_refactored;
 pub mod recursive_txn;
 
 use crate::{
@@ -211,13 +212,13 @@ impl Actionable for Vec<LoroApp> {
             Action::Ins { content, pos, site } => {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
-                let text = txn.get_text("text").unwrap();
+                let text = txn.get_text("text");
                 text.insert(&mut txn, *pos, &content.to_string());
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
-                let text = txn.get_text("text").unwrap();
+                let text = txn.get_text("text");
                 text.delete(&mut txn, *pos, *len);
             }
             Action::Sync { from, to } => {
@@ -336,9 +337,9 @@ fn check_synced_refactored(sites: &mut [LoroApp]) {
 
 fn check_eq_refactored(site_a: &mut LoroApp, site_b: &mut LoroApp) {
     let a = site_a.txn().unwrap();
-    let text_a = a.get_text("text").unwrap();
+    let text_a = a.get_text("text");
     let b = site_b.txn().unwrap();
-    let text_b = b.get_text("text").unwrap();
+    let text_b = b.get_text("text");
     let value_a = text_a.get_value();
     let value_b = text_b.get_value();
     assert_eq!(value_a, value_b);

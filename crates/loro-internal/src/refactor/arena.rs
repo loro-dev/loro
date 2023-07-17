@@ -1,5 +1,5 @@
 use std::{
-    ops::RangeBounds,
+    ops::{Range, RangeBounds},
     sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
@@ -132,6 +132,10 @@ impl SharedArena {
 
     pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
         self.values.lock().unwrap().get(idx).cloned()
+    }
+
+    pub fn get_values(&self, range: Range<usize>) -> Vec<LoroValue> {
+        (self.values.lock().unwrap()[range]).to_vec()
     }
 
     pub fn convert_single_op(

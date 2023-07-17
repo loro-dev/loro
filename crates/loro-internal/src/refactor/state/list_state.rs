@@ -90,6 +90,17 @@ impl BTreeTrait for ListImpl {
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2
     }
+
+    fn insert_batch(
+        elements: &mut generic_btree::HeapVec<Self::Elem>,
+        index: usize,
+        _offset: usize,
+        new_elements: impl IntoIterator<Item = Self::Elem>,
+    ) where
+        Self::Elem: Clone,
+    {
+        elements.splice(index..index, new_elements);
+    }
 }
 
 impl UseLengthFinder<ListImpl> for ListImpl {

@@ -75,13 +75,13 @@ impl Actor {
 
         actor
             .text_containers
-            .push(actor.loro.txn().unwrap().get_text("text").unwrap());
+            .push(actor.loro.txn().unwrap().get_text("text"));
         actor
             .map_containers
-            .push(actor.loro.txn().unwrap().get_map("map").unwrap());
+            .push(actor.loro.txn().unwrap().get_map("map"));
         actor
             .list_containers
-            .push(actor.loro.txn().unwrap().get_list("list").unwrap());
+            .push(actor.loro.txn().unwrap().get_list("list"));
         actor
     }
 }
@@ -284,41 +284,38 @@ impl Actionable for Vec<Actor> {
                     let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
-                        a.map_containers
-                            .push(a.loro.txn().unwrap().get_map(id).unwrap())
+                        a.map_containers.push(a.loro.txn().unwrap().get_map(id))
                     }
                 });
                 b.list_containers.iter().for_each(|x| {
                     let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
-                        a.list_containers
-                            .push(a.loro.txn().unwrap().get_list(id).unwrap())
+                        a.list_containers.push(a.loro.txn().unwrap().get_list(id))
                     }
                 });
                 b.text_containers.iter().for_each(|x| {
                     let id = x.id();
                     if !visited.contains(&id) {
                         visited.insert(id.clone());
-                        a.text_containers
-                            .push(a.loro.txn().unwrap().get_text(id).unwrap())
+                        a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
                 });
 
                 b.map_containers = a
                     .map_containers
                     .iter()
-                    .map(|x| b.loro.get_map(x.id()).unwrap())
+                    .map(|x| b.loro.get_map(x.id()))
                     .collect();
                 b.list_containers = a
                     .list_containers
                     .iter()
-                    .map(|x| b.loro.get_list(x.id()).unwrap())
+                    .map(|x| b.loro.get_list(x.id()))
                     .collect();
                 b.text_containers = a
                     .text_containers
                     .iter()
-                    .map(|x| b.loro.get_text(x.id()).unwrap())
+                    .map(|x| b.loro.get_text(x.id()))
                     .collect();
             }
             Action::SyncAll => {
@@ -343,21 +340,21 @@ impl Actionable for Vec<Actor> {
                         let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
-                            a.map_containers.push(a.loro.get_map(id).unwrap())
+                            a.map_containers.push(a.loro.get_map(id))
                         }
                     });
                     b.list_containers.iter().for_each(|x| {
                         let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
-                            a.list_containers.push(a.loro.get_list(id).unwrap())
+                            a.list_containers.push(a.loro.get_list(id))
                         }
                     });
                     b.text_containers.iter().for_each(|x| {
                         let id = x.id();
                         if !visited.contains(&id) {
                             visited.insert(id.clone());
-                            a.text_containers.push(a.loro.get_text(id).unwrap())
+                            a.text_containers.push(a.loro.get_text(id))
                         }
                     });
                 }
@@ -370,17 +367,17 @@ impl Actionable for Vec<Actor> {
                     b.map_containers = a
                         .map_containers
                         .iter()
-                        .map(|x| b.loro.get_map(x.id()).unwrap())
+                        .map(|x| b.loro.get_map(x.id()))
                         .collect();
                     b.list_containers = a
                         .list_containers
                         .iter()
-                        .map(|x| b.loro.get_list(x.id()).unwrap())
+                        .map(|x| b.loro.get_list(x.id()))
                         .collect();
                     b.text_containers = a
                         .text_containers
                         .iter()
-                        .map(|x| b.loro.get_text(x.id()).unwrap())
+                        .map(|x| b.loro.get_text(x.id()))
                         .collect();
                 }
             }
@@ -395,7 +392,7 @@ impl Actionable for Vec<Actor> {
                 let container = if let Some(container) = container {
                     container
                 } else {
-                    let map = actor.loro.get_map("map").unwrap();
+                    let map = actor.loro.get_map("map");
                     actor.map_containers.push(map);
                     &mut actor.map_containers[0]
                 };
@@ -422,7 +419,7 @@ impl Actionable for Vec<Actor> {
                 let actor = &mut self[*site as usize];
                 let container = actor.list_containers.get_mut(*container_idx as usize);
                 let container = if container.is_none() {
-                    let list = actor.loro.get_list("list").unwrap();
+                    let list = actor.loro.get_list("list");
                     actor.list_containers.push(list);
                     &mut actor.list_containers[0]
                 } else {
@@ -455,7 +452,7 @@ impl Actionable for Vec<Actor> {
                 let container = if let Some(container) = container {
                     container
                 } else {
-                    let text = actor.loro.get_text("text").unwrap();
+                    let text = actor.loro.get_text("text");
                     actor.text_containers.push(text);
                     &mut actor.text_containers[0]
                 };
@@ -668,6 +665,11 @@ mod failed_tests {
         } else {
             Ok(())
         }
+    }
+
+    #[test]
+    fn empty() {
+        test_multi_sites(2, &mut [])
     }
 
     #[test]

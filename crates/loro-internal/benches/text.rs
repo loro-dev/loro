@@ -58,7 +58,7 @@ mod run {
             b.iter(|| {
                 let loro = LoroApp::new();
                 let mut txn = loro.txn().unwrap();
-                let text = txn.get_text("text").unwrap();
+                let text = txn.get_text("text");
 
                 for TextAction { pos, ins, del } in actions.iter() {
                     text.delete(&mut txn, *pos, *del);

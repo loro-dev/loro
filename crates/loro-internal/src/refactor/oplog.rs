@@ -1,9 +1,9 @@
 pub(crate) mod dag;
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
@@ -302,15 +302,29 @@ impl OpLog {
         let mut contents = RleVec::new();
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
-                list_op::InnerListOp::Insert { slice, pos } => {
-                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                        slice: crate::container::text::text_content::ListSlice::RawBytes(
-                            self.arena
-                                .slice_bytes(slice.0.start as usize..slice.0.end as usize),
-                        ),
-                        pos: *pos,
-                    }))
-                }
+                list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
+                    loro_common::ContainerType::Text => {
+                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                            slice: crate::container::text::text_content::ListSlice::RawBytes(
+                                self.arena
+                                    .slice_bytes(slice.0.start as usize..slice.0.end as usize),
+                            ),
+                            pos: *pos,
+                        }))
+                    }
+                    loro_common::ContainerType::List => {
+                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                            slice: crate::container::text::text_content::ListSlice::RawData(
+                                Cow::Owned(
+                                    self.arena
+                                        .get_values(slice.0.start as usize..slice.0.end as usize),
+                                ),
+                            ),
+                            pos: *pos,
+                        }))
+                    }
+                    loro_common::ContainerType::Map => unreachable!(),
+                },
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
                 }

@@ -186,7 +186,11 @@ impl AppState {
         self.states
             .get(&container_idx)
             .map(|x| x.get_value())
-            .unwrap_or(LoroValue::Null)
+            .unwrap_or_else(|| match container_idx.get_type() {
+                ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
+                ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
+                ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+            })
     }
 
     pub(super) fn set_state(&mut self, idx: ContainerIdx, state: State) {
@@ -223,7 +227,12 @@ impl AppState {
     where
         F: FnOnce(&State) -> R,
     {
-        f(self.states.get(&idx).unwrap())
+        let state = self.states.get(&idx);
+        if let Some(state) = state {
+            f(state)
+        } else {
+            f(&create_state(idx.get_type()))
+        }
     }
 
     pub(super) fn is_in_txn(&self) -> bool {
@@ -253,7 +262,9 @@ impl AppState {
     }
 
     pub fn get_container_deep_value(&self, container: ContainerIdx) -> LoroValue {
-        let state = self.states.get(&container).unwrap();
+        let Some(state) = self.states.get(&container) else {
+            return container.get_type().default_value();
+        };
         let value = state.get_value();
         match value {
             LoroValue::Container(_) => unreachable!(),

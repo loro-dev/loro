@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use debug_log::debug_dbg;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -279,9 +278,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         self.tracker.track_apply(&op);
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {
-        todo!()
-    }
+    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
     fn calculate_diff(
         &mut self,
