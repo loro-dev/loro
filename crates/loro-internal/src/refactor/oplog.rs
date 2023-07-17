@@ -448,7 +448,7 @@ impl OpLog {
                     }
 
                     inner_vv.extend_to_include_end_id(change.id);
-                    // debug_log::debug_dbg!(&change, &inner_vv);
+                    debug_log::debug_dbg!(&change, &inner_vv);
                     Some((change, vv.clone()))
                 } else {
                     debug_log::group_end!();

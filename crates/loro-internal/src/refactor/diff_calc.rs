@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
+use debug_log::debug_dbg;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
@@ -59,10 +60,10 @@ impl DiffCalculator {
         let (lca, iter) =
             oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
         for (change, vv) in iter {
+            let mut visited = FxHashSet::default();
             for op in change.ops.iter() {
-                let container_id = arena.get_container_id(op.container).unwrap();
                 let calculator = self.calculators.entry(op.container).or_insert_with(|| {
-                    let mut new = match container_id.container_type() {
+                    let mut new = match op.container.get_type() {
                         crate::ContainerType::Text => {
                             ContainerDiffCalculator::Text(TextDiffCalculator::default())
                         }
@@ -77,7 +78,17 @@ impl DiffCalculator {
                     new
                 });
 
-                calculator.apply_change(oplog, RichOp::new_by_change(change, op), &vv.borrow());
+                if visited.contains(&op.container) {
+                    // don't checkout if we have already checked out this container in this round
+                    calculator.apply_change(oplog, RichOp::new_by_change(change, op), None);
+                } else {
+                    calculator.apply_change(
+                        oplog,
+                        RichOp::new_by_change(change, op),
+                        Some(&vv.borrow()),
+                    );
+                    visited.insert(op.container);
+                }
             }
         }
 
@@ -103,7 +114,12 @@ impl DiffCalculator {
 #[enum_dispatch]
 pub trait DiffCalculatorTrait {
     fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
-    fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector);
+    fn apply_change(
+        &mut self,
+        oplog: &OpLog,
+        op: crate::op::RichOp,
+        vv: Option<&crate::VersionVector>,
+    );
     fn stop_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
     fn calculate_diff(
         &mut self,
@@ -176,7 +192,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         &mut self,
         oplog: &super::oplog::OpLog,
         op: crate::op::RichOp,
-        _vv: &crate::VersionVector,
+        _vv: Option<&crate::VersionVector>,
     ) {
         let map = op.op().content.as_map().unwrap();
         let value = oplog.arena.get_value(map.value as usize);
@@ -252,8 +268,15 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         self.tracker.checkout(vv);
     }
 
-    fn apply_change(&mut self, _oplog: &OpLog, op: crate::op::RichOp, vv: &crate::VersionVector) {
-        self.tracker.checkout(vv);
+    fn apply_change(
+        &mut self,
+        _oplog: &OpLog,
+        op: crate::op::RichOp,
+        vv: Option<&crate::VersionVector>,
+    ) {
+        if let Some(vv) = vv {
+            self.tracker.checkout(vv);
+        }
         self.tracker.track_apply(&op);
     }
 
@@ -293,9 +316,13 @@ impl DiffCalculatorTrait for TextDiffCalculator {
         &mut self,
         _oplog: &super::oplog::OpLog,
         op: crate::op::RichOp,
-        vv: &crate::VersionVector,
+        vv: Option<&crate::VersionVector>,
     ) {
-        self.tracker.checkout(vv);
+        if let Some(vv) = vv {
+            self.tracker.checkout(vv);
+        }
+
+        debug_dbg!(&op, self.tracker.len());
         self.tracker.track_apply(&op);
     }
 

@@ -25,9 +25,9 @@ dependencies = [
 
 [[package]]
 name = "arbitrary"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29d47fbf90d5149a107494b15a7dc8d69b351be2db3bb9691740e88ec17fd880"
+checksum = "e2d098ff73c1ca148721f37baad5ea6a465a13f9573aba8641fbbbae8164a54e"
 dependencies = [
  "derive_arbitrary",
 ]
@@ -108,6 +108,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 
 [[package]]
+name = "compact-bytes"
+version = "0.1.0"
+dependencies = [
+ "append-only-bytes",
+ "fxhash",
+ "linked-hash-map",
+]
+
+[[package]]
 name = "crdt-list"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -167,13 +176,13 @@ checksum = "364ff57c5031fee39b026dcdfdc9c7dc1d1d79451bfdacba90f040524b766254"
 
 [[package]]
 name = "derive_arbitrary"
-version = "1.2.0"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4903dff04948f22033ca30232ab8eca2c3fc4c913a8b6a34ee5199699814817f"
+checksum = "53e0efad4403bfc52dc201159c4b842a246a14b98c64b55dfd0f2d89729dfeb8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.105",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -192,6 +201,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.105",
+]
+
+[[package]]
+name = "enum-as-inner"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ffccbb6966c05b32ef8fbac435df276c4ae4d3dc55a8cd0eb9745e6c12f546a"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -353,6 +374,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "lock_api"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -372,21 +399,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-common"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "rle",
+ "serde",
+ "string_cache",
+ "thiserror",
+]
+
+[[package]]
 name = "loro-internal"
 version = "0.1.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
  "arref",
+ "compact-bytes",
  "crdt-list",
  "debug-log",
- "enum-as-inner",
+ "enum-as-inner 0.5.1",
  "enum_dispatch",
  "fxhash",
  "generic-btree",
  "im",
  "itertools",
  "jumprope",
+ "loro-common",
+ "loro-preload",
  "num",
  "postcard",
  "rand",
@@ -410,6 +453,15 @@ dependencies = [
  "crdt-list",
  "libfuzzer-sys",
  "loro-internal",
+]
+
+[[package]]
+name = "loro-preload"
+version = "0.1.0"
+dependencies = [
+ "loro-common",
+ "serde",
+ "serde_columnar",
 ]
 
 [[package]]
@@ -709,7 +761,7 @@ dependencies = [
  "bumpalo",
  "crdt-list",
  "debug-log",
- "enum-as-inner",
+ "enum-as-inner 0.5.1",
  "fxhash",
  "heapless",
  "num",
@@ -871,9 +923,9 @@ checksum = "5f026164926842ec52deb1938fae44f83dfdb82d0a5b0270c5bd5935ab74d6dd"
 
 [[package]]
 name = "string_cache"
-version = "0.8.4"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213494b7a2b503146286049378ce02b482200519accc31872ee8be91fa820a08"
+checksum = "f91138e76242f575eb1d3b38b4f1362f10d3a43f47d182a5b359af488a02293b"
 dependencies = [
  "new_debug_unreachable",
  "once_cell",
@@ -937,22 +989,22 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.37"
+version = "1.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10deb33631e3c9018b9baf9dcbbc4f737320d2b576bac10f6aefa048fa407e3e"
+checksum = "a35fc5b8971143ca348fa6df4f024d4d55264f3468c71ad1c2f365b0a4d58c42"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.37"
+version = "1.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "982d17546b47146b28f7c22e3d08465f6b8903d0ea13c1660d9d84a6e7adcdbb"
+checksum = "463fe12d7993d3b327787537ce8dd4dfa058de32fc2b195ef3cde03dc4771e8f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.105",
+ "syn 2.0.25",
 ]
 
 [[package]]

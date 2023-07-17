@@ -157,8 +157,6 @@ impl LoroApp {
                 } else {
                     let app = LoroApp::new();
                     decode_app_snapshot(&app, &input[1..])?;
-                    dbg!(&app.oplog.lock().unwrap());
-                    dbg!(&app.state.lock().unwrap().states);
                     let oplog = self.oplog.lock().unwrap();
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);

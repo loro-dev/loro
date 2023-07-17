@@ -313,12 +313,18 @@ fn check_synced_refactored(sites: &mut [LoroApp]) {
             debug_log::group!("checking {} with {}", i, j);
             let (a, b) = array_mut_ref!(sites, [i, j]);
             {
-                debug_log::group!("Import {}", i);
-                a.import(&b.export_from(&a.vv_cloned())).unwrap();
-                debug_log::group_end!();
+                if (i + j) % 2 == 1 {
+                    debug_log::group!("Import {}'s Snapshot to {}", j, i);
+                    a.import(&b.export_snapshot()).unwrap();
+                    debug_log::group_end!();
+                } else {
+                    debug_log::group!("Import {} to {}", j, i);
+                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    debug_log::group_end!();
+                }
             }
             {
-                debug_log::group!("Import {}", j);
+                debug_log::group!("Import {} to {}", i, j);
                 b.import(&a.export_from(&b.vv_cloned())).unwrap();
                 debug_log::group_end!();
             }
@@ -1220,6 +1226,30 @@ mod test {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn snapshot() {
+        test_multi_sites_refactored(
+            8,
+            &mut [
+                Ins {
+                    content: 32818,
+                    pos: 0,
+                    site: 1,
+                },
+                Ins {
+                    content: 12850,
+                    pos: 0,
+                    site: 3,
+                },
+                Ins {
+                    content: 13621,
+                    pos: 3,
+                    site: 1,
+                },
+            ],
+        )
     }
 
     #[test]
