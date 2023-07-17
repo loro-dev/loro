@@ -103,6 +103,7 @@ impl Dag for AppDag {
 }
 
 impl AppDag {
+    // PERF: this may be painfully slow
     /// get the version vector for a certain op.
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
@@ -184,13 +185,13 @@ impl AppDag {
             let id = frontiers[0];
             let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
             let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!("{} not found", id) };
-            x.element.lamport_end()
+            (id.counter - x.element.cnt) as Lamport + x.element.lamport + 1
         };
 
         for id in frontiers[1..].iter() {
             let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
             let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
-            lamport = lamport.max(x.element.lamport_end());
+            lamport = lamport.max((id.counter - x.element.cnt) as Lamport + x.element.lamport + 1);
         }
 
         lamport

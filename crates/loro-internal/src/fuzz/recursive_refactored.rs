@@ -799,6 +799,34 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_1() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 3,
+                    container_idx: 30,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 14,
+                    value: Null,
+                },
+                Map {
+                    site: 3,
+                    container_idx: 248,
+                    key: 255,
+                    value: Null,
+                },
+            ],
+        );
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,
