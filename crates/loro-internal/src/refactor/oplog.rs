@@ -129,7 +129,6 @@ impl OpLog {
             ));
         }
 
-        self.dag.vv.extend_to_include_last_id(change.id_last());
         if cfg!(debug_assertions) {
             let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
             assert_eq!(
@@ -141,23 +140,34 @@ impl OpLog {
 
         self.next_lamport = self.next_lamport.max(change.lamport_end());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
+        self.dag.vv.extend_to_include_last_id(change.id_last());
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
-        let vv = self.dag.frontiers_to_im_vv(&change.deps);
         let len = change.content_len();
-        self.dag
-            .map
-            .entry(change.id.peer)
-            .or_default()
-            .push(AppDagNode {
-                vv,
-                peer: change.id.peer,
-                cnt: change.id.counter,
-                lamport: change.lamport,
-                deps: change.deps.clone(),
-                len,
-            });
+        if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
+            // don't need to push new element to dag because it only depends on itself
+            let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
+            let last = nodes.vec_mut().last_mut().unwrap();
+            assert_eq!(last.peer, change.id.peer);
+            assert_eq!(last.cnt + last.len as Counter, change.id.counter);
+            assert_eq!(last.lamport + last.len as Lamport, change.lamport);
+            last.len = change.id.counter as usize + len - last.cnt as usize;
+        } else {
+            let vv = self.dag.frontiers_to_im_vv(&change.deps);
+            self.dag
+                .map
+                .entry(change.id.peer)
+                .or_default()
+                .push(AppDagNode {
+                    vv,
+                    peer: change.id.peer,
+                    cnt: change.id.counter,
+                    lamport: change.lamport,
+                    deps: change.deps.clone(),
+                    len,
+                });
+        }
         self.changes.entry(change.id.peer).or_default().push(change);
         Ok(())
     }
@@ -443,18 +453,22 @@ impl OpLog {
         let mut iter = self.dag.iter_causal(&common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
-        // reuse the allocated memory in merged_vv...
-        let vv = Rc::new(RefCell::new(merged_vv));
+        let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
-            common_ancestors_vv,
+            common_ancestors_vv.clone(),
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
                     let mut inner_vv = vv.borrow_mut();
                     inner_vv.clear();
                     inner_vv.extend_to_include_vv(inner.data.vv.iter());
                     let peer = inner.data.peer;
-                    let cnt = inner.data.cnt.max(cur_cnt);
-                    let end = inner.data.cnt + inner.data.len as Counter;
+                    let cnt = inner
+                        .data
+                        .cnt
+                        .max(cur_cnt)
+                        .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
+                    let end = (inner.data.cnt + inner.data.len as Counter)
+                        .min(merged_vv.get(&peer).copied().unwrap_or(0));
                     let change = self
                         .changes
                         .get(&peer)

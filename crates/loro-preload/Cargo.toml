@@ -9,3 +9,4 @@ edition = "2021"
 serde = {version="1.0.171", features=["derive"]}
 serde_columnar = "0.2.5"
 loro-common = {path="../loro-common"}
+bytes = "1.4.0"
