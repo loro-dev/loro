@@ -501,8 +501,8 @@ impl OpLog {
         let mut total_changes = 0;
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
-        let mut total_dag_node = self.dag.map.len();
-        for (_, changes) in &self.changes {
+        let total_dag_node = self.dag.map.len();
+        for changes in self.changes.values() {
             total_changes += changes.len();
             for change in changes.iter() {
                 total_ops += change.ops.len();

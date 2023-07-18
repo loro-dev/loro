@@ -56,6 +56,7 @@ fn bench_decode() {
 
         let mut txn = loro.txn().unwrap();
         let mut n = 0;
+        #[allow(warnings)]
         for TextAction { pos, ins, del } in actions.iter() {
             if n % 10 == 0 {
                 drop(txn);
