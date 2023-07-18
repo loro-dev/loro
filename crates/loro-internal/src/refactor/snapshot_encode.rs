@@ -68,6 +68,7 @@ pub struct EncodedChange {
     pub(super) peer_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i64")]
     pub(super) timestamp: Timestamp,
+    #[columnar(strategy = "Rle")]
     pub(super) op_len: u32,
     /// The length of deps that exclude the dep on the same client
     #[columnar(strategy = "Rle")]
@@ -88,6 +89,7 @@ struct EncodedSnapshotOp {
     prop: usize,
     // List range start | del len | map value index
     // This value can be negative
+    #[columnar(strategy = "DeltaRle")]
     value: i64,
     // List: the length of content when inserting. -2 when the inserted content is unknown. -1 when it's a deletion
     // Map: always -1

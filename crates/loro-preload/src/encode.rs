@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use loro_common::{ContainerID, InternalString, LoroError, LoroValue, ID};
 use serde_columnar::{columnar, to_vec};
 use std::borrow::Cow;
@@ -7,11 +7,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalPhase<'a> {
-    pub common: Cow<'a, [u8]>,           // -> CommonArena
-    pub app_state: Cow<'a, [u8]>,        // -> EncodedAppState
-    pub state_arena: Cow<'a, [u8]>,      // -> TempArena<'a>
+    #[serde(borrow)]
+    pub common: Cow<'a, [u8]>, // -> CommonArena
+    #[serde(borrow)]
+    pub app_state: Cow<'a, [u8]>, // -> EncodedAppState
+    #[serde(borrow)]
+    pub state_arena: Cow<'a, [u8]>, // -> TempArena<'a>
+    #[serde(borrow)]
     pub additional_arena: Cow<'a, [u8]>, // -> TempArena<'a>，抛弃这部分则不能回溯历史
-    pub oplog: Cow<'a, [u8]>,            // -> OpLog. Can be ignored if we only need state
+    #[serde(borrow)]
+    pub oplog: Cow<'a, [u8]>, // -> OpLog. Can be ignored if we only need state
 }
 
 impl<'a> FinalPhase<'a> {
@@ -82,6 +87,7 @@ impl<'a> FinalPhase<'a> {
 #[columnar(ser, de)]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CommonArena<'a> {
+    #[serde(borrow)]
     pub peer_ids: Cow<'a, [u64]>,
     pub container_ids: Vec<ContainerID>,
 }
@@ -144,6 +150,7 @@ pub struct MapEntry {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TempArena<'a> {
+    #[serde(borrow)]
     pub text: Cow<'a, [u8]>,
     pub keywords: Vec<InternalString>,
     pub values: Vec<LoroValue>,
