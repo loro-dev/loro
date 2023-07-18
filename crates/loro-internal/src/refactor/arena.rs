@@ -110,6 +110,7 @@ impl SharedArena {
 
     pub fn alloc_values(&self, values: impl Iterator<Item = LoroValue>) -> std::ops::Range<usize> {
         let mut values_lock = self.values.lock().unwrap();
+        values_lock.reserve(values.size_hint().0);
         let start = values_lock.len();
         for value in values {
             values_lock.push(value);

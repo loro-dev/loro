@@ -14,7 +14,7 @@ pub struct FinalPhase<'a> {
     #[serde(borrow)]
     pub state_arena: Cow<'a, [u8]>, // -> TempArena<'a>
     #[serde(borrow)]
-    pub additional_arena: Cow<'a, [u8]>, // -> TempArena<'a>，抛弃这部分则不能回溯历史
+    pub oplog_extra_arena: Cow<'a, [u8]>, // -> TempArena<'a>，抛弃这部分则不能回溯历史
     #[serde(borrow)]
     pub oplog: Cow<'a, [u8]>, // -> OpLog. Can be ignored if we only need state
 }
@@ -26,7 +26,7 @@ impl<'a> FinalPhase<'a> {
             self.common.len()
                 + self.app_state.len()
                 + self.state_arena.len()
-                + self.additional_arena.len()
+                + self.oplog_extra_arena.len()
                 + self.oplog.len()
                 + 10,
         );
@@ -37,8 +37,8 @@ impl<'a> FinalPhase<'a> {
         bytes.put_slice(&self.app_state);
         leb::write_unsigned(&mut bytes, self.state_arena.len() as u64);
         bytes.put_slice(&self.state_arena);
-        leb::write_unsigned(&mut bytes, self.additional_arena.len() as u64);
-        bytes.put_slice(&self.additional_arena);
+        leb::write_unsigned(&mut bytes, self.oplog_extra_arena.len() as u64);
+        bytes.put_slice(&self.oplog_extra_arena);
         leb::write_unsigned(&mut bytes, self.oplog.len() as u64);
         bytes.put_slice(&self.oplog);
         bytes.to_vec()
@@ -70,7 +70,7 @@ impl<'a> FinalPhase<'a> {
             common: Cow::Borrowed(common),
             app_state: Cow::Borrowed(app_state),
             state_arena: Cow::Borrowed(state_arena),
-            additional_arena: Cow::Borrowed(additional_arena),
+            oplog_extra_arena: Cow::Borrowed(additional_arena),
             oplog: Cow::Borrowed(oplog),
         })
     }
@@ -79,7 +79,7 @@ impl<'a> FinalPhase<'a> {
         println!("common: {}", self.common.len());
         println!("app_state: {}", self.app_state.len());
         println!("state_arena: {}", self.state_arena.len());
-        println!("additional_arena: {}", self.additional_arena.len());
+        println!("additional_arena: {}", self.oplog_extra_arena.len());
         println!("oplog: {}", self.oplog.len());
     }
 }
@@ -167,7 +167,7 @@ impl<'a> TempArena<'a> {
     }
 
     pub fn decode_additional_arena(data: &'a FinalPhase) -> Result<Self, LoroError> {
-        serde_columnar::from_bytes(&data.additional_arena)
+        serde_columnar::from_bytes(&data.oplog_extra_arena)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
 }

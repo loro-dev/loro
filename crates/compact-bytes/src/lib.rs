@@ -110,10 +110,23 @@ impl CompactBytes {
         }
 
         let mut index = 0;
-        let min_match_size = min_match_size.min(bytes.len());
         while index < bytes.len() {
+            if bytes.len() - index < min_match_size {
+                let old_len = self.bytes.len();
+                push_with_merge(
+                    &mut ans,
+                    self.bytes.len()..self.bytes.len() + bytes.len() - index,
+                );
+                self.bytes.push_slice(&bytes[index..]);
+                self.record_new_prefix(old_len);
+                break;
+            }
             match self.lookup(&bytes[index..]) {
-                Some((pos, len)) if len >= min_match_size => {
+                Some((pos, len))
+                    if len >= min_match_size
+                        && (len == bytes.len() - index
+                            || bytes.len() - index - len >= min_match_size) =>
+                {
                     push_with_merge(&mut ans, pos..pos + len);
                     index += len;
                 }

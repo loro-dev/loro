@@ -119,7 +119,8 @@ impl OpLog {
     ///
     /// # Err
     ///
-    /// Return Err(LoroError::UsedOpID) when the change's id is occupied
+    /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
+    /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
         self.check_id_valid(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
