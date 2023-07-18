@@ -1,6 +1,6 @@
 #![allow(warnings)]
 
-use std::{borrow::Cow, collections::VecDeque, mem::take};
+use std::{borrow::Cow, collections::VecDeque, mem::take, sync::Arc};
 
 use compact_bytes::CompactBytes;
 use debug_log::debug_dbg;
@@ -375,13 +375,13 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     };
 
     let mut record_str = |s: &[u8], mut pos: usize, container_idx: u32| {
-        let slices = bytes.alloc_advance_with_min_match_size(s, 8);
+        let slices = [bytes.alloc(s)]; // PERF: We can optimize this further
         slices
             .into_iter()
             .map(|range| {
                 let ans = SnapshotOp::ListInsert {
                     pos,
-                    start: range.start as u32,
+                    start: range.start() as u32,
                     len: range.len() as u32,
                 };
                 pos += range.len();
@@ -512,7 +512,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
 
     common.peer_ids = Cow::Owned(peers);
     let bytes = bytes.take();
-    let mut extra_text = (&bytes[arena.text.len()..]).to_vec();
+    let extra_text = &bytes[arena.text.len()..];
     let oplog_encoded = OplogEncoded {
         changes: encoded_changes,
         ops: encoded_ops,
@@ -529,7 +529,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         state_arena: Cow::Owned(arena.encode()),
         additional_arena: Cow::Owned(
             TempArena {
-                text: Cow::Owned(extra_text),
+                text: Cow::Borrowed(extra_text),
                 keywords: extra_keys,
                 values: extra_values,
             }

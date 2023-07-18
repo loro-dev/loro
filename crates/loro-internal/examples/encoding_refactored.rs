@@ -4,7 +4,6 @@ use loro_internal::refactor::loro::LoroApp;
 
 fn main() {
     log_size();
-
     // bench_decode();
 }
 
@@ -66,6 +65,10 @@ fn bench_decode() {
             txn.commit().unwrap();
         }
         let snapshot = loro.export_snapshot();
+        for _ in 0..100 {
+            black_box(loro.export_snapshot());
+        }
+
         for _ in 0..100 {
             let loro = LoroApp::new();
             loro.import(black_box(&snapshot)).unwrap();
