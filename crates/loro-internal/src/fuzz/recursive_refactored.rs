@@ -560,7 +560,7 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
-            if i % 2 == 0 {
+            if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
                 a_doc
                     .import(&b_doc.export_from(&a_doc.vv_cloned()))

@@ -105,6 +105,7 @@ impl ToJson for LoroValue {
         }
     }
 
+    #[allow(unused)]
     fn from_json(s: &str) -> Self {
         #[cfg(feature = "json")]
         let ans = serde_json::from_str(s).unwrap();
