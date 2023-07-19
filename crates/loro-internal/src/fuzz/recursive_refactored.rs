@@ -15,7 +15,7 @@ use crate::{
 };
 use crate::{
     container::registry::ContainerIdx,
-    refactor::{loro::LoroApp, ListHandler, MapHandler, TextHandler},
+    refactor::{loro::LoroDoc, ListHandler, MapHandler, TextHandler},
     value::ToJson,
 };
 
@@ -48,7 +48,7 @@ pub enum Action {
 }
 
 struct Actor {
-    loro: LoroApp,
+    loro: LoroDoc,
     // value_tracker: Arc<Mutex<LoroValue>>,
     // map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
     // list_tracker: Arc<Mutex<Vec<LoroValue>>>,
@@ -60,7 +60,7 @@ struct Actor {
 
 impl Actor {
     fn new(id: PeerID) -> Self {
-        let app = LoroApp::new();
+        let app = LoroDoc::new();
         app.set_peer_id(id);
         let mut actor = Actor {
             loro: app,

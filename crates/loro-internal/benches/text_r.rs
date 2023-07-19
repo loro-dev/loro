@@ -4,7 +4,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 mod run {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::refactor::loro::LoroApp;
+    use loro_internal::refactor::loro::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
@@ -12,7 +12,7 @@ mod run {
         b.sample_size(10);
         b.bench_function("B4", |b| {
             b.iter(|| {
-                let loro = LoroApp::default();
+                let loro = LoroDoc::default();
                 let text = loro.get_text("text");
                 let mut txn = loro.txn().unwrap();
 
@@ -24,7 +24,7 @@ mod run {
         });
 
         b.bench_function("B4 encode snapshot", |b| {
-            let loro = LoroApp::default();
+            let loro = LoroDoc::default();
             let text = loro.get_text("text");
 
             let mut n = 0;
@@ -47,7 +47,7 @@ mod run {
         });
 
         b.bench_function("B4 encode updates", |b| {
-            let loro = LoroApp::default();
+            let loro = LoroDoc::default();
             let text = loro.get_text("text");
 
             let mut n = 0;
@@ -70,7 +70,7 @@ mod run {
         });
 
         b.bench_function("B4 decode snapshot", |b| {
-            let loro = LoroApp::default();
+            let loro = LoroDoc::default();
             let text = loro.get_text("text");
             let mut n = 0;
             let mut txn = loro.txn().unwrap();
@@ -88,13 +88,13 @@ mod run {
 
             let data = loro.export_snapshot();
             b.iter(|| {
-                let l = LoroApp::new();
+                let l = LoroDoc::new();
                 l.import(&data).unwrap();
             });
         });
 
         b.bench_function("B4 import updates", |b| {
-            let loro = LoroApp::default();
+            let loro = LoroDoc::default();
             let text = loro.get_text("text");
 
             let mut n = 0;
@@ -113,14 +113,14 @@ mod run {
 
             let data = loro.export_from(&Default::default());
             b.iter(|| {
-                let l = LoroApp::new();
+                let l = LoroDoc::new();
                 l.import(&data).unwrap();
             });
         });
 
         b.bench_function("B4 utf16", |b| {
             b.iter(|| {
-                let loro = LoroApp::new();
+                let loro = LoroDoc::new();
                 let text = loro.get_text("text");
                 let mut txn = loro.txn().unwrap();
 
@@ -133,7 +133,7 @@ mod run {
 
         b.bench_function("B4_Per100_Txn", |b| {
             b.iter(|| {
-                let loro = LoroApp::default();
+                let loro = LoroDoc::default();
                 let text = loro.get_text("text");
                 let mut n = 0;
                 let mut txn = loro.txn().unwrap();
@@ -152,7 +152,7 @@ mod run {
 
         b.bench_function("B4 One Op One Txn", |b| {
             b.iter(|| {
-                let loro = LoroApp::default();
+                let loro = LoroDoc::default();
                 let text = loro.get_text("text");
                 {
                     for TextAction { pos, ins, del } in actions.iter() {
@@ -167,8 +167,8 @@ mod run {
 
         b.bench_function("B4DirectSync", |b| {
             b.iter(|| {
-                let loro = LoroApp::default();
-                let loro_b = LoroApp::default();
+                let loro = LoroDoc::default();
+                let loro_b = LoroDoc::default();
                 let text = loro.get_text("text");
                 for TextAction { pos, ins, del } in actions.iter() {
                     {
@@ -188,8 +188,8 @@ mod run {
         let mut b = c.benchmark_group("refactored-sync");
         b.bench_function("B4Parallel", |b| {
             b.iter(|| {
-                let loro = LoroApp::default();
-                let loro_b = LoroApp::default();
+                let loro = LoroDoc::default();
+                let loro_b = LoroDoc::default();
                 let text = loro.get_text("text");
                 let text2 = loro_b.get_text("text");
                 let mut i = 0;

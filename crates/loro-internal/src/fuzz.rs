@@ -8,7 +8,7 @@ pub mod recursive_refactored;
 pub mod recursive_txn;
 
 use crate::{
-    array_mut_ref, id::PeerID, refactor::loro::LoroApp, LoroCore, Transact, VersionVector,
+    array_mut_ref, id::PeerID, refactor::loro::LoroDoc, LoroCore, Transact, VersionVector,
 };
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -206,7 +206,7 @@ impl Actionable for Vec<LoroCore> {
     }
 }
 
-impl Actionable for Vec<LoroApp> {
+impl Actionable for Vec<LoroDoc> {
     fn apply_action(&mut self, action: &Action) {
         match action {
             Action::Ins { content, pos, site } => {
@@ -308,7 +308,7 @@ fn check_synced(sites: &mut [LoroCore]) {
     }
 }
 
-fn check_synced_refactored(sites: &mut [LoroApp]) {
+fn check_synced_refactored(sites: &mut [LoroDoc]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);
@@ -335,7 +335,7 @@ fn check_synced_refactored(sites: &mut [LoroApp]) {
     }
 }
 
-fn check_eq_refactored(site_a: &mut LoroApp, site_b: &mut LoroApp) {
+fn check_eq_refactored(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
     let a = site_a.txn().unwrap();
     let text_a = a.get_text("text");
     let b = site_b.txn().unwrap();
@@ -549,7 +549,7 @@ pub fn normalize(site_num: u8, actions: &mut [Action]) -> Vec<Action> {
 pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
-        let loro = LoroApp::new();
+        let loro = LoroDoc::new();
         loro.set_peer_id(i as u64);
         sites.push(loro);
     }

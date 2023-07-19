@@ -24,19 +24,19 @@ use crate::{
 
 use super::{
     arena::SharedArena,
-    loro::LoroApp,
+    loro::LoroDoc,
     oplog::OpLog,
-    state::{AppState, ListState, MapState, State, TextState},
+    state::{DocState, ListState, MapState, State, TextState},
 };
 
-pub fn encode_app_snapshot(app: &LoroApp) -> Vec<u8> {
+pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
     let pre_encoded_state = preprocess_app_state(&app.app_state().lock().unwrap());
     let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
     // f.diagnose_size();
     miniz_oxide::deflate::compress_to_vec(&f.encode(), 6)
 }
 
-pub fn decode_app_snapshot(app: &LoroApp, bytes: &[u8]) -> Result<(), LoroError> {
+pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8]) -> Result<(), LoroError> {
     assert!(app.is_empty());
     let bytes = miniz_oxide::inflate::decompress_to_vec(bytes).unwrap();
     let data = FinalPhase::decode(&bytes)?;
@@ -191,7 +191,7 @@ pub fn decode_oplog(
 }
 
 pub fn decode_state<'b>(
-    app_state: &'_ mut AppState,
+    app_state: &'_ mut DocState,
     data: &'b FinalPhase,
 ) -> Result<(TempArena<'b>, CommonArena<'b>), LoroError> {
     assert!(app_state.is_empty());
@@ -454,7 +454,7 @@ struct PreEncodedState {
     app_state: EncodedAppState,
 }
 
-fn preprocess_app_state(app_state: &AppState) -> PreEncodedState {
+fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     assert!(!app_state.is_in_txn());
     let mut peers = Vec::new();
     let mut peer_lookup = FxHashMap::default();
@@ -790,13 +790,13 @@ mod test {
     #[test]
     fn text_edit_snapshot_encode_decode() {
         // test import snapshot directly
-        let app = LoroApp::new();
+        let app = LoroDoc::new();
         let mut txn = app.txn().unwrap();
         let text = txn.get_text("id");
         text.insert(&mut txn, 0, "hello");
         txn.commit().unwrap();
         let snapshot = app.export_snapshot();
-        let app2 = LoroApp::new();
+        let app2 = LoroDoc::new();
         app2.import(&snapshot).unwrap();
         let actual = app2
             .app_state()

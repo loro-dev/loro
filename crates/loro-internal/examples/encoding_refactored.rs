@@ -1,6 +1,6 @@
 use bench_utils::TextAction;
 use criterion::black_box;
-use loro_internal::refactor::loro::LoroApp;
+use loro_internal::refactor::loro::LoroDoc;
 
 fn main() {
     log_size();
@@ -12,7 +12,7 @@ fn main() {
 fn log_size() {
     let actions = bench_utils::get_automerge_actions();
     {
-        let loro = LoroApp::default();
+        let loro = LoroDoc::default();
         let text = loro.get_text("text");
         let mut txn = loro.txn().unwrap();
 
@@ -34,7 +34,7 @@ fn log_size() {
     println!("\n");
     {
         println!("One Transaction Per Action");
-        let loro = LoroApp::default();
+        let loro = LoroDoc::default();
         let text = loro.get_text("text");
 
         for TextAction { pos, ins, del } in actions.iter() {
@@ -57,7 +57,7 @@ fn log_size() {
 fn bench_decode() {
     let actions = bench_utils::get_automerge_actions();
     {
-        let loro = LoroApp::default();
+        let loro = LoroDoc::default();
         let text = loro.get_text("text");
 
         #[allow(warnings)]
@@ -73,7 +73,7 @@ fn bench_decode() {
         // }
 
         for _ in 0..100 {
-            let loro = LoroApp::new();
+            let loro = LoroDoc::new();
             loro.import(black_box(&snapshot)).unwrap();
         }
     }
@@ -82,7 +82,7 @@ fn bench_decode() {
 #[allow(unused)]
 fn bench_decode_updates() {
     let actions = bench_utils::get_automerge_actions();
-    let loro = LoroApp::default();
+    let loro = LoroDoc::default();
     let text = loro.get_text("text");
 
     #[allow(warnings)]
@@ -95,7 +95,7 @@ fn bench_decode_updates() {
 
     let updates = loro.export_from(&Default::default());
     for _ in 0..10 {
-        let loro = LoroApp::new();
+        let loro = LoroDoc::new();
         loro.import(black_box(&updates)).unwrap();
     }
 }

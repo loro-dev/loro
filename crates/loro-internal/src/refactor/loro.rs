@@ -16,7 +16,7 @@ use super::{
     diff_calc::DiffCalculator,
     oplog::OpLog,
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
-    state::{AppState, AppStateDiff, ContainerStateDiff},
+    state::{AppStateDiff, ContainerStateDiff, DocState},
     txn::Transaction,
     ListHandler, MapHandler, TextHandler,
 };
@@ -38,17 +38,17 @@ use super::{
 /// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
 /// updates to [OpLog] won't affect [AppState], while updates to [AppState]
 /// will continue to affect [OpLog].
-pub struct LoroApp {
+pub struct LoroDoc {
     oplog: Arc<Mutex<OpLog>>,
-    state: Arc<Mutex<AppState>>,
+    state: Arc<Mutex<DocState>>,
     detached: bool,
 }
 
-impl LoroApp {
+impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
         // share arena
-        let state = Arc::new(Mutex::new(AppState::new(&oplog)));
+        let state = Arc::new(Mutex::new(DocState::new(&oplog)));
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
@@ -60,7 +60,7 @@ impl LoroApp {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
-    pub(super) fn from_existing(oplog: OpLog, state: AppState) -> Self {
+    pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
@@ -104,7 +104,7 @@ impl LoroApp {
         Ok(Transaction::new(self.state.clone(), self.oplog.clone()))
     }
 
-    pub fn app_state(&self) -> &Arc<Mutex<AppState>> {
+    pub fn app_state(&self) -> &Arc<Mutex<DocState>> {
         &self.state
     }
 
@@ -165,7 +165,7 @@ impl LoroApp {
                     decode_app_snapshot(self, &input[1..])?;
                     Ok(vec![]) // TODO: return diff
                 } else {
-                    let app = LoroApp::new();
+                    let app = LoroDoc::new();
                     decode_app_snapshot(&app, &input[1..])?;
                     let oplog = self.oplog.lock().unwrap();
                     let updates = app.export_from(oplog.vv());
@@ -240,7 +240,7 @@ impl LoroApp {
     }
 }
 
-impl Default for LoroApp {
+impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
     }

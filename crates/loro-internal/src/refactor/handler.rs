@@ -1,4 +1,4 @@
-use super::{state::AppState, txn::Transaction};
+use super::{state::DocState, txn::Transaction};
 use crate::container::{
     list::list_op::{DeleteSpan, ListOp},
     registry::ContainerIdx,
@@ -12,21 +12,21 @@ use std::{
 
 pub struct TextHandler {
     container_idx: ContainerIdx,
-    state: Weak<Mutex<AppState>>,
+    state: Weak<Mutex<DocState>>,
 }
 
 pub struct MapHandler {
     container_idx: ContainerIdx,
-    state: Weak<Mutex<AppState>>,
+    state: Weak<Mutex<DocState>>,
 }
 
 pub struct ListHandler {
     container_idx: ContainerIdx,
-    state: Weak<Mutex<AppState>>,
+    state: Weak<Mutex<DocState>>,
 }
 
 impl TextHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Text);
         Self {
             container_idx: idx,
@@ -129,7 +129,7 @@ impl TextHandler {
 }
 
 impl ListHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         assert_eq!(idx.get_type(), ContainerType::List);
         Self {
             container_idx: idx,
@@ -224,7 +224,7 @@ impl ListHandler {
 }
 
 impl MapHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<AppState>>) -> Self {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Map);
         Self {
             container_idx: idx,
@@ -302,11 +302,11 @@ impl MapHandler {
 #[cfg(test)]
 mod test {
 
-    use crate::refactor::loro::LoroApp;
+    use crate::refactor::loro::LoroDoc;
 
     #[test]
     fn test() {
-        let loro = LoroApp::new();
+        let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
         text.insert(&mut txn, 0, "hello");
@@ -323,9 +323,9 @@ mod test {
 
     #[test]
     fn import() {
-        let loro = LoroApp::new();
+        let loro = LoroDoc::new();
         loro.set_peer_id(1);
-        let loro2 = LoroApp::new();
+        let loro2 = LoroDoc::new();
         loro2.set_peer_id(2);
 
         let mut txn = loro.txn().unwrap();

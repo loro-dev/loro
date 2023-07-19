@@ -28,7 +28,7 @@ use super::{
     arena::SharedArena,
     handler::{ListHandler, MapHandler, TextHandler},
     oplog::OpLog,
-    state::{AppState, ContainerStateDiff, State},
+    state::{ContainerStateDiff, DocState, State},
 };
 
 pub struct Transaction {
@@ -37,7 +37,7 @@ pub struct Transaction {
     next_counter: Counter,
     start_lamport: Lamport,
     next_lamport: Lamport,
-    state: Arc<Mutex<AppState>>,
+    state: Arc<Mutex<DocState>>,
     oplog: Arc<Mutex<OpLog>>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>,
@@ -46,7 +46,7 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new(state: Arc<Mutex<AppState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
+    pub fn new(state: Arc<Mutex<DocState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
         let mut state_lock = state.lock().unwrap();
         let oplog_lock = oplog.lock().unwrap();
         state_lock.start_txn();

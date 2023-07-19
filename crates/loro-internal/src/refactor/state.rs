@@ -26,7 +26,7 @@ pub(crate) use text_state::TextState;
 use super::{arena::SharedArena, oplog::OpLog};
 
 #[derive(Clone)]
-pub struct AppState {
+pub struct DocState {
     pub(super) peer: PeerID,
 
     pub(super) frontiers: Frontiers,
@@ -107,7 +107,7 @@ impl<'a> AppStateDiff<'a> {
     }
 }
 
-impl AppState {
+impl DocState {
     #[inline]
     pub fn new(oplog: &OpLog) -> Self {
         let peer = SystemRandom::new().next_u64();
