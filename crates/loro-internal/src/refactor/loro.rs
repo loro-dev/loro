@@ -91,7 +91,8 @@ impl LoroApp {
         );
         state.apply_diff(AppStateDiff {
             diff: (&diff).into(),
-            frontiers: Cow::Borrowed(oplog.frontiers()),
+            new_version: Cow::Borrowed(oplog.frontiers()),
+            old_version: None,
         });
     }
 
@@ -151,7 +152,8 @@ impl LoroApp {
                     let mut state = self.state.lock().unwrap();
                     state.apply_diff(AppStateDiff {
                         diff: (&diff).into(),
-                        frontiers: Cow::Borrowed(oplog.frontiers()),
+                        new_version: Cow::Borrowed(oplog.frontiers()),
+                        old_version: None,
                     });
                 }
 

@@ -33,14 +33,23 @@ pub struct AppState {
     pub(super) states: FxHashMap<ContainerIdx, State>,
     pub(super) arena: SharedArena,
 
+    // txn related stuff
     in_txn: bool,
-    changed_in_txn: FxHashSet<ContainerIdx>,
+    changed_idx_in_txn: FxHashSet<ContainerIdx>,
+
+    // diff related stuff
+    recording_diff: bool,
+    diff: Vec<AppStateDiff<'static>>,
+    record_start_version: Option<Frontiers>,
 }
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena);
     fn apply_op(&mut self, op: RawOp);
+    /// Convert a state to a diff that when apply this diff on a empty state,
+    /// the state will be the same as this state.
+    fn to_diff(&self) -> Diff;
 
     /// Start a transaction
     ///
@@ -81,12 +90,25 @@ pub struct ContainerStateDiff {
     pub diff: Diff,
 }
 
+#[derive(Debug, Clone)]
 pub struct AppStateDiff<'a> {
     pub(crate) diff: Cow<'a, [ContainerStateDiff]>,
-    pub(crate) frontiers: Cow<'a, Frontiers>,
+    pub(crate) new_version: Cow<'a, Frontiers>,
+    pub(crate) old_version: Option<Frontiers>,
+}
+
+impl<'a> AppStateDiff<'a> {
+    pub fn into_owned(self) -> AppStateDiff<'static> {
+        AppStateDiff {
+            diff: Cow::Owned((*self.diff).to_owned()),
+            new_version: Cow::Owned((*self.new_version).to_owned()),
+            old_version: self.old_version,
+        }
+    }
 }
 
 impl AppState {
+    #[inline]
     pub fn new(oplog: &OpLog) -> Self {
         let peer = SystemRandom::new().next_u64();
         // TODO: maybe we should switch to certain version in oplog
@@ -96,10 +118,14 @@ impl AppState {
             states: FxHashMap::default(),
             arena: oplog.arena.clone(),
             in_txn: false,
-            changed_in_txn: FxHashSet::default(),
+            changed_idx_in_txn: FxHashSet::default(),
+            diff: Default::default(),
+            recording_diff: false,
+            record_start_version: None,
         }
     }
 
+    #[inline]
     pub fn new_from_arena(arena: SharedArena) -> Self {
         let peer = SystemRandom::new().next_u64();
         // TODO: maybe we should switch to certain version in oplog
@@ -109,20 +135,55 @@ impl AppState {
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
             in_txn: false,
-            changed_in_txn: FxHashSet::default(),
+            changed_idx_in_txn: FxHashSet::default(),
+            diff: Default::default(),
+            recording_diff: false,
+            record_start_version: None,
         }
     }
 
+    #[inline]
+    pub fn is_recording(&self) -> bool {
+        self.recording_diff
+    }
+
+    #[inline]
+    pub fn start_recording(&mut self) {
+        self.recording_diff = true;
+        self.record_start_version = Some(self.frontiers.clone());
+    }
+
+    /// Stop recording diff and clear the diff
+    #[inline]
+    pub fn stop_and_clear_recording(&mut self) {
+        self.recording_diff = false;
+        self.record_start_version = None;
+        self.diff.clear();
+    }
+
+    #[inline]
+    pub fn take_diff(&mut self) -> Vec<AppStateDiff<'static>> {
+        let mut diffs = std::mem::take(&mut self.diff);
+        let mut last_version = self.record_start_version.take().unwrap();
+        for diff in diffs.iter_mut() {
+            diff.old_version = Some(last_version);
+            last_version = (*diff.new_version).clone();
+        }
+
+        diffs
+    }
+
+    #[inline]
     pub fn set_peer_id(&mut self, peer: PeerID) {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, AppStateDiff { diff, frontiers }: AppStateDiff) {
+    pub fn apply_diff(&mut self, diff: AppStateDiff) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
 
-        for diff in diff.iter() {
+        for diff in diff.diff.iter() {
             let state = self.states.entry(diff.idx).or_insert_with(|| {
                 let id = self.arena.get_container_id(diff.idx).unwrap();
                 create_state(id.container_type())
@@ -130,13 +191,17 @@ impl AppState {
 
             if self.in_txn {
                 state.start_txn();
-                self.changed_in_txn.insert(diff.idx);
+                self.changed_idx_in_txn.insert(diff.idx);
             }
 
             state.apply_diff(&diff.diff, &self.arena);
         }
 
-        self.frontiers = frontiers.into_owned();
+        self.frontiers = (*diff.new_version).to_owned();
+
+        if self.recording_diff {
+            self.diff.push(diff.into_owned());
+        }
     }
 
     pub fn apply_local_op(&mut self, op: RawOp) {
@@ -147,7 +212,7 @@ impl AppState {
 
         if self.in_txn {
             state.start_txn();
-            self.changed_in_txn.insert(op.container);
+            self.changed_idx_in_txn.insert(op.container);
         }
 
         state.apply_op(op);
@@ -157,27 +222,33 @@ impl AppState {
         self.in_txn = true;
     }
 
+    #[inline]
     pub(crate) fn abort_txn(&mut self) {
-        for container_idx in std::mem::take(&mut self.changed_in_txn) {
+        for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
             self.states.get_mut(&container_idx).unwrap().abort_txn();
         }
 
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers) {
-        for container_idx in std::mem::take(&mut self.changed_in_txn) {
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<AppStateDiff>) {
+        for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
 
         self.in_txn = false;
         self.frontiers = new_frontiers;
+        if self.recording_diff {
+            self.diff.push(diff.unwrap().into_owned());
+        }
     }
 
+    #[inline]
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
         self.states.get_mut(&idx)
     }
 
+    #[inline]
     pub(super) fn get_state(&self, idx: ContainerIdx) -> Option<&State> {
         self.states.get(&idx)
     }
@@ -193,11 +264,36 @@ impl AppState {
             })
     }
 
-    pub(super) fn set_state(&mut self, idx: ContainerIdx, state: State) {
-        assert!(
-            self.states.insert(idx, state).is_none(),
-            "overriding states"
-        )
+    /// Set the state of the container with the given container idx.
+    /// This is only used for decode.
+    ///
+    /// # Panic
+    ///
+    /// If the state already exists.
+    pub(super) fn init_with_states_and_version(
+        &mut self,
+        states: FxHashMap<ContainerIdx, State>,
+        frontiers: Frontiers,
+    ) {
+        assert!(self.states.is_empty(), "overriding states");
+        self.states = states;
+
+        if self.is_recording() {
+            self.diff.push(AppStateDiff {
+                diff: self
+                    .states
+                    .iter()
+                    .map(|(&idx, state)| ContainerStateDiff {
+                        idx,
+                        diff: state.to_diff(),
+                    })
+                    .collect(),
+                new_version: Cow::Owned(frontiers.clone()),
+                old_version: Default::default(),
+            })
+        }
+
+        self.frontiers = frontiers;
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

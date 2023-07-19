@@ -1,14 +1,22 @@
 use std::{
+    borrow::Cow,
     mem::take,
     sync::{Arc, Mutex},
 };
 
+use fxhash::FxHashMap;
 use loro_common::ContainerType;
 use rle::{HasLength, RleVec};
+use smallvec::smallvec;
 
 use crate::{
     change::{Change, Lamport},
-    container::{registry::ContainerIdx, ContainerIdRaw},
+    container::{
+        list::list_op::InnerListOp, registry::ContainerIdx, text::text_content::SliceRanges,
+        ContainerIdRaw,
+    },
+    delta::{Delta, MapValue},
+    event::Diff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -20,7 +28,7 @@ use super::{
     arena::SharedArena,
     handler::{ListHandler, MapHandler, TextHandler},
     oplog::OpLog,
-    state::{AppState, State},
+    state::{AppState, ContainerStateDiff, State},
 };
 
 pub struct Transaction {
@@ -105,6 +113,12 @@ impl Transaction {
             timestamp: oplog.get_timestamp(),
         };
 
+        let diff = if state.is_recording() {
+            Some(change_to_diff(&change, &oplog.arena))
+        } else {
+            None
+        };
+
         let last_id = change.id_last();
         if let Err(err) = oplog.import_local_change(change) {
             drop(state);
@@ -112,7 +126,15 @@ impl Transaction {
             self._abort();
             return Err(err);
         }
-        state.commit_txn(Frontiers::from_id(last_id));
+
+        state.commit_txn(
+            Frontiers::from_id(last_id),
+            diff.map(|x| super::state::AppStateDiff {
+                diff: Cow::Owned(x),
+                new_version: Cow::Borrowed(oplog.frontiers()),
+                old_version: None,
+            }),
+        );
         Ok(())
     }
 
@@ -208,4 +230,47 @@ impl Drop for Transaction {
             self._commit().unwrap();
         }
     }
+}
+
+// PERF: could be compacter
+fn change_to_diff(change: &Change, arena: &SharedArena) -> Vec<ContainerStateDiff> {
+    let mut diff = Vec::with_capacity(change.ops.len());
+    let peer = change.id.peer;
+    let mut lamport = change.lamport;
+    for op in change.ops.iter() {
+        let counter = op.counter;
+        let diff_op = ContainerStateDiff {
+            idx: op.container,
+            diff: match &op.content {
+                crate::op::InnerContent::List(list) => match list {
+                    InnerListOp::Insert { slice, pos } => Diff::SeqRaw(
+                        Delta::new()
+                            .retain(*pos)
+                            .insert(SliceRanges(smallvec![slice.clone()])),
+                    ),
+                    InnerListOp::Delete(del) => Diff::List(
+                        Delta::new()
+                            .retain(del.pos as usize)
+                            .delete(del.len as usize),
+                    ),
+                },
+                crate::op::InnerContent::Map(map) => {
+                    let value = arena.get_value(map.value as usize).unwrap();
+                    let mut updated: FxHashMap<_, _> = Default::default();
+                    updated.insert(
+                        map.key.clone(),
+                        MapValue {
+                            counter,
+                            value: Some(value),
+                            lamport: (lamport, peer),
+                        },
+                    );
+                    Diff::NewMap(crate::delta::MapDelta { updated })
+                }
+            },
+        };
+        lamport += op.content_len() as Lamport;
+        diff.push(diff_op);
+    }
+    diff
 }

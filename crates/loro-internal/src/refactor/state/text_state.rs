@@ -4,7 +4,7 @@ use jumprope::JumpRope;
 
 use crate::{
     container::text::text_content::ListSlice,
-    delta::DeltaItem,
+    delta::{Delta, DeltaItem},
     event::Diff,
     op::{RawOp, RawOpContent},
     refactor::arena::SharedArena,
@@ -148,6 +148,12 @@ impl ContainerState for TextState {
 
     fn get_value(&self) -> LoroValue {
         LoroValue::String(Arc::new(self.rope.to_string()))
+    }
+
+    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
+    #[doc = " the state will be the same as this state."]
+    fn to_diff(&self) -> Diff {
+        Diff::Text(Delta::new().insert(self.rope.to_string()))
     }
 }
 

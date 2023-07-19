@@ -65,16 +65,16 @@ impl ContainerState for MapState {
     }
 
     fn get_value(&self) -> LoroValue {
-        let mut ans = FxHashMap::with_capacity_and_hasher(self.len(), Default::default());
-        for (key, value) in self.map.iter() {
-            if value.value.is_none() {
-                continue;
-            }
-
-            ans.insert(key.to_string(), value.value.as_ref().cloned().unwrap());
-        }
-
+        let ans = self.to_map();
         LoroValue::Map(Arc::new(ans))
+    }
+
+    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
+    #[doc = " the state will be the same as this state."]
+    fn to_diff(&self) -> Diff {
+        Diff::NewMap(crate::delta::MapDelta {
+            updated: self.map.clone(),
+        })
     }
 }
 
@@ -106,5 +106,20 @@ impl MapState {
 
     fn len(&self) -> usize {
         self.map.len()
+    }
+
+    fn to_map(
+        &self,
+    ) -> std::collections::HashMap<String, LoroValue, std::hash::BuildHasherDefault<fxhash::FxHasher>>
+    {
+        let mut ans = FxHashMap::with_capacity_and_hasher(self.len(), Default::default());
+        for (key, value) in self.map.iter() {
+            if value.value.is_none() {
+                continue;
+            }
+
+            ans.insert(key.to_string(), value.value.as_ref().cloned().unwrap());
+        }
+        ans
     }
 }

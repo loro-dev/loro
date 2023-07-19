@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     container::ContainerID,
+    delta::Delta,
     event::Diff,
     op::{RawOp, RawOpContent},
     refactor::arena::SharedArena,
@@ -230,6 +231,14 @@ impl ListState {
     pub fn len(&self) -> usize {
         *self.list.root_cache() as usize
     }
+
+    fn to_vec(&self) -> Vec<LoroValue> {
+        let mut ans = Vec::with_capacity(self.len());
+        for value in self.list.iter() {
+            ans.push(value.clone());
+        }
+        ans
+    }
 }
 
 impl Default for ListState {
@@ -334,11 +343,14 @@ impl ContainerState for ListState {
     }
 
     fn get_value(&self) -> LoroValue {
-        let mut ans = Vec::with_capacity(self.len());
-        for value in self.list.iter() {
-            ans.push(value.clone());
-        }
+        let ans = self.to_vec();
         LoroValue::List(Arc::new(ans))
+    }
+
+    #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
+    #[doc = " the state will be the same as this state."]
+    fn to_diff(&self) -> Diff {
+        Diff::List(Delta::new().insert(self.to_vec()))
     }
 }
 

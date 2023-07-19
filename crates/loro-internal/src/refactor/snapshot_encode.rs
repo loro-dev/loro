@@ -200,8 +200,9 @@ pub fn decode_state<'b>(
     let common = CommonArena::decode(data)?;
     let state_arena = TempArena::decode_state_arena(data)?;
     let encoded_app_state = EncodedAppState::decode(data)?;
-    app_state.frontiers = Frontiers::from(&encoded_app_state.frontiers);
     let mut text_index = 0;
+    let mut container_states =
+        FxHashMap::with_capacity_and_hasher(common.container_ids.len(), Default::default());
     // this part should be moved to encode.rs in preload
     for ((id, parent), state) in common
         .container_ids
@@ -216,7 +217,7 @@ pub fn decode_state<'b>(
         match state {
             loro_preload::EncodedContainerState::Text { len } => {
                 let index = text_index;
-                app_state.set_state(
+                container_states.insert(
                     idx,
                     State::TextState(TextState::from_str(
                         std::str::from_utf8(&state_arena.text[index..index + len]).unwrap(),
@@ -240,16 +241,18 @@ pub fn decode_state<'b>(
                         },
                     )
                 }
-                app_state.set_state(idx, State::MapState(map));
+                container_states.insert(idx, State::MapState(map));
             }
             loro_preload::EncodedContainerState::List(list_data) => {
                 let mut list = ListState::new();
                 list.insert_batch(0, list_data.iter().map(|&x| state_arena.values[x].clone()));
-                app_state.set_state(idx, State::ListState(list));
+                container_states.insert(idx, State::ListState(list));
             }
         }
     }
 
+    let frontiers = Frontiers::from(&encoded_app_state.frontiers);
+    app_state.init_with_states_and_version(container_states, frontiers);
     Ok((state_arena, common))
 }
 
