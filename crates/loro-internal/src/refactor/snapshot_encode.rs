@@ -160,7 +160,7 @@ pub fn decode_oplog(
         }
 
         // calc deps
-        let mut deps: smallvec::SmallVec<[ID; 2]> = smallvec![];
+        let mut deps: smallvec::SmallVec<[ID; 1]> = smallvec![];
         if dep_on_self {
             deps.push(ID::new(peer_id, start_counter - 1));
         }

@@ -12,7 +12,7 @@ use crate::{
     id::PeerID,
     op::RawOp,
     version::Frontiers,
-    ContainerType, LoroValue,
+    ContainerType, InternalString, LoroValue,
 };
 
 mod list_state;
@@ -39,7 +39,7 @@ pub struct DocState {
 
     // diff related stuff
     recording_diff: bool,
-    diff: Vec<AppStateDiff<'static>>,
+    diff: Vec<DocStateDiff<'static>>,
     record_start_version: Option<Frontiers>,
 }
 
@@ -91,15 +91,19 @@ pub struct ContainerStateDiff {
 }
 
 #[derive(Debug, Clone)]
-pub struct AppStateDiff<'a> {
+pub struct DocStateDiff<'a> {
+    pub(crate) origin: InternalString,
+    pub(crate) local: bool,
     pub(crate) diff: Cow<'a, [ContainerStateDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
     pub(crate) old_version: Option<Frontiers>,
 }
 
-impl<'a> AppStateDiff<'a> {
-    pub fn into_owned(self) -> AppStateDiff<'static> {
-        AppStateDiff {
+impl<'a> DocStateDiff<'a> {
+    pub fn into_owned(self) -> DocStateDiff<'static> {
+        DocStateDiff {
+            origin: self.origin,
+            local: self.local,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
             old_version: self.old_version,
@@ -162,7 +166,7 @@ impl DocState {
     }
 
     #[inline]
-    pub fn take_diff(&mut self) -> Vec<AppStateDiff<'static>> {
+    pub fn take_diff(&mut self) -> Vec<DocStateDiff<'static>> {
         let mut diffs = std::mem::take(&mut self.diff);
         let mut last_version = self.record_start_version.take().unwrap();
         for diff in diffs.iter_mut() {
@@ -178,7 +182,7 @@ impl DocState {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, diff: AppStateDiff) {
+    pub fn apply_diff(&mut self, diff: DocStateDiff) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
@@ -231,7 +235,7 @@ impl DocState {
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<AppStateDiff>) {
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<DocStateDiff>) {
         for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
@@ -279,7 +283,9 @@ impl DocState {
         self.states = states;
 
         if self.is_recording() {
-            self.diff.push(AppStateDiff {
+            self.diff.push(DocStateDiff {
+                origin: Default::default(),
+                local: false,
                 diff: self
                     .states
                     .iter()

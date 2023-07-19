@@ -9,14 +9,14 @@ use crate::{
     container::{registry::ContainerIdx, ContainerIdRaw},
     id::PeerID,
     log_store::encoding::{ConcreteEncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
-    EncodeMode, LoroError, VersionVector,
+    EncodeMode, InternalString, LoroError, VersionVector,
 };
 
 use super::{
     diff_calc::DiffCalculator,
     oplog::OpLog,
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
-    state::{AppStateDiff, ContainerStateDiff, DocState},
+    state::{ContainerStateDiff, DocState, DocStateDiff},
     txn::Transaction,
     ListHandler, MapHandler, TextHandler,
 };
@@ -89,7 +89,9 @@ impl LoroDoc {
             oplog.vv(),
             Some(oplog.frontiers()),
         );
-        state.apply_diff(AppStateDiff {
+        state.apply_diff(DocStateDiff {
+            local: true,
+            origin: Default::default(),
             diff: (&diff).into(),
             new_version: Cow::Borrowed(oplog.frontiers()),
             old_version: None,
@@ -121,6 +123,14 @@ impl LoroDoc {
     }
 
     pub fn import(&self, bytes: &[u8]) -> Result<Vec<ContainerStateDiff>, LoroError> {
+        self.import_with(bytes, Default::default())
+    }
+
+    pub fn import_with(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+    ) -> Result<Vec<ContainerStateDiff>, LoroError> {
         let (magic_bytes, input) = bytes.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -150,7 +160,9 @@ impl LoroDoc {
                 );
                 if !self.detached {
                     let mut state = self.state.lock().unwrap();
-                    state.apply_diff(AppStateDiff {
+                    state.apply_diff(DocStateDiff {
+                        origin,
+                        local: false,
                         diff: (&diff).into(),
                         new_version: Cow::Borrowed(oplog.frontiers()),
                         old_version: None,

@@ -96,7 +96,7 @@ impl ImVersionVector {
 // TODO: use a better data structure that is Array when small
 // and hashmap when it's big
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Frontiers(SmallVec<[ID; 2]>);
+pub struct Frontiers(SmallVec<[ID; 1]>);
 
 impl PartialEq for Frontiers {
     fn eq(&self, other: &Self) -> bool {
@@ -139,7 +139,7 @@ impl Frontiers {
 }
 
 impl Deref for Frontiers {
-    type Target = SmallVec<[ID; 2]>;
+    type Target = SmallVec<[ID; 1]>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -152,8 +152,8 @@ impl DerefMut for Frontiers {
     }
 }
 
-impl From<SmallVec<[ID; 2]>> for Frontiers {
-    fn from(value: SmallVec<[ID; 2]>) -> Self {
+impl From<SmallVec<[ID; 1]>> for Frontiers {
+    fn from(value: SmallVec<[ID; 1]>) -> Self {
         Self(value)
     }
 }

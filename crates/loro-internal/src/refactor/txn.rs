@@ -21,7 +21,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    LoroError, LoroValue,
+    InternalString, LoroError, LoroValue,
 };
 
 use super::{
@@ -33,6 +33,7 @@ use super::{
 
 pub struct Transaction {
     peer: PeerID,
+    origin: InternalString,
     start_counter: Counter,
     next_counter: Counter,
     start_lamport: Lamport,
@@ -58,6 +59,7 @@ impl Transaction {
         drop(state_lock);
         drop(oplog_lock);
         Self {
+            origin: Default::default(),
             peer,
             start_counter: next_counter,
             start_lamport: next_lamport,
@@ -70,6 +72,20 @@ impl Transaction {
             local_ops: RleVec::new(),
             finished: false,
         }
+    }
+
+    pub fn new_with_origin(
+        state: Arc<Mutex<DocState>>,
+        oplog: Arc<Mutex<OpLog>>,
+        origin: InternalString,
+    ) -> Self {
+        let mut ans = Self::new(state, oplog);
+        ans.origin = origin;
+        ans
+    }
+
+    pub fn set_origin(&mut self, origin: InternalString) {
+        self.origin = origin;
     }
 
     pub fn abort(mut self) {
@@ -129,7 +145,9 @@ impl Transaction {
 
         state.commit_txn(
             Frontiers::from_id(last_id),
-            diff.map(|x| super::state::AppStateDiff {
+            diff.map(|x| super::state::DocStateDiff {
+                local: true,
+                origin: self.origin.clone(),
                 diff: Cow::Owned(x),
                 new_version: Cow::Borrowed(oplog.frontiers()),
                 old_version: None,
