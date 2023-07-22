@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use fxhash::FxHashMap;
+use itertools::Itertools;
 use loro_common::{ContainerType, HasLamport, ID};
 use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
@@ -245,7 +246,13 @@ pub fn decode_state<'b>(
             }
             loro_preload::EncodedContainerState::List(list_data) => {
                 let mut list = ListState::new(idx);
-                list.insert_batch(0, list_data.iter().map(|&x| state_arena.values[x].clone()));
+                list.insert_batch(
+                    0,
+                    list_data
+                        .iter()
+                        .map(|&x| state_arena.values[x].clone())
+                        .collect_vec(),
+                );
                 container_states.insert(idx, State::ListState(list));
             }
         }

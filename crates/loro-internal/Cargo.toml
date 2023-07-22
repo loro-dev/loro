@@ -36,7 +36,7 @@ itertools = "0.10.5"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
-generic-btree = "0.3.1"
+generic-btree = "0.4.0"
 compact-bytes = { path = "../compact-bytes" }
 lz4_flex = "0.11.1"
 miniz_oxide = "0.7.1"

@@ -152,7 +152,7 @@ impl ListState {
         let mapping = self.child_container_to_leaf.lock().unwrap();
         let leaf = *mapping.get(id)?;
         drop(mapping);
-        let node = self.list.get_node(leaf);
+        let node = self.list.get_node_safe(leaf)?;
         let elem_index = node
             .elements()
             .iter()
@@ -222,22 +222,9 @@ impl ListState {
     }
 
     // PERF: use &[LoroValue]
-    pub fn insert_batch(&mut self, index: usize, values: impl IntoIterator<Item = LoroValue>) {
+    pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>) {
         let q = self.list.query::<LengthFinder>(&index);
         let old_len = self.len();
-
-        let mut map = self.child_container_to_leaf.lock().unwrap();
-        let values: Vec<_> = values
-            .into_iter()
-            .map(|x| {
-                if x.is_container() {
-                    map.insert(x.as_container().unwrap().clone(), q.leaf);
-                }
-                x
-            })
-            .collect();
-        drop(map);
-        // TODO: this fix should be moved inside generic-btree
         self.list.insert_many_by_query_result(&q, values);
         if self.in_txn {
             let len = self.len() - old_len;
@@ -343,7 +330,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(pos, list.iter().cloned());
+                            self.insert_batch(pos, list.to_vec());
                         }
                         std::borrow::Cow::Owned(list) => {
                             for value in list.iter() {

@@ -843,6 +843,89 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_2() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 55,
+                    container_idx: 55,
+                    key: 55,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 55,
+                    container_idx: 64,
+                    key: 53,
+                    value: Null,
+                },
+                List {
+                    site: 56,
+                    container_idx: 56,
+                    key: 56,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 255,
+                    value: I32(7),
+                },
+                Text {
+                    site: 97,
+                    container_idx: 225,
+                    pos: 97,
+                    value: 24929,
+                    is_del: false,
+                },
+            ],
+        );
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,
