@@ -127,14 +127,14 @@ impl ListState {
         let mapping: ContainerMapping = Arc::new(Mutex::new(Default::default()));
         let mapping_clone = mapping.clone();
         tree.set_listener(Some(Box::new(move |event| {
-            debug_dbg!(&event);
             if let LoroValue::Container(container_id) = event.elem {
-                let mut mapping = mapping_clone.lock().unwrap();
+                let mut mapping = mapping_clone.try_lock().unwrap();
                 if let Some(leaf) = event.target_leaf {
                     mapping.insert((*container_id).clone(), leaf);
                 } else {
                     mapping.remove(container_id);
                 }
+                drop(mapping);
             }
         })));
 
@@ -150,8 +150,9 @@ impl ListState {
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
         debug_dbg!(self.get_value());
         let mapping = self.child_container_to_leaf.lock().unwrap();
-        let leaf = mapping.get(id)?;
-        let node = self.list.get_node(*leaf);
+        let leaf = *mapping.get(id)?;
+        drop(mapping);
+        let node = self.list.get_node(leaf);
         let elem_index = node
             .elements()
             .iter()
@@ -159,7 +160,7 @@ impl ListState {
         let mut index = 0;
         self.list.visit_previous_caches(
             QueryResult {
-                leaf: *leaf,
+                leaf,
                 elem_index: 0,
                 offset: 0,
                 found: true,
@@ -220,21 +221,24 @@ impl ListState {
         }
     }
 
+    // PERF: use &[LoroValue]
     pub fn insert_batch(&mut self, index: usize, values: impl IntoIterator<Item = LoroValue>) {
         let q = self.list.query::<LengthFinder>(&index);
         let old_len = self.len();
 
         let mut map = self.child_container_to_leaf.lock().unwrap();
-        // TODO: this fix should be moved inside generic-btree
-        self.list.insert_many_by_query_result(
-            &q,
-            values.into_iter().map(|x| {
+        let values: Vec<_> = values
+            .into_iter()
+            .map(|x| {
                 if x.is_container() {
                     map.insert(x.as_container().unwrap().clone(), q.leaf);
                 }
                 x
-            }),
-        );
+            })
+            .collect();
+        drop(map);
+        // TODO: this fix should be moved inside generic-btree
+        self.list.insert_many_by_query_result(&q, values);
         if self.in_txn {
             let len = self.len() - old_len;
             self.undo_stack.push(UndoItem::Insert { index, len });
