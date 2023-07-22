@@ -7,6 +7,7 @@ use crate::{
     ContainerTrait,
 };
 
+use debug_log::debug_dbg;
 pub use loro_common::LoroValue;
 
 pub trait ResolveDeep {
@@ -129,6 +130,7 @@ pub trait ApplyDiff {
 
 impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
+        debug_dbg!(&self, diff);
         match self {
             LoroValue::String(value) => {
                 let mut s = value.to_string();
@@ -178,22 +180,44 @@ impl ApplyDiff for LoroValue {
             }
             LoroValue::Map(map) => {
                 for item in diff.iter() {
-                    let diff = item.as_map().unwrap();
-                    let map = Arc::make_mut(map);
-                    for v in diff.added.iter() {
-                        map.insert(v.0.to_string(), unresolved_to_collection(v.1));
-                    }
-                    for (k, _) in diff.deleted.iter() {
-                        // map.remove(v.as_ref());
-                        map.insert(k.to_string(), LoroValue::Null);
-                    }
-                    for (key, value) in diff.updated.iter() {
-                        map.insert(key.to_string(), unresolved_to_collection(&value.new));
+                    match item {
+                        Diff::Map(diff) => {
+                            let map = Arc::make_mut(map);
+                            for v in diff.added.iter() {
+                                map.insert(v.0.to_string(), unresolved_to_collection(v.1));
+                            }
+                            for (k, _) in diff.deleted.iter() {
+                                // map.remove(v.as_ref());
+                                map.insert(k.to_string(), LoroValue::Null);
+                            }
+                            for (key, value) in diff.updated.iter() {
+                                map.insert(key.to_string(), unresolved_to_collection(&value.new));
+                            }
+                        }
+                        Diff::NewMap(diff) => {
+                            let map = Arc::make_mut(map);
+                            for (key, value) in diff.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        map.insert(
+                                            key.to_string(),
+                                            unresolved_to_collection(value),
+                                        );
+                                    }
+                                    None => {
+                                        map.remove(&key.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
                     }
                 }
             }
             _ => unreachable!(),
         }
+
+        debug_dbg!(&self);
     }
 
     fn apply(&mut self, path: &Path, diff: &[Diff]) {

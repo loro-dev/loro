@@ -52,12 +52,13 @@ impl SharedArena {
         let mut container_idx_to_id = self.container_idx_to_id.lock().unwrap();
         let idx = container_idx_to_id.len();
         container_idx_to_id.push(id.clone());
-        let ans = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
-        container_id_to_idx.insert(id.clone(), ans);
+        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
+        container_id_to_idx.insert(id.clone(), idx);
         if id.is_root() {
-            self.root_c_idx.lock().unwrap().push(ans);
+            self.root_c_idx.lock().unwrap().push(idx);
+            self.parents.lock().unwrap().insert(idx, None);
         }
-        ans
+        idx
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
@@ -120,11 +121,41 @@ impl SharedArena {
     }
 
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        debug_log::debug_log!(
+            "set parent {:?} {:?} {:?} {:?}",
+            child,
+            parent,
+            self.get_container_id(child),
+            parent.map(|x| self.get_container_id(x))
+        );
         self.parents.lock().unwrap().insert(child, parent);
     }
 
+    pub fn log_hierarchy(&self) {
+        if cfg!(debug_assertions) {
+            for (c, p) in self.parents.lock().unwrap().iter() {
+                debug_log::debug_log!(
+                    "container {:?} {:?} {:?}",
+                    c,
+                    self.get_container_id(*c),
+                    p.map(|x| self.get_container_id(x))
+                );
+            }
+        }
+    }
+
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        self.log_hierarchy();
         self.parents.lock().unwrap().get(&child).copied().flatten()
+    }
+
+    /// Call `f` on each ancestor of `container`, including `container` itself.
+    pub fn with_ancestors(&self, container: ContainerIdx, mut f: impl FnMut(ContainerIdx)) {
+        let mut container = Some(container);
+        while let Some(c) = container {
+            f(c);
+            container = self.get_parent(c);
+        }
     }
 
     pub fn slice_bytes(&self, range: impl RangeBounds<usize>) -> BytesSlice {

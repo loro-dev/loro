@@ -26,11 +26,13 @@ use crate::{
 
 use super::{
     arena::SharedArena,
+    event::{InternalContainerDiff, InternalDocDiff},
     handler::{ListHandler, MapHandler, TextHandler},
     oplog::OpLog,
-    state::{ContainerStateDiff, DocState, State},
+    state::{DocState, State},
 };
 
+pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>)>;
 pub struct Transaction {
     peer: PeerID,
     origin: InternalString,
@@ -44,13 +46,22 @@ pub struct Transaction {
     local_ops: RleVec<[Op; 1]>,
     pub(super) arena: SharedArena,
     finished: bool,
+    on_commit: Option<OnCommitFn>,
 }
 
 impl Transaction {
     pub fn new(state: Arc<Mutex<DocState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
+        Self::new_with_origin(state, oplog, "".into())
+    }
+
+    pub fn new_with_origin(
+        state: Arc<Mutex<DocState>>,
+        oplog: Arc<Mutex<OpLog>>,
+        origin: InternalString,
+    ) -> Self {
         let mut state_lock = state.lock().unwrap();
         let oplog_lock = oplog.lock().unwrap();
-        state_lock.start_txn();
+        state_lock.start_txn(origin, true);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer;
@@ -71,21 +82,20 @@ impl Transaction {
             frontiers,
             local_ops: RleVec::new(),
             finished: false,
+            on_commit: None,
         }
-    }
-
-    pub fn new_with_origin(
-        state: Arc<Mutex<DocState>>,
-        oplog: Arc<Mutex<OpLog>>,
-        origin: InternalString,
-    ) -> Self {
-        let mut ans = Self::new(state, oplog);
-        ans.origin = origin;
-        ans
     }
 
     pub fn set_origin(&mut self, origin: InternalString) {
         self.origin = origin;
+    }
+
+    pub fn commit(mut self) -> Result<(), LoroError> {
+        self._commit()
+    }
+
+    pub fn set_on_commit(&mut self, f: OnCommitFn) {
+        self.on_commit = Some(f);
     }
 
     pub fn abort(mut self) {
@@ -100,10 +110,6 @@ impl Transaction {
         self.finished = true;
         self.state.lock().unwrap().abort_txn();
         self.local_ops.clear();
-    }
-
-    pub fn commit(mut self) -> Result<(), LoroError> {
-        self._commit()
     }
 
     fn _commit(&mut self) -> Result<(), LoroError> {
@@ -145,14 +151,18 @@ impl Transaction {
 
         state.commit_txn(
             Frontiers::from_id(last_id),
-            diff.map(|x| super::state::DocStateDiff {
+            diff.map(|x| InternalDocDiff {
                 local: true,
                 origin: self.origin.clone(),
                 diff: Cow::Owned(x),
                 new_version: Cow::Borrowed(oplog.frontiers()),
-                old_version: None,
             }),
         );
+        drop(state);
+        drop(oplog);
+        if let Some(on_commit) = self.on_commit.take() {
+            on_commit(&self.state);
+        }
         Ok(())
     }
 
@@ -251,13 +261,13 @@ impl Drop for Transaction {
 }
 
 // PERF: could be compacter
-fn change_to_diff(change: &Change, arena: &SharedArena) -> Vec<ContainerStateDiff> {
+fn change_to_diff(change: &Change, arena: &SharedArena) -> Vec<InternalContainerDiff> {
     let mut diff = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
     for op in change.ops.iter() {
         let counter = op.counter;
-        let diff_op = ContainerStateDiff {
+        let diff_op = InternalContainerDiff {
             idx: op.container,
             diff: match &op.content {
                 crate::op::InnerContent::List(list) => match list {

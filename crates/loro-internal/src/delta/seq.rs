@@ -465,6 +465,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     }
 
     /// Reference: [Quill Delta](https://github.com/quilljs/delta)
+    // TODO: PERF use &mut self and &other
     pub fn compose(self, other: Delta<Value, M>) -> Delta<Value, M> {
         let mut this_iter = self.into_op_iter();
         let mut other_iter = other.into_op_iter();

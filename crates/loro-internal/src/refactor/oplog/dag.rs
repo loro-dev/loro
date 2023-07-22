@@ -181,7 +181,6 @@ impl AppDag {
             return 0;
         }
 
-        debug_log::debug_dbg!(&self);
         let mut lamport = {
             let id = frontiers[0];
             let Some(rle) = self.map.get(&id.peer) else { unreachable!() };

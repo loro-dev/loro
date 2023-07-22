@@ -90,7 +90,7 @@ impl ContainerState for TextState {
         }
     }
 
-    fn apply_op(&mut self, op: RawOp) {
+    fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) {
         match op.content {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
@@ -243,6 +243,10 @@ impl TextState {
 
     pub(crate) fn utf16_to_utf8(&self, pos: usize) -> usize {
         self.rope.wchars_to_chars(pos)
+    }
+
+    pub fn slice(&self, range: Range<usize>) -> impl Iterator<Item = &str> {
+        self.rope.slice_substrings(range)
     }
 }
 

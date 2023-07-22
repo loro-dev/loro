@@ -16,7 +16,7 @@ use crate::{
     InternalString, VersionVector,
 };
 
-use super::{oplog::OpLog, state::ContainerStateDiff};
+use super::{event::InternalContainerDiff, oplog::OpLog};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
@@ -39,12 +39,12 @@ impl DiffCalculator {
     }
 
     // PERF: if the causal order is linear, we can skip some of the calculation
-    pub fn calc_diff(
+    pub(crate) fn calc_diff(
         &mut self,
         oplog: &super::oplog::OpLog,
         before: &crate::VersionVector,
         after: &crate::VersionVector,
-    ) -> Vec<ContainerStateDiff> {
+    ) -> Vec<InternalContainerDiff> {
         self.calc_diff_internal(oplog, before, None, after, None)
     }
 
@@ -55,7 +55,7 @@ impl DiffCalculator {
         before_frontiers: Option<&Frontiers>,
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
-    ) -> Vec<ContainerStateDiff> {
+    ) -> Vec<InternalContainerDiff> {
         let mut diffs = Vec::new();
         let (lca, iter) =
             oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
@@ -94,7 +94,7 @@ impl DiffCalculator {
 
         for (&idx, calculator) in self.calculators.iter_mut() {
             calculator.stop_tracking(oplog, after);
-            diffs.push(ContainerStateDiff {
+            diffs.push(InternalContainerDiff {
                 idx,
                 diff: calculator.calculate_diff(oplog, before, after),
             });

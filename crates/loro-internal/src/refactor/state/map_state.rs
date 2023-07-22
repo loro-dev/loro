@@ -1,10 +1,13 @@
 use std::{mem, sync::Arc};
 
+use debug_log::debug_dbg;
 use fxhash::FxHashMap;
+use loro_common::ContainerID;
 
 use crate::{
+    container::registry::ContainerIdx,
     delta::MapValue,
-    event::Diff,
+    event::{Diff, Index},
     op::{RawOp, RawOpContent},
     refactor::arena::SharedArena,
     InternalString, LoroValue,
@@ -14,31 +17,44 @@ use super::ContainerState;
 
 #[derive(Debug, Clone)]
 pub struct MapState {
+    idx: ContainerIdx,
     map: FxHashMap<InternalString, MapValue>,
     in_txn: bool,
     map_when_txn_start: FxHashMap<InternalString, Option<MapValue>>,
 }
 
 impl ContainerState for MapState {
-    fn apply_diff(&mut self, diff: &Diff, _arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
         if let Diff::NewMap(delta) = diff {
             for (key, value) in delta.updated.iter() {
+                if let Some(LoroValue::Container(c)) = &value.value {
+                    let idx = arena.register_container(c);
+                    arena.set_parent(idx, Some(self.idx));
+                }
+
                 let old = self.map.insert(key.clone(), value.clone());
                 self.store_txn_snapshot(key.clone(), old);
             }
         }
     }
 
-    fn apply_op(&mut self, op: RawOp) {
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
         match op.content {
-            RawOpContent::Map(map) => self.insert(
-                map.key,
-                MapValue {
-                    lamport: (op.lamport, op.id.peer),
-                    counter: op.id.counter,
-                    value: Some(map.value),
-                },
-            ),
+            RawOpContent::Map(map) => {
+                if map.value.is_container() {
+                    let idx = arena.register_container(&map.value.as_container().unwrap());
+                    arena.set_parent(idx, Some(self.idx));
+                }
+
+                self.insert(
+                    map.key,
+                    MapValue {
+                        lamport: (op.lamport, op.id.peer),
+                        counter: op.id.counter,
+                        value: Some(map.value),
+                    },
+                )
+            }
             RawOpContent::List(_) => unreachable!(),
         }
     }
@@ -76,11 +92,34 @@ impl ContainerState for MapState {
             updated: self.map.clone(),
         })
     }
+
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        for (key, value) in self.map.iter() {
+            if let Some(LoroValue::Container(x)) = &value.value {
+                if x == id {
+                    return Some(Index::Key(key.clone()));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        let mut ans = Vec::new();
+        for (_, value) in self.map.iter() {
+            if let Some(LoroValue::Container(x)) = &value.value {
+                ans.push(x.clone());
+            }
+        }
+        ans
+    }
 }
 
 impl MapState {
-    pub fn new() -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         Self {
+            idx,
             map: FxHashMap::default(),
             in_txn: false,
             map_when_txn_start: FxHashMap::default(),

@@ -1,16 +1,20 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, mem::take, sync::Arc};
 
+use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
+use loro_common::ContainerID;
 use ring::rand::SystemRandom;
 
 use crate::{
     configure::SecureRandomGenerator,
     container::{registry::ContainerIdx, ContainerIdRaw},
-    event::Diff,
+    delta::{Delta, DeltaItem},
+    event::{Diff, Index, Utf16Meta},
     id::PeerID,
     op::RawOp,
+    refactor::event::InternalContainerDiff,
     version::Frontiers,
     ContainerType, InternalString, LoroValue,
 };
@@ -23,7 +27,10 @@ pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use text_state::TextState;
 
-use super::{arena::SharedArena, oplog::OpLog};
+use super::{
+    arena::SharedArena,
+    event::{ContainerDiff, DocDiff, InternalDocDiff},
+};
 
 #[derive(Clone)]
 pub struct DocState {
@@ -38,15 +45,13 @@ pub struct DocState {
     changed_idx_in_txn: FxHashSet<ContainerIdx>,
 
     // diff related stuff
-    recording_diff: bool,
-    diff: Vec<DocStateDiff<'static>>,
-    record_start_version: Option<Frontiers>,
+    event_recorder: EventRecorder,
 }
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena);
-    fn apply_op(&mut self, op: RawOp);
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena);
     /// Convert a state to a diff that when apply this diff on a empty state,
     /// the state will be the same as this state.
     fn to_diff(&self) -> Diff;
@@ -59,6 +64,17 @@ pub trait ContainerState: Clone {
     fn commit_txn(&mut self);
 
     fn get_value(&self) -> LoroValue;
+
+    /// Get the index of the child container
+    #[allow(unused)]
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        None
+    }
+
+    #[allow(unused)]
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        Vec::new()
+    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -71,12 +87,12 @@ pub enum State {
 }
 
 impl State {
-    pub fn new_list() -> Self {
-        Self::ListState(ListState::default())
+    pub fn new_list(idx: ContainerIdx) -> Self {
+        Self::ListState(ListState::new(idx))
     }
 
-    pub fn new_map() -> Self {
-        Self::MapState(MapState::new())
+    pub fn new_map(idx: ContainerIdx) -> Self {
+        Self::MapState(MapState::new(idx))
     }
 
     pub fn new_text() -> Self {
@@ -84,48 +100,19 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ContainerStateDiff {
-    pub idx: ContainerIdx,
-    pub diff: Diff,
-}
-
-#[derive(Debug, Clone)]
-pub struct DocStateDiff<'a> {
-    pub(crate) origin: InternalString,
-    pub(crate) local: bool,
-    pub(crate) diff: Cow<'a, [ContainerStateDiff]>,
-    pub(crate) new_version: Cow<'a, Frontiers>,
-    pub(crate) old_version: Option<Frontiers>,
-}
-
-impl<'a> DocStateDiff<'a> {
-    pub fn into_owned(self) -> DocStateDiff<'static> {
-        DocStateDiff {
-            origin: self.origin,
-            local: self.local,
-            diff: Cow::Owned((*self.diff).to_owned()),
-            new_version: Cow::Owned((*self.new_version).to_owned()),
-            old_version: self.old_version,
-        }
-    }
-}
-
 impl DocState {
     #[inline]
-    pub fn new(oplog: &OpLog) -> Self {
+    pub fn new(arena: SharedArena) -> Self {
         let peer = SystemRandom::new().next_u64();
         // TODO: maybe we should switch to certain version in oplog
         Self {
             peer,
+            arena,
             frontiers: Frontiers::default(),
             states: FxHashMap::default(),
-            arena: oplog.arena.clone(),
             in_txn: false,
             changed_idx_in_txn: FxHashSet::default(),
-            diff: Default::default(),
-            recording_diff: false,
-            record_start_version: None,
+            event_recorder: Default::default(),
         }
     }
 
@@ -140,58 +127,115 @@ impl DocState {
             states: FxHashMap::default(),
             in_txn: false,
             changed_idx_in_txn: FxHashSet::default(),
-            diff: Default::default(),
-            recording_diff: false,
-            record_start_version: None,
+            event_recorder: Default::default(),
         }
     }
 
-    #[inline]
-    pub fn is_recording(&self) -> bool {
-        self.recording_diff
-    }
-
-    #[inline]
     pub fn start_recording(&mut self) {
-        self.recording_diff = true;
-        self.record_start_version = Some(self.frontiers.clone());
-    }
-
-    /// Stop recording diff and clear the diff
-    #[inline]
-    pub fn stop_and_clear_recording(&mut self) {
-        self.recording_diff = false;
-        self.record_start_version = None;
-        self.diff.clear();
-    }
-
-    #[inline]
-    pub fn take_diff(&mut self) -> Vec<DocStateDiff<'static>> {
-        let mut diffs = std::mem::take(&mut self.diff);
-        let mut last_version = self.record_start_version.take().unwrap();
-        for diff in diffs.iter_mut() {
-            diff.old_version = Some(last_version);
-            last_version = (*diff.new_version).clone();
+        if self.is_recording() {
+            return;
         }
 
-        diffs
+        self.event_recorder.recording_diff = true;
+        self.event_recorder.diff_start_version = Some(self.frontiers.clone());
     }
 
+    #[inline(always)]
+    pub fn stop_and_clear_recording(&mut self) {
+        self.event_recorder = Default::default();
+    }
+
+    #[inline(always)]
+    pub fn is_recording(&self) -> bool {
+        self.event_recorder.recording_diff
+    }
+
+    /// Take all the diffs that are recorded and convert them to events.
+    pub fn take_events(&mut self) -> Vec<DocDiff> {
+        if !self.is_recording() {
+            return vec![];
+        }
+
+        self.convert_current_batch_diff_into_event();
+        std::mem::take(&mut self.event_recorder.events)
+    }
+
+    /// Record the next diff.
+    ///
+    /// # Panic
+    ///
+    /// If the diff cannot be merged with the previous diff.
+    /// Caller should call [pre_txn] before calling this.
+    fn record_diff(&mut self, diff: InternalDocDiff) {
+        if !self.event_recorder.recording_diff {
+            return;
+        }
+
+        let Some(last_diff) = self.event_recorder.diffs.last_mut() else {
+            self.event_recorder.diffs.push(diff.into_owned());
+            return;
+        };
+
+        if last_diff.can_merge(&diff) {
+            self.event_recorder.diffs.push(diff.into_owned());
+            return;
+        }
+
+        panic!("should call pre_txn before record_diff")
+    }
+
+    /// This should be called when DocState is going to apply a transaction / a diff.
+    fn pre_txn(&mut self, next_origin: InternalString, next_local: bool) {
+        if !self.is_recording() {
+            return;
+        }
+
+        let Some(last_diff) = self.event_recorder.diffs.last() else {
+            return;
+        };
+
+        if last_diff.origin == next_origin && last_diff.local == next_local {
+            return;
+        }
+
+        // current diff batch cannot merge with the incoming diff,
+        // need to convert all the current diffs into event
+        self.convert_current_batch_diff_into_event()
+    }
+
+    fn convert_current_batch_diff_into_event(&mut self) {
+        let recorder = &mut self.event_recorder;
+        let diffs = std::mem::take(&mut recorder.diffs);
+        let start = recorder.diff_start_version.take().unwrap();
+        recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
+        let event = self.diffs_to_event(diffs, start);
+        self.event_recorder.events.push(event);
+    }
+
+    /// Change the peer id of this doc state.
+    /// It changes the peer id for the future txn on this AppState
     #[inline]
     pub fn set_peer_id(&mut self, peer: PeerID) {
         self.peer = peer;
     }
 
-    pub fn apply_diff(&mut self, diff: DocStateDiff) {
+    pub fn peer_id(&self) -> PeerID {
+        self.peer
+    }
+
+    pub(crate) fn apply_diff(&mut self, diff: InternalDocDiff) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
 
+        debug_dbg!(&diff);
+        debug_dbg!(self.get_deep_value());
+        self.pre_txn(diff.origin.clone(), diff.local);
         for diff in diff.diff.iter() {
-            let state = self.states.entry(diff.idx).or_insert_with(|| {
-                let id = self.arena.get_container_id(diff.idx).unwrap();
-                create_state(id.container_type())
-            });
+            let state = self
+                .states
+                .entry(diff.idx)
+                .or_insert_with(|| create_state(diff.idx));
 
             if self.in_txn {
                 state.start_txn();
@@ -203,26 +247,28 @@ impl DocState {
 
         self.frontiers = (*diff.new_version).to_owned();
 
-        if self.recording_diff {
-            self.diff.push(diff.into_owned());
+        if self.is_recording() {
+            self.record_diff(diff)
         }
+        debug_dbg!(self.get_deep_value());
     }
 
     pub fn apply_local_op(&mut self, op: RawOp) {
-        let state = self.states.entry(op.container).or_insert_with(|| {
-            let id = self.arena.get_container_id(op.container).unwrap();
-            create_state(id.container_type())
-        });
+        let state = self
+            .states
+            .entry(op.container)
+            .or_insert_with(|| create_state(op.container));
 
         if self.in_txn {
             state.start_txn();
             self.changed_idx_in_txn.insert(op.container);
         }
 
-        state.apply_op(op);
+        state.apply_op(op, &self.arena);
     }
 
-    pub(crate) fn start_txn(&mut self) {
+    pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
+        self.pre_txn(origin, local);
         self.in_txn = true;
     }
 
@@ -235,15 +281,15 @@ impl DocState {
         self.in_txn = false;
     }
 
-    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<DocStateDiff>) {
+    pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         for container_idx in std::mem::take(&mut self.changed_idx_in_txn) {
             self.states.get_mut(&container_idx).unwrap().commit_txn();
         }
 
         self.in_txn = false;
         self.frontiers = new_frontiers;
-        if self.recording_diff {
-            self.diff.push(diff.unwrap().into_owned());
+        if self.is_recording() {
+            self.record_diff(diff.unwrap());
         }
     }
 
@@ -280,23 +326,29 @@ impl DocState {
         frontiers: Frontiers,
     ) {
         assert!(self.states.is_empty(), "overriding states");
+        self.pre_txn(Default::default(), false);
         self.states = states;
+        for (idx, state) in self.states.iter() {
+            for child_id in state.get_child_containers() {
+                let child_idx = self.arena.register_container(&child_id);
+                self.arena.set_parent(child_idx, Some(*idx));
+            }
+        }
 
         if self.is_recording() {
-            self.diff.push(DocStateDiff {
+            self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 local: false,
                 diff: self
                     .states
                     .iter()
-                    .map(|(&idx, state)| ContainerStateDiff {
+                    .map(|(&idx, state)| InternalContainerDiff {
                         idx,
                         diff: state.to_diff(),
                     })
                     .collect(),
                 new_version: Cow::Owned(frontiers.clone()),
-                old_version: Default::default(),
-            })
+            });
         }
 
         self.frontiers = frontiers;
@@ -333,7 +385,7 @@ impl DocState {
         if let Some(state) = state {
             f(state)
         } else {
-            f(&create_state(idx.get_type()))
+            f(&create_state(idx))
         }
     }
 
@@ -407,12 +459,182 @@ impl DocState {
             _ => value,
         }
     }
+
+    // Because we need to calculate path based on [DocState], so we cannot extract
+    // [EventRecorder] to a separate module.
+    fn diffs_to_event(&self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
+        if diffs.is_empty() {
+            panic!("diffs is empty");
+        }
+
+        debug_dbg!(&diffs);
+
+        let mut containers = FxHashMap::default();
+        let to = (*diffs.last().unwrap().new_version).to_owned();
+        let origin = diffs[0].origin.clone();
+        let local = diffs[0].local;
+        for diff in diffs {
+            #[allow(clippy::unnecessary_to_owned)]
+            for mut container_diff in diff.diff.into_owned() {
+                self.convert_raw(&mut container_diff.diff, container_diff.idx);
+                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
+                    if let Some(path) = self.get_path(container_diff.idx) {
+                        containers.insert(container_diff.idx, (container_diff.diff, path));
+                    } else {
+                        // if we cannot find the path to the container, the container must be overwritten afterwards.
+                        // So we can ignore the diff from it.
+                        debug_log::debug_log!("ignore because cannot find path {:#?}", &container_diff);
+                    }
+                    continue;
+                };
+
+                *last_container_diff = take(last_container_diff)
+                    .compose(container_diff.diff)
+                    .unwrap();
+            }
+        }
+
+        let mut diff: Vec<_> = containers
+            .into_iter()
+            .map(|(idx, (diff, path))| {
+                let id = self.arena.get_container_id(idx).unwrap();
+                ContainerDiff {
+                    id,
+                    idx,
+                    diff,
+                    path,
+                }
+            })
+            .collect();
+
+        diff.sort_by_key(|x| x.path.len());
+        DocDiff {
+            from,
+            to,
+            origin,
+            local,
+            diff,
+        }
+    }
+
+    // the container may be override, so it may return None
+    fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+        let mut ans = Vec::new();
+        let mut idx = idx;
+        loop {
+            let id = self.arena.idx_to_id(idx).unwrap();
+            debug_dbg!(&id);
+            if let Some(parent_idx) = self.arena.get_parent(idx) {
+                debug_dbg!(&parent_idx);
+                let parent_id = self.arena.get_container_id(parent_idx);
+                debug_dbg!(&id, &idx, &parent_idx, &parent_id);
+                let parent_state = self.states.get(&parent_idx).unwrap();
+                let prop = parent_state.get_child_index(&id)?;
+                ans.push((id, prop));
+                idx = parent_idx;
+            } else {
+                // this container may be deleted
+                let prop = id.as_root()?.0.clone();
+                ans.push((id, Index::Key(prop)));
+                break;
+            }
+        }
+
+        ans.reverse();
+        Some(ans)
+    }
+
+    /// convert seq raw to text/list
+    pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
+        let Diff::SeqRaw(seq) = diff else { return };
+
+        match idx.get_type() {
+            ContainerType::Text => {
+                let state = self.states.get(&idx).unwrap().as_text_state().unwrap();
+                let mut ans: Delta<String, Utf16Meta> = Delta::new();
+                let mut index = 0;
+                for span in seq.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { len, .. } => {
+                            ans.push(DeltaItem::Retain {
+                                len: *len,
+                                meta: Utf16Meta { utf16_len: None },
+                            });
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Insert { value, .. } => {
+                            let len = value.0.iter().fold(0, |acc, cur| acc + cur.0.len());
+                            let mut s = String::with_capacity(len);
+                            for sub in state.slice(index..index + len) {
+                                s.push_str(sub);
+                            }
+
+                            ans.push(DeltaItem::Insert {
+                                value: s,
+                                meta: Utf16Meta { utf16_len: None },
+                            });
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Delete { len, .. } => {
+                            ans.push(DeltaItem::Delete {
+                                len: *len,
+                                meta: Utf16Meta { utf16_len: None },
+                            });
+                        }
+                    }
+                }
+
+                *diff = Diff::Text(ans);
+            }
+            ContainerType::List => {
+                let mut list: Delta<Vec<LoroValue>> = Delta::new();
+
+                for span in seq.iter() {
+                    match span {
+                        DeltaItem::Retain { len, .. } => {
+                            list = list.retain(*len);
+                        }
+                        DeltaItem::Insert { value, .. } => {
+                            let mut arr = Vec::new();
+                            for slice in value.0.iter() {
+                                let values = self
+                                    .arena
+                                    .get_values(slice.0.start as usize..slice.0.end as usize);
+                                arr.extend_from_slice(&values);
+                            }
+
+                            list = list.insert(arr)
+                        }
+                        DeltaItem::Delete { len, .. } => list = list.delete(*len),
+                    }
+                }
+                *diff = Diff::List(list);
+            }
+            ContainerType::Map => unreachable!(),
+        }
+    }
 }
 
-pub fn create_state(kind: ContainerType) -> State {
-    match kind {
+pub fn create_state(idx: ContainerIdx) -> State {
+    match idx.get_type() {
         ContainerType::Text => State::TextState(TextState::new()),
-        ContainerType::Map => State::MapState(MapState::new()),
-        ContainerType::List => State::ListState(ListState::new()),
+        ContainerType::Map => State::MapState(MapState::new(idx)),
+        ContainerType::List => State::ListState(ListState::new(idx)),
+    }
+}
+
+#[derive(Default, Clone)]
+struct EventRecorder {
+    recording_diff: bool,
+    // A batch of diffs will be converted to a event when
+    // they cannot be merged with the next diff.
+    diffs: Vec<InternalDocDiff<'static>>,
+    events: Vec<DocDiff>,
+    diff_start_version: Option<Frontiers>,
+}
+
+impl EventRecorder {
+    pub fn new() -> Self {
+        Self::default()
     }
 }

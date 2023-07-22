@@ -226,7 +226,7 @@ pub fn decode_state<'b>(
                 text_index += len;
             }
             loro_preload::EncodedContainerState::Map(map_data) => {
-                let mut map = MapState::new();
+                let mut map = MapState::new(idx);
                 for entry in map_data.iter() {
                     map.insert(
                         InternalString::from(&*state_arena.keywords[entry.key]),
@@ -244,7 +244,7 @@ pub fn decode_state<'b>(
                 container_states.insert(idx, State::MapState(map));
             }
             loro_preload::EncodedContainerState::List(list_data) => {
-                let mut list = ListState::new();
+                let mut list = ListState::new(idx);
                 list.insert_batch(0, list_data.iter().map(|&x| state_arena.values[x].clone()));
                 container_states.insert(idx, State::ListState(list));
             }

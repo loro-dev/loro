@@ -4,13 +4,14 @@ use std::{
 };
 
 use crate::{
-    container::ContainerID,
+    container::{registry::ContainerIdx, ContainerID},
     delta::Delta,
-    event::Diff,
+    event::{Diff, Index},
     op::{RawOp, RawOpContent},
     refactor::arena::SharedArena,
     LoroValue,
 };
+use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use generic_btree::{
     ArenaIndex, BTree, BTreeTrait, FindResult, LengthFinder, QueryResult, UseLengthFinder,
@@ -22,6 +23,7 @@ type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
 #[derive(Debug)]
 pub struct ListState {
+    idx: ContainerIdx,
     list: BTree<ListImpl>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
@@ -31,6 +33,7 @@ pub struct ListState {
 impl Clone for ListState {
     fn clone(&self) -> Self {
         Self {
+            idx: self.idx,
             list: self.list.clone(),
             in_txn: false,
             undo_stack: Vec::new(),
@@ -119,11 +122,12 @@ impl UseLengthFinder<ListImpl> for ListImpl {
 }
 
 impl ListState {
-    pub fn new() -> Self {
+    pub fn new(idx: ContainerIdx) -> Self {
         let mut tree = BTree::new();
         let mapping: ContainerMapping = Arc::new(Mutex::new(Default::default()));
         let mapping_clone = mapping.clone();
         tree.set_listener(Some(Box::new(move |event| {
+            debug_dbg!(&event);
             if let LoroValue::Container(container_id) = event.elem {
                 let mut mapping = mapping_clone.lock().unwrap();
                 if let Some(leaf) = event.target_leaf {
@@ -135,6 +139,7 @@ impl ListState {
         })));
 
         Self {
+            idx,
             list: tree,
             in_txn: false,
             undo_stack: Vec::new(),
@@ -143,6 +148,7 @@ impl ListState {
     }
 
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
+        debug_dbg!(self.get_value());
         let mapping = self.child_container_to_leaf.lock().unwrap();
         let leaf = mapping.get(id)?;
         let node = self.list.get_node(*leaf);
@@ -217,7 +223,18 @@ impl ListState {
     pub fn insert_batch(&mut self, index: usize, values: impl IntoIterator<Item = LoroValue>) {
         let q = self.list.query::<LengthFinder>(&index);
         let old_len = self.len();
-        self.list.insert_many_by_query_result(&q, values);
+
+        let mut map = self.child_container_to_leaf.lock().unwrap();
+        // TODO: this fix should be moved inside generic-btree
+        self.list.insert_many_by_query_result(
+            &q,
+            values.into_iter().map(|x| {
+                if x.is_container() {
+                    map.insert(x.as_container().unwrap().clone(), q.leaf);
+                }
+                x
+            }),
+        );
         if self.in_txn {
             let len = self.len() - old_len;
             self.undo_stack.push(UndoItem::Insert { index, len });
@@ -241,14 +258,9 @@ impl ListState {
     }
 }
 
-impl Default for ListState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContainerState for ListState {
     fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+        debug_log::debug_log!("Apply List Diff {:#?}", diff);
         match diff {
             Diff::List(delta) => {
                 let mut index = 0;
@@ -259,6 +271,14 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { value, .. } => {
                             let len = value.len();
+                            for value in value.iter() {
+                                if value.is_container() {
+                                    let c = value.as_container().unwrap();
+                                    let idx = arena.register_container(c);
+                                    arena.set_parent(idx, Some(self.idx));
+                                }
+                            }
+
                             self.insert_batch(index, value.clone());
                             index += len;
                         }
@@ -277,9 +297,16 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { value, .. } => {
                             let mut arr = Vec::new();
-                            for value in value.0.iter() {
-                                for i in value.0.start..value.0.end {
-                                    arr.push(arena.get_value(i as usize).unwrap());
+                            for slices in value.0.iter() {
+                                for i in slices.0.start..slices.0.end {
+                                    let value = arena.get_value(i as usize).unwrap();
+                                    debug_dbg!(&value);
+                                    if value.is_container() {
+                                        let c = value.as_container().unwrap();
+                                        let idx = arena.register_container(c);
+                                        arena.set_parent(idx, Some(self.idx));
+                                    }
+                                    arr.push(value);
                                 }
                             }
                             let len = arr.len();
@@ -293,19 +320,35 @@ impl ContainerState for ListState {
                 }
             }
             _ => unreachable!(),
-        }
+        };
+        debug_dbg!(&self.idx);
+        debug_dbg!(&self.get_value());
     }
 
-    fn apply_op(&mut self, op: RawOp) {
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
         match op.content {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     crate::container::text::text_content::ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
+                            for value in list.iter() {
+                                if value.is_container() {
+                                    let c = value.as_container().unwrap();
+                                    let idx = arena.register_container(c);
+                                    arena.set_parent(idx, Some(self.idx));
+                                }
+                            }
                             self.insert_batch(pos, list.iter().cloned());
                         }
                         std::borrow::Cow::Owned(list) => {
+                            for value in list.iter() {
+                                if value.is_container() {
+                                    let c = value.as_container().unwrap();
+                                    let idx = arena.register_container(c);
+                                    arena.set_parent(idx, Some(self.idx));
+                                }
+                            }
                             self.insert_batch(pos, list);
                         }
                     },
@@ -352,6 +395,20 @@ impl ContainerState for ListState {
     fn to_diff(&self) -> Diff {
         Diff::List(Delta::new().insert(self.to_vec()))
     }
+
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        self.get_child_container_index(id).map(Index::Seq)
+    }
+
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        let mut ans = Vec::new();
+        for value in self.list.iter() {
+            if value.is_container() {
+                ans.push(value.as_container().unwrap().clone());
+            }
+        }
+        ans
+    }
 }
 
 #[cfg(test)]
@@ -360,7 +417,10 @@ mod test {
 
     #[test]
     fn test() {
-        let mut list = ListState::new();
+        let mut list = ListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::List,
+        ));
         fn id(name: &str) -> ContainerID {
             ContainerID::new_root(name, crate::ContainerType::List)
         }

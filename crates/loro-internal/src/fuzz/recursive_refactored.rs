@@ -1,6 +1,11 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc};
+use std::{
+    collections::HashSet,
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
 use arbitrary::Arbitrary;
+use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 
@@ -17,6 +22,7 @@ use crate::{
     container::registry::ContainerIdx,
     refactor::{loro::LoroDoc, ListHandler, MapHandler, TextHandler},
     value::ToJson,
+    ApplyDiff,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -49,7 +55,7 @@ pub enum Action {
 
 struct Actor {
     loro: LoroDoc,
-    // value_tracker: Arc<Mutex<LoroValue>>,
+    value_tracker: Arc<Mutex<LoroValue>>,
     // map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
     // list_tracker: Arc<Mutex<Vec<LoroValue>>>,
     // text_tracker: Arc<Mutex<String>>,
@@ -64,7 +70,7 @@ impl Actor {
         app.set_peer_id(id);
         let mut actor = Actor {
             loro: app,
-            // value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
+            value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
             // map_tracker: Default::default(),
             // list_tracker: Default::default(),
             // text_tracker: Default::default(),
@@ -72,6 +78,16 @@ impl Actor {
             list_containers: Default::default(),
             text_containers: Default::default(),
         };
+
+        let root_value = Arc::clone(&actor.value_tracker);
+        actor.loro.subscribe_deep(Arc::new(move |event| {
+            let mut root_value = root_value.lock().unwrap();
+            debug_dbg!(&event);
+            root_value.apply(
+                &event.container.path.iter().map(|x| x.1.clone()).collect(),
+                &[event.container.diff.clone()],
+            );
+        }));
 
         actor
             .text_containers
@@ -110,7 +126,7 @@ impl Tabled for Action {
         match self {
             Action::Sync { from, to } => vec![
                 "sync".into(),
-                format!("{} to {}", from, to).into(),
+                format!("{} with {}", from, to).into(),
                 "".into(),
                 "".into(),
                 "".into(),
@@ -509,7 +525,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_result = a_doc.get_state_deep_value();
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_doc.get_state_deep_value());
-    // assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
+    assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
 
     // let a = a_doc.get_text("text").unwrap();
     // let value_a = a.get_value();
@@ -910,6 +926,55 @@ mod failed_tests {
             .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
             .run(|u| prop(u, 3))
     }
+
+    #[test]
+    fn obs() {
+        test_multi_sites(
+            2,
+            &mut [List {
+                site: 1,
+                container_idx: 255,
+                key: 255,
+                value: Container(C::List),
+            }],
+        );
+    }
+
+    #[test]
+    fn obs_text() {
+        test_multi_sites(
+            5,
+            &mut [Text {
+                site: 0,
+                container_idx: 0,
+                pos: 0,
+                value: 13756,
+                is_del: false,
+            }],
+        )
+    }
+
+    #[test]
+    fn obs_map() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 225,
+                    container_idx: 233,
+                    key: 234,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 233,
+                    key: 233,
+                    value: I32(16777215),
+                },
+            ],
+        )
+    }
+
     #[test]
     fn deleted_container() {
         test_multi_sites(

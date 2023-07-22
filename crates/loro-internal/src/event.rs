@@ -129,6 +129,26 @@ pub enum Diff {
     NewMap(MapDelta),
 }
 
+impl Diff {
+    pub(crate) fn compose(self, diff: Diff) -> Result<Diff, Self> {
+        // PERF: avoid clone
+        match (self, diff) {
+            (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
+            (Diff::SeqRaw(a), Diff::SeqRaw(b)) => Ok(Diff::SeqRaw(a.compose(b))),
+            (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
+            (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
+            (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
+            (a, _) => Err(a),
+        }
+    }
+}
+
+impl Default for Diff {
+    fn default() -> Self {
+        Diff::List(Delta::default())
+    }
+}
+
 // pub type Observer = Box<dyn FnMut(&Event) + Send>;
 #[derive(Default)]
 pub(crate) struct ObserverOptions {

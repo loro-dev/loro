@@ -1,6 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use arbitrary::Arbitrary;
+use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -31,7 +32,7 @@ pub struct ID {
 /// - Normal Container: `<counter>@<client>:<type>`
 ///
 /// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone, Serialize, Deserialize, EnumAsInner)]
 pub enum ContainerID {
     /// Root container does not need an op to create. It can be created implicitly.
     Root {
@@ -157,16 +158,6 @@ mod container {
                 name: name.into(),
                 container_type,
             }
-        }
-
-        #[inline]
-        pub fn is_root(&self) -> bool {
-            matches!(self, ContainerID::Root { .. })
-        }
-
-        #[inline]
-        pub fn is_normal(&self) -> bool {
-            matches!(self, ContainerID::Normal { .. })
         }
 
         #[inline]

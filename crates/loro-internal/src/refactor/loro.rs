@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use debug_log::debug_dbg;
 use loro_common::{ContainerType, LoroValue};
 
 use crate::{
@@ -14,9 +15,11 @@ use crate::{
 
 use super::{
     diff_calc::DiffCalculator,
+    event::InternalDocDiff,
+    obs::{Observer, SubID, Subscriber},
     oplog::OpLog,
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
-    state::{ContainerStateDiff, DocState, DocStateDiff},
+    state::DocState,
     txn::Transaction,
     ListHandler, MapHandler, TextHandler,
 };
@@ -41,18 +44,21 @@ use super::{
 pub struct LoroDoc {
     oplog: Arc<Mutex<OpLog>>,
     state: Arc<Mutex<DocState>>,
+    observer: Arc<Observer>,
     detached: bool,
 }
 
 impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
+        let arena = oplog.arena.clone();
         // share arena
-        let state = Arc::new(Mutex::new(DocState::new(&oplog)));
+        let state = Arc::new(Mutex::new(DocState::new(arena.clone())));
         Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
             detached: false,
+            observer: Arc::new(Observer::new(arena)),
         }
     }
 
@@ -61,7 +67,9 @@ impl LoroDoc {
     }
 
     pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
+        let obs = Observer::new(oplog.arena.clone());
         Self {
+            observer: Arc::new(obs),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
             detached: false,
@@ -89,12 +97,11 @@ impl LoroDoc {
             oplog.vv(),
             Some(oplog.frontiers()),
         );
-        state.apply_diff(DocStateDiff {
+        state.apply_diff(InternalDocDiff {
             local: true,
             origin: Default::default(),
             diff: (&diff).into(),
             new_version: Cow::Borrowed(oplog.frontiers()),
-            old_version: None,
         });
     }
 
@@ -102,8 +109,16 @@ impl LoroDoc {
         if self.state.lock().unwrap().is_in_txn() {
             return Err(LoroError::DuplicatedTransactionError);
         }
+        let mut txn = Transaction::new(self.state.clone(), self.oplog.clone());
+        let obs = self.observer.clone();
+        txn.set_on_commit(Box::new(move |state| {
+            let events = state.lock().unwrap().take_events();
+            for event in events {
+                obs.emit(&event);
+            }
+        }));
 
-        Ok(Transaction::new(self.state.clone(), self.oplog.clone()))
+        Ok(txn)
     }
 
     pub fn app_state(&self) -> &Arc<Mutex<DocState>> {
@@ -122,15 +137,11 @@ impl LoroDoc {
         self.oplog.lock().unwrap().export_from(vv)
     }
 
-    pub fn import(&self, bytes: &[u8]) -> Result<Vec<ContainerStateDiff>, LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.import_with(bytes, Default::default())
     }
 
-    pub fn import_with(
-        &self,
-        bytes: &[u8],
-        origin: InternalString,
-    ) -> Result<Vec<ContainerStateDiff>, LoroError> {
+    pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let (magic_bytes, input) = bytes.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -160,36 +171,47 @@ impl LoroDoc {
                 );
                 if !self.detached {
                     let mut state = self.state.lock().unwrap();
-                    state.apply_diff(DocStateDiff {
+                    state.apply_diff(InternalDocDiff {
                         origin,
                         local: false,
                         diff: (&diff).into(),
                         new_version: Cow::Borrowed(oplog.frontiers()),
-                        old_version: None,
                     });
                 }
 
                 debug_log::group_end!();
-                Ok(diff)
             }
             ConcreteEncodeMode::Snapshot => {
                 if self.is_empty() {
                     decode_app_snapshot(self, &input[1..])?;
-                    Ok(vec![]) // TODO: return diff
                 } else {
                     let app = LoroDoc::new();
                     decode_app_snapshot(&app, &input[1..])?;
                     let oplog = self.oplog.lock().unwrap();
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
-                    self.import(&updates)
+                    return self.import_with(&updates, origin);
                 }
             }
+        };
+
+        debug_dbg!(&self.oplog.lock().unwrap().changes);
+        self.emit_events();
+
+        Ok(())
+    }
+
+    fn emit_events(&self) {
+        let mut state = self.state.lock().unwrap();
+        for event in state.take_events() {
+            self.observer.emit(&event);
         }
     }
 
     pub fn export_snapshot(&self) -> Vec<u8> {
         debug_log::group!("export snapshot");
+        debug_dbg!(&self.oplog.lock().unwrap().changes);
+        debug_dbg!(&self.state.lock().unwrap().get_deep_value());
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
         // maybe u8 is enough
@@ -249,6 +271,15 @@ impl LoroDoc {
                 .arena
                 .register_container(&id.with_type(c_type)),
         }
+    }
+
+    pub(crate) fn subscribe_deep(&self, callback: Subscriber) -> SubID {
+        let mut state = self.state.lock().unwrap();
+        if !state.is_recording() {
+            state.start_recording();
+        }
+
+        self.observer.subscribe_deep(callback)
     }
 }
 
