@@ -208,7 +208,9 @@ impl DocState {
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
+        // debug_dbg!(&diffs);
         let event = self.diffs_to_event(diffs, start);
+        // debug_dbg!(&event);
         self.event_recorder.events.push(event);
     }
 
@@ -228,8 +230,6 @@ impl DocState {
             panic!("apply_diff should not be called in a transaction");
         }
 
-        debug_dbg!(&diff);
-        debug_dbg!(self.get_deep_value());
         self.pre_txn(diff.origin.clone(), diff.local);
         for diff in diff.diff.iter() {
             let state = self
@@ -467,8 +467,6 @@ impl DocState {
             panic!("diffs is empty");
         }
 
-        debug_dbg!(&diffs);
-
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
@@ -523,11 +521,8 @@ impl DocState {
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                debug_dbg!(&parent_idx);
                 let parent_id = self.arena.get_container_id(parent_idx);
-                debug_dbg!(&id, &idx, &parent_idx, &parent_id);
                 let parent_state = self.states.get(&parent_idx).unwrap();
                 let prop = parent_state.get_child_index(&id)?;
                 ans.push((id, prop));

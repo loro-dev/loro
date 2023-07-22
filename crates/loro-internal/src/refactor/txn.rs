@@ -276,7 +276,7 @@ fn change_to_diff(change: &Change, arena: &SharedArena) -> Vec<InternalContainer
                             .retain(*pos)
                             .insert(SliceRanges(smallvec![slice.clone()])),
                     ),
-                    InnerListOp::Delete(del) => Diff::List(
+                    InnerListOp::Delete(del) => Diff::SeqRaw(
                         Delta::new()
                             .retain(del.pos as usize)
                             .delete(del.len as usize),

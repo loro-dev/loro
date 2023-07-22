@@ -44,8 +44,17 @@ mod container_idx {
     // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
     // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
     // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
     pub struct ContainerIdx(u32);
+
+    impl std::fmt::Debug for ContainerIdx {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_tuple("ContainerIdx")
+                .field(&self.get_type())
+                .field(&self.to_index())
+                .finish()
+        }
+    }
 
     impl ContainerIdx {
         pub(crate) const TYPE_MASK: u32 = 0b1111 << 28;
