@@ -1,6 +1,5 @@
 use std::{mem, sync::Arc};
 
-use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
 
@@ -42,7 +41,7 @@ impl ContainerState for MapState {
         match op.content {
             RawOpContent::Map(map) => {
                 if map.value.is_container() {
-                    let idx = arena.register_container(&map.value.as_container().unwrap());
+                    let idx = arena.register_container(map.value.as_container().unwrap());
                     arena.set_parent(idx, Some(self.idx));
                 }
 

@@ -104,22 +104,7 @@ impl DocState {
     #[inline]
     pub fn new(arena: SharedArena) -> Self {
         let peer = SystemRandom::new().next_u64();
-        // TODO: maybe we should switch to certain version in oplog
-        Self {
-            peer,
-            arena,
-            frontiers: Frontiers::default(),
-            states: FxHashMap::default(),
-            in_txn: false,
-            changed_idx_in_txn: FxHashSet::default(),
-            event_recorder: Default::default(),
-        }
-    }
-
-    #[inline]
-    pub fn new_from_arena(arena: SharedArena) -> Self {
-        let peer = SystemRandom::new().next_u64();
-        // TODO: maybe we should switch to certain version in oplog
+        // TODO: maybe we should switch to certain version in oplog?
         Self {
             peer,
             arena,
@@ -161,11 +146,12 @@ impl DocState {
     }
 
     /// Record the next diff.
+    /// Caller should call [pre_txn] before calling this.
     ///
     /// # Panic
     ///
-    /// If the diff cannot be merged with the previous diff.
-    /// Caller should call [pre_txn] before calling this.
+    /// Panic when the diff cannot be merged with the previous diff.
+    /// Caller should call [pre_txn] before calling this to avoid panic.
     fn record_diff(&mut self, diff: InternalDocDiff) {
         if !self.event_recorder.recording_diff {
             return;
@@ -319,7 +305,7 @@ impl DocState {
     ///
     /// # Panic
     ///
-    /// If the state already exists.
+    /// If the state is not empty.
     pub(super) fn init_with_states_and_version(
         &mut self,
         states: FxHashMap<ContainerIdx, State>,
@@ -461,7 +447,7 @@ impl DocState {
     }
 
     // Because we need to calculate path based on [DocState], so we cannot extract
-    // [EventRecorder] to a separate module.
+    // the event recorder to a separate module.
     fn diffs_to_event(&self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
         if diffs.is_empty() {
             panic!("diffs is empty");
@@ -505,6 +491,8 @@ impl DocState {
             })
             .collect();
 
+        // Sort by path length, so caller can apply the diff from the root to the leaf.
+        // Otherwise, the caller may use a wrong path to apply the diff.
         diff.sort_by_key(|x| x.path.len());
         DocDiff {
             from,
@@ -522,7 +510,6 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_id = self.arena.get_container_id(parent_idx);
                 let parent_state = self.states.get(&parent_idx).unwrap();
                 let prop = parent_state.get_child_index(&id)?;
                 ans.push((id, prop));

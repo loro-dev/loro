@@ -26,7 +26,7 @@ pub struct DiffEvent<'a> {
 /// It's the exposed event type.
 /// It's exposed to the user. The user can use this to apply the diff to their local state.
 ///
-/// DocDiff may include the diff that calculated from several transactions and imports.
+/// [DocDiff] may include the diff that calculated from several transactions and imports.
 /// They all should have the same origin and local flag.
 #[derive(Debug, Clone)]
 pub struct DocDiff {
@@ -35,7 +35,6 @@ pub struct DocDiff {
     pub origin: InternalString,
     pub local: bool,
     pub diff: Vec<ContainerDiff>,
-    // state: Weak<Mutex<DocState>>,
 }
 
 #[derive(Debug, Clone)]

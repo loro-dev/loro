@@ -33,6 +33,7 @@ use super::{
 };
 
 pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>)>;
+
 pub struct Transaction {
     peer: PeerID,
     origin: InternalString,
