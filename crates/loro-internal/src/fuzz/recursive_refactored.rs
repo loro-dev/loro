@@ -7,6 +7,7 @@ use std::{
 use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -56,9 +57,9 @@ pub enum Action {
 struct Actor {
     loro: LoroDoc,
     value_tracker: Arc<Mutex<LoroValue>>,
-    // map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
-    // list_tracker: Arc<Mutex<Vec<LoroValue>>>,
-    // text_tracker: Arc<Mutex<String>>,
+    map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
+    list_tracker: Arc<Mutex<Vec<LoroValue>>>,
+    text_tracker: Arc<Mutex<String>>,
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
@@ -71,9 +72,9 @@ impl Actor {
         let mut actor = Actor {
             loro: app,
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
-            // map_tracker: Default::default(),
-            // list_tracker: Default::default(),
-            // text_tracker: Default::default(),
+            map_tracker: Default::default(),
+            list_tracker: Default::default(),
+            text_tracker: Default::default(),
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
@@ -89,6 +90,94 @@ impl Actor {
             );
         }));
 
+        let text = Arc::clone(&actor.text_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("text", ContainerType::Text),
+            Arc::new(move |event| {
+                if event.from_children {
+                    return;
+                }
+                let mut text = text.lock().unwrap();
+                match &event.container.diff {
+                    Diff::Text(delta) => {
+                        let mut index = 0;
+                        for item in delta.iter() {
+                            match item {
+                                DeltaItem::Retain { len, meta: _ } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { value, meta: _ } => {
+                                    text.insert_str(index, value);
+                                    index += value.len();
+                                }
+                                DeltaItem::Delete { len, .. } => {
+                                    text.drain(index..index + *len);
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }),
+        );
+
+        let map = Arc::clone(&actor.map_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("map", ContainerType::Map),
+            Arc::new(move |event| {
+                if event.from_children {
+                    return;
+                }
+                let mut map = map.lock().unwrap();
+                if let Diff::NewMap(map_diff) = &event.container.diff {
+                    for (key, value) in map_diff.updated.iter() {
+                        match &value.value {
+                            Some(value) => {
+                                map.insert(key.to_string(), value.clone());
+                            }
+                            None => {
+                                map.remove(&key.to_string());
+                            }
+                        }
+                    }
+                } else {
+                    debug_dbg!(&event.container);
+                    unreachable!()
+                }
+            }),
+        );
+
+        let list = Arc::clone(&actor.list_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("list", ContainerType::List),
+            Arc::new(move |event| {
+                if event.from_children {
+                    return;
+                }
+                let mut list = list.lock().unwrap();
+                if let Diff::List(delta) = &event.container.diff {
+                    let mut index = 0;
+                    for item in delta.iter() {
+                        match item {
+                            DeltaItem::Retain { len, meta: _ } => {
+                                index += len;
+                            }
+                            DeltaItem::Insert { value, meta: _ } => {
+                                for v in value {
+                                    list.insert(index, v.clone());
+                                    index += 1;
+                                }
+                            }
+                            DeltaItem::Delete { len, .. } => {
+                                list.drain(index..index + *len);
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!()
+                }
+            }),
+        );
         actor
             .text_containers
             .push(actor.loro.txn().unwrap().get_text("text"));

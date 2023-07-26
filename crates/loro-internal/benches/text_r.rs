@@ -2,9 +2,13 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 #[cfg(feature = "test_utils")]
 mod run {
+    use std::sync::{atomic::AtomicU32, Arc};
+
     use super::*;
     use bench_utils::TextAction;
+    use criterion::black_box;
     use loro_internal::refactor::loro::LoroDoc;
+    use tracing::instrument::WithSubscriber;
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
@@ -16,6 +20,21 @@ mod run {
                 let text = loro.get_text("text");
                 let mut txn = loro.txn().unwrap();
 
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&mut txn, *pos, *del);
+                    text.insert(&mut txn, *pos, ins);
+                }
+            })
+        });
+
+        b.bench_function("B4 Obs", |b| {
+            b.iter(|| {
+                let loro = LoroDoc::default();
+                let text = loro.get_text("text");
+                loro.subscribe_deep(Arc::new(move |event| {
+                    black_box(event);
+                }));
+                let mut txn = loro.txn().unwrap();
                 for TextAction { pos, ins, del } in actions.iter() {
                     text.delete(&mut txn, *pos, *del);
                     text.insert(&mut txn, *pos, ins);
@@ -154,6 +173,24 @@ mod run {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let text = loro.get_text("text");
+                {
+                    for TextAction { pos, ins, del } in actions.iter() {
+                        let mut txn = loro.txn().unwrap();
+                        text.delete(&mut txn, *pos, *del);
+                        text.insert(&mut txn, *pos, ins);
+                        txn.commit().unwrap();
+                    }
+                }
+            })
+        });
+
+        b.bench_function("B4 One Op One Txn Obs", |b| {
+            b.iter(|| {
+                let loro = LoroDoc::default();
+                let text = loro.get_text("text");
+                loro.subscribe_deep(Arc::new(move |event| {
+                    black_box(event);
+                }));
                 {
                     for TextAction { pos, ins, del } in actions.iter() {
                         let mut txn = loro.txn().unwrap();

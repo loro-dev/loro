@@ -81,26 +81,29 @@ impl Observer {
         let mut inner = self.take_inner();
 
         for container_diff in doc_diff.diff.iter() {
-            self.arena.with_ancestors(container_diff.idx, |ancestor| {
-                if let Some(subs) = inner.containers.get_mut(&ancestor) {
-                    subs.retain(|sub| match inner.subscribers.get_mut(sub) {
-                        Some(f) => {
-                            f(DiffEvent {
-                                container: container_diff,
-                                doc: doc_diff,
-                            });
-                            true
-                        }
-                        None => false,
-                    });
-                }
-            });
+            self.arena
+                .with_ancestors(container_diff.idx, |ancestor, is_self| {
+                    if let Some(subs) = inner.containers.get_mut(&ancestor) {
+                        subs.retain(|sub| match inner.subscribers.get_mut(sub) {
+                            Some(f) => {
+                                f(DiffEvent {
+                                    from_children: !is_self,
+                                    container: container_diff,
+                                    doc: doc_diff,
+                                });
+                                true
+                            }
+                            None => false,
+                        });
+                    }
+                });
 
             inner
                 .root
                 .retain(|sub| match inner.subscribers.get_mut(sub) {
                     Some(f) => {
                         f(DiffEvent {
+                            from_children: true,
                             container: container_diff,
                             doc: doc_diff,
                         });

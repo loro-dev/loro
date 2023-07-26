@@ -169,10 +169,14 @@ impl SharedArena {
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
-    pub fn with_ancestors(&self, container: ContainerIdx, mut f: impl FnMut(ContainerIdx)) {
+    ///
+    /// f(ContainerIdx, is_first)
+    pub fn with_ancestors(&self, container: ContainerIdx, mut f: impl FnMut(ContainerIdx, bool)) {
         let mut container = Some(container);
+        let mut is_first = true;
         while let Some(c) = container {
-            f(c);
+            f(c, is_first);
+            is_first = false;
             container = self.get_parent(c);
         }
     }

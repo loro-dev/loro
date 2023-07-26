@@ -19,6 +19,8 @@ pub struct ContainerDiff {
 
 #[derive(Debug)]
 pub struct DiffEvent<'a> {
+    /// whether the event comes from the children of the container.
+    pub from_children: bool,
     pub container: &'a ContainerDiff,
     pub doc: &'a DocDiff,
 }

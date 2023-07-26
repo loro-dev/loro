@@ -130,7 +130,6 @@ pub trait ApplyDiff {
 
 impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
-        debug_dbg!(&self, diff);
         match self {
             LoroValue::String(value) => {
                 let mut s = value.to_string();

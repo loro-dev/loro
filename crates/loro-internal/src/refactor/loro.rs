@@ -4,7 +4,7 @@ use std::{
 };
 
 use debug_log::debug_dbg;
-use loro_common::{ContainerType, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroValue};
 
 use crate::{
     container::{registry::ContainerIdx, ContainerIdRaw},
@@ -273,13 +273,22 @@ impl LoroDoc {
         }
     }
 
-    pub(crate) fn subscribe_deep(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_deep(&self, callback: Subscriber) -> SubID {
         let mut state = self.state.lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
         }
 
         self.observer.subscribe_deep(callback)
+    }
+
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+        let mut state = self.state.lock().unwrap();
+        if !state.is_recording() {
+            state.start_recording();
+        }
+
+        self.observer.subscribe(container_id, callback)
     }
 }
 
