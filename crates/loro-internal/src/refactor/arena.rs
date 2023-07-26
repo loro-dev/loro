@@ -158,7 +158,6 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        self.log_hierarchy();
         self.inner
             .parents
             .lock()

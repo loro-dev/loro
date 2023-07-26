@@ -114,7 +114,7 @@ impl LoroDoc {
         txn.set_on_commit(Box::new(move |state| {
             let events = state.lock().unwrap().take_events();
             for event in events {
-                obs.emit(&event);
+                obs.emit(event);
             }
         }));
 
@@ -204,7 +204,7 @@ impl LoroDoc {
     fn emit_events(&self) {
         let mut state = self.state.lock().unwrap();
         for event in state.take_events() {
-            self.observer.emit(&event);
+            self.observer.emit(event);
         }
     }
 
@@ -289,6 +289,10 @@ impl LoroDoc {
         }
 
         self.observer.subscribe(container_id, callback)
+    }
+
+    pub fn unsubscribe(&self, id: SubID) {
+        self.observer.unsubscribe(id);
     }
 }
 
