@@ -100,8 +100,8 @@ impl LoroDoc {
         state.apply_diff(InternalDocDiff {
             local: true,
             origin: Default::default(),
-            diff: (&diff).into(),
-            new_version: Cow::Borrowed(oplog.frontiers()),
+            diff: (diff).into(),
+            new_version: Cow::Owned(oplog.frontiers().clone()),
         });
     }
 
@@ -174,8 +174,8 @@ impl LoroDoc {
                     state.apply_diff(InternalDocDiff {
                         origin,
                         local: false,
-                        diff: (&diff).into(),
-                        new_version: Cow::Borrowed(oplog.frontiers()),
+                        diff: (diff).into(),
+                        new_version: Cow::Owned(oplog.frontiers().clone()),
                     });
                 }
 

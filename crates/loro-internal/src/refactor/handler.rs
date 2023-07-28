@@ -34,34 +34,6 @@ impl TextHandler {
         }
     }
 
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
-        if s.is_empty() {
-            return;
-        }
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr(Cow::Borrowed(s)),
-                pos,
-            }),
-        );
-    }
-
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
-        if len == 0 {
-            return;
-        }
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                pos: pos as isize,
-                len: len as isize,
-            })),
-        );
-    }
-
     pub fn get_value(&self) -> LoroValue {
         self.state
             .upgrade()
@@ -69,21 +41,6 @@ impl TextHandler {
             .lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_text_state().as_ref().unwrap().len()
-            })
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub fn id(&self) -> ContainerID {
@@ -97,22 +54,85 @@ impl TextHandler {
             .unwrap()
     }
 
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
-        let (start, end) =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let text_state = &state.as_text_state();
-                    let text = text_state.as_ref().unwrap();
-                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
-                });
-        self.delete(txn, start, end - start);
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len_utf16(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_text_state().as_ref().unwrap().len_wchars()
+            })
+    }
+
+    pub fn len_utf8(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_text_state().as_ref().unwrap().len()
+            })
+    }
+}
+
+#[cfg(not(features = "wasm"))]
+impl TextHandler {
+    #[inline(always)]
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        self.insert_utf8(txn, pos, s)
+    }
+
+    #[inline(always)]
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
+        self.delete_utf8(txn, pos, len)
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len_utf8()
+    }
+
+    pub fn insert_utf8(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                pos,
+            }),
+            None,
+        );
+    }
+
+    pub fn delete_utf8(&self, txn: &mut Transaction, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: pos as isize,
+                len: len as isize,
+            })),
+            None,
+        );
     }
 
     pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+
         let start =
             self.state
                 .upgrade()
@@ -124,7 +144,123 @@ impl TextHandler {
                     let text = text_state.as_ref().unwrap();
                     text.utf16_to_utf8(pos)
                 });
-        self.insert(txn, start, s);
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                pos: start,
+            }),
+            None,
+        );
+    }
+
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
+        if del == 0 {
+            return;
+        }
+
+        let (start, end) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let text_state = &state.as_text_state();
+                    let text = text_state.as_ref().unwrap();
+                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
+                });
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: start as isize,
+                len: (end - start) as isize,
+            })),
+            None,
+        );
+    }
+}
+
+#[cfg(features = "wasm")]
+impl TextHandler {
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len_utf16()
+    }
+
+    #[inline(always)]
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, del: usize) {
+        self.delete_utf16(txn, pos, del)
+    }
+
+    #[inline(always)]
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        self.insert_utf16(txn, pos, s)
+    }
+
+    pub fn len_utf16(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_text_state().as_ref().unwrap().len_wchars()
+            })
+    }
+
+    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+
+        let start =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let text_state = &state.as_text_state();
+                    let text = text_state.as_ref().unwrap();
+                    text.utf16_to_utf8(pos)
+                });
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                pos: start,
+            }),
+            Some(EventHint::Utf16 { pos, len: 0 }),
+        );
+    }
+
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
+        if del == 0 {
+            return;
+        }
+
+        let (start, end) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    let text_state = &state.as_text_state();
+                    let text = text_state.as_ref().unwrap();
+                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
+                });
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: start as isize,
+                len: (end - start) as isize,
+            })),
+            Some(EventHint::Utf16 { pos, len: del }),
+        );
     }
 }
 
@@ -149,6 +285,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v])),
                 pos,
             }),
+            None,
         );
     }
 
@@ -169,6 +306,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v])),
                 pos,
             }),
+            None,
         );
         child_idx
     }
@@ -184,6 +322,7 @@ impl ListHandler {
                 pos: pos as isize,
                 len: len as isize,
             })),
+            None,
         );
     }
 
@@ -244,6 +383,7 @@ impl MapHandler {
                 key: key.into(),
                 value,
             }),
+            None,
         );
     }
 
@@ -263,6 +403,7 @@ impl MapHandler {
                 key: key.into(),
                 value: LoroValue::Container(container_id),
             }),
+            None,
         );
         child_idx
     }
@@ -275,6 +416,7 @@ impl MapHandler {
                 // TODO: use another special value to delete?
                 value: LoroValue::Null,
             }),
+            None,
         );
     }
 

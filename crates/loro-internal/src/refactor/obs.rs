@@ -205,7 +205,6 @@ impl Observer {
 
 #[cfg(test)]
 mod test {
-    use debug_log::debug_dbg;
 
     use crate::refactor::loro::LoroDoc;
 
@@ -217,7 +216,7 @@ mod test {
         let loro_cp = loro.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let count_cp = Arc::clone(&count);
-        loro_cp.subscribe_deep(Arc::new(move |e| {
+        loro_cp.subscribe_deep(Arc::new(move |_| {
             count_cp.fetch_add(1, Ordering::SeqCst);
             let mut txn = loro.txn().unwrap();
             let text = loro.get_text("id");

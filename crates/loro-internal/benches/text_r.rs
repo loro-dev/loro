@@ -2,13 +2,12 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 #[cfg(feature = "test_utils")]
 mod run {
-    use std::sync::{atomic::AtomicU32, Arc};
+    use std::sync::Arc;
 
     use super::*;
     use bench_utils::TextAction;
     use criterion::black_box;
     use loro_internal::refactor::loro::LoroDoc;
-    use tracing::instrument::WithSubscriber;
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();

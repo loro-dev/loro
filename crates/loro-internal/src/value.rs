@@ -230,6 +230,7 @@ impl ApplyDiff for LoroValue {
             Diff::Map(_) => TypeHint::Map,
             Diff::NewMap(_) => TypeHint::Map,
             Diff::SeqRaw(_) => TypeHint::Text,
+            Diff::SeqRawUtf16(_) => TypeHint::Text,
         };
         {
             let mut hints = Vec::with_capacity(path.len());
@@ -397,6 +398,22 @@ pub mod wasm {
                         &obj,
                         &JsValue::from_str("type"),
                         &JsValue::from_str("seq_raw"),
+                    )
+                    .unwrap();
+                    // set diff as array
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("diff"),
+                        &serde_wasm_bindgen::to_value(&text).unwrap(),
+                    )
+                    .unwrap();
+                }
+                Diff::SeqRawUtf16(text) => {
+                    // set type as "text"
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("seq_raw_utf16"),
                     )
                     .unwrap();
                     // set diff as array

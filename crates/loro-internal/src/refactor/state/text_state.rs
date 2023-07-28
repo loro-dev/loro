@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 use jumprope::JumpRope;
 
 use crate::{
-    container::text::text_content::ListSlice,
+    container::text::text_content::{ListSlice, SliceRanges},
     delta::{Delta, DeltaItem},
     event::Diff,
     op::{RawOp, RawOpContent},
@@ -46,27 +46,11 @@ enum UndoItem {
 }
 
 impl ContainerState for TextState {
-    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
         match diff {
             Diff::SeqRaw(delta) => {
-                let mut index = 0;
-                for span in delta.iter() {
-                    match span {
-                        DeltaItem::Retain { len, meta: _ } => {
-                            index += len;
-                        }
-                        DeltaItem::Insert { value, .. } => {
-                            for value in value.0.iter() {
-                                let s =
-                                    arena.slice_bytes(value.0.start as usize..value.0.end as usize);
-                                self.insert(index, std::str::from_utf8(&s).unwrap());
-                                index += s.len();
-                            }
-                        }
-                        DeltaItem::Delete { len, .. } => {
-                            self.delete(index..index + len);
-                        }
-                    }
+                if let Some(new_diff) = self.apply_seq_raw(delta, arena) {
+                    *diff = new_diff;
                 }
             }
             Diff::Text(delta) => {
@@ -247,6 +231,76 @@ impl TextState {
 
     pub fn slice(&self, range: Range<usize>) -> impl Iterator<Item = &str> {
         self.rope.slice_substrings(range)
+    }
+
+    #[cfg(not(features = "wasm"))]
+    fn apply_seq_raw(
+        &mut self,
+        delta: &mut Delta<SliceRanges>,
+        arena: &SharedArena,
+    ) -> Option<Diff> {
+        let mut index = 0;
+        for span in delta.iter() {
+            match span {
+                DeltaItem::Retain { len, meta: _ } => {
+                    index += len;
+                }
+                DeltaItem::Insert { value, .. } => {
+                    for value in value.0.iter() {
+                        let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
+                        self.insert(index, std::str::from_utf8(&s).unwrap());
+                        index += s.len();
+                    }
+                }
+                DeltaItem::Delete { len, .. } => {
+                    self.delete(index..index + len);
+                }
+            }
+        }
+
+        None
+    }
+
+    #[cfg(features = "wasm")]
+    fn apply_seq_raw(
+        &mut self,
+        delta: &mut Delta<SliceRanges>,
+        arena: &SharedArena,
+    ) -> Option<Diff> {
+        let mut new_delta = Delta::new();
+        let mut index = 0;
+        let mut utf16_index = 0;
+        for span in delta.iter() {
+            match span {
+                DeltaItem::Retain { len, meta: _ } => {
+                    index += len;
+                    let next_utf16_index = self.utf8_to_utf16(index);
+                    new_delta = new_delta.retain(next_utf16_index - utf16_index);
+                    utf16_index = next_utf16_index;
+                }
+                DeltaItem::Insert { value, .. } => {
+                    new_delta = new_delta.insert(value.clone());
+                    let start_utf16_len = self.len_wchars();
+                    for value in value.0.iter() {
+                        let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
+                        self.insert(index, std::str::from_utf8(&s).unwrap());
+                        index += s.len();
+                    }
+                    utf16_index += self.len_wchars() - start_utf16_len;
+                }
+                DeltaItem::Delete { len, .. } => {
+                    let start_utf16_len = self.len_wchars();
+                    self.delete(index..index + len);
+                    new_delta = new_delta.delete(start_utf16_len - self.len_wchars());
+                }
+            }
+        }
+
+        Some(Diff::SeqRawUtf16(new_delta))
+    }
+
+    fn utf8_to_utf16(&self, index: usize) -> usize {
+        self.rope.chars_to_wchars(index)
     }
 }
 

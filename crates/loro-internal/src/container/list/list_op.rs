@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::container::text::text_content::{ListSlice, SliceRange};
 
+/// `pos` and `len` in [ListOp] are always measured in utf8 bytes for text op.
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ListOp<'a> {

@@ -336,6 +336,7 @@ fn compose_two_event_diff(this_diff: &mut Diff, other_diff: Diff) {
         Diff::SeqRaw(_) => {
             unimplemented!();
         }
+        Diff::SeqRawUtf16(_) => todo!(),
     };
     *this_diff = diff;
 }

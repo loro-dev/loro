@@ -23,7 +23,7 @@ pub struct MapState {
 }
 
 impl ContainerState for MapState {
-    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
         if let Diff::NewMap(delta) = diff {
             for (key, value) in delta.updated.iter() {
                 if let Some(LoroValue::Container(c)) = &value.value {

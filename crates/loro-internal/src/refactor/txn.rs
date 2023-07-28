@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::ContainerType;
 use rle::{HasLength, RleVec};
@@ -44,10 +45,16 @@ pub struct Transaction {
     state: Arc<Mutex<DocState>>,
     oplog: Arc<Mutex<OpLog>>,
     frontiers: Frontiers,
-    local_ops: RleVec<[Op; 1]>,
+    local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
+    event_hints: FxHashMap<Counter, EventHint>,
     pub(super) arena: SharedArena,
     finished: bool,
     on_commit: Option<OnCommitFn>,
+}
+
+#[derive(Debug, Clone, EnumAsInner)]
+pub(super) enum EventHint {
+    Utf16 { pos: usize, len: usize },
 }
 
 impl Transaction {
@@ -80,6 +87,7 @@ impl Transaction {
             arena,
             oplog,
             next_lamport,
+            event_hints: Default::default(),
             frontiers,
             local_ops: RleVec::new(),
             finished: false,
@@ -111,6 +119,7 @@ impl Transaction {
         self.finished = true;
         self.state.lock().unwrap().abort_txn();
         self.local_ops.clear();
+        self.event_hints.clear();
     }
 
     fn _commit(&mut self) -> Result<(), LoroError> {
@@ -137,7 +146,11 @@ impl Transaction {
         };
 
         let diff = if state.is_recording() {
-            Some(change_to_diff(&change, &oplog.arena))
+            Some(change_to_diff(
+                &change,
+                &oplog.arena,
+                std::mem::take(&mut self.event_hints),
+            ))
         } else {
             None
         };
@@ -167,7 +180,13 @@ impl Transaction {
         Ok(())
     }
 
-    pub fn apply_local_op(&mut self, container: ContainerIdx, content: RawOpContent) {
+    pub(super) fn apply_local_op(
+        &mut self,
+        container: ContainerIdx,
+        content: RawOpContent,
+        // we need extra hint to reduce calculation for utf16 text op
+        hint: Option<EventHint>,
+    ) {
         let len = content.content_len();
         let op = RawOp {
             id: ID {
@@ -178,6 +197,10 @@ impl Transaction {
             container,
             content,
         };
+
+        if let Some(hint) = hint {
+            self.event_hints.insert(op.id.counter, hint);
+        }
         self.push_local_op_to_log(&op);
         let mut state = self.state.lock().unwrap();
         state.apply_local_op(op);
@@ -262,42 +285,69 @@ impl Drop for Transaction {
 }
 
 // PERF: could be compacter
-fn change_to_diff(change: &Change, arena: &SharedArena) -> Vec<InternalContainerDiff> {
+fn change_to_diff(
+    change: &Change,
+    arena: &SharedArena,
+    event_hints: FxHashMap<Counter, EventHint>,
+) -> Vec<InternalContainerDiff> {
     let mut diff = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
     for op in change.ops.iter() {
         let counter = op.counter;
-        let diff_op = InternalContainerDiff {
-            idx: op.container,
-            diff: match &op.content {
-                crate::op::InnerContent::List(list) => match list {
-                    InnerListOp::Insert { slice, pos } => Diff::SeqRaw(
-                        Delta::new()
-                            .retain(*pos)
-                            .insert(SliceRanges(smallvec![slice.clone()])),
-                    ),
-                    InnerListOp::Delete(del) => Diff::SeqRaw(
-                        Delta::new()
-                            .retain(del.pos as usize)
-                            .delete(del.len as usize),
-                    ),
-                },
-                crate::op::InnerContent::Map(map) => {
-                    let value = arena.get_value(map.value as usize).unwrap();
-                    let mut updated: FxHashMap<_, _> = Default::default();
-                    updated.insert(
-                        map.key.clone(),
-                        MapValue {
-                            counter,
-                            value: Some(value),
-                            lamport: (lamport, peer),
+        let diff_op = if let Some(hint) = event_hints.get(&counter) {
+            match hint {
+                EventHint::Utf16 { pos, len } => {
+                    // only use utf16 pos & len in wasm context
+                    assert!(cfg!(feature = "wasm"));
+                    InternalContainerDiff {
+                        idx: op.container,
+                        diff: match op.content.as_list().unwrap() {
+                            InnerListOp::Insert { slice, .. } => Diff::SeqRawUtf16(
+                                Delta::new()
+                                    .retain(*pos)
+                                    .insert(SliceRanges(smallvec![slice.clone()])),
+                            ),
+                            InnerListOp::Delete(..) => {
+                                Diff::SeqRawUtf16(Delta::new().retain(*pos).delete(*len))
+                            }
                         },
-                    );
-                    Diff::NewMap(crate::delta::MapDelta { updated })
+                    }
                 }
-            },
+            }
+        } else {
+            InternalContainerDiff {
+                idx: op.container,
+                diff: match &op.content {
+                    crate::op::InnerContent::List(list) => match list {
+                        InnerListOp::Insert { slice, pos } => Diff::SeqRaw(
+                            Delta::new()
+                                .retain(*pos)
+                                .insert(SliceRanges(smallvec![slice.clone()])),
+                        ),
+                        InnerListOp::Delete(del) => Diff::SeqRaw(
+                            Delta::new()
+                                .retain(del.pos as usize)
+                                .delete(del.len as usize),
+                        ),
+                    },
+                    crate::op::InnerContent::Map(map) => {
+                        let value = arena.get_value(map.value as usize).unwrap();
+                        let mut updated: FxHashMap<_, _> = Default::default();
+                        updated.insert(
+                            map.key.clone(),
+                            MapValue {
+                                counter,
+                                value: Some(value),
+                                lamport: (lamport, peer),
+                            },
+                        );
+                        Diff::NewMap(crate::delta::MapDelta { updated })
+                    }
+                },
+            }
         };
+
         lamport += op.content_len() as Lamport;
         diff.push(diff_op);
     }

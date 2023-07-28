@@ -119,10 +119,23 @@ impl Utf16Meta {
     }
 }
 
+/// Diff is the diff between two versions of a container.
+/// It's used to describe the change of a container and the events.
+///
+/// # Internal
+///
+/// SeqRaw & SeqRawUtf16 is internal stuff, it should not be exposed to user.
+/// The len inside SeqRaw uses utf8 for Text by default.
+///
+/// Text always uses platform specific indexes:
+///
+/// - When `wasm` is enabled, it should use utf16 indexes.
+/// - When `wasm` is disabled, it should use utf8 indexes.
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     SeqRaw(Delta<SliceRanges>),
+    SeqRawUtf16(Delta<SliceRanges>),
     Text(Delta<String, Utf16Meta>),
     /// @deprecated
     Map(MapDiff<LoroValue>),

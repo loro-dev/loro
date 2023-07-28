@@ -250,7 +250,7 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
-    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
         debug_log::debug_log!("Apply List Diff {:#?}", diff);
         match diff {
             Diff::List(delta) => {

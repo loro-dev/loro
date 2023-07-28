@@ -50,7 +50,7 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
-    fn apply_diff(&mut self, diff: &Diff, arena: &SharedArena);
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena);
     fn apply_op(&mut self, op: RawOp, arena: &SharedArena);
     /// Convert a state to a diff that when apply this diff on a empty state,
     /// the state will be the same as this state.
@@ -61,6 +61,8 @@ pub trait ContainerState: Clone {
     /// The transaction may be aborted later, then all the ops during this transaction need to be undone.
     fn start_txn(&mut self);
     fn abort_txn(&mut self);
+    /// Commit the transaction and return the diff of the transaction.
+    /// If `record_diff` in [Self::start_txn] is false, return None.
     fn commit_txn(&mut self);
 
     fn get_value(&self) -> LoroValue;
@@ -211,13 +213,14 @@ impl DocState {
         self.peer
     }
 
-    pub(crate) fn apply_diff(&mut self, diff: InternalDocDiff) {
+    pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
 
         self.pre_txn(diff.origin.clone(), diff.local);
-        for diff in diff.diff.iter() {
+        let Cow::Owned(inner) = &mut diff.diff else {unreachable!()};
+        for diff in inner.iter_mut() {
             let state = self
                 .states
                 .entry(diff.idx)
@@ -228,7 +231,7 @@ impl DocState {
                 self.changed_idx_in_txn.insert(diff.idx);
             }
 
-            state.apply_diff(&diff.diff, &self.arena);
+            state.apply_diff(&mut diff.diff, &self.arena);
         }
 
         self.frontiers = (*diff.new_version).to_owned();
@@ -528,7 +531,11 @@ impl DocState {
 
     /// convert seq raw to text/list
     pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
-        let Diff::SeqRaw(seq) = diff else { return };
+        let seq = match diff {
+            Diff::SeqRaw(seq) => seq,
+            Diff::SeqRawUtf16(seq) => seq,
+            _ => return,
+        };
 
         match idx.get_type() {
             ContainerType::Text => {
