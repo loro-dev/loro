@@ -61,11 +61,11 @@ impl ContainerState for TextState {
                             index += len;
                         }
                         DeltaItem::Insert { value, .. } => {
-                            self.insert(index, value);
+                            self.insert_utf8(index, value);
                             index += value.len();
                         }
                         DeltaItem::Delete { len, .. } => {
-                            self.delete(index..index + len);
+                            self.delete_utf8(index..index + len);
                         }
                     }
                 }
@@ -79,12 +79,12 @@ impl ContainerState for TextState {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr(s) => {
-                        self.insert(pos, &s);
+                        self.insert_utf8(pos, &s);
                     }
                     _ => unreachable!(),
                 },
                 crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete(del.pos as usize..del.pos as usize + del.len as usize);
+                    self.delete_utf8(del.pos as usize..del.pos as usize + del.len as usize);
                 }
             },
             _ => unreachable!(),
@@ -153,11 +153,11 @@ impl TextState {
 
     pub fn from_str(s: &str) -> Self {
         let mut state = Self::new();
-        state.insert(0, s);
+        state.insert_utf8(0, s);
         state
     }
 
-    pub fn insert(&mut self, pos: usize, s: &str) {
+    pub fn insert_utf8(&mut self, pos: usize, s: &str) {
         if self.in_txn {
             self.record_insert(pos, s.len());
         }
@@ -165,7 +165,7 @@ impl TextState {
         self.rope.insert(pos, s);
     }
 
-    pub fn delete(&mut self, range: Range<usize>) {
+    pub fn delete_utf8(&mut self, range: Range<usize>) {
         if range.is_empty() {
             return;
         }
@@ -248,12 +248,12 @@ impl TextState {
                 DeltaItem::Insert { value, .. } => {
                     for value in value.0.iter() {
                         let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
-                        self.insert(index, std::str::from_utf8(&s).unwrap());
+                        self.insert_utf8(index, std::str::from_utf8(&s).unwrap());
                         index += s.len();
                     }
                 }
                 DeltaItem::Delete { len, .. } => {
-                    self.delete(index..index + len);
+                    self.delete_utf8(index..index + len);
                 }
             }
         }
@@ -317,10 +317,10 @@ mod test {
     #[test]
     fn abort_txn() {
         let mut state = TextState::new();
-        state.insert(0, "haha");
+        state.insert_utf8(0, "haha");
         state.start_txn();
-        state.insert(4, "1234");
-        state.delete(2..6);
+        state.insert_utf8(4, "1234");
+        state.delete_utf8(2..6);
         assert_eq!(state.rope.to_string(), "ha34");
         state.abort_txn();
         assert_eq!(state.rope.to_string(), "haha");
