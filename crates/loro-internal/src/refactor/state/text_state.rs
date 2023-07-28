@@ -233,7 +233,7 @@ impl TextState {
         self.rope.slice_substrings(range)
     }
 
-    #[cfg(not(features = "wasm"))]
+    #[cfg(not(feature = "wasm"))]
     fn apply_seq_raw(
         &mut self,
         delta: &mut Delta<SliceRanges>,
@@ -261,7 +261,7 @@ impl TextState {
         None
     }
 
-    #[cfg(features = "wasm")]
+    #[cfg(feature = "wasm")]
     fn apply_seq_raw(
         &mut self,
         delta: &mut Delta<SliceRanges>,
@@ -283,14 +283,14 @@ impl TextState {
                     let start_utf16_len = self.len_wchars();
                     for value in value.0.iter() {
                         let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
-                        self.insert(index, std::str::from_utf8(&s).unwrap());
+                        self.insert_utf8(index, std::str::from_utf8(&s).unwrap());
                         index += s.len();
                     }
                     utf16_index += self.len_wchars() - start_utf16_len;
                 }
                 DeltaItem::Delete { len, .. } => {
                     let start_utf16_len = self.len_wchars();
-                    self.delete(index..index + len);
+                    self.delete_utf8(index..index + len);
                     new_delta = new_delta.delete(start_utf16_len - self.len_wchars());
                 }
             }

@@ -213,13 +213,13 @@ impl Actionable for Vec<LoroDoc> {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                text.insert(&mut txn, *pos, &content.to_string());
+                text.insert(&mut txn, *pos, &content.to_string()).unwrap();
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                text.delete(&mut txn, *pos, *len);
+                text.delete(&mut txn, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
                 if from != to {

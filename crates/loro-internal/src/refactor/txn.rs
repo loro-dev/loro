@@ -4,9 +4,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::ContainerType;
+use loro_common::{ContainerType, LoroResult};
 use rle::{HasLength, RleVec};
 use smallvec::smallvec;
 
@@ -14,7 +15,7 @@ use crate::{
     change::{Change, Lamport},
     container::{
         list::list_op::InnerListOp, registry::ContainerIdx, text::text_content::SliceRanges,
-        ContainerIdRaw,
+        IntoContainerId,
     },
     delta::{Delta, MapValue},
     event::Diff,
@@ -68,6 +69,10 @@ impl Transaction {
         origin: InternalString,
     ) -> Self {
         let mut state_lock = state.lock().unwrap();
+        if state_lock.is_in_txn() {
+            panic!("Cannot start a transaction while another one is in progress");
+        }
+
         let oplog_lock = oplog.lock().unwrap();
         state_lock.start_txn(origin, true);
         let arena = state_lock.arena.clone();
@@ -186,7 +191,7 @@ impl Transaction {
         content: RawOpContent,
         // we need extra hint to reduce calculation for utf16 text op
         hint: Option<EventHint>,
-    ) {
+    ) -> LoroResult<()> {
         let len = content.content_len();
         let op = RawOp {
             id: ID {
@@ -198,14 +203,16 @@ impl Transaction {
             content,
         };
 
+        let mut state = self.state.lock().unwrap();
+        state.apply_local_op(op.clone())?;
+        drop(state);
         if let Some(hint) = hint {
             self.event_hints.insert(op.id.counter, hint);
         }
         self.push_local_op_to_log(&op);
-        let mut state = self.state.lock().unwrap();
-        state.apply_local_op(op);
         self.next_counter += len as Counter;
         self.next_lamport += len as Lamport;
+        Ok(())
     }
 
     fn push_local_op_to_log(&mut self, op: &RawOp) {
@@ -215,43 +222,28 @@ impl Transaction {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> TextHandler {
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> ListHandler {
+    pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
         ListHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> MapHandler {
+    pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
     }
 
-    fn get_container_idx<I: Into<ContainerIdRaw>>(
-        &self,
-        id: I,
-        c_type: ContainerType,
-    ) -> ContainerIdx {
-        let id: ContainerIdRaw = id.into();
-        match id {
-            ContainerIdRaw::Root { name } => {
-                self.arena
-                    .register_container(&crate::container::ContainerID::Root {
-                        name,
-                        container_type: c_type,
-                    })
-            }
-            ContainerIdRaw::Normal { id: _ } => {
-                self.arena.register_container(&id.with_type(c_type))
-            }
-        }
+    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
+        let id = id.into_container_id(&self.arena, c_type);
+        self.arena.register_container(&id)
     }
 
     pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
@@ -351,5 +343,7 @@ fn change_to_diff(
         lamport += op.content_len() as Lamport;
         diff.push(diff_op);
     }
+
+    debug_dbg!(&diff);
     diff
 }

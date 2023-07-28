@@ -23,11 +23,10 @@ import {
 export type { ContainerID, ContainerType } from "loro-wasm";
 
 Loro.prototype.transact = function (cb, origin) {
-  this.__raw__transactionWithOrigin(origin, (txn: Transaction) => {
+  return this.__raw__transactionWithOrigin(origin || "", (txn: Transaction) => {
     try {
-      cb(txn);
+      return cb(txn);
     } finally {
-      txn.commit();
       txn.free();
     }
   });
@@ -55,51 +54,27 @@ LoroMap.prototype.getTyped = function (loro, key) {
 LoroMap.prototype.setTyped = LoroMap.prototype.set;
 
 LoroText.prototype.insert = function (txn, pos, text) {
-  if (txn instanceof Loro) {
-    this.__loro_insert(txn, pos, text);
-  } else {
-    this.__txn_insert(txn, pos, text);
-  }
+  this.__txn_insert(txn, pos, text);
 };
 
 LoroText.prototype.delete = function (txn, pos, len) {
-  if (txn instanceof Loro) {
-    this.__loro_delete(txn, pos, len);
-  } else {
-    this.__txn_delete(txn, pos, len);
-  }
+  this.__txn_delete(txn, pos, len);
 };
 
 LoroList.prototype.insert = function (txn, pos, len) {
-  if (txn instanceof Loro) {
-    this.__loro_insert(txn, pos, len);
-  } else {
-    this.__txn_insert(txn, pos, len);
-  }
+  this.__txn_insert(txn, pos, len);
 };
 
 LoroList.prototype.delete = function (txn, pos, len) {
-  if (txn instanceof Loro) {
-    this.__loro_delete(txn, pos, len);
-  } else {
-    this.__txn_delete(txn, pos, len);
-  }
+  this.__txn_delete(txn, pos, len);
 };
 
 LoroMap.prototype.set = function (txn, key, value) {
-  if (txn instanceof Loro) {
-    this.__loro_insert(txn, key, value);
-  } else {
-    this.__txn_insert(txn, key, value);
-  }
+  this.__txn_insert(txn, key, value);
 };
 
 LoroMap.prototype.delete = function (txn, key) {
-  if (txn instanceof Loro) {
-    this.__loro_delete(txn, key);
-  } else {
-    this.__txn_delete(txn, key);
-  }
+  this.__txn_delete(txn, key);
 };
 
 export type Value =
@@ -136,14 +111,7 @@ export type TextDiff = {
 
 export type MapDiff = {
   type: "map";
-  diff: {
-    added: Record<string, Value>;
-    deleted: Record<string, Value>;
-    updated: Record<string, {
-      old: Value;
-      new: Value;
-    }>;
-  };
+  updated: Record<string, Value | undefined>;
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff;
@@ -191,7 +159,7 @@ export { Loro };
 declare module "loro-wasm" {
   interface Loro {
     subscribe(listener: Listener): number;
-    transact(f: (tx: Transaction) => void, origin?: string): void;
+    transact<T>(f: (tx: Transaction) => T, origin?: string): T;
   }
 
   interface Loro<T extends Record<string, any> = Record<string, any>> {
@@ -205,22 +173,22 @@ declare module "loro-wasm" {
 
   interface LoroList<T extends any[] = any[]> {
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       pos: number,
       container: "Map",
     ): LoroMap;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       pos: number,
       container: "List",
     ): LoroList;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       pos: number,
       container: "Text",
     ): LoroText;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       pos: number,
       container: string,
     ): never;
@@ -228,35 +196,33 @@ declare module "loro-wasm" {
     get(index: number): Value;
     getTyped<Key extends (keyof T) & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends (keyof T) & number>(
-      txn: Transaction | Loro,
+      txn: Transaction,
       pos: Key,
       value: T[Key],
     ): void;
-    insert(txn: Transaction | Loro, pos: number, value: Value | Prelim): void;
-    delete(txn: Transaction | Loro, pos: number, len: number): void;
-    subscribe(txn: Transaction | Loro, listener: Listener): number;
-    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
-    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
+    insert(txn: Transaction, pos: number, value: Value | Prelim): void;
+    delete(txn: Transaction, pos: number, len: number): void;
+    subscribe(txn: Loro, listener: Listener): number;
   }
 
   interface LoroMap<T extends Record<string, any> = Record<string, any>> {
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       key: string,
       container_type: "Map",
     ): LoroMap;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       key: string,
       container_type: "List",
     ): LoroList;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       key: string,
       container_type: "Text",
     ): LoroText;
     insertContainer(
-      txn: Transaction | Loro,
+      txn: Transaction,
       key: string,
       container_type: string,
     ): never;
@@ -266,23 +232,19 @@ declare module "loro-wasm" {
       txn: Loro,
       key: Key,
     ): T[Key];
-    set(txn: Transaction | Loro, key: string, value: Value | Prelim): void;
+    set(txn: Transaction, key: string, value: Value | Prelim): void;
     setTyped<Key extends (keyof T) & string>(
-      txn: Transaction | Loro,
+      txn: Transaction,
       key: Key,
       value: T[Key],
     ): void;
-    delete(txn: Transaction | Loro, key: string): void;
-    subscribe(txn: Transaction | Loro, listener: Listener): number;
-    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
-    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
+    delete(txn: Transaction, key: string): void;
+    subscribe(txn: Loro, listener: Listener): number;
   }
 
   interface LoroText {
-    insert(txn: Transaction | Loro, pos: number, text: string): void;
-    delete(txn: Transaction | Loro, pos: number, len: number): void;
-    subscribe(txn: Transaction | Loro, listener: Listener): number;
-    subscribeDeep(txn: Transaction | Loro, listener: Listener): number;
-    subscribeOnce(txn: Transaction | Loro, listener: Listener): number;
+    insert(txn: Transaction, pos: number, text: string): void;
+    delete(txn: Transaction, pos: number, len: number): void;
+    subscribe(txn: Loro, listener: Listener): number;
   }
 }

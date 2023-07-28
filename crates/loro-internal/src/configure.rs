@@ -1,7 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
 use crate::{log_store::GcConfig, Timestamp};
-use ring::rand::{SecureRandom, SystemRandom};
 
 #[derive(Clone)]
 pub struct Configure {
@@ -16,6 +15,14 @@ impl Debug for Configure {
             .field("gc", &self.gc)
             .field("get_time", &self.get_time)
             .finish()
+    }
+}
+
+pub struct DefaultRandom;
+
+impl SecureRandomGenerator for DefaultRandom {
+    fn fill_byte(&self, dest: &mut [u8]) {
+        getrandom::getrandom(dest).unwrap();
     }
 }
 
@@ -46,18 +53,12 @@ pub trait SecureRandomGenerator: Send + Sync {
     }
 }
 
-impl SecureRandomGenerator for SystemRandom {
-    fn fill_byte(&self, dest: &mut [u8]) {
-        self.fill(dest).unwrap();
-    }
-}
-
 impl Default for Configure {
     fn default() -> Self {
         Self {
             gc: GcConfig::default(),
             get_time: || 0,
-            rand: Arc::new(SystemRandom::new()),
+            rand: Arc::new(DefaultRandom),
         }
     }
 }

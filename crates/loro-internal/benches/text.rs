@@ -61,8 +61,8 @@ mod run {
                 let text = txn.get_text("text");
 
                 for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&mut txn, *pos, *del);
-                    text.insert(&mut txn, *pos, ins);
+                    text.delete(&mut txn, *pos, *del).unwrap();
+                    text.insert(&mut txn, *pos, ins).unwrap();
                 }
 
                 txn.commit().unwrap();

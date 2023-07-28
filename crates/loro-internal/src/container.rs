@@ -5,6 +5,7 @@
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
 use crate::{
+    arena::SharedArena,
     event::{Observer, ObserverHandler, SubscriptionID},
     hierarchy::Hierarchy,
     log_store::ImportContext,
@@ -119,6 +120,41 @@ pub use loro_common::ContainerID;
 pub enum ContainerIdRaw {
     Root { name: InternalString },
     Normal { id: ID },
+}
+
+pub trait IntoContainerId {
+    fn into_container_id(self, arena: &SharedArena, kind: ContainerType) -> ContainerID;
+}
+
+impl IntoContainerId for String {
+    fn into_container_id(self, _arena: &SharedArena, kind: ContainerType) -> ContainerID {
+        ContainerID::Root {
+            name: InternalString::from(self.as_str()),
+            container_type: kind,
+        }
+    }
+}
+
+impl<'a> IntoContainerId for &'a str {
+    fn into_container_id(self, _arena: &SharedArena, kind: ContainerType) -> ContainerID {
+        ContainerID::Root {
+            name: InternalString::from(self),
+            container_type: kind,
+        }
+    }
+}
+
+impl IntoContainerId for ContainerID {
+    fn into_container_id(self, _arena: &SharedArena, _kind: ContainerType) -> ContainerID {
+        self
+    }
+}
+
+impl IntoContainerId for ContainerIdx {
+    fn into_container_id(self, arena: &SharedArena, kind: ContainerType) -> ContainerID {
+        assert_eq!(self.get_type(), kind);
+        arena.get_container_id(self).unwrap()
+    }
 }
 
 impl From<String> for ContainerIdRaw {

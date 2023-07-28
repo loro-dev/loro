@@ -1,15 +1,18 @@
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     sync::{Arc, Mutex},
 };
 
 use debug_log::debug_dbg;
-use loro_common::{ContainerID, ContainerType, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 
 use crate::{
-    container::{registry::ContainerIdx, ContainerIdRaw},
+    arena::SharedArena,
+    container::{registry::ContainerIdx, IntoContainerId},
     id::PeerID,
     log_store::encoding::{ConcreteEncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    version::Frontiers,
     EncodeMode, InternalString, LoroError, VersionVector,
 };
 
@@ -44,6 +47,7 @@ use super::{
 pub struct LoroDoc {
     oplog: Arc<Mutex<OpLog>>,
     state: Arc<Mutex<DocState>>,
+    arena: SharedArena,
     observer: Arc<Observer>,
     detached: bool,
 }
@@ -58,7 +62,8 @@ impl LoroDoc {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
             detached: false,
-            observer: Arc::new(Observer::new(arena)),
+            observer: Arc::new(Observer::new(arena.clone())),
+            arena,
         }
     }
 
@@ -69,11 +74,16 @@ impl LoroDoc {
     pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
         let obs = Observer::new(oplog.arena.clone());
         Self {
+            arena: oplog.arena.clone(),
             observer: Arc::new(obs),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
             detached: false,
         }
+    }
+
+    pub fn peer_id(&self) -> PeerID {
+        self.state.lock().unwrap().peer
     }
 
     pub fn set_peer_id(&self, peer: PeerID) {
@@ -105,18 +115,23 @@ impl LoroDoc {
         });
     }
 
+    #[inline(always)]
     pub fn txn(&self) -> Result<Transaction, LoroError> {
-        if self.state.lock().unwrap().is_in_txn() {
-            return Err(LoroError::DuplicatedTransactionError);
+        self.txn_with_origin("")
+    }
+
+    pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
+        let mut txn =
+            Transaction::new_with_origin(self.state.clone(), self.oplog.clone(), origin.into());
+        if self.state.lock().unwrap().is_recording() {
+            let obs = self.observer.clone();
+            txn.set_on_commit(Box::new(move |state| {
+                let events = state.lock().unwrap().take_events();
+                for event in events {
+                    obs.emit(event);
+                }
+            }));
         }
-        let mut txn = Transaction::new(self.state.clone(), self.oplog.clone());
-        let obs = self.observer.clone();
-        txn.set_on_commit(Box::new(move |state| {
-            let events = state.lock().unwrap().take_events();
-            for event in events {
-                obs.emit(event);
-            }
-        }));
 
         Ok(txn)
     }
@@ -228,21 +243,21 @@ impl LoroDoc {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&self, id: I) -> TextHandler {
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_list<I: Into<ContainerIdRaw>>(&self, id: I) -> ListHandler {
+    pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
         ListHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_map<I: Into<ContainerIdRaw>>(&self, id: I) -> MapHandler {
+    pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
     }
@@ -251,26 +266,20 @@ impl LoroDoc {
         self.oplog().lock().unwrap().diagnose_size();
     }
 
-    fn get_container_idx<I: Into<ContainerIdRaw>>(
-        &self,
-        id: I,
-        c_type: ContainerType,
-    ) -> ContainerIdx {
-        let id: ContainerIdRaw = id.into();
-        match id {
-            ContainerIdRaw::Root { name } => self.oplog().lock().unwrap().arena.register_container(
-                &crate::container::ContainerID::Root {
-                    name,
-                    container_type: c_type,
-                },
-            ),
-            ContainerIdRaw::Normal { id: _ } => self
-                .oplog()
-                .lock()
-                .unwrap()
-                .arena
-                .register_container(&id.with_type(c_type)),
-        }
+    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
+        let id = id.into_container_id(&self.arena, c_type);
+        self.arena.register_container(&id)
+    }
+
+    pub fn frontiers(&self) -> Frontiers {
+        self.oplog().lock().unwrap().frontiers().clone()
+    }
+
+    /// - Ordering::Less means self is less than target or parallel
+    /// - Ordering::Equal means versions equal
+    /// - Ordering::Greater means self's version is greater than target
+    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.oplog().lock().unwrap().cmp_frontiers(other)
     }
 
     pub fn subscribe_deep(&self, callback: Subscriber) -> SubID {
@@ -293,6 +302,19 @@ impl LoroDoc {
 
     pub fn unsubscribe(&self, id: SubID) {
         self.observer.unsubscribe(id);
+    }
+
+    // PERF: opt
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        for data in bytes.iter() {
+            self.import(data)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn to_json(&self) -> LoroValue {
+        self.state.lock().unwrap().get_deep_value()
     }
 }
 

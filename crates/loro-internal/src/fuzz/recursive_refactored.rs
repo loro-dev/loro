@@ -504,13 +504,17 @@ impl Actionable for Vec<Actor> {
                 let mut txn = actor.loro.txn().unwrap();
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&mut txn, &key.to_string());
+                        container.delete(&mut txn, &key.to_string()).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&mut txn, &key.to_string(), LoroValue::from(*i));
+                        container
+                            .insert(&mut txn, &key.to_string(), LoroValue::from(*i))
+                            .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container.insert_container(&mut txn, &key.to_string(), *c);
+                        let idx = container
+                            .insert_container(&mut txn, &key.to_string(), *c)
+                            .unwrap();
                         actor.add_new_container(idx, *c);
                     }
                 };
@@ -534,13 +538,17 @@ impl Actionable for Vec<Actor> {
                 let mut txn = actor.loro.txn().unwrap();
                 match value {
                     FuzzValue::Null => {
-                        container.delete(&mut txn, *key as usize, 1);
+                        container.delete(&mut txn, *key as usize, 1).unwrap();
                     }
                     FuzzValue::I32(i) => {
-                        container.insert(&mut txn, *key as usize, LoroValue::from(*i));
+                        container
+                            .insert(&mut txn, *key as usize, LoroValue::from(*i))
+                            .unwrap();
                     }
                     FuzzValue::Container(c) => {
-                        let idx = container.insert_container(&mut txn, *key as usize, *c);
+                        let idx = container
+                            .insert_container(&mut txn, *key as usize, *c)
+                            .unwrap();
                         actor.add_new_container(idx, *c);
                     }
                 };
@@ -563,9 +571,13 @@ impl Actionable for Vec<Actor> {
                 };
                 let mut txn = actor.loro.txn().unwrap();
                 if *is_del {
-                    container.delete(&mut txn, *pos as usize, *value as usize);
+                    container
+                        .delete(&mut txn, *pos as usize, *value as usize)
+                        .unwrap();
                 } else {
-                    container.insert(&mut txn, *pos as usize, &(format!("[{}]", value)));
+                    container
+                        .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
+                        .unwrap();
                 }
                 drop(txn);
             }

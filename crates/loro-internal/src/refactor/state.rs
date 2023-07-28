@@ -4,11 +4,10 @@ use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::ContainerID;
-use ring::rand::SystemRandom;
+use loro_common::{ContainerID, LoroResult};
 
 use crate::{
-    configure::SecureRandomGenerator,
+    configure::{DefaultRandom, SecureRandomGenerator},
     container::{registry::ContainerIdx, ContainerIdRaw},
     delta::{Delta, DeltaItem},
     event::{Diff, Index, Utf16Meta},
@@ -105,7 +104,7 @@ impl State {
 impl DocState {
     #[inline]
     pub fn new(arena: SharedArena) -> Self {
-        let peer = SystemRandom::new().next_u64();
+        let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
         Self {
             peer,
@@ -242,7 +241,7 @@ impl DocState {
         debug_dbg!(self.get_deep_value());
     }
 
-    pub fn apply_local_op(&mut self, op: RawOp) {
+    pub fn apply_local_op(&mut self, op: RawOp) -> LoroResult<()> {
         let state = self
             .states
             .entry(op.container)
@@ -253,7 +252,9 @@ impl DocState {
             self.changed_idx_in_txn.insert(op.container);
         }
 
+        // TODO: make apply_op return a result
         state.apply_op(op, &self.arena);
+        Ok(())
     }
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
@@ -539,7 +540,6 @@ impl DocState {
 
         match idx.get_type() {
             ContainerType::Text => {
-                let state = self.states.get(&idx).unwrap().as_text_state().unwrap();
                 let mut ans: Delta<String, Utf16Meta> = Delta::new();
                 let mut index = 0;
                 for span in seq.iter() {
@@ -554,10 +554,12 @@ impl DocState {
                         crate::delta::DeltaItem::Insert { value, .. } => {
                             let len = value.0.iter().fold(0, |acc, cur| acc + cur.0.len());
                             let mut s = String::with_capacity(len);
-                            for sub in state.slice(index..index + len) {
-                                s.push_str(sub);
+                            for slice in value.0.iter() {
+                                let bytes = self
+                                    .arena
+                                    .slice_bytes(slice.0.start as usize..slice.0.end as usize);
+                                s.push_str(std::str::from_utf8(&bytes).unwrap());
                             }
-
                             ans.push(DeltaItem::Insert {
                                 value: s,
                                 meta: Utf16Meta { utf16_len: None },

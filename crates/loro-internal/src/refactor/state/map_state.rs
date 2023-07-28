@@ -142,7 +142,7 @@ impl MapState {
         self.map.iter()
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.map.len()
     }
 
@@ -159,5 +159,15 @@ impl MapState {
             ans.insert(key.to_string(), value.value.as_ref().cloned().unwrap());
         }
         ans
+    }
+
+    pub fn get(&self, k: &str) -> Option<&LoroValue> {
+        match self.map.get(&k.into()) {
+            Some(value) => match &value.value {
+                Some(v) => Some(v),
+                None => None,
+            },
+            None => None,
+        }
     }
 }

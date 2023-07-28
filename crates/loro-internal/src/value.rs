@@ -288,7 +288,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDiff},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff},
         event::{Diff, Index, Utf16Meta},
         LoroValue,
     };
@@ -385,12 +385,7 @@ pub mod wasm {
                     )
                     .unwrap();
 
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&map).unwrap(),
-                    )
-                    .unwrap();
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map.into()).unwrap();
                 }
                 Diff::SeqRaw(text) => {
                     // set type as "text"
@@ -427,6 +422,22 @@ pub mod wasm {
             };
 
             // convert object to js value
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<MapDelta> for JsValue {
+        fn from(value: MapDelta) -> Self {
+            let obj = Object::new();
+            for (key, value) in value.updated.iter() {
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str(key),
+                    &JsValue::from(value.value.clone()),
+                )
+                .unwrap();
+            }
+
             obj.into_js_result().unwrap()
         }
     }
@@ -508,7 +519,7 @@ pub mod wasm {
         fn from(value: DeltaItem<String, Utf16Meta>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len: _len, meta } => {
+                DeltaItem::Retain { len, meta: _ } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -518,7 +529,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
+                        &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
                 }
@@ -537,7 +548,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Delete { len: _len, meta } => {
+                DeltaItem::Delete { len, meta: _ } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -547,7 +558,7 @@ pub mod wasm {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("len"),
-                        &JsValue::from_f64(meta.utf16_len.unwrap() as f64),
+                        &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
                 }

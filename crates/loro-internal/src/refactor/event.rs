@@ -17,7 +17,7 @@ pub struct ContainerDiff {
     pub diff: Diff,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DiffEvent<'a> {
     /// whether the event comes from the children of the container.
     pub from_children: bool,
@@ -71,5 +71,32 @@ impl<'a> InternalDocDiff<'a> {
 
     pub fn can_merge(&self, other: &Self) -> bool {
         self.origin == other.origin && self.local == other.local
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use crate::LoroDoc;
+
+    #[test]
+    fn test_text_event() {
+        let loro = LoroDoc::new();
+        loro.subscribe_deep(Arc::new(|event| {
+            assert_eq!(
+                &event.container.diff.as_text().unwrap().vec[0]
+                    .as_insert()
+                    .unwrap()
+                    .0,
+                &"h223ello"
+            );
+            dbg!(event);
+        }));
+        let mut txn = loro.txn().unwrap();
+        let text = loro.get_text("id");
+        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert(&mut txn, 1, "223").unwrap();
+        txn.commit().unwrap();
     }
 }

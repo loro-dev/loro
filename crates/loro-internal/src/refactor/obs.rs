@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU32, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
@@ -25,12 +25,22 @@ struct ObserverInner {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct SubID(usize);
+pub struct SubID(u32);
+
+impl SubID {
+    pub fn into_u32(self) -> u32 {
+        self.0
+    }
+
+    pub fn from_u32(id: u32) -> Self {
+        Self(id)
+    }
+}
 
 pub struct Observer {
     inner: Mutex<ObserverInner>,
     arena: SharedArena,
-    next_sub_id: AtomicUsize,
+    next_sub_id: AtomicU32,
     taken_times: AtomicUsize,
 }
 
@@ -38,7 +48,7 @@ impl Observer {
     pub fn new(arena: SharedArena) -> Self {
         Self {
             arena,
-            next_sub_id: AtomicUsize::new(0),
+            next_sub_id: AtomicU32::new(0),
             taken_times: AtomicUsize::new(0),
             inner: Mutex::new(ObserverInner {
                 subscribers: Default::default(),
@@ -223,14 +233,14 @@ mod test {
             if text.get_value().as_string().unwrap().len() > 10 {
                 return;
             }
-            text.insert(&mut txn, 0, "123");
+            text.insert(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }));
 
         let loro = loro_cp;
         let mut txn = loro.txn().unwrap();
         let text = loro.get_text("id");
-        text.insert(&mut txn, 0, "123");
+        text.insert(&mut txn, 0, "123").unwrap();
         txn.commit().unwrap();
         let count = count.load(Ordering::SeqCst);
         assert!(count > 2, "{}", count);
@@ -250,20 +260,20 @@ mod test {
         assert_eq!(count.load(Ordering::SeqCst), 0);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123");
+            text.insert(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 1);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123");
+            text.insert(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 2);
         loro.unsubscribe(sub);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123");
+            text.insert(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 2);

@@ -582,7 +582,6 @@ impl List {
         self.container_idx
     }
 
-    /// Inserts an element at position index within the List
     pub fn insert<T: Transact, P: Prelim>(
         &mut self,
         txn: &T,

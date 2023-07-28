@@ -5,22 +5,31 @@ import {
   Loro,
   LoroEvent,
   MapDiff as MapDiff,
+  setPanicHook,
   TextDiff,
 } from "../src";
 
+setPanicHook();
 describe("Frontiers", () => {
   it("two clients", () => {
     const doc = new Loro();
     const text = doc.getText("text");
-    text.insert(doc, 0, "0");
+    const txn = doc.txn();
+    text.insert(txn, 0, "0");
+    txn.commit();
+
     const v0 = doc.frontiers();
     const docB = new Loro();
     docB.import(doc.exportFrom());
     expect(docB.cmpFrontiers(v0)).toBe(0);
-    text.insert(doc, 1, "0");
+    doc.transact((t) => {
+      text.insert(t, 1, "0");
+    });
     expect(docB.cmpFrontiers(doc.frontiers())).toBe(-1);
     const textB = docB.getText("text");
-    textB.insert(docB, 0, "0");
+    docB.transact((t) => {
+      textB.insert(t, 0, "0");
+    });
     expect(docB.cmpFrontiers(doc.frontiers())).toBe(-1);
     docB.import(doc.exportFrom());
     expect(docB.cmpFrontiers(doc.frontiers())).toBe(1);

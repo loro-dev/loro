@@ -16,6 +16,7 @@ pub mod log_store;
 pub mod op;
 pub mod refactor;
 pub mod version;
+pub use refactor::*;
 
 mod error;
 #[cfg(feature = "test_utils")]

@@ -13,7 +13,6 @@ loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 smartstring = { version = "1.0.1" }
 fxhash = "0.2.1"
-ring = "0.16.20"
 serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0.31"
 enum-as-inner = "0.5.1"
@@ -40,6 +39,7 @@ generic-btree = "0.4.0"
 compact-bytes = { path = "../compact-bytes" }
 lz4_flex = "0.11.1"
 miniz_oxide = "0.7.1"
+getrandom = "0.2.10"
 
 [dev-dependencies]
 serde_json = "1.0.87"

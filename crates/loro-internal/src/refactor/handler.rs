@@ -1,10 +1,13 @@
 use super::{state::DocState, txn::Transaction};
-use crate::container::{
-    list::list_op::{DeleteSpan, ListOp},
-    registry::ContainerIdx,
-    text::text_content::ListSlice,
+use crate::{
+    container::{
+        list::list_op::{DeleteSpan, ListOp},
+        registry::ContainerIdx,
+        text::text_content::ListSlice,
+    },
+    txn::EventHint,
 };
-use loro_common::{ContainerID, ContainerType, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -81,15 +84,15 @@ impl TextHandler {
     }
 }
 
-#[cfg(not(features = "wasm"))]
+#[cfg(not(feature = "wasm"))]
 impl TextHandler {
     #[inline(always)]
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         self.insert_utf8(txn, pos, s)
     }
 
     #[inline(always)]
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         self.delete_utf8(txn, pos, len)
     }
 
@@ -98,9 +101,9 @@ impl TextHandler {
         self.len_utf8()
     }
 
-    pub fn insert_utf8(&self, txn: &mut Transaction, pos: usize, s: &str) {
+    pub fn insert_utf8(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
-            return;
+            return Ok(());
         }
 
         txn.apply_local_op(
@@ -110,12 +113,12 @@ impl TextHandler {
                 pos,
             }),
             None,
-        );
+        )
     }
 
-    pub fn delete_utf8(&self, txn: &mut Transaction, pos: usize, len: usize) {
+    pub fn delete_utf8(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
-            return;
+            return Ok(());
         }
 
         txn.apply_local_op(
@@ -125,12 +128,12 @@ impl TextHandler {
                 len: len as isize,
             })),
             None,
-        );
+        )
     }
 
-    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) {
+    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
-            return;
+            return Ok(());
         }
 
         let start =
@@ -152,12 +155,14 @@ impl TextHandler {
                 pos: start,
             }),
             None,
-        );
+        )?;
+
+        Ok(())
     }
 
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
         if del == 0 {
-            return;
+            return Ok(());
         }
 
         let (start, end) =
@@ -178,11 +183,11 @@ impl TextHandler {
                 len: (end - start) as isize,
             })),
             None,
-        );
+        )
     }
 }
 
-#[cfg(features = "wasm")]
+#[cfg(feature = "wasm")]
 impl TextHandler {
     #[inline(always)]
     pub fn len(&self) -> usize {
@@ -190,29 +195,18 @@ impl TextHandler {
     }
 
     #[inline(always)]
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, del: usize) {
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
         self.delete_utf16(txn, pos, del)
     }
 
     #[inline(always)]
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) {
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         self.insert_utf16(txn, pos, s)
     }
 
-    pub fn len_utf16(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_text_state().as_ref().unwrap().len_wchars()
-            })
-    }
-
-    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) {
+    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
-            return;
+            return Ok(());
         }
 
         let start =
@@ -234,12 +228,12 @@ impl TextHandler {
                 pos: start,
             }),
             Some(EventHint::Utf16 { pos, len: 0 }),
-        );
+        )
     }
 
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) {
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
         if del == 0 {
-            return;
+            return Ok(());
         }
 
         let (start, end) =
@@ -260,7 +254,7 @@ impl TextHandler {
                 len: (end - start) as isize,
             })),
             Some(EventHint::Utf16 { pos, len: del }),
-        );
+        )
     }
 }
 
@@ -273,10 +267,10 @@ impl ListHandler {
         }
     }
 
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) {
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) -> LoroResult<()> {
         if let Some(container) = v.as_container() {
-            self.insert_container(txn, pos, container.container_type());
-            return;
+            self.insert_container(txn, pos, container.container_type())?;
+            return Ok(());
         }
 
         txn.apply_local_op(
@@ -286,7 +280,7 @@ impl ListHandler {
                 pos,
             }),
             None,
-        );
+        )
     }
 
     pub fn insert_container(
@@ -294,7 +288,7 @@ impl ListHandler {
         txn: &mut Transaction,
         pos: usize,
         c_type: ContainerType,
-    ) -> ContainerIdx {
+    ) -> LoroResult<ContainerIdx> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
@@ -307,13 +301,13 @@ impl ListHandler {
                 pos,
             }),
             None,
-        );
-        child_idx
+        )?;
+        Ok(child_idx)
     }
 
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) {
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
-            return;
+            return Ok(());
         }
 
         txn.apply_local_op(
@@ -323,10 +317,10 @@ impl ListHandler {
                 len: len as isize,
             })),
             None,
-        );
+        )
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.state
             .upgrade()
             .unwrap()
@@ -337,7 +331,7 @@ impl ListHandler {
             })
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -360,6 +354,18 @@ impl ListHandler {
             .idx_to_id(self.container_idx)
             .unwrap()
     }
+
+    pub fn get(&self, index: usize) -> Option<LoroValue> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_list_state().unwrap();
+                a.get(index).cloned()
+            })
+    }
 }
 
 impl MapHandler {
@@ -371,10 +377,10 @@ impl MapHandler {
         }
     }
 
-    pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) {
+    pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) -> LoroResult<()> {
         if let Some(value) = value.as_container() {
-            self.insert_container(txn, key, value.container_type());
-            return;
+            self.insert_container(txn, key, value.container_type())?;
+            return Ok(());
         }
 
         txn.apply_local_op(
@@ -384,7 +390,7 @@ impl MapHandler {
                 value,
             }),
             None,
-        );
+        )
     }
 
     pub fn insert_container(
@@ -392,7 +398,7 @@ impl MapHandler {
         txn: &mut Transaction,
         key: &str,
         c_type: ContainerType,
-    ) -> ContainerIdx {
+    ) -> LoroResult<ContainerIdx> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
@@ -404,11 +410,11 @@ impl MapHandler {
                 value: LoroValue::Container(container_id),
             }),
             None,
-        );
-        child_idx
+        )?;
+        Ok(child_idx)
     }
 
-    pub fn delete(&self, txn: &mut Transaction, key: &str) {
+    pub fn delete(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
@@ -417,7 +423,7 @@ impl MapHandler {
                 value: LoroValue::Null,
             }),
             None,
-        );
+        )
     }
 
     pub fn get_value(&self) -> LoroValue {
@@ -429,6 +435,18 @@ impl MapHandler {
             .get_value_by_idx(self.container_idx)
     }
 
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_map_state().unwrap();
+                a.get(key).cloned()
+            })
+    }
+
     pub fn id(&self) -> ContainerID {
         self.state
             .upgrade()
@@ -438,6 +456,21 @@ impl MapHandler {
             .arena
             .idx_to_id(self.container_idx)
             .unwrap()
+    }
+
+    pub fn len(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_map_state().as_ref().unwrap().len()
+            })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -451,14 +484,14 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert(&mut txn, 0, "hello");
+        text.insert(&mut txn, 0, "hello").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert(&mut txn, 2, " kk ");
+        text.insert(&mut txn, 2, " kk ").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "he kk llo");
         txn.abort();
         let mut txn = loro.txn().unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "");
-        text.insert(&mut txn, 0, "hi");
+        text.insert(&mut txn, 0, "hi").unwrap();
         txn.commit().unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hi");
     }
@@ -472,14 +505,14 @@ mod test {
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert(&mut txn, 0, "hello");
+        text.insert(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let exported = loro.export_from(&Default::default());
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert(&mut txn, 5, " world");
+        text.insert(&mut txn, 5, " world").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))

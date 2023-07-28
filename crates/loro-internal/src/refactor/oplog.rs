@@ -2,6 +2,7 @@ pub(crate) mod dag;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -232,6 +233,13 @@ impl OpLog {
 
     pub(crate) fn frontiers(&self) -> &Frontiers {
         &self.dag.frontiers
+    }
+
+    /// - Ordering::Less means self is less than target or parallel
+    /// - Ordering::Equal means versions equal
+    /// - Ordering::Greater means self's version is greater than target
+    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.dag.cmp_frontiers(other)
     }
 
     pub(crate) fn export_changes_from(&self, from: &VersionVector) -> RemoteClientChanges {

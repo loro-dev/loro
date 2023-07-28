@@ -200,4 +200,17 @@ impl AppDag {
     pub fn get_frontiers(&self) -> &Frontiers {
         &self.frontiers
     }
+
+    /// - Ordering::Less means self is less than target or parallel
+    /// - Ordering::Equal means versions equal
+    /// - Ordering::Greater means self's version is greater than target
+    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
+        if &self.frontiers == other {
+            Ordering::Equal
+        } else if other.iter().all(|id| self.vv.includes_id(*id)) {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }
+    }
 }

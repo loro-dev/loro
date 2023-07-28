@@ -800,7 +800,7 @@ mod test {
         let app = LoroDoc::new();
         let mut txn = app.txn().unwrap();
         let text = txn.get_text("id");
-        text.insert(&mut txn, 0, "hello");
+        text.insert(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let snapshot = app.export_snapshot();
         let app2 = LoroDoc::new();
@@ -818,7 +818,7 @@ mod test {
         // test import snapshot to a LoroApp that is already changed
         let mut txn = app2.txn().unwrap();
         let text = txn.get_text("id");
-        text.insert(&mut txn, 2, " ");
+        text.insert(&mut txn, 2, " ").unwrap();
         txn.commit().unwrap();
         debug_log::group!("app2 export");
         let snapshot = app2.export_snapshot();

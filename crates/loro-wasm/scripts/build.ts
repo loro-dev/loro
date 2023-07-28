@@ -19,12 +19,13 @@ const LoroWasmDir = resolve(__dirname, "..");
 console.log(LoroWasmDir);
 async function build() {
   await cargoBuild();
-  if (Deno.args[1] != null) {
-    if (!TARGETS.includes(Deno.args[1])) {
-      throw new Error(`Invalid target ${Deno.args[1]}`);
+  const target = Deno.args[1];
+  if (target != null) {
+    if (!TARGETS.includes(target)) {
+      throw new Error(`Invalid target ${target}`);
     }
 
-    buildTarget(Deno.args[1]);
+    buildTarget(target);
     return;
   }
 
@@ -74,13 +75,29 @@ async function buildTarget(target: string) {
   try {
     await Deno.remove(targetDirPath, { recursive: true });
     console.log("Clear directory " + targetDirPath);
-  } catch (e) {}
+  } catch (_e) {
+    //
+  }
 
   const cmd =
     `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
+
+  if (target === "nodejs") {
+    console.log("🔨  Patching nodejs target");
+    const patch = await Deno.readTextFile(
+      resolve(__dirname, "./nodejs_patch.js"),
+    );
+    const wasm = await Deno.readTextFile(
+      resolve(targetDirPath, "loro_wasm.js"),
+    );
+    await Deno.writeTextFile(
+      resolve(targetDirPath, "loro_wasm.js"),
+      wasm + "\n" + patch,
+    );
+  }
 }
 
 build();

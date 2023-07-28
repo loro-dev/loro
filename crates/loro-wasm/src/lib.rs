@@ -1,23 +1,20 @@
-use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
+use js_sys::{Array, Promise, Uint8Array};
 use loro_internal::{
-    configure::{Configure, SecureRandomGenerator},
-    container::{registry::ContainerWrapper, ContainerID},
-    context::Context,
+    configure::SecureRandomGenerator,
+    container::ContainerID,
     event::{Diff, Path},
-    log_store::GcConfig,
+    obs::SubID,
+    refactor::handler::{ListHandler, MapHandler, TextHandler},
+    refactor::txn::Transaction as Txn,
     version::Frontiers,
-    ContainerType, List, LoroCore, Map, Origin, Text, Transact, TransactionWrap, VersionVector,
+    ContainerType, DiffEvent, LoroDoc, VersionVector,
 };
 use std::{cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
-use wasm_bindgen::{
-    __rt::{IntoJsResult, RefMut},
-    prelude::*,
-};
+use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 mod prelim;
 pub use prelim::{PrelimList, PrelimMap, PrelimText};
 
-use crate::convert::js_try_to_prelim;
 mod convert;
 
 #[wasm_bindgen(js_name = setPanicHook)]
@@ -32,13 +29,18 @@ pub fn set_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+#[wasm_bindgen(js_name = setDebug)]
+pub fn set_debug(filter: &str) {
+    debug_log::set_debug(filter)
+}
+
 type JsResult<T> = Result<T, JsValue>;
 
 #[wasm_bindgen]
-pub struct Loro(RefCell<LoroCore>);
+pub struct Loro(RefCell<LoroDoc>);
 
 impl Deref for Loro {
-    type Target = RefCell<LoroCore>;
+    type Target = RefCell<LoroDoc>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -79,6 +81,8 @@ mod observer {
 
     use wasm_bindgen::JsValue;
 
+    use crate::JsResult;
+
     /// We need to wrap the observer function in a struct so that we can implement Send for it.
     /// But it's not Send essentially, so we need to check it manually in runtime.
     #[derive(Clone)]
@@ -95,9 +99,9 @@ mod observer {
             }
         }
 
-        pub fn call1(&self, arg: &JsValue) {
+        pub fn call1(&self, arg: &JsValue) -> JsResult<JsValue> {
             if std::thread::current().id() == self.thread {
-                self.f.call1(&JsValue::NULL, arg).unwrap();
+                self.f.call1(&JsValue::NULL, arg)
             } else {
                 panic!("Observer called from different thread")
             }
@@ -111,17 +115,20 @@ mod observer {
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let cfg: Configure = Configure {
-            gc: GcConfig::default().with_gc(false),
-            get_time: || js_sys::Date::now() as i64,
-            rand: Arc::new(MathRandom),
-        };
-        Self(RefCell::new(LoroCore::new(cfg, None)))
+        Self(RefCell::new(LoroDoc::new()))
+    }
+
+    pub fn txn(&self) -> Transaction {
+        Transaction(self.0.borrow().txn().unwrap())
+    }
+
+    pub fn txn_with_origin(&self, origin: &str) -> Transaction {
+        Transaction(self.0.borrow().txn_with_origin(origin).unwrap())
     }
 
     #[wasm_bindgen(js_name = "clientId", method, getter)]
     pub fn client_id(&self) -> u64 {
-        self.0.borrow().client_id()
+        self.0.borrow().peer_id()
     }
 
     #[wasm_bindgen(js_name = "getText")]
@@ -146,26 +153,20 @@ impl Loro {
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
         let ty = container_id.container_type();
-        let container = self.0.borrow_mut().get_container(&container_id);
-        if let Some(container) = container {
-            let client_id = self.0.borrow().client_id();
-            Ok(match ty {
-                ContainerType::Text => {
-                    let text: Text = Text::from_instance(container, client_id);
-                    LoroText(text).into()
-                }
-                ContainerType::Map => {
-                    let map: Map = Map::from_instance(container, client_id);
-                    LoroMap(map).into()
-                }
-                ContainerType::List => {
-                    let list: List = List::from_instance(container, client_id);
-                    LoroList(list).into()
-                }
-            })
-        } else {
-            Err(JsValue::from_str("Container not found"))
-        }
+        Ok(match ty {
+            ContainerType::Text => {
+                let text = self.0.borrow().get_text(container_id);
+                LoroText(text).into()
+            }
+            ContainerType::Map => {
+                let map = self.0.borrow().get_map(container_id);
+                LoroMap(map).into()
+            }
+            ContainerType::List => {
+                let list = self.0.borrow().get_list(container_id);
+                LoroList(list).into()
+            }
+        })
     }
 
     #[inline(always)]
@@ -194,7 +195,7 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.borrow().encode_all())
+        Ok(self.0.borrow().export_snapshot())
     }
 
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
@@ -211,11 +212,11 @@ impl Loro {
             None => Default::default(),
         };
 
-        Ok(self.0.borrow().encode_from(vv))
+        Ok(self.0.borrow().export_from(&vv))
     }
 
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
-        self.0.borrow_mut().decode(update_or_snapshot)?;
+        self.0.borrow_mut().import(update_or_snapshot)?;
         Ok(())
     }
 
@@ -231,7 +232,7 @@ impl Loro {
         if data.is_empty() {
             return Ok(());
         }
-        Ok(self.0.borrow_mut().decode_batch(&data)?)
+        Ok(self.0.borrow_mut().import_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]
@@ -243,45 +244,55 @@ impl Loro {
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
-        self.0.borrow_mut().subscribe_deep(Box::new(move |e| {
-            call_after_micro_task(observer.clone(), e);
-        }))
+        self.0
+            .borrow_mut()
+            .subscribe_deep(Arc::new(move |e| {
+                call_after_micro_task(observer.clone(), e);
+            }))
+            .into_u32()
     }
 
     pub fn unsubscribe(&self, subscription: u32) {
-        self.0.borrow_mut().unsubscribe_deep(subscription)
+        self.0
+            .borrow_mut()
+            .unsubscribe(SubID::from_u32(subscription))
     }
 
     /// It's the caller's responsibility to commit and free the transaction
     #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
-    pub fn transaction_with_origin(&self, origin: &JsOrigin, f: js_sys::Function) -> JsResult<()> {
-        let origin = origin.as_string().map(Origin::from);
-        let txn = self.0.borrow().transact_with(origin);
+    pub fn transaction_with_origin(
+        &self,
+        origin: &JsOrigin,
+        f: js_sys::Function,
+    ) -> JsResult<JsValue> {
+        let origin = origin.as_string().unwrap();
+        debug_log::group!("transaction with origin: {}", origin);
+        let txn = self.0.borrow().txn_with_origin(&origin)?;
         let js_txn = JsValue::from(Transaction(txn));
-        f.call1(&JsValue::NULL, &js_txn)?;
-        Ok(())
+        let ans = f.call1(&JsValue::NULL, &js_txn);
+        debug_log::group_end!();
+        ans
     }
 }
 
-fn call_after_micro_task(ob: observer::Observer, e: &loro_internal::event::Event) {
-    let e = e.clone();
+fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
+    let event = Event {
+        local: e.doc.local,
+        origin: e.doc.origin.to_string(),
+        target: e.container.id.clone(),
+        diff: Either::A(e.container.diff.to_owned()),
+        path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
+    };
     let closure = Closure::once(move |_: JsValue| {
-        ob.call1(
-            &Event {
-                local: e.local,
-                origin: e.origin.clone(),
-                target: e.target.clone(),
-                diff: Either::A(e.diff),
-                path: Either::A(e.absolute_path.clone()),
-            }
-            .into(),
-        );
-
+        let ans = ob.call1(&event.into());
         drop(copy);
+        if let Err(e) = ans {
+            console_log!("Error when calling observer: {:#?}", e);
+        }
     });
     let _ = promise.then(&closure);
     drop_handler.borrow_mut().replace(closure);
@@ -301,7 +312,7 @@ enum Either<A, B> {
 #[wasm_bindgen]
 pub struct Event {
     pub local: bool,
-    origin: Option<Origin>,
+    origin: String,
     target: ContainerID,
     diff: Either<Diff, JsValue>,
     path: Either<Path, JsValue>,
@@ -310,10 +321,8 @@ pub struct Event {
 #[wasm_bindgen]
 impl Event {
     #[wasm_bindgen(js_name = "origin", method, getter)]
-    pub fn origin(&self) -> Option<JsOrigin> {
-        self.origin
-            .as_ref()
-            .map(|o| JsValue::from_str(o.as_str()).into())
+    pub fn origin(&self) -> String {
+        self.origin.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -351,62 +360,38 @@ impl Event {
 }
 
 #[wasm_bindgen]
-pub struct Transaction(TransactionWrap);
+pub struct Transaction(Txn);
 
 #[wasm_bindgen]
 impl Transaction {
-    pub fn commit(&self) -> JsResult<()> {
+    pub fn commit(self) -> JsResult<()> {
         self.0.commit()?;
         Ok(())
     }
 }
 
-fn get_transaction_mut(txn: &JsTransaction) -> TransactionWrap {
-    use wasm_bindgen::convert::RefMutFromWasmAbi;
-    let js: &JsValue = txn.as_ref();
-    if js.is_undefined() || js.is_null() {
-        panic!("you should input Transaction");
-    } else {
-        let ctor_name = Object::get_prototype_of(js).constructor().name();
-        if ctor_name == "Transaction" {
-            let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
-            let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
-            let txn: RefMut<Transaction> = unsafe { Transaction::ref_mut_from_abi(ptr) };
-            txn.0.transact()
-        } else if ctor_name == "Loro" {
-            let ptr = Reflect::get(js, &JsValue::from_str("ptr")).unwrap();
-            let ptr = ptr.as_f64().ok_or(JsValue::NULL).unwrap() as u32;
-            let loro: RefMut<Loro> = unsafe { Loro::ref_mut_from_abi(ptr) };
-            let loro = loro.0.borrow();
-            loro.transact()
-        } else {
-            panic!("you should input Transaction");
-        }
-    }
-}
-
 #[wasm_bindgen]
-pub struct LoroText(Text);
+pub struct LoroText(TextHandler);
 
 #[wasm_bindgen]
 impl LoroText {
-    pub fn __loro_insert(&mut self, txn: &Loro, index: usize, content: &str) -> JsResult<()> {
-        self.0.insert_utf16(&*txn.0.borrow(), index, content)?;
+    pub fn __txn_insert(
+        &mut self,
+        txn: &mut Transaction,
+        index: usize,
+        content: &str,
+    ) -> JsResult<()> {
+        self.0.insert_utf16(&mut txn.0, index, content)?;
         Ok(())
     }
 
-    pub fn __loro_delete(&mut self, txn: &Loro, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete_utf16(&*txn.0.borrow(), index, len)?;
-        Ok(())
-    }
-
-    pub fn __txn_insert(&mut self, txn: &Transaction, index: usize, content: &str) -> JsResult<()> {
-        self.0.insert_utf16(&txn.0, index, content)?;
-        Ok(())
-    }
-
-    pub fn __txn_delete(&mut self, txn: &Transaction, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete_utf16(&txn.0, index, len)?;
+    pub fn __txn_delete(
+        &mut self,
+        txn: &mut Transaction,
+        index: usize,
+        len: usize,
+    ) -> JsResult<()> {
+        self.0.delete_utf16(&mut txn.0, index, len)?;
         Ok(())
     }
 
@@ -427,69 +412,44 @@ impl LoroText {
         self.0.len()
     }
 
-    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe(
-            &txn,
-            Box::new(move |e| {
+        let ans = loro.0.borrow_mut().subscribe(
+            &self.0.id(),
+            Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e);
             }),
-        )?;
-        Ok(ans)
+        );
+
+        Ok(ans.into_u32())
     }
 
-    #[wasm_bindgen(js_name = "subscribeOnce")]
-    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
-        let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe_once(
-            &txn,
-            Box::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
-            }),
-        )?;
-        Ok(ans)
-    }
-
-    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.unsubscribe(&txn, subscription)?;
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0
+            .borrow_mut()
+            .unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 }
 
 #[wasm_bindgen]
-pub struct LoroMap(Map);
+pub struct LoroMap(MapHandler);
 const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List";
 
 #[wasm_bindgen]
 impl LoroMap {
-    pub fn __loro_insert(&mut self, txn: &Loro, key: &str, value: JsValue) -> JsResult<()> {
-        if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&*txn.0.borrow(), key, v)?;
-        } else {
-            self.0.insert(&*txn.0.borrow(), key, value)?;
-        };
+    pub fn __txn_insert(
+        &mut self,
+        txn: &mut Transaction,
+        key: &str,
+        value: JsValue,
+    ) -> JsResult<()> {
+        self.0.insert(&mut txn.0, key, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_insert(&mut self, txn: &Transaction, key: &str, value: JsValue) -> JsResult<()> {
-        if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&txn.0, key, v)?;
-        } else {
-            self.0.insert(&txn.0, key, value)?;
-        };
-        Ok(())
-    }
-
-    pub fn __loro_delete(&mut self, txn: &Loro, key: &str) -> JsResult<()> {
-        self.0.delete(&*txn.0.borrow(), key)?;
-        Ok(())
-    }
-
-    pub fn __txn_delete(&mut self, txn: &Transaction, key: &str) -> JsResult<()> {
-        self.0.delete(&txn.0, key)?;
+    pub fn __txn_delete(&mut self, txn: &mut Transaction, key: &str) -> JsResult<()> {
+        self.0.delete(&mut txn.0, key)?;
         Ok(())
     }
 
@@ -510,85 +470,44 @@ impl LoroMap {
     }
 
     #[wasm_bindgen(js_name = "getValueDeep")]
-    pub fn get_value_deep(&self, ctx: &Loro) -> JsValue {
-        self.0.get_value_deep(ctx.deref()).into()
+    pub fn get_value_deep(&self) -> JsValue {
+        todo!()
+        // self.0.get_value_deep(ctx.deref()).into()
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,
-        txn: &JsTransaction,
+        txn: &mut Transaction,
         key: &str,
         container_type: &str,
     ) -> JsResult<JsValue> {
-        let txn = get_transaction_mut(txn);
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let idx = self.0.insert(&txn, key, type_)?.unwrap();
+        let idx = self.0.insert_container(&mut txn.0, key, type_)?;
 
         let container = match type_ {
-            ContainerType::Text => {
-                let x = txn.get_text_by_idx(idx).unwrap();
-                LoroText(x).into()
-            }
-            ContainerType::Map => {
-                let x = txn.get_map_by_idx(idx).unwrap();
-                LoroMap(x).into()
-            }
-            ContainerType::List => {
-                let x = txn.get_list_by_idx(idx).unwrap();
-                LoroList(x).into()
-            }
+            ContainerType::Text => LoroText(txn.0.get_text(idx)).into(),
+            ContainerType::Map => LoroMap(txn.0.get_map(idx)).into(),
+            ContainerType::List => LoroList(txn.0.get_list(idx)).into(),
         };
         Ok(container)
     }
 
-    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe(
-            &txn,
-            Box::new(move |e| {
+        let id = loro.0.borrow_mut().subscribe(
+            &self.0.id(),
+            Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e);
             }),
-        )?;
-        Ok(ans)
-    }
+        );
 
-    #[wasm_bindgen(js_name = "subscribeOnce")]
-    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
-        let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe_once(
-            &txn,
-            Box::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
-            }),
-        )?;
-        Ok(ans)
-    }
-
-    #[wasm_bindgen(js_name = "subscribeDeep")]
-    pub fn subscribe_deep(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
-        let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe_deep(
-            &txn,
-            Box::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
-            }),
-        )?;
-        Ok(ans)
-    }
-
-    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.unsubscribe(&txn, subscription)?;
-        Ok(())
+        Ok(id.into_u32())
     }
 
     #[wasm_bindgen(js_name = "size", method, getter)]
@@ -598,40 +517,27 @@ impl LoroMap {
 }
 
 #[wasm_bindgen]
-pub struct LoroList(List);
+pub struct LoroList(ListHandler);
 
 #[wasm_bindgen]
 impl LoroList {
-    pub fn __loro_insert(&mut self, loro: &Loro, index: usize, value: JsValue) -> JsResult<()> {
-        if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&*loro.0.borrow(), index, v)?;
-        } else {
-            self.0.insert(&*loro.0.borrow(), index, value)?;
-        };
-        Ok(())
-    }
-
     pub fn __txn_insert(
         &mut self,
-        txn: &Transaction,
+        txn: &mut Transaction,
         index: usize,
         value: JsValue,
     ) -> JsResult<()> {
-        if let Some(v) = js_try_to_prelim(&value) {
-            self.0.insert(&txn.0, index, v)?;
-        } else {
-            self.0.insert(&txn.0, index, value)?;
-        };
+        self.0.insert(&mut txn.0, index, value.into())?;
         Ok(())
     }
 
-    pub fn __loro_delete(&mut self, loro: &Loro, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete(&*loro.0.borrow(), index, len)?;
-        Ok(())
-    }
-
-    pub fn __txn_delete(&mut self, loro: &Transaction, index: usize, len: usize) -> JsResult<()> {
-        self.0.delete(&loro.0, index, len)?;
+    pub fn __txn_delete(
+        &mut self,
+        txn: &mut Transaction,
+        index: usize,
+        len: usize,
+    ) -> JsResult<()> {
+        self.0.delete(&mut txn.0, index, len)?;
         Ok(())
     }
 
@@ -651,85 +557,43 @@ impl LoroList {
     }
 
     #[wasm_bindgen(js_name = "getValueDeep")]
-    pub fn get_value_deep(&self, ctx: &Loro) -> JsValue {
-        let value = self.0.get_value_deep(ctx.deref());
-        value.into()
+    pub fn get_value_deep(&self) -> JsValue {
+        todo!()
+        // let value = self.0.get_value_deep(ctx.deref());
+        // value.into()
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
     pub fn insert_container(
         &mut self,
-        txn: &JsTransaction,
+        txn: &mut Transaction,
         pos: usize,
         container: &str,
     ) -> JsResult<JsValue> {
-        let txn = get_transaction_mut(txn);
         let _type = match container {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let idx = self.0.insert(&txn, pos, _type)?.unwrap();
+        let idx = self.0.insert_container(&mut txn.0, pos, _type)?;
         let container = match _type {
-            ContainerType::Text => {
-                let x = txn.get_text_by_idx(idx).unwrap();
-                LoroText(x).into()
-            }
-            ContainerType::Map => {
-                let x = txn.get_map_by_idx(idx).unwrap();
-                LoroMap(x).into()
-            }
-            ContainerType::List => {
-                let x = txn.get_list_by_idx(idx).unwrap();
-                LoroList(x).into()
-            }
+            ContainerType::Text => LoroText(txn.0.get_text(idx)).into(),
+            ContainerType::Map => LoroMap(txn.0.get_map(idx)).into(),
+            ContainerType::List => LoroList(txn.0.get_list(idx)).into(),
         };
         Ok(container)
     }
 
-    pub fn subscribe(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe(
-            &txn,
-            Box::new(move |e| {
+        let ans = loro.0.borrow_mut().subscribe(
+            &self.0.id(),
+            Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e);
             }),
-        )?;
-        Ok(ans)
-    }
-
-    #[wasm_bindgen(js_name = "subscribeOnce")]
-    pub fn subscribe_once(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
-        let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe_once(
-            &txn,
-            Box::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
-            }),
-        )?;
-        Ok(ans)
-    }
-
-    #[wasm_bindgen(js_name = "subscribeDeep")]
-    pub fn subscribe_deep(&self, txn: &JsTransaction, f: js_sys::Function) -> JsResult<u32> {
-        let observer = observer::Observer::new(f);
-        let txn = get_transaction_mut(txn);
-        let ans = self.0.subscribe_deep(
-            &txn,
-            Box::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
-            }),
-        )?;
-        Ok(ans)
-    }
-
-    pub fn unsubscribe(&self, txn: &JsTransaction, subscription: u32) -> JsResult<()> {
-        let txn = get_transaction_mut(txn);
-        self.0.unsubscribe(&txn, subscription)?;
-        Ok(())
+        );
+        Ok(ans.into_u32())
     }
 
     #[wasm_bindgen(js_name = "length", method, getter)]
