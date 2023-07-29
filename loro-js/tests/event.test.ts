@@ -151,7 +151,7 @@ describe("event", () => {
       let ran = 0;
       const sub = text.subscribe(loro, (event) => {
         if (!ran) {
-          expect(event.diff.diff).toStrictEqual(
+          expect((event.diff as any).diff).toStrictEqual(
             [{ type: "insert", "value": "123" }] as Delta<string>[],
           );
         }

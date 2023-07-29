@@ -47,6 +47,7 @@ impl Rope {
     }
 
     /// this method will downgrade to use utf8 length directly when the content is unknown
+    #[allow(unused)]
     pub fn utf8_to_utf16_with_unknown(&self, index: usize) -> usize {
         self.process_cursor_at(
             index,

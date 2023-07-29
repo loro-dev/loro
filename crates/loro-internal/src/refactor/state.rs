@@ -10,7 +10,7 @@ use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{registry::ContainerIdx, ContainerIdRaw},
     delta::{Delta, DeltaItem},
-    event::{Diff, Index, Utf16Meta},
+    event::{Diff, Index},
     id::PeerID,
     op::RawOp,
     refactor::event::InternalContainerDiff,
@@ -540,14 +540,14 @@ impl DocState {
 
         match idx.get_type() {
             ContainerType::Text => {
-                let mut ans: Delta<String, Utf16Meta> = Delta::new();
+                let mut ans: Delta<String> = Delta::new();
                 let mut index = 0;
                 for span in seq.iter() {
                     match span {
                         crate::delta::DeltaItem::Retain { len, .. } => {
                             ans.push(DeltaItem::Retain {
                                 len: *len,
-                                meta: Utf16Meta { utf16_len: None },
+                                meta: (),
                             });
                             index += len;
                         }
@@ -560,16 +560,13 @@ impl DocState {
                                     .slice_bytes(slice.0.start as usize..slice.0.end as usize);
                                 s.push_str(std::str::from_utf8(&bytes).unwrap());
                             }
-                            ans.push(DeltaItem::Insert {
-                                value: s,
-                                meta: Utf16Meta { utf16_len: None },
-                            });
+                            ans.push(DeltaItem::Insert { value: s, meta: () });
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { len, .. } => {
                             ans.push(DeltaItem::Delete {
                                 len: *len,
-                                meta: Utf16Meta { utf16_len: None },
+                                meta: (),
                             });
                         }
                     }

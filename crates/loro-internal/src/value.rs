@@ -289,7 +289,7 @@ pub mod wasm {
 
     use crate::{
         delta::{Delta, DeltaItem, MapDelta, MapDiff},
-        event::{Diff, Index, Utf16Meta},
+        event::{Diff, Index},
         LoroValue,
     };
 
@@ -504,8 +504,8 @@ pub mod wasm {
         }
     }
 
-    impl From<Delta<String, Utf16Meta>> for JsValue {
-        fn from(value: Delta<String, Utf16Meta>) -> Self {
+    impl From<Delta<String>> for JsValue {
+        fn from(value: Delta<String>) -> Self {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.iter().enumerate() {
                 arr.set(i as u32, JsValue::from(v.clone()));
@@ -515,8 +515,8 @@ pub mod wasm {
         }
     }
 
-    impl From<DeltaItem<String, Utf16Meta>> for JsValue {
-        fn from(value: DeltaItem<String, Utf16Meta>) -> Self {
+    impl From<DeltaItem<String, ()>> for JsValue {
+        fn from(value: DeltaItem<String, ()>) -> Self {
             let obj = Object::new();
             match value {
                 DeltaItem::Retain { len, meta: _ } => {
