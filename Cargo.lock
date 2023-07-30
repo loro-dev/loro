@@ -1076,6 +1076,7 @@ dependencies = [
  "getrandom",
  "js-sys",
  "loro-internal",
+ "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
 ]

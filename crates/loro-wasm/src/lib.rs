@@ -1,8 +1,8 @@
-use js_sys::{Array, Promise, Uint8Array};
+use js_sys::{Array, Promise, Reflect, Uint8Array};
 use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
-    event::{Diff, Path},
+    event::{Diff, Index},
     obs::SubID,
     refactor::handler::{ListHandler, MapHandler, TextHandler},
     refactor::txn::Transaction as Txn,
@@ -36,6 +36,9 @@ pub fn set_debug(filter: &str) {
 
 type JsResult<T> = Result<T, JsValue>;
 
+/// The CRDT document.
+///
+/// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
 pub struct Loro(LoroDoc);
 
@@ -130,8 +133,8 @@ impl Loro {
         ))
     }
 
-    #[wasm_bindgen(js_name = "clientId", method, getter)]
-    pub fn client_id(&self) -> u64 {
+    #[wasm_bindgen(js_name = "peerId", method, getter)]
+    pub fn peer_id(&self) -> u64 {
         self.0.peer_id()
     }
 
@@ -277,17 +280,27 @@ impl Loro {
 }
 
 fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
+    // We convert the event to js object here, so that we don't need to worry about GC.
+    // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
+    // in wasm-bindgen to avoid this.
+    //
+    // [1]: https://caniuse.com/?search=FinalizationRegistry
+    // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = Event {
+        path: Event::get_path(
+            e.container.path.len() as u32,
+            e.container.path.iter().map(|x| &x.1),
+        ),
         from_children: e.from_children,
         local: e.doc.local,
         origin: e.doc.origin.to_string(),
         target: e.container.id.clone(),
-        diff: Either::A(e.container.diff.to_owned()),
-        path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
-    };
+        diff: e.container.diff.to_owned(),
+    }
+    // PERF: converting the events into js values may hurt performance
+    .into_js();
 
-    let value: JsValue = event.into();
-    if let Err(e) = ob.call1(&value) {
+    if let Err(e) = ob.call1(&event) {
         console_error!("Error when calling observer: {:#?}", e);
     }
 }
@@ -303,12 +316,16 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
         local: e.doc.local,
         origin: e.doc.origin.to_string(),
         target: e.container.id.clone(),
-        diff: Either::A(e.container.diff.to_owned()),
-        path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
-    };
+        diff: (e.container.diff.to_owned()),
+        path: Event::get_path(
+            e.container.path.len() as u32,
+            e.container.path.iter().map(|x| &x.1),
+        ),
+    }
+    .into_js();
 
     let closure = Closure::once(move |_: JsValue| {
-        let ans = ob.call1(&event.into());
+        let ans = ob.call1(&event);
         drop(copy);
         if let Err(e) = ans {
             console_error!("Error when calling observer: {:#?}", e);
@@ -325,59 +342,34 @@ impl Default for Loro {
     }
 }
 
-enum Either<A, B> {
-    A(A),
-    B(B),
-}
-
-#[wasm_bindgen]
 pub struct Event {
     pub local: bool,
     pub from_children: bool,
     origin: String,
     target: ContainerID,
-    diff: Either<Diff, JsValue>,
-    path: Either<Path, JsValue>,
+    diff: Diff,
+    path: JsValue,
 }
 
-#[wasm_bindgen]
 impl Event {
-    #[wasm_bindgen(js_name = "origin", method, getter)]
-    pub fn origin(&self) -> String {
-        self.origin.clone()
+    fn into_js(self) -> JsValue {
+        let obj = js_sys::Object::new();
+        Reflect::set(&obj, &"local".into(), &self.local.into()).unwrap();
+        Reflect::set(&obj, &"fromChildren".into(), &self.from_children.into()).unwrap();
+        Reflect::set(&obj, &"origin".into(), &self.origin.into()).unwrap();
+        Reflect::set(&obj, &"target".into(), &self.target.to_string().into()).unwrap();
+        Reflect::set(&obj, &"diff".into(), &self.diff.into()).unwrap();
+        Reflect::set(&obj, &"path".into(), &self.path).unwrap();
+        obj.into()
     }
 
-    #[wasm_bindgen(getter)]
-    pub fn target(&self) -> JsContainerID {
-        JsValue::from_str(&self.target.to_string()).into()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn path(&mut self) -> JsValue {
-        match &mut self.path {
-            Either::A(path) => {
-                let arr = Array::new_with_length(path.len() as u32);
-                for (i, p) in path.iter().enumerate() {
-                    arr.set(i as u32, p.clone().into());
-                }
-                let inner: JsValue = arr.into_js_result().unwrap();
-                self.path = Either::B(inner.clone());
-                inner
-            }
-            Either::B(new) => new.clone(),
+    fn get_path<'a>(n: u32, source: impl Iterator<Item = &'a Index>) -> JsValue {
+        let arr = Array::new_with_length(n);
+        for (i, p) in source.enumerate() {
+            arr.set(i as u32, p.clone().into());
         }
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn diff(&mut self) -> JsValue {
-        match &self.diff {
-            Either::A(diff) => {
-                let value: JsValue = diff.clone().into();
-                self.diff = Either::B(value.clone());
-                value
-            }
-            Either::B(ans) => ans.clone(),
-        }
+        let path: JsValue = arr.into_js_result().unwrap();
+        path
     }
 }
 
