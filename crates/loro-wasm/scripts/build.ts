@@ -79,6 +79,7 @@ async function buildTarget(target: string) {
     //
   }
 
+  // TODO: polyfill FinalizationRegistry
   const cmd =
     `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
