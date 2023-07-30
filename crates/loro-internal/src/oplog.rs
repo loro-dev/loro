@@ -193,6 +193,7 @@ impl OpLog {
         Ok(())
     }
 
+    #[allow(unused)]
     fn convert_change(&mut self, change: Change<RemoteOp>) -> Change {
         let mut ops = RleVec::new();
         for op in change.ops {

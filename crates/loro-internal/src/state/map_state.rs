@@ -4,11 +4,11 @@ use fxhash::FxHashMap;
 use loro_common::ContainerID;
 
 use crate::{
+    arena::SharedArena,
     container::registry::ContainerIdx,
     delta::MapValue,
     event::{Diff, Index},
     op::{RawOp, RawOpContent},
-    refactor::arena::SharedArena,
     InternalString, LoroValue,
 };
 

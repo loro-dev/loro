@@ -6,6 +6,21 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
+pub mod arena;
+pub mod diff_calc;
+pub mod handler;
+pub use event::{ContainerDiff, DiffEvent, DocDiff};
+pub use handler::{ListHandler, MapHandler, TextHandler};
+pub use loro::LoroDoc;
+pub use oplog::OpLog;
+pub use state::DocState;
+pub mod loro;
+pub mod obs;
+pub mod oplog;
+pub mod snapshot_encode;
+mod state;
+pub mod txn;
+
 pub mod change;
 pub mod configure;
 pub mod container;
@@ -13,9 +28,7 @@ pub mod dag;
 pub mod id;
 pub mod log_store;
 pub mod op;
-pub mod refactor;
 pub mod version;
-pub use refactor::*;
 
 mod error;
 #[cfg(feature = "test_utils")]

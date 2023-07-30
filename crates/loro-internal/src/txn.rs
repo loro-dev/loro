@@ -259,6 +259,7 @@ impl Transaction {
         self.state.lock().unwrap().get_value_by_idx(idx)
     }
 
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,

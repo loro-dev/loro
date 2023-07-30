@@ -507,7 +507,7 @@ impl MapHandler {
 #[cfg(test)]
 mod test {
 
-    use crate::refactor::loro::LoroDoc;
+    use crate::loro::LoroDoc;
 
     #[test]
     fn test() {

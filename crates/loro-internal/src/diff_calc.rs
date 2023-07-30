@@ -24,21 +24,18 @@ use super::{event::InternalContainerDiff, oplog::OpLog};
 /// TODO: persist diffCalculator and skip processed version
 #[derive(Default)]
 pub struct DiffCalculator {
-    start_vv: VersionVector,
-    end_vv: VersionVector,
     calculators: FxHashMap<ContainerIdx, ContainerDiffCalculator>,
 }
 
 impl DiffCalculator {
     pub fn new() -> Self {
         Self {
-            start_vv: Default::default(),
-            end_vv: Default::default(),
             calculators: Default::default(),
         }
     }
 
     // PERF: if the causal order is linear, we can skip some of the calculation
+    #[allow(unused)]
     pub(crate) fn calc_diff(
         &mut self,
         oplog: &super::oplog::OpLog,
@@ -186,11 +183,11 @@ impl MapDiffCalculator {
 }
 
 impl DiffCalculatorTrait for MapDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &crate::OpLog, _vv: &crate::VersionVector) {}
 
     fn apply_change(
         &mut self,
-        oplog: &super::oplog::OpLog,
+        oplog: &crate::OpLog,
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
@@ -290,12 +287,6 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         to: &crate::VersionVector,
     ) -> Diff {
         Diff::SeqRaw(self.tracker.diff(from, to))
-    }
-}
-
-impl TextDiffCalculator {
-    fn new(tracker: Tracker) -> Self {
-        Self { tracker }
     }
 }
 

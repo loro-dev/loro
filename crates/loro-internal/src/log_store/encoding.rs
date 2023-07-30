@@ -3,7 +3,7 @@ mod encode_updates;
 
 use rle::HasLength;
 
-use crate::{refactor::oplog::OpLog, LoroError, VersionVector};
+use crate::{oplog::OpLog, LoroError, VersionVector};
 
 use self::{
     encode_changes::{decode_oplog_changes, encode_oplog_changes},

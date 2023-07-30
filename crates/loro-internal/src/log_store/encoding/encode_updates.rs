@@ -9,7 +9,7 @@ use crate::{
     id::{Counter, PeerID, ID},
     log_store::RemoteClientChanges,
     op::{RawOpContent, RemoteOp},
-    refactor::oplog::OpLog,
+    oplog::OpLog,
     version::Frontiers,
     LoroError, VersionVector,
 };

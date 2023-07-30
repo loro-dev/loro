@@ -3,9 +3,9 @@ use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
     event::{Diff, Index},
+    handler::{ListHandler, MapHandler, TextHandler},
     obs::SubID,
-    refactor::handler::{ListHandler, MapHandler, TextHandler},
-    refactor::txn::Transaction as Txn,
+    txn::Transaction as Txn,
     version::Frontiers,
     ContainerType, DiffEvent, LoroDoc, VersionVector,
 };

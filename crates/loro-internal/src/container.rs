@@ -18,6 +18,14 @@ pub use loro_common::ContainerType;
 
 pub use loro_common::ContainerID;
 
+use crate::{event::Diff, VersionVector};
+
+use super::oplog::OpLog;
+
+pub trait Container {
+    fn diff(&self, log: &OpLog, before: &VersionVector, after: &VersionVector) -> Vec<Diff>;
+}
+
 pub enum ContainerIdRaw {
     Root { name: InternalString },
     Normal { id: ID },
