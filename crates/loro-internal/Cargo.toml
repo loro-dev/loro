@@ -11,14 +11,13 @@ rle = { path = "../rle" }
 loro-preload = { path = "../loro-preload" }
 loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
-smartstring = { version = "1.0.1" }
+postcard = "1.0.2"
 fxhash = "0.2.1"
 serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0.31"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
 crdt-list = { version = "0.4.0" }
-postcard = "1.0.2"
 rand = { version = "0.8.5", optional = true }
 arbitrary = { version = "1.1.7", optional = true }
 tabled = { version = "0.10.0", optional = true }
@@ -36,8 +35,6 @@ enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
 generic-btree = "0.4.1"
-compact-bytes = { path = "../compact-bytes" }
-lz4_flex = "0.11.1"
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
 
