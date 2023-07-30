@@ -111,7 +111,10 @@ mod observer {
         }
     }
 
+    // TODO: need to double check whether this is safe
     unsafe impl Send for Observer {}
+    // TODO: need to double check whether this is safe
+    unsafe impl Sync for Observer {}
 }
 
 #[wasm_bindgen]

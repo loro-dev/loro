@@ -4,7 +4,7 @@ mod run {
     use super::*;
     use arbitrary::Arbitrary;
     use arbitrary::Unstructured;
-    use loro_internal::LoroCore;
+    use loro_internal::LoroDoc;
     use loro_internal::LoroValue;
     use rand::Rng;
     use rand::SeedableRng;
@@ -31,25 +31,27 @@ mod run {
         b.sample_size(10);
         b.bench_function("sync random inserts to 10 list containers", |b| {
             b.iter(|| {
-                let mut actors: Vec<_> = (0..10).map(|_| LoroCore::default()).collect();
+                let mut actors: Vec<_> = (0..10).map(|_| LoroDoc::default()).collect();
                 for action in actions.iter() {
                     let len = actors.len();
                     let actor = &mut actors[action.actor as usize % len];
                     let container = action.container % 10;
                     if container % 2 == 0 {
-                        let mut text = actor.get_text(container.to_string().as_str());
+                        let text = actor.get_text(container.to_string().as_str());
+                        let mut txn = actor.txn().unwrap();
                         text.insert(
-                            actor,
+                            &mut txn,
                             (action.pos as usize) % text.len().max(1),
                             action.value.to_string().as_str(),
                         )
                         .unwrap();
                     } else {
-                        let mut list = actor.get_list(container.to_string().as_str());
+                        let list = actor.get_list(container.to_string().as_str());
+                        let mut txn = actor.txn().unwrap();
                         list.insert(
-                            actor,
+                            &mut txn,
                             (action.pos as usize) % list.len().max(1),
-                            action.value.to_string().as_str(),
+                            action.value.to_string().as_str().into(),
                         )
                         .unwrap();
                     }
@@ -58,17 +60,17 @@ mod run {
                     let b = (action.sync as usize) % len;
                     if a != b {
                         let (a, b) = arref::array_mut_ref!(&mut actors, [a, b]);
-                        a.import(b.export(a.vv_cloned()));
+                        a.import(&b.export_from(&a.vv_cloned())).unwrap();
                     }
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(b.export(a.vv_cloned()));
+                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
                 }
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [i, 0]);
-                    a.import(b.export(a.vv_cloned()));
+                    a.import(&b.export_from(&a.vv_cloned()));
                 }
             })
         });
@@ -79,21 +81,22 @@ mod run {
         b.sample_size(10);
         b.bench_function("100 actors", |b| {
             b.iter(|| {
-                let mut actors: Vec<_> = (0..100).map(|_| LoroCore::default()).collect();
+                let mut actors: Vec<_> = (0..100).map(|_| LoroDoc::default()).collect();
                 for (i, actor) in actors.iter_mut().enumerate() {
                     let mut list = actor.get_list("list");
                     let value: LoroValue = i.to_string().into();
-                    list.insert(actor, 0, value).unwrap();
+                    let mut txn = actor.txn().unwrap();
+                    list.insert(&mut txn, 0, value).unwrap();
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(b.export(a.vv_cloned()));
+                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import(a.export(b.vv_cloned()));
+                    b.import(&a.export_from(&b.vv_cloned())).unwrap();
                 }
             })
         });

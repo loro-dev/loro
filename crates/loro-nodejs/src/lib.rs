@@ -1,19 +1,19 @@
 #![deny(clippy::all)]
 
-use loro_internal::{LoroCore, Text};
+use loro_internal::{LoroDoc, TextHandler};
 
 #[macro_use]
 extern crate napi_derive;
 
 #[napi]
 #[derive(Default)]
-pub struct Loro(LoroCore);
+pub struct Loro(LoroDoc);
 
 #[napi]
 impl Loro {
   #[napi(constructor)]
   pub fn new() -> Self {
-    Self(LoroCore::default())
+    Self(LoroDoc::default())
   }
 
   #[napi]
@@ -23,13 +23,14 @@ impl Loro {
 }
 
 #[napi]
-pub struct LoroText(Text);
+pub struct LoroText(TextHandler);
 
 #[napi]
 impl LoroText {
   #[napi]
   pub fn insert(&mut self, loro: &Loro, pos: u32, text: String) {
-    self.0.insert(&loro.0, pos as usize, &text).unwrap()
+    let mut txn = loro.0.txn().unwrap();
+    self.0.insert(&mut txn, pos as usize, &text).unwrap()
   }
 
   #[napi]

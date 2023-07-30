@@ -1,10 +1,9 @@
 use std::{fmt::Debug, sync::Arc};
 
-use crate::{log_store::GcConfig, Timestamp};
+use crate::Timestamp;
 
 #[derive(Clone)]
 pub struct Configure {
-    pub gc: GcConfig,
     pub get_time: fn() -> Timestamp,
     pub rand: Arc<dyn SecureRandomGenerator>,
 }
@@ -12,7 +11,6 @@ pub struct Configure {
 impl Debug for Configure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Configure")
-            .field("gc", &self.gc)
             .field("get_time", &self.get_time)
             .finish()
     }
@@ -56,7 +54,6 @@ pub trait SecureRandomGenerator: Send + Sync {
 impl Default for Configure {
     fn default() -> Self {
         Self {
-            gc: GcConfig::default(),
             get_time: || 0,
             rand: Arc::new(DefaultRandom),
         }

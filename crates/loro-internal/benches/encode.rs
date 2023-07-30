@@ -4,7 +4,7 @@ mod sync {
 
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
-    use loro_internal::LoroCore;
+    use loro_internal::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
         let actions = get_automerge_actions();
@@ -12,51 +12,32 @@ mod sync {
         b.sample_size(10);
         b.bench_function("update", |b| {
             b.iter(|| {
-                let mut c1 = LoroCore::new(Default::default(), Some(0));
-                let mut c2 = LoroCore::new(Default::default(), Some(1));
-                let mut t1 = c1.get_text("text");
-                let mut t2 = c2.get_text("text");
+                let c1 = LoroDoc::new();
+                c1.set_peer_id(1);
+                let c2 = LoroDoc::new();
+                c1.set_peer_id(2);
+                let t1 = c1.get_text("text");
+                let t2 = c2.get_text("text");
                 for (i, action) in actions.iter().enumerate() {
                     if i > 2000 {
                         break;
                     }
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
-                        t1.delete(&c1, *pos, *del).unwrap();
-                        t1.insert(&c1, *pos, ins).unwrap();
+                        let mut txn = c1.txn().unwrap();
+                        t1.delete(&mut txn, *pos, *del).unwrap();
+                        t1.insert(&mut txn, *pos, ins).unwrap();
+                        txn.commit().unwrap();
 
-                        let update = c1.encode_from(c2.vv_cloned());
-                        c2.decode(&update).unwrap();
+                        let update = c1.export_from(&c2.vv_cloned());
+                        c2.import(&update).unwrap();
                     } else {
-                        t2.delete(&c2, *pos, *del).unwrap();
-                        t2.insert(&c2, *pos, ins).unwrap();
-                        let update = c2.encode_from(c1.vv_cloned());
-                        c1.decode(&update).unwrap();
-                    }
-                }
-            })
-        });
-        b.bench_function("rle update", |b| {
-            b.iter(|| {
-                let mut c1 = LoroCore::new(Default::default(), Some(0));
-                let mut c2 = LoroCore::new(Default::default(), Some(1));
-                let mut t1 = c1.get_text("text");
-                let mut t2 = c2.get_text("text");
-                for (i, action) in actions.iter().enumerate() {
-                    if i > 2000 {
-                        break;
-                    }
-                    let TextAction { pos, ins, del } = action;
-                    if i % 2 == 0 {
-                        t1.delete(&c1, *pos, *del).unwrap();
-                        t1.insert(&c1, *pos, ins).unwrap();
-                        let update = c1.encode_from(c2.vv_cloned());
-                        c2.decode(&update).unwrap();
-                    } else {
-                        t2.delete(&c2, *pos, *del).unwrap();
-                        t2.insert(&c2, *pos, ins).unwrap();
-                        let update = c2.encode_from(c1.vv_cloned());
-                        c1.decode(&update).unwrap();
+                        let mut txn = c2.txn().unwrap();
+                        t2.delete(&mut txn, *pos, *del).unwrap();
+                        t2.insert(&mut txn, *pos, ins).unwrap();
+                        txn.commit().unwrap();
+                        let update = c2.export_from(&c1.vv_cloned());
+                        c1.import(&update).unwrap();
                     }
                 }
             })
@@ -67,56 +48,53 @@ mod sync {
 mod run {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::log_store::EncodeMode;
-    use loro_internal::{LoroCore, Transact, VersionVector};
+    use loro_internal::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
-        let actions = bench_utils::get_automerge_actions();
-        let mut loro = LoroCore::default();
-        let mut text = loro.get_text("text");
-        let txn = loro.transact();
-        for TextAction { pos, ins, del } in actions.iter() {
-            text.delete(&txn, *pos, *del).unwrap();
-            text.insert(&txn, *pos, ins).unwrap();
-        }
-        drop(txn);
+        let loro = LoroDoc::default();
+        let mut ran = false;
+        let mut ensure_ran = || {
+            if !ran {
+                let actions = bench_utils::get_automerge_actions();
+                let text = loro.get_text("text");
+                let mut txn = loro.txn().unwrap();
+                for TextAction { pos, ins, del } in actions.iter() {
+                    text.delete(&mut txn, *pos, *del).unwrap();
+                    text.insert(&mut txn, *pos, ins).unwrap();
+                }
+                drop(txn);
+                ran = true;
+            }
+        };
 
         let mut b = c.benchmark_group("encode");
         b.bench_function("B4_encode_updates", |b| {
+            ensure_ran();
             b.iter(|| {
-                let _ = loro.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
+                let _ = loro.export_from(&Default::default());
             })
         });
         b.bench_function("B4_decode_updates", |b| {
-            let buf = loro.encode_with_cfg(EncodeMode::Updates(VersionVector::new()));
+            ensure_ran();
+            let buf = loro.export_from(&Default::default());
 
             b.iter(|| {
-                let mut store2 = LoroCore::default();
-                store2.decode(&buf).unwrap();
-            })
-        });
-        b.bench_function("B4_encode_rle_updates", |b| {
-            b.iter(|| {
-                let _ = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
-            })
-        });
-        b.bench_function("B4_decode_rle_updates", |b| {
-            let buf = loro.encode_with_cfg(EncodeMode::RleUpdates(VersionVector::new()));
-            b.iter(|| {
-                let mut store2 = LoroCore::default();
-                store2.decode(&buf).unwrap();
+                let store2 = LoroDoc::default();
+                store2.import(&buf).unwrap();
             })
         });
         b.bench_function("B4_encode_snapshot", |b| {
+            ensure_ran();
             b.iter(|| {
-                let _ = loro.encode_all();
+                let _ = loro.export_snapshot();
             })
         });
         b.bench_function("B4_decode_snapshot", |b| {
-            let buf = loro.encode_all();
+            ensure_ran();
+            let buf = loro.export_snapshot();
             b.iter(|| {
-                let mut store2 = LoroCore::default();
-                store2.decode(&buf).unwrap();
+                let store2 = LoroDoc::default();
+                store2.import(&buf).unwrap();
             })
         });
     }
@@ -124,7 +102,7 @@ mod run {
 
 mod import {
     use criterion::Criterion;
-    use loro_internal::{configure::Configure, LoroCore};
+    use loro_internal::LoroDoc;
 
     #[allow(dead_code)]
     pub fn causal_iter(c: &mut Criterion) {
@@ -132,26 +110,19 @@ mod import {
         b.sample_size(10);
         b.bench_function("parallel_500", |b| {
             b.iter(|| {
-                let mut c1 = LoroCore::new(
-                    Configure {
-                        ..Default::default()
-                    },
-                    Some(1),
-                );
-                let mut c2 = LoroCore::new(
-                    Configure {
-                        ..Default::default()
-                    },
-                    Some(2),
-                );
-                let mut text1 = c1.get_text("text");
-                let mut text2 = c2.get_text("text");
+                let c1 = LoroDoc::new();
+                c1.set_peer_id(1);
+                let c2 = LoroDoc::new();
+                c1.set_peer_id(2);
+
+                let text1 = c1.get_text("text");
+                let text2 = c2.get_text("text");
                 for _ in 0..500 {
-                    text1.insert(&c1, 0, "1").unwrap();
-                    text2.insert(&c2, 0, "2").unwrap();
+                    text1.insert(&mut c1.txn().unwrap(), 0, "1").unwrap();
+                    text2.insert(&mut c2.txn().unwrap(), 0, "2").unwrap();
                 }
 
-                c1.decode(&c2.encode_from(c1.vv_cloned())).unwrap();
+                c1.import(&c2.export_from(&c1.vv_cloned())).unwrap();
             })
         });
     }

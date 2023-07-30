@@ -13,7 +13,7 @@ use super::{
     event::{DiffEvent, DocDiff},
 };
 
-pub type Subscriber = Arc<dyn for<'a> Fn(DiffEvent<'a>)>;
+pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 #[derive(Default)]
 struct ObserverInner {

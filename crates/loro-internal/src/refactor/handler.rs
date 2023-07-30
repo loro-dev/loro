@@ -113,6 +113,7 @@ impl TextHandler {
                 pos,
             }),
             None,
+            &self.state,
         )
     }
 
@@ -128,6 +129,7 @@ impl TextHandler {
                 len: len as isize,
             })),
             None,
+            &self.state,
         )
     }
 
@@ -155,6 +157,7 @@ impl TextHandler {
                 pos: start,
             }),
             None,
+            &self.state,
         )?;
 
         Ok(())
@@ -183,6 +186,7 @@ impl TextHandler {
                 len: (end - start) as isize,
             })),
             None,
+            &self.state,
         )
     }
 }

@@ -323,3 +323,13 @@ impl Default for LoroDoc {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_sync() {
+        fn is_send_sync<T: Send + Sync>(v: T) {}
+        let loro = super::LoroDoc::new();
+        is_send_sync(loro)
+    }
+}

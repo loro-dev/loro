@@ -9,7 +9,6 @@
 pub mod change;
 pub mod configure;
 pub mod container;
-pub mod context;
 pub mod dag;
 pub mod id;
 pub mod log_store;
@@ -21,18 +20,13 @@ pub use refactor::*;
 mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
-mod hierarchy;
-mod loro;
 mod smstring;
 mod span;
 #[cfg(test)]
 pub mod tests;
-mod transaction;
-pub use transaction::{Origin, Transact, Transaction, TransactionWrap};
 
 pub mod delta;
 pub mod event;
-pub mod prelim;
 
 pub use error::LoroError;
 pub(crate) mod macros;
@@ -43,12 +37,10 @@ pub(crate) use op::{ContentType, InsertContentTrait, Op};
 
 // TODO: rename as Key?
 pub(crate) type InternalString = DefaultAtom;
-pub use container::ContainerTrait;
 
-pub use container::{list::List, map::Map, text::Text, ContainerType};
+pub use container::ContainerType;
 pub use fxhash::FxHashMap;
-pub use log_store::{EncodeMode, LogStore};
-pub use loro::LoroCore;
+pub use log_store::EncodeMode;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 

@@ -1,8 +1,4 @@
-use loro_internal::{
-    container::registry::ContainerIdx,
-    prelim::{Prelim, PrelimList as PList, PrelimMap as PMap, PrelimText as PText, PrelimValue},
-    ContainerType, FxHashMap, LoroError, LoroValue, Transaction,
-};
+use loro_internal::FxHashMap;
 use wasm_bindgen::prelude::*;
 
 use crate::JsResult;
@@ -11,37 +7,6 @@ pub(crate) enum PrelimType {
     Text(PrelimText),
     Map(PrelimMap),
     List(PrelimList),
-}
-
-impl Prelim for PrelimType {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        match self {
-            PrelimType::Text(text) => {
-                let (value, prelim) = text.convert_value()?;
-                Ok((value, prelim.map(PrelimType::Text)))
-            }
-            PrelimType::Map(map) => {
-                let (value, prelim) = map.convert_value()?;
-                Ok((value, prelim.map(PrelimType::Map)))
-            }
-            PrelimType::List(list) => {
-                let (value, prelim) = list.convert_value()?;
-                Ok((value, prelim.map(PrelimType::List)))
-            }
-        }
-    }
-
-    fn integrate(
-        self,
-        txn: &mut Transaction,
-        container_idx: ContainerIdx,
-    ) -> Result<(), LoroError> {
-        match self {
-            PrelimType::Text(t) => t.integrate(txn, container_idx),
-            PrelimType::Map(m) => m.integrate(txn, container_idx),
-            PrelimType::List(l) => l.integrate(txn, container_idx),
-        }
-    }
 }
 
 #[wasm_bindgen]
@@ -140,68 +105,5 @@ impl PrelimMap {
             js_sys::Reflect::set(&object, &key.into(), value).unwrap();
         }
         object
-    }
-}
-
-impl Prelim for PrelimText {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        Ok((PrelimValue::Container(ContainerType::Text), Some(self)))
-    }
-
-    fn integrate(
-        self,
-        txn: &mut Transaction,
-        container_idx: ContainerIdx,
-    ) -> Result<(), LoroError> {
-        PText::from(self.0).integrate(txn, container_idx)
-    }
-}
-
-impl Prelim for PrelimList {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        Ok((PrelimValue::Container(ContainerType::List), Some(self)))
-    }
-
-    fn integrate(
-        self,
-        txn: &mut Transaction,
-        container_idx: ContainerIdx,
-    ) -> Result<(), LoroError> {
-        let values: Vec<LoroValue> = self.0.into_iter().map(|v| v.into()).collect();
-        PList::from(values).integrate(txn, container_idx)
-    }
-}
-
-impl Prelim for PrelimMap {
-    fn convert_value(self) -> Result<(PrelimValue, Option<Self>), LoroError> {
-        Ok((PrelimValue::Container(ContainerType::Map), Some(self)))
-    }
-
-    fn integrate(
-        self,
-        txn: &mut Transaction,
-        container_idx: ContainerIdx,
-    ) -> Result<(), LoroError> {
-        let values: FxHashMap<String, LoroValue> =
-            self.0.into_iter().map(|(k, v)| (k, v.into())).collect();
-        PMap::from(values).integrate(txn, container_idx)
-    }
-}
-
-impl From<PrelimText> for PrelimType {
-    fn from(p: PrelimText) -> Self {
-        Self::Text(p)
-    }
-}
-
-impl From<PrelimList> for PrelimType {
-    fn from(p: PrelimList) -> Self {
-        Self::List(p)
-    }
-}
-
-impl From<PrelimMap> for PrelimType {
-    fn from(p: PrelimMap) -> Self {
-        Self::Map(p)
     }
 }

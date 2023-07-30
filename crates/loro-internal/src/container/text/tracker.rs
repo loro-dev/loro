@@ -21,8 +21,6 @@ use self::{
     y_span::{Status, StatusChange, YSpan, YSpanTreeTrait},
 };
 
-pub(crate) use effects_iter::Effect;
-
 use super::text_content::{ListSlice, SliceRanges};
 mod content_map;
 mod cursor_map;

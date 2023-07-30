@@ -12,12 +12,8 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
 use crate::{
-    array_mut_ref,
-    container::ContainerID,
-    delta::DeltaItem,
-    event::{Diff, Observer},
-    id::PeerID,
-    ContainerType, List, LoroCore, LoroValue, Map, Text, Transact,
+    array_mut_ref, container::ContainerID, delta::DeltaItem, event::Diff, id::PeerID,
+    ContainerType, LoroValue,
 };
 use crate::{
     container::registry::ContainerIdx,

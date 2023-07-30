@@ -35,7 +35,7 @@ itertools = "0.10.5"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
-generic-btree = "0.4.0"
+generic-btree = "0.4.1"
 compact-bytes = { path = "../compact-bytes" }
 lz4_flex = "0.11.1"
 miniz_oxide = "0.7.1"
@@ -70,10 +70,6 @@ wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
 test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
-
-[[bench]]
-name = "text"
-harness = false
 
 [[bench]]
 name = "text_r"
