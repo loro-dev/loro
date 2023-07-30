@@ -23,7 +23,13 @@ pub(crate) fn js_to_any<T: FromWasmAbi<Abi = u32>>(
         let obj = unsafe { T::from_abi(ptr_u32) };
         Ok(obj)
     } else {
-        Err(JsValue::NULL)
+        return Err(JsValue::from_str(
+            format!(
+                "Value ctor_name is {} but the required struct name is {}",
+                ctor_name, struct_name
+            )
+            .as_str(),
+        ));
     }
 }
 

@@ -37,10 +37,10 @@ pub fn set_debug(filter: &str) {
 type JsResult<T> = Result<T, JsValue>;
 
 #[wasm_bindgen]
-pub struct Loro(RefCell<LoroDoc>);
+pub struct Loro(LoroDoc);
 
 impl Deref for Loro {
-    type Target = RefCell<LoroDoc>;
+    type Target = LoroDoc;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -115,7 +115,7 @@ mod observer {
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self(RefCell::new(LoroDoc::new()))
+        Self(LoroDoc::new())
     }
 
     /// Create a new Loro transaction.
@@ -126,33 +126,30 @@ impl Loro {
     #[wasm_bindgen(js_name = "newTransaction")]
     pub fn new_transaction(&self, origin: Option<String>) -> Transaction {
         Transaction(Some(
-            self.0
-                .borrow()
-                .txn_with_origin(&origin.unwrap_or_default())
-                .unwrap(),
+            self.0.txn_with_origin(&origin.unwrap_or_default()).unwrap(),
         ))
     }
 
     #[wasm_bindgen(js_name = "clientId", method, getter)]
     pub fn client_id(&self) -> u64 {
-        self.0.borrow().peer_id()
+        self.0.peer_id()
     }
 
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
-        let text = self.0.borrow_mut().get_text(name);
+        let text = self.0.get_text(name);
         Ok(LoroText(text))
     }
 
     #[wasm_bindgen(js_name = "getMap")]
     pub fn get_map(&self, name: &str) -> JsResult<LoroMap> {
-        let map = self.0.borrow_mut().get_map(name);
+        let map = self.0.get_map(name);
         Ok(LoroMap(map))
     }
 
     #[wasm_bindgen(js_name = "getList")]
     pub fn get_list(&self, name: &str) -> JsResult<LoroList> {
-        let list = self.0.borrow_mut().get_list(name);
+        let list = self.0.get_list(name);
         Ok(LoroList(list))
     }
 
@@ -162,15 +159,15 @@ impl Loro {
         let ty = container_id.container_type();
         Ok(match ty {
             ContainerType::Text => {
-                let text = self.0.borrow().get_text(container_id);
+                let text = self.0.get_text(container_id);
                 LoroText(text).into()
             }
             ContainerType::Map => {
-                let map = self.0.borrow().get_map(container_id);
+                let map = self.0.get_map(container_id);
                 LoroMap(map).into()
             }
             ContainerType::List => {
-                let list = self.0.borrow().get_list(container_id);
+                let list = self.0.get_list(container_id);
                 LoroList(list).into()
             }
         })
@@ -178,12 +175,12 @@ impl Loro {
 
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.borrow().vv_cloned().encode()
+        self.0.vv_cloned().encode()
     }
 
     #[inline]
     pub fn frontiers(&self) -> Vec<u8> {
-        self.0.borrow().frontiers().encode()
+        self.0.frontiers().encode()
     }
 
     /// - -1: self's version is less than frontiers or is parallel to target
@@ -193,7 +190,7 @@ impl Loro {
     #[wasm_bindgen(js_name = "cmpFrontiers")]
     pub fn cmp_frontiers(&self, frontiers: &[u8]) -> JsResult<i32> {
         let frontiers = Frontiers::decode(frontiers)?;
-        Ok(match self.0.borrow().cmp_frontiers(&frontiers) {
+        Ok(match self.0.cmp_frontiers(&frontiers) {
             Ordering::Less => -1,
             Ordering::Greater => 1,
             Ordering::Equal => 0,
@@ -202,7 +199,7 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.borrow().export_snapshot())
+        Ok(self.0.export_snapshot())
     }
 
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
@@ -219,11 +216,11 @@ impl Loro {
             None => Default::default(),
         };
 
-        Ok(self.0.borrow().export_from(&vv))
+        Ok(self.0.export_from(&vv))
     }
 
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
-        self.0.borrow_mut().import(update_or_snapshot)?;
+        self.0.import(update_or_snapshot)?;
         Ok(())
     }
 
@@ -239,12 +236,12 @@ impl Loro {
         if data.is_empty() {
             return Ok(());
         }
-        Ok(self.0.borrow_mut().import_batch(&data)?)
+        Ok(self.0.import_batch(&data)?)
     }
 
     #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
-        let json = self.0.borrow().to_json();
+        let json = self.0.to_json();
         Ok(json.into())
     }
 
@@ -252,7 +249,6 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0
-            .borrow_mut()
             .subscribe_deep(Arc::new(move |e| {
                 call_subscriber(observer.clone(), e);
             }))
@@ -260,9 +256,7 @@ impl Loro {
     }
 
     pub fn unsubscribe(&self, subscription: u32) {
-        self.0
-            .borrow_mut()
-            .unsubscribe(SubID::from_u32(subscription))
+        self.0.unsubscribe(SubID::from_u32(subscription))
     }
 
     /// It's the caller's responsibility to commit and free the transaction
@@ -274,7 +268,7 @@ impl Loro {
     ) -> JsResult<JsValue> {
         let origin = origin.as_string().unwrap();
         debug_log::group!("transaction with origin: {}", origin);
-        let txn = self.0.borrow().txn_with_origin(&origin)?;
+        let txn = self.0.txn_with_origin(&origin)?;
         let js_txn = JsValue::from(Transaction(Some(txn)));
         let ans = f.call1(&JsValue::NULL, &js_txn);
         debug_log::group_end!();
@@ -292,7 +286,8 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
         path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
     };
 
-    if let Err(e) = ob.call1(&event.into()) {
+    let value: JsValue = event.into();
+    if let Err(e) = ob.call1(&value) {
         console_error!("Error when calling observer: {:#?}", e);
     }
 }
@@ -456,7 +451,7 @@ impl LoroText {
 
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let ans = loro.0.borrow_mut().subscribe(
+        let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
                 call_subscriber(observer.clone(), e);
@@ -467,9 +462,7 @@ impl LoroText {
     }
 
     pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
-        loro.0
-            .borrow_mut()
-            .unsubscribe(SubID::from_u32(subscription));
+        loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 }
@@ -542,7 +535,7 @@ impl LoroMap {
 
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let id = loro.0.borrow_mut().subscribe(
+        let id = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
                 call_subscriber(observer.clone(), e);
@@ -629,7 +622,7 @@ impl LoroList {
 
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
-        let ans = loro.0.borrow_mut().subscribe(
+        let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
                 call_subscriber(observer.clone(), e);
