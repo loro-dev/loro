@@ -291,7 +291,7 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
         let ans = ob.call1(&event.into());
         drop(copy);
         if let Err(e) = ans {
-            console_log!("Error when calling observer: {:#?}", e);
+            console_error!("Error when calling observer: {:#?}", e);
         }
     });
     let _ = promise.then(&closure);
@@ -469,10 +469,9 @@ impl LoroMap {
         value.into()
     }
 
-    #[wasm_bindgen(js_name = "getValueDeep")]
+    #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_value_deep(&self) -> JsValue {
-        todo!()
-        // self.0.get_value_deep(ctx.deref()).into()
+        self.0.get_deep_value().into()
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
@@ -556,11 +555,10 @@ impl LoroList {
         self.0.get_value().into()
     }
 
-    #[wasm_bindgen(js_name = "getValueDeep")]
-    pub fn get_value_deep(&self) -> JsValue {
-        todo!()
-        // let value = self.0.get_value_deep(ctx.deref());
-        // value.into()
+    #[wasm_bindgen(js_name = "getDeepValue")]
+    pub fn get_deep_value(&self) -> JsValue {
+        let value = self.0.get_deep_value();
+        value.into()
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]

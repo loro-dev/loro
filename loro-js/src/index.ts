@@ -32,8 +32,8 @@ Loro.prototype.transact = function (cb, origin) {
   });
 };
 
-Loro.prototype.getTypedMap = Loro.prototype.getMap;
-Loro.prototype.getTypedList = Loro.prototype.getList;
+Loro.prototype.getTypedMap = function (...args) { return this.getMap(...args) };
+Loro.prototype.getTypedList = function (...args) { return this.getList(...args) };
 LoroList.prototype.getTyped = function (loro, index) {
   const value = this.get(index);
   if (typeof value === "string" && isContainerId(value)) {
@@ -42,7 +42,9 @@ LoroList.prototype.getTyped = function (loro, index) {
     return value;
   }
 };
-LoroList.prototype.insertTyped = LoroList.prototype.insert;
+LoroList.prototype.insertTyped = function (...args) {
+  return this.insert(...args)
+}
 LoroMap.prototype.getTyped = function (loro, key) {
   const value = this.get(key);
   if (typeof value === "string" && isContainerId(value)) {
@@ -51,7 +53,7 @@ LoroMap.prototype.getTyped = function (loro, key) {
     return value;
   }
 };
-LoroMap.prototype.setTyped = LoroMap.prototype.set;
+LoroMap.prototype.setTyped = function (...args) { return this.set(...args) };
 
 LoroText.prototype.insert = function (txn, pos, text) {
   this.__txn_insert(txn, pos, text);

@@ -69,19 +69,29 @@ describe("subscribe", () => {
     let i = 1;
     const sub = loro.subscribe(() => {
       if (i > 0) {
-        list.insert(loro, 0, i);
-        i--;
+        loro.transact(txn => {
+          list.insert(txn, 0, i);
+          i--;
+        })
       }
+
       count += 1;
     });
-    text.insert(loro, 0, "hello world");
+    loro.transact((txn) => {
+      text.insert(txn, 0, "hello world");
+    })
+
     await one_ms();
     assertEquals(count, 2);
-    text.insert(loro, 0, "hello world");
+    loro.transact((txn) => {
+      text.insert(txn, 0, "hello world");
+    });
     await one_ms();
     assertEquals(count, 3);
     loro.unsubscribe(sub);
-    text.insert(loro, 0, "hello world");
+    loro.transact(txn => {
+      text.insert(txn, 0, "hello world");
+    })
     await one_ms();
     assertEquals(count, 3);
   });
@@ -95,10 +105,16 @@ describe("subscribe", () => {
       loro.unsubscribe(sub);
     });
     assertEquals(count, 0);
-    text.insert(loro, 0, "hello world");
+    loro.transact(txn => {
+      text.insert(txn, 0, "hello world");
+    })
+
     await one_ms();
     assertEquals(count, 1);
-    text.insert(loro, 0, "hello world");
+    loro.transact(txn => {
+      text.insert(txn, 0, "hello world");
+    })
+
     assertEquals(count, 1);
   });
 
@@ -109,14 +125,20 @@ describe("subscribe", () => {
     const sub = loro.subscribe(() => {
       count += 1;
     });
-    text.insert(loro, 0, "hello world");
+    loro.transact(loro => {
+      text.insert(loro, 0, "hello world");
+    })
     await one_ms();
     assertEquals(count, 1);
-    text.insert(loro, 0, "hello world");
+    loro.transact(loro => {
+      text.insert(loro, 0, "hello world");
+    })
     await one_ms();
     assertEquals(count, 2);
     loro.unsubscribe(sub);
-    text.insert(loro, 0, "hello world");
+    loro.transact(loro => {
+      text.insert(loro, 0, "hello world");
+    })
     await one_ms();
     assertEquals(count, 2);
   });
@@ -144,7 +166,10 @@ describe("sync", () => {
     });
     const aText = a.getText("text");
     const bText = b.getText("text");
-    aText.insert(a, 0, "abc");
+    a.transact(txn => {
+      aText.insert(txn, 0, "abc");
+    });
+
     await one_ms();
     assertEquals(aText.toString(), bText.toString());
   });
@@ -152,17 +177,26 @@ describe("sync", () => {
   it("sync", () => {
     const loro = new Loro();
     const text = loro.getText("text");
-    text.insert(loro, 0, "hello world");
+    loro.transact(txn => {
+      text.insert(txn, 0, "hello world");
+    });
+
     const loro_bk = new Loro();
     loro_bk.import(loro.exportFrom(undefined));
     assertEquals(loro_bk.toJson(), loro.toJson());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.toString(), "hello world");
-    text_bk.insert(loro_bk, 0, "a ");
+    loro_bk.transact(txn => {
+      text_bk.insert(txn, 0, "a ");
+    });
+
     loro.import(loro_bk.exportFrom(undefined));
     assertEquals(text.toString(), "a hello world");
     const map = loro.getMap("map");
-    map.set(loro, "key", "value");
+    loro.transact(txn => {
+      map.set(txn, "key", "value");
+    });
+
   });
 });
 
@@ -198,10 +232,13 @@ describe("prelim", () => {
     });
 
     it("prelim map integrate", () => {
-      map.set(loro, "text", prelim_text);
-      map.set(loro, "map", prelim_map);
-      map.set(loro, "list", prelim_list);
-      assertEquals(map.getValueDeep(loro), {
+      loro.transact(txn => {
+        map.set(txn, "text", prelim_text);
+        map.set(txn, "map", prelim_map);
+        map.set(txn, "list", prelim_list);
+      });
+
+      assertEquals(map.getDeepValue(), {
         text: "hello everyone",
         map: { a: 1, ab: 123 },
         list: [0, { a: 4 }],
@@ -212,10 +249,13 @@ describe("prelim", () => {
       const prelim_text = new PrelimText("ttt");
       const prelim_map = new PrelimMap({ a: 1, b: 2 });
       const prelim_list = new PrelimList([1, "2", { a: 4 }]);
-      list.insert(loro, 0, prelim_text);
-      list.insert(loro, 1, prelim_map);
-      list.insert(loro, 2, prelim_list);
-      assertEquals(list.getValueDeep(loro), ["ttt", { a: 1, b: 2 }, [1, "2", {
+      loro.transact(txn => {
+        list.insert(txn, 0, prelim_text);
+        list.insert(txn, 1, prelim_map);
+        list.insert(txn, 2, prelim_list);
+      });
+
+      assertEquals(list.getDeepValue(), ["ttt", { a: 1, b: 2 }, [1, "2", {
         a: 4,
       }]]);
     });
@@ -225,27 +265,40 @@ describe("prelim", () => {
 describe("wasm", () => {
   const loro = new Loro();
   const a = loro.getText("ha");
-  a.insert(loro, 0, "hello world");
-  a.delete(loro, 6, 5);
-  a.insert(loro, 6, "everyone");
-  const b = loro.getMap("ha");
-  b.set(loro, "ab", 123);
+  loro.transact(txn => {
+    a.insert(txn, 0, "hello world");
 
-  const bText = b.insertContainer(loro, "hh", "Text");
+    a.delete(txn, 6, 5);
+    a.insert(txn, 6, "everyone");
+  });
+  const b = loro.getMap("ha");
+  loro.transact(txn => {
+    b.set(txn, "ab", 123);
+  });
+
+  const bText = loro.transact(txn => {
+    return b.insertContainer(txn, "hh", "Text")
+  });
 
   it("map get", () => {
     assertEquals(b.get("ab"), 123);
   });
 
   it("getValueDeep", () => {
-    bText.insert(loro, 0, "hello world Text");
-    assertEquals(b.getValueDeep(loro), { ab: 123, hh: "hello world Text" });
+    loro.transact(txn => {
+      bText.insert(txn, 0, "hello world Text");
+    });
+
+    assertEquals(b.getDeepValue(), { ab: 123, hh: "hello world Text" });
   });
 
   it("should throw error when using the wrong context", () => {
     expect(() => {
       const loro2 = new Loro();
-      bText.insert(loro2, 0, "hello world Text");
+      loro2.transact(txn => {
+        bText.insert(txn, 0, "hello world Text");
+      });
+
     }).toThrow();
   });
 
@@ -254,7 +307,10 @@ describe("wasm", () => {
     const b2 = loro.getContainerById(id) as LoroMap;
     assertEquals(b2.value, b.value);
     assertEquals(b2.id, id);
-    b2.set(loro, "0", 12);
+    loro.transact(txn => {
+      b2.set(txn, "0", 12);
+    });
+
     assertEquals(b2.value, b.value);
   });
 });
@@ -270,7 +326,10 @@ describe("type", () => {
   it("test recursive map type", () => {
     const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
     const map = loro.getTypedMap("map");
-    map.insertContainer(loro, "map", "Map");
+    loro.transact(txn => {
+      map.insertContainer(txn, "map", "Map");
+    });
+
     const subMap = map.getTyped(loro, "map");
     const name = subMap.getTyped(loro, "name");
     expectTypeOf(name).toEqualTypeOf<"he">();
@@ -279,8 +338,15 @@ describe("type", () => {
   it("works for list type", () => {
     const loro = new Loro<{ list: LoroList<[string, number]> }>();
     const list = loro.getTypedList("list");
-    list.insertTyped(loro, 0, "123");
-    list.insertTyped(loro, 1, 123);
+    console.dir((list as any).__proto__);
+    loro.transact(txn => {
+      list.insertTyped(txn, 0, "123");
+    });
+
+    loro.transact(txn => {
+      list.insertTyped(txn, 1, 123);
+    });
+
     const v0 = list.getTyped(loro, 0);
     expectTypeOf(v0).toEqualTypeOf<string>();
     const v1 = list.getTyped(loro, 1);

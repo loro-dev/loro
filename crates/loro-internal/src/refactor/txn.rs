@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     mem::take,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use debug_log::debug_dbg;
@@ -191,7 +191,16 @@ impl Transaction {
         content: RawOpContent,
         // we need extra hint to reduce calculation for utf16 text op
         hint: Option<EventHint>,
+        // check whther context and txn are refering to the same state context
+        state_ref: &Weak<Mutex<DocState>>,
     ) -> LoroResult<()> {
+        if Arc::as_ptr(&self.state) != Weak::as_ptr(state_ref) {
+            return Err(LoroError::UnmatchedContext {
+                expected: self.state.lock().unwrap().peer,
+                found: state_ref.upgrade().unwrap().lock().unwrap().peer,
+            });
+        }
+
         let len = content.content_len();
         let op = RawOp {
             id: ID {

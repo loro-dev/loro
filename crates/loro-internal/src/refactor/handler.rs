@@ -228,6 +228,7 @@ impl TextHandler {
                 pos: start,
             }),
             Some(EventHint::Utf16 { pos, len: 0 }),
+            &self.state,
         )
     }
 
@@ -254,6 +255,7 @@ impl TextHandler {
                 len: (end - start) as isize,
             })),
             Some(EventHint::Utf16 { pos, len: del }),
+            &self.state,
         )
     }
 }
@@ -280,6 +282,7 @@ impl ListHandler {
                 pos,
             }),
             None,
+            &self.state,
         )
     }
 
@@ -301,6 +304,7 @@ impl ListHandler {
                 pos,
             }),
             None,
+            &self.state,
         )?;
         Ok(child_idx)
     }
@@ -317,6 +321,7 @@ impl ListHandler {
                 len: len as isize,
             })),
             None,
+            &self.state,
         )
     }
 
@@ -342,6 +347,15 @@ impl ListHandler {
             .lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.container_idx)
     }
 
     pub fn id(&self) -> ContainerID {
@@ -390,6 +404,7 @@ impl MapHandler {
                 value,
             }),
             None,
+            &self.state,
         )
     }
 
@@ -410,6 +425,7 @@ impl MapHandler {
                 value: LoroValue::Container(container_id),
             }),
             None,
+            &self.state,
         )?;
         Ok(child_idx)
     }
@@ -423,6 +439,7 @@ impl MapHandler {
                 value: LoroValue::Null,
             }),
             None,
+            &self.state,
         )
     }
 
@@ -433,6 +450,15 @@ impl MapHandler {
             .lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.container_idx)
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
