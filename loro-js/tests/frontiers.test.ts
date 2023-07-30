@@ -14,7 +14,7 @@ describe("Frontiers", () => {
   it("two clients", () => {
     const doc = new Loro();
     const text = doc.getText("text");
-    const txn = doc.txn();
+    const txn = doc.newTransaction("");
     text.insert(txn, 0, "0");
     txn.commit();
 

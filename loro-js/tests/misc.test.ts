@@ -1,16 +1,11 @@
 import { assertType, describe, expect, it } from "vitest";
 import {
-  Delta,
-  ListDiff,
   Loro,
-  LoroEvent,
   LoroList,
   LoroMap,
-  MapDiff as MapDiff,
   PrelimList,
   PrelimMap,
   PrelimText,
-  TextDiff,
   Transaction,
 } from "../src";
 import { expectTypeOf } from "vitest";
@@ -35,7 +30,6 @@ describe("transaction", () => {
       text.insert(txn, 0, "hello world");
       assertEquals(count, 0);
     });
-    await one_ms();
     assertEquals(count, 1);
   });
 
@@ -55,7 +49,6 @@ describe("transaction", () => {
       text.insert(txn, 0, "hello world");
       assertEquals(count, 0);
     }, "origin");
-    await one_ms();
     assertEquals(count, 1);
   });
 });
@@ -81,18 +74,15 @@ describe("subscribe", () => {
       text.insert(txn, 0, "hello world");
     })
 
-    await one_ms();
     assertEquals(count, 2);
     loro.transact((txn) => {
       text.insert(txn, 0, "hello world");
     });
-    await one_ms();
     assertEquals(count, 3);
     loro.unsubscribe(sub);
     loro.transact(txn => {
       text.insert(txn, 0, "hello world");
     })
-    await one_ms();
     assertEquals(count, 3);
   });
 
@@ -109,7 +99,6 @@ describe("subscribe", () => {
       text.insert(txn, 0, "hello world");
     })
 
-    await one_ms();
     assertEquals(count, 1);
     loro.transact(txn => {
       text.insert(txn, 0, "hello world");
@@ -128,18 +117,15 @@ describe("subscribe", () => {
     loro.transact(loro => {
       text.insert(loro, 0, "hello world");
     })
-    await one_ms();
     assertEquals(count, 1);
     loro.transact(loro => {
       text.insert(loro, 0, "hello world");
     })
-    await one_ms();
     assertEquals(count, 2);
     loro.unsubscribe(sub);
     loro.transact(loro => {
       text.insert(loro, 0, "hello world");
     })
-    await one_ms();
     assertEquals(count, 2);
   });
 });
@@ -170,7 +156,6 @@ describe("sync", () => {
       aText.insert(txn, 0, "abc");
     });
 
-    await one_ms();
     assertEquals(aText.toString(), bText.toString());
   });
 

@@ -118,12 +118,19 @@ impl Loro {
         Self(RefCell::new(LoroDoc::new()))
     }
 
-    pub fn txn(&self) -> Transaction {
-        Transaction(self.0.borrow().txn().unwrap())
-    }
-
-    pub fn txn_with_origin(&self, origin: &str) -> Transaction {
-        Transaction(self.0.borrow().txn_with_origin(origin).unwrap())
+    /// Create a new Loro transaction.
+    /// There can be only one transaction at a time.
+    ///
+    /// It's caller's responsibility to call `commit` or `abort` on the transaction.
+    /// Transaction.free() will commit the transaction if it's not committed or aborted.
+    #[wasm_bindgen(js_name = "newTransaction")]
+    pub fn new_transaction(&self, origin: Option<String>) -> Transaction {
+        Transaction(Some(
+            self.0
+                .borrow()
+                .txn_with_origin(&origin.unwrap_or_default())
+                .unwrap(),
+        ))
     }
 
     #[wasm_bindgen(js_name = "clientId", method, getter)]
@@ -247,7 +254,7 @@ impl Loro {
         self.0
             .borrow_mut()
             .subscribe_deep(Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }))
             .into_u32()
     }
@@ -268,25 +275,43 @@ impl Loro {
         let origin = origin.as_string().unwrap();
         debug_log::group!("transaction with origin: {}", origin);
         let txn = self.0.borrow().txn_with_origin(&origin)?;
-        let js_txn = JsValue::from(Transaction(txn));
+        let js_txn = JsValue::from(Transaction(Some(txn)));
         let ans = f.call1(&JsValue::NULL, &js_txn);
         debug_log::group_end!();
         ans
     }
 }
 
-fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
-    let promise = Promise::resolve(&JsValue::NULL);
-    type C = Closure<dyn FnMut(JsValue)>;
-    let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
-    let copy = drop_handler.clone();
+fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     let event = Event {
+        from_children: e.from_children,
         local: e.doc.local,
         origin: e.doc.origin.to_string(),
         target: e.container.id.clone(),
         diff: Either::A(e.container.diff.to_owned()),
         path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
     };
+
+    if let Err(e) = ob.call1(&event.into()) {
+        console_error!("Error when calling observer: {:#?}", e);
+    }
+}
+
+#[allow(unused)]
+fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
+    let promise = Promise::resolve(&JsValue::NULL);
+    type C = Closure<dyn FnMut(JsValue)>;
+    let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
+    let copy = drop_handler.clone();
+    let event = Event {
+        from_children: e.from_children,
+        local: e.doc.local,
+        origin: e.doc.origin.to_string(),
+        target: e.container.id.clone(),
+        diff: Either::A(e.container.diff.to_owned()),
+        path: Either::A(e.container.path.iter().map(|x| x.1.clone()).collect()),
+    };
+
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event.into());
         drop(copy);
@@ -294,6 +319,7 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
             console_error!("Error when calling observer: {:#?}", e);
         }
     });
+
     let _ = promise.then(&closure);
     drop_handler.borrow_mut().replace(closure);
 }
@@ -312,6 +338,7 @@ enum Either<A, B> {
 #[wasm_bindgen]
 pub struct Event {
     pub local: bool,
+    pub from_children: bool,
     origin: String,
     target: ContainerID,
     diff: Either<Diff, JsValue>,
@@ -360,13 +387,28 @@ impl Event {
 }
 
 #[wasm_bindgen]
-pub struct Transaction(Txn);
+pub struct Transaction(Option<Txn>);
 
 #[wasm_bindgen]
 impl Transaction {
-    pub fn commit(self) -> JsResult<()> {
-        self.0.commit()?;
+    pub fn commit(&mut self) -> JsResult<()> {
+        if let Some(x) = self.0.take() {
+            x.commit()?;
+        }
         Ok(())
+    }
+
+    pub fn abort(&mut self) -> JsResult<()> {
+        if let Some(x) = self.0.take() {
+            x.abort();
+        }
+        Ok(())
+    }
+
+    fn as_mut(&mut self) -> JsResult<&mut Txn> {
+        self.0
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("Transaction is aborted"))
     }
 }
 
@@ -381,7 +423,7 @@ impl LoroText {
         index: usize,
         content: &str,
     ) -> JsResult<()> {
-        self.0.insert_utf16(&mut txn.0, index, content)?;
+        self.0.insert_utf16(txn.as_mut()?, index, content)?;
         Ok(())
     }
 
@@ -391,7 +433,7 @@ impl LoroText {
         index: usize,
         len: usize,
     ) -> JsResult<()> {
-        self.0.delete_utf16(&mut txn.0, index, len)?;
+        self.0.delete_utf16(txn.as_mut()?, index, len)?;
         Ok(())
     }
 
@@ -417,7 +459,7 @@ impl LoroText {
         let ans = loro.0.borrow_mut().subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
 
@@ -444,12 +486,12 @@ impl LoroMap {
         key: &str,
         value: JsValue,
     ) -> JsResult<()> {
-        self.0.insert(&mut txn.0, key, value.into())?;
+        self.0.insert(txn.as_mut()?, key, value.into())?;
         Ok(())
     }
 
     pub fn __txn_delete(&mut self, txn: &mut Transaction, key: &str) -> JsResult<()> {
-        self.0.delete(&mut txn.0, key)?;
+        self.0.delete(txn.as_mut()?, key)?;
         Ok(())
     }
 
@@ -487,12 +529,13 @@ impl LoroMap {
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let idx = self.0.insert_container(&mut txn.0, key, type_)?;
+        let t = txn.as_mut()?;
+        let idx = self.0.insert_container(t, key, type_)?;
 
         let container = match type_ {
-            ContainerType::Text => LoroText(txn.0.get_text(idx)).into(),
-            ContainerType::Map => LoroMap(txn.0.get_map(idx)).into(),
-            ContainerType::List => LoroList(txn.0.get_list(idx)).into(),
+            ContainerType::Text => LoroText(t.get_text(idx)).into(),
+            ContainerType::Map => LoroMap(t.get_map(idx)).into(),
+            ContainerType::List => LoroList(t.get_list(idx)).into(),
         };
         Ok(container)
     }
@@ -502,7 +545,7 @@ impl LoroMap {
         let id = loro.0.borrow_mut().subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
 
@@ -526,7 +569,7 @@ impl LoroList {
         index: usize,
         value: JsValue,
     ) -> JsResult<()> {
-        self.0.insert(&mut txn.0, index, value.into())?;
+        self.0.insert(txn.as_mut()?, index, value.into())?;
         Ok(())
     }
 
@@ -536,7 +579,7 @@ impl LoroList {
         index: usize,
         len: usize,
     ) -> JsResult<()> {
-        self.0.delete(&mut txn.0, index, len)?;
+        self.0.delete(txn.as_mut()?, index, len)?;
         Ok(())
     }
 
@@ -574,11 +617,12 @@ impl LoroList {
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let idx = self.0.insert_container(&mut txn.0, pos, _type)?;
+        let t = txn.as_mut()?;
+        let idx = self.0.insert_container(t, pos, _type)?;
         let container = match _type {
-            ContainerType::Text => LoroText(txn.0.get_text(idx)).into(),
-            ContainerType::Map => LoroMap(txn.0.get_map(idx)).into(),
-            ContainerType::List => LoroList(txn.0.get_list(idx)).into(),
+            ContainerType::Text => LoroText(t.get_text(idx)).into(),
+            ContainerType::Map => LoroMap(t.get_map(idx)).into(),
+            ContainerType::List => LoroList(t.get_list(idx)).into(),
         };
         Ok(container)
     }
@@ -588,7 +632,7 @@ impl LoroList {
         let ans = loro.0.borrow_mut().subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
         Ok(ans.into_u32())
