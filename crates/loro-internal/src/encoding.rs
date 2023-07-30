@@ -1,3 +1,12 @@
+use fxhash::FxHashMap;
+use loro_common::PeerID;
+use rle::RleVec;
+
+use crate::{change::Change, op::RemoteOp};
+
+pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
+pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
+
 mod encode_changes;
 mod encode_updates;
 
@@ -50,8 +59,6 @@ impl From<u8> for ConcreteEncodeMode {
         }
     }
 }
-
-pub struct LoroEncoder;
 
 pub(crate) fn encode_oplog(oplog: &OpLog, mode: EncodeMode) -> Vec<u8> {
     let version = ENCODE_SCHEMA_VERSION;

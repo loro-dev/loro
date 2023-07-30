@@ -6,8 +6,8 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
+    encoding::RemoteClientChanges,
     id::{Counter, PeerID, ID},
-    log_store::RemoteClientChanges,
     op::{RawOpContent, RemoteOp},
     oplog::OpLog,
     version::Frontiers,

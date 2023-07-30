@@ -16,8 +16,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::registry::ContainerIdx, loro::LoroDoc, value::ToJson, ApplyDiff, ListHandler,
-    MapHandler, TextHandler,
+    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, ApplyDiff, ListHandler, MapHandler,
+    TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]

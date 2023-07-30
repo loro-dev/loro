@@ -9,11 +9,11 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
-    container::{registry::ContainerIdx, IntoContainerId},
+    container::{idx::ContainerIdx, IntoContainerId},
+    encoding::{ConcreteEncodeMode, EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     id::PeerID,
-    log_store::encoding::{ConcreteEncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     version::Frontiers,
-    EncodeMode, InternalString, LoroError, VersionVector,
+    InternalString, LoroError, VersionVector,
 };
 
 use super::{

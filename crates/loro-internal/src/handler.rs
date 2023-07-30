@@ -1,8 +1,8 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
     container::{
+        idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
-        registry::ContainerIdx,
         text::text_content::ListSlice,
     },
     txn::EventHint,

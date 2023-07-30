@@ -6,7 +6,7 @@ use std::sync::{
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ContainerID;
 
-use crate::container::registry::ContainerIdx;
+use crate::container::idx::ContainerIdx;
 
 use super::{
     arena::SharedArena,

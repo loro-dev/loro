@@ -12,9 +12,9 @@ use rle::{HasLength, RleVec};
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
+use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
-use crate::log_store::{decode_oplog, encode_oplog};
-use crate::log_store::{ClientChanges, RemoteClientChanges};
 use crate::op::{RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
@@ -410,7 +410,7 @@ impl OpLog {
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog(self, crate::EncodeMode::Auto(vv.clone()))
+        encode_oplog(self, EncodeMode::Auto(vv.clone()))
     }
 
     pub fn decode(&mut self, data: &[u8]) -> Result<(), LoroError> {

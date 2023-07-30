@@ -5,7 +5,7 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
-    container::registry::ContainerIdx,
+    container::idx::ContainerIdx,
     delta::{MapDelta, MapValue},
     event::Diff,
     id::Counter,

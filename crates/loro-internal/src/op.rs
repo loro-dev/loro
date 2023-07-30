@@ -1,6 +1,6 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::{registry::ContainerIdx, ContainerID},
+    container::{idx::ContainerIdx, ContainerID},
     id::{Counter, PeerID, ID},
     span::{HasCounter, HasId, HasLamport},
 };

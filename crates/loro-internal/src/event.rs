@@ -12,7 +12,7 @@ use std::borrow::Cow;
 
 use loro_common::ContainerID;
 
-use crate::{container::registry::ContainerIdx, version::Frontiers};
+use crate::{container::idx::ContainerIdx, version::Frontiers};
 
 #[derive(Debug, Clone)]
 pub struct ContainerDiff {

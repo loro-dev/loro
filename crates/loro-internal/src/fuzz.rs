@@ -1,11 +1,10 @@
-use std::{fmt::Debug, time::Instant};
-
-use debug_log::debug_log;
-use enum_as_inner::EnumAsInner;
-use tabled::{TableIteratorExt, Tabled};
 pub mod recursive_refactored;
 
 use crate::{array_mut_ref, loro::LoroDoc};
+use debug_log::debug_log;
+use enum_as_inner::EnumAsInner;
+use std::{fmt::Debug, time::Instant};
+use tabled::{TableIteratorExt, Tabled};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {

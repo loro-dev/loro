@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     arena::SharedArena,
-    container::{registry::ContainerIdx, ContainerID},
+    container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
     event::{Diff, Index},
     op::{RawOp, RawOpContent},

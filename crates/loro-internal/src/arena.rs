@@ -8,9 +8,9 @@ use fxhash::FxHashMap;
 
 use crate::{
     container::{
+        idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
         map::InnerMapSet,
-        registry::ContainerIdx,
         text::text_content::SliceRange,
         ContainerID,
     },

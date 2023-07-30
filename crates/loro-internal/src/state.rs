@@ -8,7 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
-    container::{registry::ContainerIdx, ContainerIdRaw},
+    container::{idx::ContainerIdx, ContainerIdRaw},
     delta::{Delta, DeltaItem},
     event::InternalContainerDiff,
     event::{Diff, Index},

@@ -14,7 +14,7 @@ use smallvec::smallvec;
 use crate::{
     change::{Change, Lamport},
     container::{
-        list::list_op::InnerListOp, registry::ContainerIdx, text::text_content::SliceRanges,
+        idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
     },
     delta::{Delta, MapValue},

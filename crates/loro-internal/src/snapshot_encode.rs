@@ -13,7 +13,7 @@ use smallvec::smallvec;
 
 use crate::{
     change::{Change, Timestamp},
-    container::{list::list_op::InnerListOp, map::InnerMapSet, registry::ContainerIdx},
+    container::{idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet},
     delta::MapValue,
     id::{Counter, PeerID},
     op::{InnerContent, Op},

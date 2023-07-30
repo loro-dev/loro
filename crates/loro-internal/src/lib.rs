@@ -25,15 +25,14 @@ pub mod change;
 pub mod configure;
 pub mod container;
 pub mod dag;
+mod encoding;
 pub mod id;
-pub mod log_store;
 pub mod op;
 pub mod version;
 
 mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
-mod smstring;
 mod span;
 #[cfg(test)]
 pub mod tests;
@@ -53,7 +52,6 @@ pub(crate) type InternalString = DefaultAtom;
 
 pub use container::ContainerType;
 pub use fxhash::FxHashMap;
-pub use log_store::EncodeMode;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 
