@@ -551,23 +551,6 @@ pub mod wasm {
         }
     }
 }
-#[cfg(test)]
-pub(crate) mod proptest {
-    use proptest::prelude::*;
-    use proptest::prop_oneof;
-
-    use super::LoroValue;
-
-    pub fn gen_insert_value() -> impl Strategy<Value = LoroValue> {
-        prop_oneof![
-            Just(LoroValue::Null),
-            any::<f64>().prop_map(LoroValue::Double),
-            any::<i32>().prop_map(LoroValue::I32),
-            any::<bool>().prop_map(LoroValue::Bool),
-            any::<String>().prop_map(|s| LoroValue::String(s.into())),
-        ]
-    }
-}
 
 #[cfg(test)]
 #[cfg(feature = "json")]

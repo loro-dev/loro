@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use tabled::{TableIteratorExt, Tabled};
 pub mod recursive_refactored;
 
-use crate::{array_mut_ref, id::PeerID, refactor::loro::LoroDoc, VersionVector};
+use crate::{array_mut_ref, refactor::loro::LoroDoc};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {

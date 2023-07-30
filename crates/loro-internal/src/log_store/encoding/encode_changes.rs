@@ -18,7 +18,7 @@ use crate::{
     log_store::RemoteClientChanges,
     op::{RawOpContent, RemoteOp},
     refactor::oplog::OpLog,
-    span::{HasId, HasIdSpan},
+    span::HasId,
     version::Frontiers,
     InternalString, LoroError, LoroValue, VersionVector,
 };

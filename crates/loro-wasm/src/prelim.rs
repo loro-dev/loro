@@ -3,12 +3,6 @@ use wasm_bindgen::prelude::*;
 
 use crate::JsResult;
 
-pub(crate) enum PrelimType {
-    Text(PrelimText),
-    Map(PrelimMap),
-    List(PrelimList),
-}
-
 #[wasm_bindgen]
 pub struct PrelimText(String);
 

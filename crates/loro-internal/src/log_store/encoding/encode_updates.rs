@@ -78,19 +78,6 @@ pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static
     Ok(changes)
 }
 
-pub(super) fn decode_updates_to_inner_format(
-    input: &[u8],
-) -> Result<RemoteClientChanges<'static>, LoroError> {
-    let updates: Updates =
-        postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
-    let mut changes: RemoteClientChanges = Default::default();
-    for encoded in updates.changes {
-        changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
-    }
-
-    Ok(changes)
-}
-
 fn convert_changes_to_encoded<'a, I>(mut changes: I) -> EncodedClientChanges
 where
     I: Iterator<Item = Change<RemoteOp<'a>>>,

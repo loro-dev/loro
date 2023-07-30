@@ -8,8 +8,6 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::{delta::DeltaValue, LoroValue};
 
-use super::string_pool::PoolString;
-
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(PartialEq, Debug, EnumAsInner, Clone, Serialize, Deserialize)]
 pub enum ListSlice<'a> {
@@ -32,13 +30,6 @@ impl SliceRange {
 
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
-    }
-
-    pub fn from_pool_string(p: &PoolString) -> Self {
-        match &p.slice {
-            Some(x) => Self(x.start() as u32..x.end() as u32),
-            None => Self::new_unknown(p.unknown_len),
-        }
     }
 }
 

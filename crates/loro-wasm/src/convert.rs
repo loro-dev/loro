@@ -1,7 +1,7 @@
 use js_sys::{Object, Reflect};
 use wasm_bindgen::JsValue;
 
-use crate::{prelim::PrelimType, LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};
+use crate::{LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};
 use wasm_bindgen::convert::FromWasmAbi;
 
 /// Convert a `JsValue` to `T` by constructor's name.

@@ -1,10 +1,10 @@
-use std::{io::Write, time::Instant};
 
-use bench_utils::TextAction;
-use flate2::write::GzEncoder;
-use loro_internal::EncodeMode;
-use loro_internal::LoroDoc;
-use loro_internal::VersionVector;
+
+
+
+
+
+
 
 fn main() {
     // let actions = bench_utils::get_automerge_actions();

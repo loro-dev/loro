@@ -3,24 +3,10 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::ContainerID,
     delta::{Delta, MapDelta, MapDiff},
     text::text_content::SliceRanges,
     InternalString, LoroValue,
 };
-
-#[derive(Debug)]
-pub(crate) struct EventDiff {
-    pub id: ContainerID,
-    pub diff: SmallVec<[Diff; 1]>,
-    pub local: bool,
-}
-
-#[derive(Debug)]
-pub(crate) struct PathAndTarget {
-    pub relative_path: Path,
-    pub target: Option<ContainerID>,
-}
 
 pub type Path = SmallVec<[Index; 4]>;
 

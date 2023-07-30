@@ -10,16 +10,16 @@ fn main() {
     let mut actors: Vec<_> = (0..1540).map(|_| LoroDoc::default()).collect();
     let mut updates: Vec<Vec<u8>> = Vec::new();
     for (i, actor) in actors.iter_mut().enumerate() {
-        let mut list = actor.get_list("list");
+        let list = actor.get_list("list");
         let value: LoroValue = i.to_string().into();
         let mut txn = actor.txn().unwrap();
         list.insert(&mut txn, 0, value).unwrap();
         updates.push(actor.export_from(&Default::default()));
     }
 
-    todo!();
-    // actors[0].decode_batch(&updates).unwrap();
-
     // drop(profiler);
     println!("{}", start.elapsed().as_millis());
+
+    todo!();
+    // actors[0].decode_batch(&updates).unwrap();
 }

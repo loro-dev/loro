@@ -68,6 +68,7 @@ impl Op {
 }
 
 impl<'a> RemoteOp<'a> {
+    #[allow(unused)]
     pub(crate) fn into_static(self) -> RemoteOp<'static> {
         RemoteOp {
             counter: self.counter,

@@ -31,9 +31,9 @@ pub mod event;
 pub use error::LoroError;
 pub(crate) mod macros;
 pub(crate) mod value;
-pub(crate) use change::{Lamport, Timestamp};
+pub(crate) use change::Timestamp;
 pub(crate) use id::{PeerID, ID};
-pub(crate) use op::{ContentType, InsertContentTrait, Op};
+pub(crate) use op::{ContentType, InsertContentTrait};
 
 // TODO: rename as Key?
 pub(crate) type InternalString = DefaultAtom;

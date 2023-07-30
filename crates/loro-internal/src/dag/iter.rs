@@ -187,11 +187,14 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 
 #[derive(Debug)]
 pub(crate) struct IterReturn<'a, T> {
+    #[allow(unused)]
     pub retreat: IdSpanVector,
+    #[allow(unused)]
     pub forward: IdSpanVector,
     /// data is a reference, it need to be sliced by the counter_range to get the underlying data
     pub data: &'a T,
     /// data[slice] is the data we want to return
+    #[allow(unused)]
     pub slice: Range<i32>,
 }
 

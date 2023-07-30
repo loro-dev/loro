@@ -70,7 +70,7 @@ mod run {
                 }
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [i, 0]);
-                    a.import(&b.export_from(&a.vv_cloned()));
+                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
                 }
             })
         });
@@ -83,7 +83,7 @@ mod run {
             b.iter(|| {
                 let mut actors: Vec<_> = (0..100).map(|_| LoroDoc::default()).collect();
                 for (i, actor) in actors.iter_mut().enumerate() {
-                    let mut list = actor.get_list("list");
+                    let list = actor.get_list("list");
                     let value: LoroValue = i.to_string().into();
                     let mut txn = actor.txn().unwrap();
                     list.insert(&mut txn, 0, value).unwrap();
