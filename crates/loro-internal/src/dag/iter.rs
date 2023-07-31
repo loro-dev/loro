@@ -187,11 +187,14 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 
 #[derive(Debug)]
 pub(crate) struct IterReturn<'a, T> {
+    #[allow(unused)]
     pub retreat: IdSpanVector,
+    #[allow(unused)]
     pub forward: IdSpanVector,
     /// data is a reference, it need to be sliced by the counter_range to get the underlying data
     pub data: &'a T,
     /// data[slice] is the data we want to return
+    #[allow(unused)]
     pub slice: Range<i32>,
 }
 
@@ -345,138 +348,5 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             data: node,
             slice: slice_from..slice_end,
         })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{
-        configure::Configure,
-        dag::DagUtils,
-        id::{Counter, ID},
-        LoroCore, VersionVector,
-    };
-    #[test]
-    fn my_case() {
-        let mut loro_a = LoroCore::new(Default::default(), Some(1));
-        let mut loro_b = LoroCore::new(Default::default(), Some(2));
-        let mut loro_c = LoroCore::new(Default::default(), Some(3));
-
-        let mut text_a = loro_a.get_text("text");
-        let mut text_b = loro_b.get_text("text");
-        let mut text_c = loro_c.get_text("text");
-
-        text_a.insert(&loro_a, 0, "a1").unwrap();
-        text_a.insert(&loro_a, 0, "a2").unwrap();
-        text_a.insert(&loro_a, 0, "a3").unwrap();
-
-        text_b.insert(&loro_b, 0, "b1").unwrap();
-
-        loro_c.decode(&loro_b.encode_all()).unwrap();
-
-        text_c.insert(&loro_c, 0, "c1").unwrap();
-        let from: Vec<ID> = {
-            let m = loro_c.log_store.try_read().unwrap();
-            let f = m.frontiers();
-            f.to_vec()
-        };
-        let from_vv = loro_c.vv_cloned();
-        println!("c start vv: {:?}", loro_c.vv_cloned());
-
-        text_b.insert(&loro_b, 0, "b2").unwrap();
-        text_b.insert(&loro_b, 0, "b3").unwrap();
-
-        loro_b
-            .decode(&loro_a.encode_from(loro_b.vv_cloned()))
-            .unwrap();
-
-        text_b.insert(&loro_b, 0, "b4").unwrap();
-
-        text_c.insert(&loro_c, 0, "c2").unwrap();
-
-        loro_c
-            .decode(&loro_b.encode_from(loro_c.vv_cloned()))
-            .unwrap();
-
-        text_c.insert(&loro_c, 0, "c3").unwrap();
-        let mut vv = from_vv.clone();
-
-        println!(
-            "from {:?}, diff {:?}\n#################",
-            &from,
-            loro_c.vv_cloned().diff(&from_vv).left
-        );
-
-        let store_c = loro_c.log_store.try_read().unwrap();
-
-        for n in store_c.iter_causal(&from, loro_c.vv_cloned().diff(&from_vv).left) {
-            // println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
-            // println!("data: {:?}", store_c.change_to_export_format(n.data));
-            vv.retreat(&n.retreat);
-            vv.forward(&n.forward);
-            let end = n.slice.end;
-            let change = n.data;
-
-            vv.set_end(ID::new(change.id.peer, end as Counter + change.id.counter));
-            println!("{:?}\n", vv);
-        }
-    }
-
-    #[test]
-    fn parallel_case() {
-        let mut c1 = LoroCore::new(
-            Configure {
-                ..Default::default()
-            },
-            Some(1),
-        );
-        let mut c2 = LoroCore::new(
-            Configure {
-                ..Default::default()
-            },
-            Some(2),
-        );
-        let mut text1 = c1.get_text("text");
-        let mut text2 = c2.get_text("text");
-        for _ in 0..5 {
-            text1.insert(&c1, 0, "1").unwrap();
-            text2.insert(&c2, 0, "2").unwrap();
-        }
-        c1.decode(&c2.encode_from(c1.vv_cloned())).unwrap();
-
-        let mut from_vv = VersionVector::new();
-        from_vv.set_last(ID {
-            peer: 1,
-            counter: 1,
-        });
-        from_vv.set_last(ID {
-            peer: 2,
-            counter: 1,
-        });
-        let mut vv = from_vv.clone();
-        let c1_store = c1.log_store.try_read().unwrap();
-        for n in c1_store.iter_causal(
-            &[
-                ID {
-                    peer: 1,
-                    counter: 1,
-                },
-                ID {
-                    peer: 2,
-                    counter: 1,
-                },
-            ],
-            c1.vv_cloned().diff(&from_vv).left,
-        ) {
-            println!("retreat {:?} forward {:?}", &n.retreat, &n.forward);
-            // println!("data: {:?}", store_c.change_to_export_format(n.data));
-            vv.retreat(&n.retreat);
-            vv.forward(&n.forward);
-            let end = n.slice.end;
-            let change = n.data;
-
-            vv.set_end(ID::new(change.id.peer, end as Counter + change.id.counter));
-            println!("{:?}\n", vv);
-        }
     }
 }

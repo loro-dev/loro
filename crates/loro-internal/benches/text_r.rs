@@ -7,7 +7,7 @@ mod run {
     use super::*;
     use bench_utils::TextAction;
     use criterion::black_box;
-    use loro_internal::refactor::loro::LoroDoc;
+    use loro_internal::loro::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();

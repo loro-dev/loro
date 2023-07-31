@@ -3,56 +3,107 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::ContainerID,
     delta::{Delta, MapDelta, MapDiff},
     text::text_content::SliceRanges,
-    transaction::Origin,
-    version::Frontiers,
     InternalString, LoroValue,
 };
 
-#[derive(Debug)]
-pub(crate) struct EventDiff {
+use std::borrow::Cow;
+
+use loro_common::ContainerID;
+
+use crate::{container::idx::ContainerIdx, version::Frontiers};
+
+#[derive(Debug, Clone)]
+pub struct ContainerDiff {
     pub id: ContainerID,
-    pub diff: SmallVec<[Diff; 1]>,
-    pub local: bool,
-}
-
-#[derive(Debug)]
-pub(crate) struct RawEvent {
-    pub container_id: ContainerID,
-    pub old_version: Frontiers,
-    pub new_version: Frontiers,
-    pub local: bool,
+    pub path: Vec<(ContainerID, Index)>,
+    pub(crate) idx: ContainerIdx,
     pub diff: Diff,
-    pub abs_path: Path,
-    pub origin: Option<Origin>,
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct Event {
-    pub old_version: Frontiers,
-    pub new_version: Frontiers,
-    pub current_target: Option<ContainerID>,
-    pub target: ContainerID,
-    /// the relative path from current_target to target
-    pub relative_path: Path,
-    pub absolute_path: Path,
-    pub diff: Diff,
+#[derive(Debug, Clone)]
+pub struct DiffEvent<'a> {
+    /// whether the event comes from the children of the container.
+    pub from_children: bool,
+    pub container: &'a ContainerDiff,
+    pub doc: &'a DocDiff,
+}
+
+/// It's the exposed event type.
+/// It's exposed to the user. The user can use this to apply the diff to their local state.
+///
+/// [DocDiff] may include the diff that calculated from several transactions and imports.
+/// They all should have the same origin and local flag.
+#[derive(Debug, Clone)]
+pub struct DocDiff {
+    pub from: Frontiers,
+    pub to: Frontiers,
+    pub origin: InternalString,
     pub local: bool,
-    pub origin: Option<Origin>,
+    pub diff: Vec<ContainerDiff>,
 }
 
-#[derive(Debug)]
-pub(crate) struct PathAndTarget {
-    pub relative_path: Path,
-    pub target: Option<ContainerID>,
+#[derive(Debug, Clone)]
+pub(crate) struct InternalContainerDiff {
+    pub(crate) idx: ContainerIdx,
+    pub(crate) diff: Diff,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct EventDispatch {
-    pub sub_ids: Vec<SubscriptionID>,
-    pub rewrite: Option<PathAndTarget>,
+/// It's used for transmitting and recording the diff internally.
+///
+/// It can be convert into a [DocDiff].
+// Internally, we need to batch the diff then calculate the event. Because
+// we need to sort the diff by containers' created time, to make sure the
+// the path to each container is up-to-date.
+#[derive(Debug, Clone)]
+pub(crate) struct InternalDocDiff<'a> {
+    pub(crate) origin: InternalString,
+    pub(crate) local: bool,
+    pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
+    pub(crate) new_version: Cow<'a, Frontiers>,
+}
+
+impl<'a> InternalDocDiff<'a> {
+    pub fn into_owned(self) -> InternalDocDiff<'static> {
+        InternalDocDiff {
+            origin: self.origin,
+            local: self.local,
+            diff: Cow::Owned((*self.diff).to_owned()),
+            new_version: Cow::Owned((*self.new_version).to_owned()),
+        }
+    }
+
+    pub fn can_merge(&self, other: &Self) -> bool {
+        self.origin == other.origin && self.local == other.local
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use crate::LoroDoc;
+
+    #[test]
+    fn test_text_event() {
+        let loro = LoroDoc::new();
+        loro.subscribe_deep(Arc::new(|event| {
+            assert_eq!(
+                &event.container.diff.as_text().unwrap().vec[0]
+                    .as_insert()
+                    .unwrap()
+                    .0,
+                &"h223ello"
+            );
+            dbg!(event);
+        }));
+        let mut txn = loro.txn().unwrap();
+        let text = loro.get_text("id");
+        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert(&mut txn, 1, "223").unwrap();
+        txn.commit().unwrap();
+    }
 }
 
 pub type Path = SmallVec<[Index; 4]>;
@@ -105,73 +156,3 @@ impl Default for Diff {
         Diff::List(Delta::default())
     }
 }
-
-// pub type Observer = Box<dyn FnMut(&Event) + Send>;
-#[derive(Default)]
-pub(crate) struct ObserverOptions {
-    pub(crate) once: bool,
-    pub(crate) container: Option<ContainerID>,
-    pub(crate) deep: bool,
-}
-
-impl ObserverOptions {
-    fn with_container(mut self, container: ContainerID) -> Self {
-        self.container.replace(container);
-        self
-    }
-}
-
-pub type ObserverHandler = Box<dyn FnMut(&Event) + Send>;
-
-pub(crate) struct Observer {
-    handler: ObserverHandler,
-    options: ObserverOptions,
-}
-
-impl Observer {
-    pub fn new_root(handler: ObserverHandler) -> Self {
-        Self {
-            handler,
-            options: ObserverOptions::default(),
-        }
-    }
-
-    pub fn new_container(handler: ObserverHandler, container: ContainerID) -> Self {
-        Self {
-            handler,
-            options: ObserverOptions::default().with_container(container),
-        }
-    }
-
-    pub fn container(&self) -> &Option<ContainerID> {
-        &self.options.container
-    }
-
-    pub fn root(&self) -> bool {
-        self.options.container.is_none()
-    }
-
-    pub fn deep(&self) -> bool {
-        self.options.deep
-    }
-
-    pub fn with_once(mut self, once: bool) -> Self {
-        self.options.once = once;
-        self
-    }
-
-    pub fn with_deep(mut self, deep: bool) -> Self {
-        self.options.deep = deep;
-        self
-    }
-
-    pub fn once(&self) -> bool {
-        self.options.once
-    }
-
-    pub fn call(&mut self, event: &Event) {
-        (self.handler)(event)
-    }
-}
-
-pub type SubscriptionID = u32;

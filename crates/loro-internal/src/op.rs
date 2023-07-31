@@ -1,9 +1,6 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::{
-        registry::{ContainerIdx, ContainerInstance},
-        ContainerID, ContainerTrait,
-    },
+    container::{idx::ContainerIdx, ContainerID},
     id::{Counter, PeerID, ID},
     span::{HasCounter, HasId, HasLamport},
 };
@@ -11,7 +8,6 @@ use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 mod content;
 
 pub use content::*;
-use smallvec::SmallVec;
 
 /// Operation is a unit of change.
 ///
@@ -69,37 +65,10 @@ impl Op {
             container,
         }
     }
-
-    pub(crate) fn convert(self, container: &mut ContainerInstance, gc: bool) -> RemoteOp {
-        RemoteOp {
-            counter: self.counter,
-            container: container.id().clone(),
-            contents: RleVec::from(container.to_export(self.content, gc)),
-        }
-    }
 }
 
 impl<'a> RemoteOp<'a> {
-    pub(crate) fn convert(
-        self,
-        container: &mut ContainerInstance,
-        container_idx: ContainerIdx,
-    ) -> SmallVec<[Op; 1]> {
-        let mut counter = self.counter;
-        self.contents
-            .into_iter()
-            .map(|content| {
-                let ans = Op {
-                    counter,
-                    container: container_idx,
-                    content: container.to_import(content),
-                };
-                counter += ans.atom_len() as Counter;
-                ans
-            })
-            .collect()
-    }
-
+    #[allow(unused)]
     pub(crate) fn into_static(self) -> RemoteOp<'static> {
         RemoteOp {
             counter: self.counter,

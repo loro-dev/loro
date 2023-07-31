@@ -1,19 +1,19 @@
 use std::sync::Arc;
 
-use loro_internal::{LoroCore, Text};
+use loro_internal::{LoroDoc, TextHandler};
 use pyo3::prelude::*;
 
 #[pyclass]
-struct Loro(LoroCore);
+struct Loro(LoroDoc);
 
 #[pyclass]
-struct LoroText(Text);
+struct LoroText(TextHandler);
 
 #[pymethods]
 impl Loro {
     #[new]
     pub fn __new__() -> Self {
-        Self(LoroCore::default())
+        Self(LoroDoc::default())
     }
 
     pub fn get_text(&mut self, id: &str) -> LoroText {
@@ -25,7 +25,9 @@ impl Loro {
 #[pymethods]
 impl LoroText {
     pub fn insert(&mut self, ctx: &Loro, pos: usize, value: &str) -> PyResult<()> {
-        self.0.insert(&ctx.0, pos, value).unwrap();
+        self.0
+            .insert(&mut ctx.0.txn().unwrap(), pos, value)
+            .unwrap();
         Ok(())
     }
 

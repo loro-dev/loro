@@ -6,12 +6,12 @@ use tracing::instrument;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::ContainerID,
+    encoding::RemoteClientChanges,
     id::{Counter, PeerID, ID},
-    log_store::RemoteClientChanges,
     op::{RawOpContent, RemoteOp},
-    refactor::oplog::OpLog,
+    oplog::OpLog,
     version::Frontiers,
-    LogStore, LoroError, VersionVector,
+    LoroError, VersionVector,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,22 +48,6 @@ struct EncodedChange {
     pub(crate) timestamp_delta: i64,
 }
 
-#[instrument(skip_all)]
-pub(super) fn encode_updates(store: &LogStore, from: &VersionVector) -> Result<Vec<u8>, LoroError> {
-    store.expose_local_change();
-    let changes = store.export(from);
-    let mut updates = Updates {
-        changes: Vec::with_capacity(changes.len()),
-    };
-    for (_, changes) in changes {
-        let encoded = convert_changes_to_encoded(changes.into_iter());
-        updates.changes.push(encoded);
-    }
-
-    postcard::to_allocvec(&updates)
-        .map_err(|err| LoroError::DecodeError(err.to_string().into_boxed_str()))
-}
-
 pub(crate) fn encode_oplog_updates(oplog: &OpLog, from: &VersionVector) -> Vec<u8> {
     let changes = oplog.export_changes_from(from);
     let mut updates = Updates {
@@ -84,19 +68,6 @@ pub(crate) fn decode_oplog_updates(oplog: &mut OpLog, updates: &[u8]) -> Result<
 }
 
 pub(super) fn decode_updates(input: &[u8]) -> Result<RemoteClientChanges<'static>, LoroError> {
-    let updates: Updates =
-        postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
-    let mut changes: RemoteClientChanges = Default::default();
-    for encoded in updates.changes {
-        changes.insert(encoded.meta.client, convert_encoded_to_changes(encoded));
-    }
-
-    Ok(changes)
-}
-
-pub(super) fn decode_updates_to_inner_format(
-    input: &[u8],
-) -> Result<RemoteClientChanges<'static>, LoroError> {
     let updates: Updates =
         postcard::from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
     let mut changes: RemoteClientChanges = Default::default();

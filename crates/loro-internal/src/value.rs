@@ -1,84 +1,16 @@
 use std::sync::Arc;
 
 use crate::{
-    container::registry::ContainerRegistry,
     delta::DeltaItem,
     event::{Diff, Index, Path},
-    ContainerTrait,
 };
 
 use debug_log::debug_dbg;
 pub use loro_common::LoroValue;
 
-pub trait ResolveDeep {
-    fn resolve_deep(self, reg: &ContainerRegistry) -> Self;
-}
-
-impl ResolveDeep for LoroValue {
-    fn resolve_deep(mut self, reg: &ContainerRegistry) -> LoroValue {
-        match &mut self {
-            LoroValue::List(list) => {
-                let list = Arc::make_mut(list);
-                for v in list.iter_mut() {
-                    if v.as_container().is_some() {
-                        *v = v.clone().resolve_deep(reg)
-                    }
-                }
-            }
-            LoroValue::Map(map) => {
-                let map = Arc::make_mut(map);
-                for v in map.values_mut() {
-                    if v.as_container().is_some() {
-                        *v = v.clone().resolve_deep(reg)
-                    }
-                }
-            }
-            LoroValue::Container(id) => {
-                self = reg
-                    .get(id)
-                    .map(|container| {
-                        let mut value =
-                            container.upgrade().unwrap().try_lock().unwrap().get_value();
-
-                        match &mut value {
-                            LoroValue::List(list) => {
-                                let list = Arc::make_mut(list);
-                                for v in list.iter_mut() {
-                                    if v.as_container().is_some() {
-                                        *v = v.clone().resolve_deep(reg)
-                                    }
-                                }
-                            }
-                            LoroValue::Map(map) => {
-                                let map = Arc::make_mut(map);
-                                for v in map.values_mut() {
-                                    if v.as_container().is_some() {
-                                        *v = v.clone().resolve_deep(reg)
-                                    }
-                                }
-                            }
-                            LoroValue::Container(_) => unreachable!(),
-                            _ => {}
-                        }
-
-                        value
-                    })
-                    .unwrap_or_else(|| match id.container_type() {
-                        crate::ContainerType::Text => LoroValue::String(Default::default()),
-                        crate::ContainerType::Map => LoroValue::Map(Default::default()),
-                        crate::ContainerType::List => LoroValue::List(Default::default()),
-                    })
-            }
-            _ => {}
-        }
-        self
-    }
-}
-
 pub trait ToJson {
     fn to_json(&self) -> String;
     fn to_json_pretty(&self) -> String;
-    fn to_json_value(&self, reg: &ContainerRegistry) -> LoroValue;
     fn from_json(s: &str) -> Self;
 }
 
@@ -97,13 +29,6 @@ impl ToJson for LoroValue {
         #[cfg(not(feature = "json"))]
         let ans = String::new();
         ans
-    }
-
-    fn to_json_value(&self, reg: &ContainerRegistry) -> LoroValue {
-        match self {
-            LoroValue::Container(_) => self.clone().resolve_deep(reg).to_json_value(reg),
-            _ => self.clone(),
-        }
     }
 
     #[allow(unused)]
@@ -624,23 +549,6 @@ pub mod wasm {
 
             obj.into_js_result().unwrap()
         }
-    }
-}
-#[cfg(test)]
-pub(crate) mod proptest {
-    use proptest::prelude::*;
-    use proptest::prop_oneof;
-
-    use super::LoroValue;
-
-    pub fn gen_insert_value() -> impl Strategy<Value = LoroValue> {
-        prop_oneof![
-            Just(LoroValue::Null),
-            any::<f64>().prop_map(LoroValue::Double),
-            any::<i32>().prop_map(LoroValue::I32),
-            any::<bool>().prop_map(LoroValue::Bool),
-            any::<String>().prop_map(|s| LoroValue::String(s.into())),
-        ]
     }
 }
 

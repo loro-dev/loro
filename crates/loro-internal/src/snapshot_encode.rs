@@ -13,9 +13,7 @@ use smallvec::smallvec;
 
 use crate::{
     change::{Change, Timestamp},
-    container::{
-        list::list_op::InnerListOp, map::InnerMapSet, registry::ContainerIdx, ContainerID,
-    },
+    container::{idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet},
     delta::MapValue,
     id::{Counter, PeerID},
     op::{InnerContent, Op},
@@ -263,9 +261,7 @@ pub fn decode_state<'b>(
     Ok((state_arena, common))
 }
 
-type Containers = Vec<ContainerID>;
 type ClientIdx = u32;
-type Clients = Vec<PeerID>;
 
 #[columnar(ser, de)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -440,15 +436,6 @@ struct DepsEncoding {
     peer_idx: ClientIdx,
     #[columnar(strategy = "DeltaRle", original_type = "i32")]
     counter: Counter,
-}
-
-impl DepsEncoding {
-    pub(super) fn new(client_idx: ClientIdx, counter: Counter) -> Self {
-        Self {
-            peer_idx: client_idx,
-            counter,
-        }
-    }
 }
 
 #[derive(Default)]

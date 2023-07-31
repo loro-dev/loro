@@ -720,9 +720,9 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c539f443471bd9c4d6bb4d5526f2f5f26c645defe7a9de82409b844dc2e5d2e"
+checksum = "a8f334f35041258df9e9fbd321e6559ff57db4e1bf04bc31ecf05ccb7e615993"
 dependencies = [
  "fxhash",
  "smallvec",
@@ -1007,7 +1007,6 @@ dependencies = [
  "arref",
  "bench-utils",
  "color-backtrace",
- "compact-bytes",
  "crdt-list",
  "criterion 0.4.0",
  "ctor",
@@ -1025,7 +1024,6 @@ dependencies = [
  "jumprope",
  "loro-common",
  "loro-preload",
- "lz4_flex",
  "miniz_oxide 0.7.1",
  "num",
  "postcard",
@@ -1038,7 +1036,6 @@ dependencies = [
  "serde_columnar",
  "serde_json",
  "smallvec",
- "smartstring",
  "static_assertions",
  "string_cache",
  "tabled",
@@ -1079,15 +1076,6 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "lz4_flex"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ea9b256699eda7b0387ffbc776dd625e28bde3918446381781245b7a50349d8"
-dependencies = [
- "twox-hash",
 ]
 
 [[package]]
@@ -2186,16 +2174,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24eb03ba0eab1fd845050058ce5e616558e8f8d8fca633e6b163fe25c797213a"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "twox-hash"
-version = "1.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
-dependencies = [
- "cfg-if",
- "static_assertions",
 ]
 
 [[package]]

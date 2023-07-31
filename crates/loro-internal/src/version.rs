@@ -15,7 +15,7 @@ use tracing::instrument;
 use crate::{
     change::Lamport,
     id::{Counter, ID},
-    refactor::oplog::AppDag,
+    oplog::AppDag,
     span::{CounterSpan, HasIdSpan, IdSpan},
     LoroError, PeerID,
 };

@@ -31,48 +31,6 @@ doc = false
 # opt-level = 3
 
 [[bin]]
-name = "single_client_text"
-path = "fuzz_targets/single_client_text.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "two_client_text"
-path = "fuzz_targets/two_client_text.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "text"
-path = "fuzz_targets/text.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "recursive"
-path = "fuzz_targets/recursive.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "recursive_txn"
-path = "fuzz_targets/recursive_txn.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "encode"
-path = "fuzz_targets/encode.rs"
-test = false
-doc = false
-
-[[bin]]
-name = "unicode"
-path = "fuzz_targets/unicode.rs"
-test = false
-doc = false
-
-[[bin]]
 name = "text_refactored"
 path = "fuzz_targets/text_refactored.rs"
 test = false

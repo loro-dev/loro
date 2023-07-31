@@ -1,8 +1,8 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
     container::{
+        idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
-        registry::ContainerIdx,
         text::text_content::ListSlice,
     },
     txn::EventHint,
@@ -113,6 +113,7 @@ impl TextHandler {
                 pos,
             }),
             None,
+            &self.state,
         )
     }
 
@@ -128,6 +129,7 @@ impl TextHandler {
                 len: len as isize,
             })),
             None,
+            &self.state,
         )
     }
 
@@ -155,6 +157,7 @@ impl TextHandler {
                 pos: start,
             }),
             None,
+            &self.state,
         )?;
 
         Ok(())
@@ -183,6 +186,7 @@ impl TextHandler {
                 len: (end - start) as isize,
             })),
             None,
+            &self.state,
         )
     }
 }
@@ -503,7 +507,7 @@ impl MapHandler {
 #[cfg(test)]
 mod test {
 
-    use crate::refactor::loro::LoroDoc;
+    use crate::loro::LoroDoc;
 
     #[test]
     fn test() {

@@ -1,217 +1,336 @@
 use std::{
+    borrow::Cow,
     cmp::Ordering,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
-use crate::{
-    container::{registry::ContainerIdx, ContainerID},
-    context::Context,
-    event::ObserverHandler,
-    hierarchy::Hierarchy,
-    log_store::LoroEncoder,
-    version::Frontiers,
-    EncodeMode, LoroError, LoroValue, Transact,
-};
-use fxhash::{FxHashMap, FxHashSet};
+use debug_log::debug_dbg;
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 
 use crate::{
-    change::Change,
-    configure::Configure,
-    container::{list::List, map::Map, text::Text, ContainerIdRaw, ContainerType},
-    event::{Observer, SubscriptionID},
+    arena::SharedArena,
+    container::{idx::ContainerIdx, IntoContainerId},
+    encoding::{ConcreteEncodeMode, EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     id::PeerID,
-    op::RemoteOp,
-    LogStore, VersionVector,
+    version::Frontiers,
+    InternalString, LoroError, VersionVector,
 };
 
-pub struct LoroCore {
-    pub(crate) log_store: Arc<RwLock<LogStore>>,
-    pub(crate) hierarchy: Arc<Mutex<Hierarchy>>,
+use super::{
+    diff_calc::DiffCalculator,
+    event::InternalDocDiff,
+    obs::{Observer, SubID, Subscriber},
+    oplog::OpLog,
+    snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
+    state::DocState,
+    txn::Transaction,
+    ListHandler, MapHandler, TextHandler,
+};
+
+/// `LoroApp` serves as the library's primary entry point.
+/// It's constituted by an [OpLog] and an [AppState].
+///
+/// - [OpLog] encompasses all operations, signifying the document history.
+/// - [AppState] signifies the current document state.
+///
+/// They will share a [super::arena::SharedArena]
+///
+/// # Detached Mode
+///
+/// This mode enables separate usage of [OpLog] and [AppState].
+/// It facilitates temporal navigation. [AppState] can be reverted to
+/// any version contained within the [OpLog].
+///
+/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
+/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
+/// will continue to affect [OpLog].
+pub struct LoroDoc {
+    oplog: Arc<Mutex<OpLog>>,
+    state: Arc<Mutex<DocState>>,
+    arena: SharedArena,
+    observer: Arc<Observer>,
+    detached: bool,
 }
 
-impl Default for LoroCore {
-    fn default() -> Self {
-        LoroCore::new(Configure::default(), None)
-    }
-}
-
-impl LoroCore {
-    #[inline]
-    pub fn new(cfg: Configure, client_id: Option<PeerID>) -> Self {
+impl LoroDoc {
+    pub fn new() -> Self {
+        let oplog = OpLog::new();
+        let arena = oplog.arena.clone();
+        // share arena
+        let state = Arc::new(Mutex::new(DocState::new(arena.clone())));
         Self {
-            log_store: LogStore::new(cfg, client_id),
-            hierarchy: Default::default(),
+            oplog: Arc::new(Mutex::new(oplog)),
+            state,
+            detached: false,
+            observer: Arc::new(Observer::new(arena.clone())),
+            arena,
         }
     }
 
-    #[inline]
-    pub fn client_id(&self) -> PeerID {
-        self.log_store.read().unwrap().this_client_id()
+    pub fn is_empty(&self) -> bool {
+        self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
-    #[inline]
+    #[allow(unused)]
+    pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
+        let obs = Observer::new(oplog.arena.clone());
+        Self {
+            arena: oplog.arena.clone(),
+            observer: Arc::new(obs),
+            oplog: Arc::new(Mutex::new(oplog)),
+            state: Arc::new(Mutex::new(state)),
+            detached: false,
+        }
+    }
+
+    pub fn peer_id(&self) -> PeerID {
+        self.state.lock().unwrap().peer
+    }
+
+    pub fn set_peer_id(&self, peer: PeerID) {
+        self.state.lock().unwrap().peer = peer;
+    }
+
+    pub fn detach(&mut self) {
+        self.detached = true;
+    }
+
+    pub fn attach(&mut self) {
+        self.detached = false;
+        let mut state = self.state.lock().unwrap();
+        let oplog = self.oplog.lock().unwrap();
+        let state_vv = oplog.dag.frontiers_to_vv(&state.frontiers);
+        let mut diff = DiffCalculator::new();
+        let diff = diff.calc_diff_internal(
+            &oplog,
+            &state_vv,
+            Some(&state.frontiers),
+            oplog.vv(),
+            Some(oplog.frontiers()),
+        );
+        state.apply_diff(InternalDocDiff {
+            local: true,
+            origin: Default::default(),
+            diff: (diff).into(),
+            new_version: Cow::Owned(oplog.frontiers().clone()),
+        });
+    }
+
+    #[inline(always)]
+    pub fn txn(&self) -> Result<Transaction, LoroError> {
+        self.txn_with_origin("")
+    }
+
+    pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
+        let mut txn =
+            Transaction::new_with_origin(self.state.clone(), self.oplog.clone(), origin.into());
+        if self.state.lock().unwrap().is_recording() {
+            let obs = self.observer.clone();
+            txn.set_on_commit(Box::new(move |state| {
+                let events = state.lock().unwrap().take_events();
+                for event in events {
+                    obs.emit(event);
+                }
+            }));
+        }
+
+        Ok(txn)
+    }
+
+    pub fn app_state(&self) -> &Arc<Mutex<DocState>> {
+        &self.state
+    }
+
+    pub fn get_state_deep_value(&self) -> LoroValue {
+        self.state.lock().unwrap().get_deep_value()
+    }
+
+    pub fn oplog(&self) -> &Arc<Mutex<OpLog>> {
+        &self.oplog
+    }
+
+    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
+        self.oplog.lock().unwrap().export_from(vv)
+    }
+
+    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+        self.import_with(bytes, Default::default())
+    }
+
+    pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+        let (magic_bytes, input) = bytes.split_at(4);
+        let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
+        if magic_bytes != MAGIC_BYTES {
+            return Err(LoroError::DecodeError("Invalid header bytes".into()));
+        }
+        let (version, input) = input.split_at(1);
+        if version != [ENCODE_SCHEMA_VERSION] {
+            return Err(LoroError::DecodeError("Invalid version".into()));
+        }
+
+        let mode: ConcreteEncodeMode = input[0].into();
+        match mode {
+            ConcreteEncodeMode::Updates | ConcreteEncodeMode::RleUpdates => {
+                // TODO: need to throw error if state is in transaction
+                debug_log::group!("import");
+                let mut oplog = self.oplog.lock().unwrap();
+                let old_vv = oplog.vv().clone();
+                let old_frontiers = oplog.frontiers().clone();
+                oplog.decode(bytes)?;
+                let mut diff = DiffCalculator::new();
+                let diff = diff.calc_diff_internal(
+                    &oplog,
+                    &old_vv,
+                    Some(&old_frontiers),
+                    oplog.vv(),
+                    Some(oplog.dag.get_frontiers()),
+                );
+                if !self.detached {
+                    let mut state = self.state.lock().unwrap();
+                    state.apply_diff(InternalDocDiff {
+                        origin,
+                        local: false,
+                        diff: (diff).into(),
+                        new_version: Cow::Owned(oplog.frontiers().clone()),
+                    });
+                }
+
+                debug_log::group_end!();
+            }
+            ConcreteEncodeMode::Snapshot => {
+                if self.is_empty() {
+                    decode_app_snapshot(self, &input[1..])?;
+                } else {
+                    let app = LoroDoc::new();
+                    decode_app_snapshot(&app, &input[1..])?;
+                    let oplog = self.oplog.lock().unwrap();
+                    let updates = app.export_from(oplog.vv());
+                    drop(oplog);
+                    return self.import_with(&updates, origin);
+                }
+            }
+        };
+
+        debug_dbg!(&self.oplog.lock().unwrap().changes);
+        self.emit_events();
+
+        Ok(())
+    }
+
+    fn emit_events(&self) {
+        let mut state = self.state.lock().unwrap();
+        for event in state.take_events() {
+            self.observer.emit(event);
+        }
+    }
+
+    pub fn export_snapshot(&self) -> Vec<u8> {
+        debug_log::group!("export snapshot");
+        debug_dbg!(&self.oplog.lock().unwrap().changes);
+        debug_dbg!(&self.state.lock().unwrap().get_deep_value());
+        let version = ENCODE_SCHEMA_VERSION;
+        let mut ans = Vec::from(MAGIC_BYTES);
+        // maybe u8 is enough
+        ans.push(version);
+        ans.push((EncodeMode::Snapshot).to_byte());
+        ans.extend(encode_app_snapshot(self));
+        debug_log::group_end!();
+        ans
+    }
+
     pub fn vv_cloned(&self) -> VersionVector {
-        self.log_store.read().unwrap().get_vv().clone()
+        self.oplog.lock().unwrap().vv().clone()
     }
 
-    #[inline]
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
+        let idx = self.get_container_idx(id, ContainerType::Text);
+        TextHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
+        let idx = self.get_container_idx(id, ContainerType::List);
+        ListHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
+        let idx = self.get_container_idx(id, ContainerType::Map);
+        MapHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    pub fn diagnose_size(&self) {
+        self.oplog().lock().unwrap().diagnose_size();
+    }
+
+    fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
+        let id = id.into_container_id(&self.arena, c_type);
+        self.arena.register_container(&id)
+    }
+
     pub fn frontiers(&self) -> Frontiers {
-        self.log_store.read().unwrap().frontiers().clone()
+        self.oplog().lock().unwrap().frontiers().clone()
     }
 
     /// - Ordering::Less means self is less than target or parallel
     /// - Ordering::Equal means versions equal
     /// - Ordering::Greater means self's version is greater than target
-    #[inline]
-    pub fn cmp_frontiers(&self, frontiers: &Frontiers) -> Ordering {
-        self.log_store.read().unwrap().cmp_frontiers(frontiers)
+    pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
+        self.oplog().lock().unwrap().cmp_frontiers(other)
     }
 
-    #[inline(always)]
-    pub fn get_list<I: Into<ContainerIdRaw>>(&mut self, id: I) -> List {
-        let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.try_write().unwrap();
-        let instance = store.get_or_create_container(&id.with_type(ContainerType::List));
-        let cid = store.this_client_id();
-        List::from_instance(instance, cid)
+    pub fn subscribe_deep(&self, callback: Subscriber) -> SubID {
+        let mut state = self.state.lock().unwrap();
+        if !state.is_recording() {
+            state.start_recording();
+        }
+
+        self.observer.subscribe_deep(callback)
     }
 
-    #[inline(always)]
-    pub fn get_map<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Map {
-        let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.try_write().unwrap();
-        let instance = store.get_or_create_container(&id.with_type(ContainerType::Map));
-        let cid = store.this_client_id();
-        Map::from_instance(instance, cid)
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+        let mut state = self.state.lock().unwrap();
+        if !state.is_recording() {
+            state.start_recording();
+        }
+
+        self.observer.subscribe(container_id, callback)
     }
 
-    #[inline(always)]
-    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Text {
-        let id: ContainerIdRaw = id.into();
-        let mut store = self.log_store.try_write().unwrap();
-        let instance = store.get_or_create_container(&id.with_type(ContainerType::Text));
-        let cid = store.this_client_id();
-        Text::from_instance(instance, cid)
+    pub fn unsubscribe(&self, id: SubID) {
+        self.observer.unsubscribe(id);
     }
 
-    pub fn get_list_by_idx(&self, idx: &ContainerIdx) -> Option<List> {
-        let cid = self.client_id();
-        self.get_container_by_idx(idx)
-            .map(|i| List::from_instance(i, cid))
-    }
+    // PERF: opt
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        for data in bytes.iter() {
+            self.import(data)?;
+        }
 
-    pub fn get_map_by_idx(&self, idx: &ContainerIdx) -> Option<Map> {
-        let cid = self.client_id();
-        self.get_container_by_idx(idx)
-            .map(|i| Map::from_instance(i, cid))
-    }
-
-    pub fn get_text_by_idx(&self, idx: &ContainerIdx) -> Option<Text> {
-        let cid = self.client_id();
-        self.get_container_by_idx(idx)
-            .map(|i| Text::from_instance(i, cid))
-    }
-
-    pub fn contains(&self, id: &ContainerID) -> bool {
-        let store = self.log_store.try_read().unwrap();
-        store.contains_container(id)
-    }
-
-    pub fn children(&self, id: &ContainerID) -> Result<FxHashSet<ContainerID>, LoroError> {
-        let hierarchy = self.hierarchy.try_lock().unwrap();
-        hierarchy.children(id)
-    }
-
-    pub fn parent(&self, id: &ContainerID) -> Result<Option<ContainerID>, LoroError> {
-        let hierarchy = self.hierarchy.try_lock().unwrap();
-        hierarchy.parent(id)
-    }
-
-    // TODO: make it private
-    pub fn export(
-        &self,
-        remote_vv: VersionVector,
-    ) -> FxHashMap<u64, Vec<Change<RemoteOp<'static>>>> {
-        let store = self.log_store.read().unwrap();
-        store.export(&remote_vv)
-    }
-
-    // TODO: make it private
-    pub fn import(&mut self, changes: FxHashMap<u64, Vec<Change<RemoteOp<'static>>>>) {
-        debug_log::group!("Import at {}", self.client_id());
-        let txn = self.transact();
-        let mut txn = txn.0.borrow_mut();
-        let txn = txn.as_mut();
-        txn.import(changes);
-        txn.commit().unwrap();
-        debug_log::group_end!();
-    }
-
-    /// this method will always compress
-    pub fn encode_all(&self) -> Vec<u8> {
-        LoroEncoder::encode_context(self, EncodeMode::Snapshot)
-    }
-
-    /// encode without compress
-    pub fn encode_from(&self, from: VersionVector) -> Vec<u8> {
-        LoroEncoder::encode_context(self, EncodeMode::Auto(from))
-    }
-
-    pub fn encode_with_cfg(&self, mode: EncodeMode) -> Vec<u8> {
-        LoroEncoder::encode_context(self, mode)
-    }
-
-    pub fn decode(&mut self, input: &[u8]) -> Result<(), LoroError> {
-        let txn = self.transact();
-        let mut txn = txn.0.borrow_mut();
-        let txn = txn.as_mut();
-        txn.decode(input)?;
-        txn.commit()?;
         Ok(())
-    }
-
-    pub fn decode_batch(&mut self, input: &[Vec<u8>]) -> Result<(), LoroError> {
-        let txn = self.transact();
-        let mut txn = txn.0.borrow_mut();
-        let txn = txn.as_mut();
-        txn.decode_batch(input)?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    #[cfg(feature = "test_utils")]
-    pub fn diagnose(&self) {
-        self.log_store.try_write().unwrap().debug_inspect();
     }
 
     pub fn to_json(&self) -> LoroValue {
-        self.log_store.try_read().unwrap().to_json()
+        self.state.lock().unwrap().get_deep_value()
     }
+}
 
-    pub fn subscribe_deep(&mut self, handler: ObserverHandler) -> SubscriptionID {
-        let observer = Observer::new_root(handler);
-        self.hierarchy.try_lock().unwrap().subscribe(observer)
+impl Default for LoroDoc {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    pub fn unsubscribe_deep(&mut self, subscription: SubscriptionID) {
-        self.hierarchy.try_lock().unwrap().unsubscribe(subscription)
-    }
-
-    pub fn subscribe_once(&mut self, handler: ObserverHandler) -> SubscriptionID {
-        let observer = Observer::new_root(handler).with_once(true);
-        self.hierarchy.try_lock().unwrap().subscribe(observer)
-    }
-
-    // config
-
-    pub fn gc(&mut self, gc: bool) {
-        self.log_store.write().unwrap().gc(gc)
-    }
-
-    pub fn snapshot_interval(&mut self, snapshot_interval: u64) {
-        self.log_store
-            .write()
-            .unwrap()
-            .snapshot_interval(snapshot_interval);
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_sync() {
+        fn is_send_sync<T: Send + Sync>(_v: T) {}
+        let loro = super::LoroDoc::new();
+        is_send_sync(loro)
     }
 }

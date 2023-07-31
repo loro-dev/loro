@@ -3,11 +3,11 @@ use std::{ops::Range, sync::Arc};
 use jumprope::JumpRope;
 
 use crate::{
+    arena::SharedArena,
     container::text::text_content::{ListSlice, SliceRanges},
     delta::{Delta, DeltaItem},
     event::Diff,
     op::{RawOp, RawOpContent},
-    refactor::arena::SharedArena,
     LoroValue,
 };
 

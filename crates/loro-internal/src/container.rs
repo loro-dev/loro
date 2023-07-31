@@ -4,118 +4,82 @@
 //!
 //! Every [Container] can take a [Snapshot], which contains [crate::LoroValue] that describes the state.
 //!
-use crate::{
-    arena::SharedArena,
-    event::{Observer, ObserverHandler, SubscriptionID},
-    hierarchy::Hierarchy,
-    log_store::ImportContext,
-    op::{InnerContent, RawOpContent, RichOp},
-    InternalString, LoroValue, VersionVector, ID,
-};
+use crate::{arena::SharedArena, InternalString, ID};
 
-use smallvec::SmallVec;
+pub mod idx {
+    use super::super::ContainerType;
 
-use std::{any::Any, fmt::Debug};
-
-use self::pool_mapping::StateContent;
-
-pub mod pool_mapping;
-pub mod registry;
-
-pub mod list;
-pub mod map;
-mod pool;
-pub mod text;
-
-use registry::ContainerIdx;
-
-pub use loro_common::ContainerType;
-
-pub trait ContainerTrait: Debug + Any + Unpin + Send + Sync {
-    fn id(&self) -> &ContainerID;
-    fn idx(&self) -> ContainerIdx;
-    fn type_(&self) -> ContainerType;
-    fn get_value(&self) -> LoroValue;
-
-    /// Initialize the pool mapping in current state for this container
-    fn initialize_pool_mapping(&mut self);
-
-    /// Encode and release the pool mapping, and return the encoded bytes.
-    fn encode_and_release_pool_mapping(&mut self) -> StateContent;
-
-    /// Convert an op content to new op content(s) that includes the data of the new state of the pool mapping.
-    fn to_export_snapshot(
-        &mut self,
-        content: &InnerContent,
-        gc: bool,
-    ) -> SmallVec<[InnerContent; 1]>;
-
-    /// Decode the pool mapping from the bytes and apply it to the container.
-    fn to_import_snapshot(
-        &mut self,
-        state_content: StateContent,
-        hierarchy: &mut Hierarchy,
-        ctx: &mut ImportContext,
-    );
-
-    /// convert an op content to exported format that includes the raw data
-    fn to_export(&mut self, content: InnerContent, gc: bool) -> SmallVec<[RawOpContent; 1]>;
-
-    /// convert an op content to compact imported format
-    fn to_import(&mut self, content: RawOpContent) -> InnerContent;
-
-    /// Initialize tracker at the target version
-    fn tracker_init(&mut self, vv: &VersionVector);
-
-    /// Tracker need to checkout to target version in order to apply the op.
-    fn tracker_checkout(&mut self, vv: &VersionVector);
-
-    /// Apply the op to the tracker.
+    /// Inner representation for ContainerID.
+    /// It contains the unique index for the container and the type of the container.
+    /// It uses top 4 bits to represent the type of the container.
     ///
-    /// Here we have not updated the container state yet. Because we
-    /// need to calculate the effect of the op for [crate::List] and
-    /// [crate::Text] by using tracker.
-    fn track_apply(
-        &mut self,
-        hierarchy: &mut Hierarchy,
-        op: &RichOp,
-        import_context: &mut ImportContext,
-    );
+    /// It's only used inside this crate and should not be exposed to the user.
+    ///
+    /// TODO: make this type private in this crate only
+    ///
+    // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
+    // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
+    // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+    pub struct ContainerIdx(u32);
 
-    /// Apply the effect of the op directly to the state.
-    fn update_state_directly(
-        &mut self,
-        hierarchy: &mut Hierarchy,
-        op: &RichOp,
-        import_context: &mut ImportContext,
-    );
-    /// Make tracker iterate over the target spans and apply the calculated
-    /// effects to the container state
-    fn apply_tracked_effects_from(
-        &mut self,
-        hierarchy: &mut Hierarchy,
-        import_context: &mut ImportContext,
-    );
-
-    fn subscribe(
-        &self,
-        hierarchy: &mut Hierarchy,
-        handler: ObserverHandler,
-        deep: bool,
-        once: bool,
-    ) -> SubscriptionID {
-        let observer = Observer::new_container(handler, self.id().clone())
-            .with_deep(deep)
-            .with_once(once);
-        hierarchy.subscribe(observer)
+    impl std::fmt::Debug for ContainerIdx {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_tuple("ContainerIdx")
+                .field(&self.get_type())
+                .field(&self.to_index())
+                .finish()
+        }
     }
 
-    fn unsubscribe(&self, hierarchy: &mut Hierarchy, subscription: SubscriptionID) {
-        hierarchy.unsubscribe(subscription);
+    impl ContainerIdx {
+        pub(crate) const TYPE_MASK: u32 = 0b1111 << 28;
+        pub(crate) const INDEX_MASK: u32 = !Self::TYPE_MASK;
+
+        #[allow(unused)]
+        pub(crate) fn get_type(self) -> ContainerType {
+            match (self.0 & Self::TYPE_MASK) >> 28 {
+                0 => ContainerType::Map,
+                1 => ContainerType::List,
+                2 => ContainerType::Text,
+                _ => unreachable!(),
+            }
+        }
+
+        #[allow(unused)]
+        pub(crate) fn to_index(self) -> u32 {
+            self.0 & Self::INDEX_MASK
+        }
+
+        pub(crate) fn from_index_and_type(index: u32, container_type: ContainerType) -> Self {
+            let prefix: u32 = match container_type {
+                ContainerType::Map => 0,
+                ContainerType::List => 1,
+                ContainerType::Text => 2,
+            } << 28;
+
+            Self(prefix | index)
+        }
     }
 }
 
+pub mod list;
+pub mod map;
+pub mod text;
+
+use idx::ContainerIdx;
+
+pub use loro_common::ContainerType;
+
 pub use loro_common::ContainerID;
+
+use crate::{event::Diff, VersionVector};
+
+use super::oplog::OpLog;
+
+pub trait Container {
+    fn diff(&self, log: &OpLog, before: &VersionVector, after: &VersionVector) -> Vec<Diff>;
+}
 
 pub enum ContainerIdRaw {
     Root { name: InternalString },

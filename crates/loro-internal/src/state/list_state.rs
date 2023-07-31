@@ -4,11 +4,11 @@ use std::{
 };
 
 use crate::{
-    container::{registry::ContainerIdx, ContainerID},
+    arena::SharedArena,
+    container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
     event::{Diff, Index},
     op::{RawOp, RawOpContent},
-    refactor::arena::SharedArena,
     LoroValue,
 };
 use debug_log::debug_dbg;

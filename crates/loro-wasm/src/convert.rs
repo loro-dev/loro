@@ -1,7 +1,7 @@
 use js_sys::{Object, Reflect};
 use wasm_bindgen::JsValue;
 
-use crate::{prelim::PrelimType, LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};
+use crate::{LoroList, LoroMap, LoroText, PrelimList, PrelimMap, PrelimText};
 use wasm_bindgen::convert::FromWasmAbi;
 
 /// Convert a `JsValue` to `T` by constructor's name.
@@ -78,15 +78,5 @@ impl TryFrom<JsValue> for LoroMap {
 
     fn try_from(value: JsValue) -> Result<Self, Self::Error> {
         js_to_any(value, "LoroMap")
-    }
-}
-
-pub(crate) fn js_try_to_prelim(value: &JsValue) -> Option<PrelimType> {
-    let ctor_name = Object::get_prototype_of(value).constructor().name();
-    match ctor_name.as_string().unwrap().as_ref() {
-        "PrelimText" => Some(PrelimText::try_from(value.clone()).unwrap().into()),
-        "PrelimList" => Some(PrelimList::try_from(value.clone()).unwrap().into()),
-        "PrelimMap" => Some(PrelimMap::try_from(value.clone()).unwrap().into()),
-        _ => None,
     }
 }

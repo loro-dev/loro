@@ -8,12 +8,12 @@ use loro_common::{ContainerID, LoroResult};
 
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
-    container::{registry::ContainerIdx, ContainerIdRaw},
+    container::{idx::ContainerIdx, ContainerIdRaw},
     delta::{Delta, DeltaItem},
+    event::InternalContainerDiff,
     event::{Diff, Index},
     id::PeerID,
     op::RawOp,
-    refactor::event::InternalContainerDiff,
     version::Frontiers,
     ContainerType, InternalString, LoroValue,
 };
@@ -88,10 +88,12 @@ pub enum State {
 }
 
 impl State {
+    #[allow(unused)]
     pub fn new_list(idx: ContainerIdx) -> Self {
         Self::ListState(ListState::new(idx))
     }
 
+    #[allow(unused)]
     pub fn new_map(idx: ContainerIdx) -> Self {
         Self::MapState(MapState::new(idx))
     }
@@ -284,11 +286,13 @@ impl DocState {
     }
 
     #[inline]
+    #[allow(unused)]
     pub(super) fn get_state_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
         self.states.get_mut(&idx)
     }
 
     #[inline]
+    #[allow(unused)]
     pub(super) fn get_state(&self, idx: ContainerIdx) -> Option<&State> {
         self.states.get(&idx)
     }
@@ -622,6 +626,7 @@ struct EventRecorder {
 }
 
 impl EventRecorder {
+    #[allow(unused)]
     pub fn new() -> Self {
         Self::default()
     }

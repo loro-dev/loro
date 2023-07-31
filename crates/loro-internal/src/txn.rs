@@ -14,7 +14,7 @@ use smallvec::smallvec;
 use crate::{
     change::{Change, Lamport},
     container::{
-        list::list_op::InnerListOp, registry::ContainerIdx, text::text_content::SliceRanges,
+        idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
     },
     delta::{Delta, MapValue},
@@ -259,6 +259,7 @@ impl Transaction {
         self.state.lock().unwrap().get_value_by_idx(idx)
     }
 
+    #[allow(unused)]
     pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,

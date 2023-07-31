@@ -6,14 +6,14 @@ use std::sync::{
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::ContainerID;
 
-use crate::container::registry::ContainerIdx;
+use crate::container::idx::ContainerIdx;
 
 use super::{
     arena::SharedArena,
     event::{DiffEvent, DocDiff},
 };
 
-pub type Subscriber = Arc<dyn for<'a> Fn(DiffEvent<'a>)>;
+pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 #[derive(Default)]
 struct ObserverInner {
@@ -216,7 +216,7 @@ impl Observer {
 #[cfg(test)]
 mod test {
 
-    use crate::refactor::loro::LoroDoc;
+    use crate::loro::LoroDoc;
 
     use super::*;
 

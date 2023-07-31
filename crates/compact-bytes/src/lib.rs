@@ -122,11 +122,7 @@ impl CompactBytes {
                 break;
             }
             match self.lookup(&bytes[index..]) {
-                Some((pos, len))
-                    if len >= min_match_size
-                        && (len == bytes.len() - index
-                            || bytes.len() - index - len >= min_match_size) =>
-                {
+                Some((pos, len)) if len >= min_match_size => {
                     push_with_merge(&mut ans, pos..pos + len);
                     index += len;
                 }
@@ -289,6 +285,7 @@ mod tests {
         let mut bytes = CompactBytes::new();
         bytes.append(b"1234kk 123456 1234xyz");
         let ans = bytes.alloc_advance(b"012345678");
+        dbg!(&ans);
         assert_eq!(ans.len(), 3);
         assert_eq!(ans[0].len(), 1);
         assert_eq!(ans[1].len(), 6);
