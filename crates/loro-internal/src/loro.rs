@@ -71,6 +71,10 @@ impl LoroDoc {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
+    pub fn is_detached(&self) -> bool {
+        self.detached
+    }
+
     #[allow(unused)]
     pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
         let obs = Observer::new(oplog.arena.clone());

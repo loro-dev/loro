@@ -214,11 +214,6 @@ impl OpLog {
         }
     }
 
-    pub fn get_timestamp(&self) -> Timestamp {
-        // TODO: get timestamp
-        0
-    }
-
     pub fn next_lamport(&self) -> Lamport {
         self.next_lamport
     }
@@ -279,6 +274,16 @@ impl OpLog {
         }
 
         changes
+    }
+
+    pub fn get_change_at(&self, id: ID) -> Option<Change> {
+        if let Some(peer_changes) = self.changes.get(&id.peer) {
+            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
+                return Some(peer_changes.vec()[result.merged_index].clone());
+            }
+        }
+
+        None
     }
 
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {

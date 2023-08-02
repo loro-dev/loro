@@ -12,7 +12,7 @@ use rle::{HasLength, RleVec};
 use smallvec::smallvec;
 
 use crate::{
-    change::{Change, Lamport},
+    change::{get_sys_timestamp, Change, Lamport},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
@@ -147,7 +147,7 @@ impl Transaction {
             ops,
             deps,
             id: ID::new(self.peer, self.start_counter),
-            timestamp: oplog.get_timestamp(),
+            timestamp: oplog.latest_timestamp.max(get_sys_timestamp()),
         };
 
         let diff = if state.is_recording() {

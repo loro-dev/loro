@@ -119,10 +119,46 @@ impl DagNode for Change {
 }
 
 impl Change {
+    pub fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    pub fn id(&self) -> ID {
+        self.id
+    }
+
     pub fn can_merge_right(&self, other: &Self) -> bool {
         other.id.peer == self.id.peer
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
             && other.deps[0].peer == self.id.peer
     }
+}
+
+#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+pub(crate) fn get_sys_timestamp() -> Timestamp {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .as_()
+}
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+pub fn get_sys_timestamp() -> Timestamp {
+    use wasm_bindgen::prelude::wasm_bindgen;
+    #[wasm_bindgen]
+    extern "C" {
+        // Use `js_namespace` here to bind `console.log(..)` instead of just
+        // `log(..)`
+        #[wasm_bindgen(js_namespace = Date)]
+        pub fn now() -> f64;
+    }
+
+    now() as Timestamp
 }
