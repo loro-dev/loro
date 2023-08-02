@@ -1,10 +1,10 @@
 use std::{
-    ops::{Range, RangeBounds},
+    ops::Range,
     sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
-use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHashMap;
+use jumprope::JumpRope;
 
 use crate::{
     container::{
@@ -28,7 +28,7 @@ struct InnerSharedArena {
     container_id_to_idx: Mutex<FxHashMap<ContainerID, ContainerIdx>>,
     /// The parent of each container.
     parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
-    text: Mutex<AppendOnlyBytes>,
+    text: Mutex<JumpRope>,
     text_utf16_len: AtomicUsize,
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
@@ -88,15 +88,16 @@ impl SharedArena {
     /// return utf16 len
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
         let mut text_lock = self.inner.text.lock().unwrap();
-        let start = text_lock.len();
+        let start = text_lock.len_chars();
         let utf16_len = count_utf16_chars(str.as_bytes());
-        text_lock.push_slice(str.as_bytes());
+        let pos = text_lock.len_chars();
+        text_lock.insert(pos, str);
         self.inner
             .text_utf16_len
             .fetch_add(utf16_len, std::sync::atomic::Ordering::SeqCst);
         StrAllocResult {
             start,
-            end: text_lock.len(),
+            end: text_lock.len_chars(),
             utf16_len,
         }
     }
@@ -107,7 +108,8 @@ impl SharedArena {
         self.inner
             .text_utf16_len
             .fetch_add(utf16_len, std::sync::atomic::Ordering::SeqCst);
-        text_lock.push_slice(bytes);
+        let pos = text_lock.len_chars();
+        text_lock.insert(pos, std::str::from_utf8(bytes).unwrap());
     }
 
     pub fn utf16_len(&self) -> usize {
@@ -180,8 +182,19 @@ impl SharedArena {
         }
     }
 
-    pub fn slice_bytes(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.text.lock().unwrap().slice(range)
+    pub fn slice_str(&self, range: Range<usize>) -> String {
+        let mut ans = String::with_capacity(range.len());
+        for span in self.inner.text.lock().unwrap().slice_substrings(range) {
+            ans.push_str(span);
+        }
+
+        ans
+    }
+
+    pub fn with_text_slice(&self, range: Range<usize>, mut f: impl FnMut(&str)) {
+        for span in self.inner.text.lock().unwrap().slice_substrings(range) {
+            f(span);
+        }
     }
 
     pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
@@ -241,13 +254,16 @@ impl SharedArena {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::RawStr(str) => {
-                        let bytes = self.alloc_str(&str);
+                    crate::text::text_content::ListSlice::RawStr {
+                        str,
+                        unicode_len: _,
+                    } => {
+                        let slice = self.alloc_str(&str);
                         Op {
                             counter,
                             container,
                             content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
+                                slice: SliceRange::from(slice.start as u32..slice.end as u32),
                                 pos,
                             }),
                         }
@@ -260,17 +276,6 @@ impl SharedArena {
                             pos,
                         }),
                     },
-                    crate::text::text_content::ListSlice::RawBytes(x) => {
-                        let bytes = self.alloc_str(std::str::from_utf8(&x).unwrap());
-                        Op {
-                            counter,
-                            container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(bytes.start as u32..bytes.end as u32),
-                                pos,
-                            }),
-                        }
-                    }
                 },
                 ListOp::Delete(span) => Op {
                     counter,

@@ -179,11 +179,11 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                             // TODO: perf may be optimized by using borrow type instead
                             match slice {
                                 ListSlice::RawData(v) => LoroValue::List(Arc::new(v.to_vec())),
-                                ListSlice::RawStr(s) => LoroValue::String(Arc::new(s.to_string())),
+                                ListSlice::RawStr {
+                                    str,
+                                    unicode_len: _,
+                                } => LoroValue::String(Arc::new(str.to_string())),
                                 ListSlice::Unknown(_) => LoroValue::Null,
-                                ListSlice::RawBytes(s) => LoroValue::String(Arc::new(
-                                    (std::str::from_utf8(&s).unwrap()).to_string(),
-                                )),
                             },
                         ),
                         ListOp::Delete(span) => {
@@ -294,9 +294,10 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                             },
                             _ => {
                                 let slice = match value {
-                                    LoroValue::String(s) => {
-                                        ListSlice::RawStr(std::borrow::Cow::Owned(s.to_string()))
-                                    }
+                                    LoroValue::String(s) => ListSlice::RawStr {
+                                        str: std::borrow::Cow::Owned(s.to_string()),
+                                        unicode_len: s.chars().count(),
+                                    },
                                     LoroValue::List(v) => {
                                         ListSlice::RawData(std::borrow::Cow::Owned((*v).clone()))
                                     }

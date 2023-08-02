@@ -1,9 +1,10 @@
-use js_sys::{Array, Promise, Reflect, Uint8Array};
+use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextHandler},
+    id::{Counter, ID},
     obs::SubID,
     txn::Transaction as Txn,
     version::Frontiers,
@@ -58,7 +59,8 @@ extern "C" {
     pub type JsTransaction;
     #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
-
+    #[wasm_bindgen(typescript_type = "{ peer: bigint, counter: number }")]
+    pub type JsID;
 }
 
 struct MathRandom;
@@ -117,6 +119,30 @@ mod observer {
     unsafe impl Sync for Observer {}
 }
 
+fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
+    let mut frontiers = Frontiers::default();
+    for id in ids {
+        let peer: u64 = Reflect::get(&id, &"peer".into())?.try_into()?;
+        let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
+        frontiers.push(ID::new(peer, counter));
+    }
+
+    Ok(frontiers)
+}
+
+fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
+    let mut ans = Vec::with_capacity(frontiers.len());
+    for id in frontiers.iter() {
+        let obj = Object::new();
+        Reflect::set(&obj, &"peer".into(), &id.peer.into()).unwrap();
+        Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
+        let value: JsValue = obj.into_js_result().unwrap();
+        ans.push(value.into());
+    }
+
+    ans
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
@@ -134,6 +160,15 @@ impl Loro {
         Transaction(Some(
             self.0.txn_with_origin(&origin.unwrap_or_default()).unwrap(),
         ))
+    }
+
+    pub fn attach(&mut self) {
+        self.0.attach();
+    }
+
+    pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
+        self.0.checkout(&ids_to_frontiers(frontiers)?);
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = "peerId", method, getter)]
@@ -185,8 +220,8 @@ impl Loro {
     }
 
     #[inline]
-    pub fn frontiers(&self) -> Vec<u8> {
-        self.0.frontiers().encode()
+    pub fn frontiers(&self) -> Vec<JsID> {
+        frontiers_to_ids(&self.0.frontiers())
     }
 
     /// - -1: self's version is less than frontiers or is parallel to target
@@ -194,8 +229,8 @@ impl Loro {
     /// - 1: self's version is greater than frontiers
     #[inline]
     #[wasm_bindgen(js_name = "cmpFrontiers")]
-    pub fn cmp_frontiers(&self, frontiers: &[u8]) -> JsResult<i32> {
-        let frontiers = Frontiers::decode(frontiers)?;
+    pub fn cmp_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
+        let frontiers = ids_to_frontiers(frontiers)?;
         Ok(match self.0.cmp_frontiers(&frontiers) {
             Ordering::Less => -1,
             Ordering::Greater => 1,
@@ -441,7 +476,7 @@ impl LoroText {
 
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
-        self.0.len()
+        self.0.len_utf16()
     }
 
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {

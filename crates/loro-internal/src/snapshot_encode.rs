@@ -648,14 +648,17 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         } else {
                             match op.container.get_type() {
                                 loro_common::ContainerType::Text => {
-                                    let slice = oplog
-                                        .arena
-                                        .slice_bytes(slice.0.start as usize..slice.0.end as usize);
-                                    encoded_ops.push(record_str(
-                                        &slice,
-                                        *pos,
-                                        op.container.to_index(),
-                                    ));
+                                    let range = slice.0.start as usize..slice.0.end as usize;
+                                    let mut pos = *pos;
+                                    oplog.arena.with_text_slice(range, |slice| {
+                                        encoded_ops.push(record_str(
+                                            slice.as_bytes(),
+                                            pos,
+                                            op.container.to_index(),
+                                        ));
+
+                                        pos += slice.chars().count();
+                                    })
                                 }
                                 loro_common::ContainerType::List => {
                                     let values = oplog

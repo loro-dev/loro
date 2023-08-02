@@ -61,11 +61,11 @@ impl ContainerState for TextState {
                             index += len;
                         }
                         DeltaItem::Insert { value, .. } => {
-                            self.insert_utf8(index, value);
+                            self.insert_unicode(index, value);
                             index += value.len();
                         }
                         DeltaItem::Delete { len, .. } => {
-                            self.delete_utf8(index..index + len);
+                            self.delete_unicode(index..index + len);
                         }
                     }
                 }
@@ -78,13 +78,16 @@ impl ContainerState for TextState {
         match op.content {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    ListSlice::RawStr(s) => {
-                        self.insert_utf8(pos, &s);
+                    ListSlice::RawStr {
+                        str,
+                        unicode_len: _,
+                    } => {
+                        self.insert_unicode(pos, &str);
                     }
                     _ => unreachable!(),
                 },
                 crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete_utf8(del.pos as usize..del.pos as usize + del.len as usize);
+                    self.delete_unicode(del.pos as usize..del.pos as usize + del.len as usize);
                 }
             },
             _ => unreachable!(),
@@ -153,11 +156,11 @@ impl TextState {
 
     pub fn from_str(s: &str) -> Self {
         let mut state = Self::new();
-        state.insert_utf8(0, s);
+        state.insert_unicode(0, s);
         state
     }
 
-    pub fn insert_utf8(&mut self, pos: usize, s: &str) {
+    pub fn insert_unicode(&mut self, pos: usize, s: &str) {
         if self.in_txn {
             self.record_insert(pos, s.len());
         }
@@ -165,7 +168,7 @@ impl TextState {
         self.rope.insert(pos, s);
     }
 
-    pub fn delete_utf8(&mut self, range: Range<usize>) {
+    pub fn delete_unicode(&mut self, range: Range<usize>) {
         if range.is_empty() {
             return;
         }
@@ -178,6 +181,7 @@ impl TextState {
             self.record_del(range.start, range.len());
         }
 
+        dbg!(&range);
         self.rope.remove(range);
     }
 
@@ -225,7 +229,7 @@ impl TextState {
         self.rope.slice_substrings(0..self.len())
     }
 
-    pub(crate) fn utf16_to_utf8(&self, pos: usize) -> usize {
+    pub(crate) fn utf16_to_unicode(&self, pos: usize) -> usize {
         self.rope.wchars_to_chars(pos)
     }
 
@@ -247,13 +251,17 @@ impl TextState {
                 }
                 DeltaItem::Insert { value, .. } => {
                     for value in value.0.iter() {
-                        let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
-                        self.insert_utf8(index, std::str::from_utf8(&s).unwrap());
-                        index += s.len();
+                        arena.with_text_slice(
+                            value.0.start as usize..value.0.end as usize,
+                            |slice| {
+                                self.insert_unicode(index, slice);
+                                index += slice.len();
+                            },
+                        );
                     }
                 }
                 DeltaItem::Delete { len, .. } => {
-                    self.delete_utf8(index..index + len);
+                    self.delete_unicode(index..index + len);
                 }
             }
         }
@@ -274,7 +282,7 @@ impl TextState {
             match span {
                 DeltaItem::Retain { len, meta: _ } => {
                     index += len;
-                    let next_utf16_index = self.utf8_to_utf16(index);
+                    let next_utf16_index = self.unicode_to_utf16(index);
                     new_delta = new_delta.retain(next_utf16_index - utf16_index);
                     utf16_index = next_utf16_index;
                 }
@@ -282,15 +290,17 @@ impl TextState {
                     new_delta = new_delta.insert(value.clone());
                     let start_utf16_len = self.len_wchars();
                     for value in value.0.iter() {
-                        let s = arena.slice_bytes(value.0.start as usize..value.0.end as usize);
-                        self.insert_utf8(index, std::str::from_utf8(&s).unwrap());
-                        index += s.len();
+                        let range = value.0.start as usize..value.0.end as usize;
+                        arena.with_text_slice(range, |s| {
+                            self.insert_unicode(index, s);
+                            index += s.len();
+                        });
                     }
                     utf16_index += self.len_wchars() - start_utf16_len;
                 }
                 DeltaItem::Delete { len, .. } => {
                     let start_utf16_len = self.len_wchars();
-                    self.delete_utf8(index..index + len);
+                    self.delete_unicode(index..index + len);
                     new_delta = new_delta.delete(start_utf16_len - self.len_wchars());
                 }
             }
@@ -299,7 +309,7 @@ impl TextState {
         Some(Diff::SeqRawUtf16(new_delta))
     }
 
-    fn utf8_to_utf16(&self, index: usize) -> usize {
+    fn unicode_to_utf16(&self, index: usize) -> usize {
         self.rope.chars_to_wchars(index)
     }
 }
@@ -317,10 +327,10 @@ mod test {
     #[test]
     fn abort_txn() {
         let mut state = TextState::new();
-        state.insert_utf8(0, "haha");
+        state.insert_unicode(0, "haha");
         state.start_txn();
-        state.insert_utf8(4, "1234");
-        state.delete_utf8(2..6);
+        state.insert_unicode(4, "1234");
+        state.delete_unicode(2..6);
         assert_eq!(state.rope.to_string(), "ha34");
         state.abort_txn();
         assert_eq!(state.rope.to_string(), "haha");

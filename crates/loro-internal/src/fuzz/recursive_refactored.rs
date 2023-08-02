@@ -344,10 +344,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.len() as u8).max(1);
+                    *pos %= (text.len_unicode() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;

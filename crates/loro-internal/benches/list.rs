@@ -41,7 +41,7 @@ mod run {
                         let mut txn = actor.txn().unwrap();
                         text.insert(
                             &mut txn,
-                            (action.pos as usize) % text.len().max(1),
+                            (action.pos as usize) % text.len_unicode().max(1),
                             action.value.to_string().as_str(),
                         )
                         .unwrap();

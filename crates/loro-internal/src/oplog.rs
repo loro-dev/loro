@@ -329,13 +329,16 @@ impl OpLog {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
                     loro_common::ContainerType::Text => {
+                        let str = self
+                            .arena
+                            .slice_str(slice.0.start as usize..slice.0.end as usize);
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: crate::container::text::text_content::ListSlice::RawBytes(
-                                self.arena
-                                    .slice_bytes(slice.0.start as usize..slice.0.end as usize),
-                            ),
+                            slice: crate::container::text::text_content::ListSlice::RawStr {
+                                unicode_len: str.chars().count(),
+                                str: Cow::Owned(str),
+                            },
                             pos: *pos,
-                        }))
+                        }));
                     }
                     loro_common::ContainerType::List => {
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {

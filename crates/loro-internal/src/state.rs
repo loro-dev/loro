@@ -559,10 +559,12 @@ impl DocState {
                             let len = value.0.iter().fold(0, |acc, cur| acc + cur.0.len());
                             let mut s = String::with_capacity(len);
                             for slice in value.0.iter() {
-                                let bytes = self
-                                    .arena
-                                    .slice_bytes(slice.0.start as usize..slice.0.end as usize);
-                                s.push_str(std::str::from_utf8(&bytes).unwrap());
+                                self.arena.with_text_slice(
+                                    slice.0.start as usize..slice.0.end as usize,
+                                    |slice| {
+                                        s.push_str(slice);
+                                    },
+                                )
                             }
                             ans.push(DeltaItem::Insert { value: s, meta: () });
                             index += len;
