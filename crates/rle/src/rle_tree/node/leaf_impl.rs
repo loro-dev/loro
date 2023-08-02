@@ -843,7 +843,6 @@ fn slice<T: HasLength + Sliceable>(
 ) -> SmallVec<[T; 2]> {
     let mut index = beginning;
     let mut ans = smallvec::smallvec![];
-    dbg!(from, to);
     for item in vec.iter() {
         if index < to && from < index + item.atom_len() {
             let start = if index < from { from - index } else { 0 };

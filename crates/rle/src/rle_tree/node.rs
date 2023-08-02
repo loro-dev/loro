@@ -156,8 +156,6 @@ impl<'a, T: Rle, A: RleTreeTrait<T>> Node<'a, T, A> {
 
             #[cfg(debug_assertions)]
             if ans.is_none() {
-                dbg!(parent);
-                dbg!(self);
                 unreachable!();
             }
 

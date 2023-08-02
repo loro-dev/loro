@@ -774,14 +774,14 @@ mod test {
     fn test_snapshot_encode() {
         use std::borrow::Cow;
 
-        dbg!(FinalPhase {
+        FinalPhase {
             common: Cow::Owned(vec![0, 1, 2, 253, 254, 255]),
             app_state: Cow::Owned(vec![255]),
             state_arena: Cow::Owned(vec![255]),
             oplog_extra_arena: Cow::Owned(vec![255]),
             oplog: Cow::Owned(vec![255]),
         }
-        .encode());
+        .encode();
     }
 
     #[test]

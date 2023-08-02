@@ -181,7 +181,6 @@ impl TextState {
             self.record_del(range.start, range.len());
         }
 
-        dbg!(&range);
         self.rope.remove(range);
     }
 
