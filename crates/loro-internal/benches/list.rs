@@ -60,17 +60,17 @@ mod run {
                     let b = (action.sync as usize) % len;
                     if a != b {
                         let (a, b) = arref::array_mut_ref!(&mut actors, [a, b]);
-                        a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                        a.import(&b.export_from(&a.oplog_vv())).unwrap();
                     }
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
                 }
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [i, 0]);
-                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
                 }
             })
         });
@@ -91,12 +91,12 @@ mod run {
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import(&a.export_from(&b.vv_cloned())).unwrap();
+                    b.import(&a.export_from(&b.oplog_vv())).unwrap();
                 }
             })
         });

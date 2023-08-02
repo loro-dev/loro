@@ -116,11 +116,20 @@ impl LoroDoc {
         });
     }
 
+    /// Create a new transaction.
+    /// Every ops created inside one transaction will be packed into a single
+    /// [Change].
+    ///
+    /// There can only be one active transaction at a time for a [LoroDoc].
     #[inline(always)]
     pub fn txn(&self) -> Result<Transaction, LoroError> {
         self.txn_with_origin("")
     }
 
+    /// Create a new transaction with specified origin.
+    ///
+    /// The origin will be propagated to the events.
+    /// There can only be one active transaction at a time for a [LoroDoc].
     pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
         let mut txn =
             Transaction::new_with_origin(self.state.clone(), self.oplog.clone(), origin.into());
@@ -238,8 +247,15 @@ impl LoroDoc {
         ans
     }
 
-    pub fn vv_cloned(&self) -> VersionVector {
+    /// Get the version vector of the current OpLog
+    pub fn oplog_vv(&self) -> VersionVector {
         self.oplog.lock().unwrap().vv().clone()
+    }
+
+    /// Get the version vector of the current [DocState]
+    pub fn state_vv(&self) -> VersionVector {
+        let f = &self.state.lock().unwrap().frontiers;
+        self.oplog.lock().unwrap().dag.frontiers_to_vv(f)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -263,6 +279,7 @@ impl LoroDoc {
         MapHandler::new(idx, Arc::downgrade(&self.state))
     }
 
+    /// This is for debugging purpose. It will travel the whole oplog
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
     }
@@ -314,8 +331,44 @@ impl LoroDoc {
         Ok(())
     }
 
-    pub fn to_json(&self) -> LoroValue {
+    /// Get deep value of the document.
+    pub fn get_deep_value(&self) -> LoroValue {
         self.state.lock().unwrap().get_deep_value()
+    }
+
+    /// Checkout [DocState] to a specific version.
+    ///
+    /// This will make the current [DocState] detached from the latest version of [OpLog].
+    /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
+    pub fn checkout(&mut self, frontiers: &Frontiers) {
+        let oplog = self.oplog.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        self.detached = true;
+        let mut calc = DiffCalculator::new();
+        let before = &oplog.dag.frontiers_to_vv(&state.frontiers);
+        let after = &oplog.dag.frontiers_to_vv(frontiers);
+        let diff = calc.calc_diff_internal(
+            &oplog,
+            before,
+            Some(&state.frontiers),
+            after,
+            Some(frontiers),
+        );
+
+        state.apply_diff(InternalDocDiff {
+            origin: "checkout".into(),
+            local: true,
+            diff: Cow::Owned(diff),
+            new_version: Cow::Owned(frontiers.clone()),
+        });
+    }
+
+    pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
+        self.oplog.lock().unwrap().dag.vv_to_frontiers(vv)
+    }
+
+    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> VersionVector {
+        self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
     }
 }
 
@@ -327,10 +380,58 @@ impl Default for LoroDoc {
 
 #[cfg(test)]
 mod test {
+    use loro_common::ID;
+
+    use crate::{version::Frontiers, LoroDoc, ToJson};
+
     #[test]
     fn test_sync() {
         fn is_send_sync<T: Send + Sync>(_v: T) {}
         let loro = super::LoroDoc::new();
         is_send_sync(loro)
+    }
+
+    #[test]
+    fn test_checkout() {
+        let mut loro = LoroDoc::new();
+        loro.set_peer_id(1);
+        let text = loro.get_text("text");
+        let map = loro.get_map("map");
+        let list = loro.get_list("list");
+        let mut txn = loro.txn().unwrap();
+        for i in 0..10 {
+            map.insert(&mut txn, "key", i.into()).unwrap();
+            text.insert(&mut txn, 0, &i.to_string()).unwrap();
+            list.insert(&mut txn, 0, i.into()).unwrap();
+        }
+        txn.commit().unwrap();
+        let mut b = LoroDoc::new();
+        b.import(&loro.export_snapshot()).unwrap();
+        loro.checkout(&Frontiers::default());
+        {
+            let json = &loro.get_deep_value();
+            assert_eq!(json.to_json(), r#"{"text":"","list":[],"map":{}}"#);
+        }
+
+        b.checkout(&ID::new(1, 2).into());
+        {
+            let json = &b.get_deep_value();
+            assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":0}}"#);
+        }
+
+        loro.checkout(&ID::new(1, 3).into());
+        {
+            let json = &loro.get_deep_value();
+            assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":1}}"#);
+        }
+
+        b.checkout(&ID::new(1, 29).into());
+        {
+            let json = &b.get_deep_value();
+            assert_eq!(
+                json.to_json(),
+                r#"{"text":"9876543210","list":[9,8,7,6,5,4,3,2,1,0],"map":{"key":9}}"#
+            );
+        }
     }
 }

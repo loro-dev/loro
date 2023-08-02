@@ -29,14 +29,14 @@ mod sync {
                         t1.insert(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
 
-                        let update = c1.export_from(&c2.vv_cloned());
+                        let update = c1.export_from(&c2.oplog_vv());
                         c2.import(&update).unwrap();
                     } else {
                         let mut txn = c2.txn().unwrap();
                         t2.delete(&mut txn, *pos, *del).unwrap();
                         t2.insert(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
-                        let update = c2.export_from(&c1.vv_cloned());
+                        let update = c2.export_from(&c1.oplog_vv());
                         c1.import(&update).unwrap();
                     }
                 }
@@ -122,7 +122,7 @@ mod import {
                     text2.insert(&mut c2.txn().unwrap(), 0, "2").unwrap();
                 }
 
-                c1.import(&c2.export_from(&c1.vv_cloned())).unwrap();
+                c1.import(&c2.export_from(&c1.oplog_vv())).unwrap();
             })
         });
     }

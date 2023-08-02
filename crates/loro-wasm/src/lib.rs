@@ -181,7 +181,7 @@ impl Loro {
 
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.vv_cloned().encode()
+        self.0.oplog_vv().encode()
     }
 
     #[inline]
@@ -247,7 +247,7 @@ impl Loro {
 
     #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
-        let json = self.0.to_json();
+        let json = self.0.get_deep_value();
         Ok(json.into())
     }
 
