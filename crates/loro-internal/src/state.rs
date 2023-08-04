@@ -138,6 +138,10 @@ impl DocState {
         self.event_recorder.recording_diff
     }
 
+    pub fn refresh_peer_id(&mut self) {
+        self.peer = DefaultRandom.next_u64();
+    }
+
     /// Take all the diffs that are recorded and convert them to events.
     pub fn take_events(&mut self) -> Vec<DocDiff> {
         if !self.is_recording() {
