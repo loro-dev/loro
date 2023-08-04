@@ -221,7 +221,7 @@ impl Loro {
 
     #[inline]
     pub fn frontiers(&self) -> Vec<JsID> {
-        frontiers_to_ids(&self.0.frontiers())
+        frontiers_to_ids(&self.0.oplog_frontiers())
     }
 
     /// - -1: self's version is less than frontiers or is parallel to target

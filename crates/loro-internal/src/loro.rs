@@ -67,10 +67,12 @@ impl LoroDoc {
         }
     }
 
+    /// Is the document empty? (no ops)
     pub fn is_empty(&self) -> bool {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
+    /// Whether [OpLog] ans [DocState] are detached.
     pub fn is_detached(&self) -> bool {
         self.detached
     }
@@ -100,24 +102,7 @@ impl LoroDoc {
     }
 
     pub fn attach(&mut self) {
-        self.detached = false;
-        let mut state = self.state.lock().unwrap();
-        let oplog = self.oplog.lock().unwrap();
-        let state_vv = oplog.dag.frontiers_to_vv(&state.frontiers);
-        let mut diff = DiffCalculator::new();
-        let diff = diff.calc_diff_internal(
-            &oplog,
-            &state_vv,
-            Some(&state.frontiers),
-            oplog.vv(),
-            Some(oplog.frontiers()),
-        );
-        state.apply_diff(InternalDocDiff {
-            local: true,
-            origin: Default::default(),
-            diff: (diff).into(),
-            new_version: Cow::Owned(oplog.frontiers().clone()),
-        });
+        self.checkout_to_latest()
     }
 
     /// Create a new transaction.
@@ -293,8 +278,12 @@ impl LoroDoc {
         self.arena.register_container(&id)
     }
 
-    pub fn frontiers(&self) -> Frontiers {
+    pub fn oplog_frontiers(&self) -> Frontiers {
         self.oplog().lock().unwrap().frontiers().clone()
+    }
+
+    pub fn state_frontiers(&self) -> Frontiers {
+        self.state.lock().unwrap().frontiers.clone()
     }
 
     /// - Ordering::Less means self is less than target or parallel
@@ -338,6 +327,12 @@ impl LoroDoc {
     /// Get deep value of the document.
     pub fn get_deep_value(&self) -> LoroValue {
         self.state.lock().unwrap().get_deep_value()
+    }
+
+    pub fn checkout_to_latest(&mut self) {
+        let f = self.oplog_frontiers();
+        self.checkout(&f);
+        self.detached = false;
     }
 
     /// Checkout [DocState] to a specific version.
