@@ -344,10 +344,10 @@ impl Actionable for Vec<Actor> {
                     .text_containers
                     .get(*container_idx as usize)
                 {
-                    *pos %= (text.len() as u8).max(1);
+                    *pos %= (text.len_unicode() as u8).max(1);
                     if *is_del {
                         *value &= 0x1f;
-                        *value = (*value).min(text.len() as u16 - (*pos) as u16);
+                        *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
                     }
                 } else {
                     *is_del = false;
@@ -373,10 +373,10 @@ impl Actionable for Vec<Actor> {
                 });
 
                 a.loro
-                    .import(&b.loro.export_from(&a.loro.vv_cloned()))
+                    .import(&b.loro.export_from(&a.loro.oplog_vv()))
                     .unwrap();
                 b.loro
-                    .import(&a.loro.export_from(&b.loro.vv_cloned()))
+                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
 
                 b.map_containers.iter().for_each(|x| {
@@ -433,7 +433,7 @@ impl Actionable for Vec<Actor> {
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
                     a.loro
-                        .import(&b.loro.export_from(&a.loro.vv_cloned()))
+                        .import(&b.loro.export_from(&a.loro.oplog_vv()))
                         .unwrap();
                     b.map_containers.iter().for_each(|x| {
                         let id = x.id();
@@ -461,7 +461,7 @@ impl Actionable for Vec<Actor> {
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
                     b.loro
-                        .import(&a.loro.export_from(&b.loro.vv_cloned()))
+                        .import(&a.loro.export_from(&b.loro.oplog_vv()))
                         .unwrap();
                     b.map_containers = a
                         .map_containers
@@ -673,14 +673,10 @@ fn check_synced(sites: &mut [Actor]) {
             let b_doc = &mut b.loro;
             if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
-                a_doc
-                    .import(&b_doc.export_from(&a_doc.vv_cloned()))
-                    .unwrap();
+                a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
                 debug_log::group_end!();
                 debug_log::group!("Updates {} to {}", i, j);
-                b_doc
-                    .import(&a_doc.export_from(&b_doc.vv_cloned()))
-                    .unwrap();
+                b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
                 debug_log::group_end!();
             } else {
                 debug_log::group!("Snapshot {} to {}", j, i);

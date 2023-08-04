@@ -214,7 +214,7 @@ mod run {
                     }
 
                     loro_b
-                        .import(&loro.export_from(&loro_b.vv_cloned()))
+                        .import(&loro.export_from(&loro_b.oplog_vv()))
                         .unwrap();
                 }
             })
@@ -249,9 +249,9 @@ mod run {
                         text2.insert(&mut txn, pos, ins).unwrap();
                     }
                     loro_b
-                        .import(&loro.export_from(&loro_b.vv_cloned()))
+                        .import(&loro.export_from(&loro_b.oplog_vv()))
                         .unwrap();
-                    loro.import(&loro_b.export_from(&loro.vv_cloned())).unwrap();
+                    loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
                 }
             })
         });

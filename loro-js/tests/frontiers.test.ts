@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  Delta,
-  ListDiff,
   Loro,
-  LoroEvent,
-  MapDiff as MapDiff,
   setPanicHook,
-  TextDiff,
 } from "../src";
 
 setPanicHook();

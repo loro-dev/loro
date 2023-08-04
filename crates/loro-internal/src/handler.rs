@@ -58,7 +58,7 @@ impl TextHandler {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len_unicode() == 0
     }
 
     pub fn len_utf16(&self) -> usize {
@@ -69,6 +69,17 @@ impl TextHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 state.as_text_state().as_ref().unwrap().len_wchars()
+            })
+    }
+
+    pub fn len_unicode(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_text_state().as_ref().unwrap().len_chars()
             })
     }
 
@@ -88,20 +99,15 @@ impl TextHandler {
 impl TextHandler {
     #[inline(always)]
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_utf8(txn, pos, s)
+        self.insert_unicode(txn, pos, s)
     }
 
     #[inline(always)]
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
-        self.delete_utf8(txn, pos, len)
+        self.delete_unicode(txn, pos, len)
     }
 
-    #[inline(always)]
-    pub fn len(&self) -> usize {
-        self.len_utf8()
-    }
-
-    pub fn insert_utf8(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+    pub fn insert_unicode(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
             return Ok(());
         }
@@ -109,7 +115,10 @@ impl TextHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                slice: ListSlice::RawStr {
+                    str: Cow::Borrowed(s),
+                    unicode_len: s.chars().count(),
+                },
                 pos,
             }),
             None,
@@ -117,7 +126,7 @@ impl TextHandler {
         )
     }
 
-    pub fn delete_utf8(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+    pub fn delete_unicode(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
         }
@@ -147,13 +156,16 @@ impl TextHandler {
                 .with_state(self.container_idx, |state| {
                     let text_state = &state.as_text_state();
                     let text = text_state.as_ref().unwrap();
-                    text.utf16_to_utf8(pos)
+                    text.utf16_to_unicode(pos)
                 });
 
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                slice: ListSlice::RawStr {
+                    str: Cow::Borrowed(s),
+                    unicode_len: s.chars().count(),
+                },
                 pos: start,
             }),
             None,
@@ -177,7 +189,7 @@ impl TextHandler {
                 .with_state(self.container_idx, |state| {
                     let text_state = &state.as_text_state();
                     let text = text_state.as_ref().unwrap();
-                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
+                    (text.utf16_to_unicode(pos), text.utf16_to_unicode(pos + del))
                 });
         txn.apply_local_op(
             self.container_idx,
@@ -193,11 +205,6 @@ impl TextHandler {
 
 #[cfg(feature = "wasm")]
 impl TextHandler {
-    #[inline(always)]
-    pub fn len(&self) -> usize {
-        self.len_utf16()
-    }
-
     #[inline(always)]
     pub fn delete(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
         self.delete_utf16(txn, pos, del)
@@ -222,13 +229,16 @@ impl TextHandler {
                 .with_state(self.container_idx, |state| {
                     let text_state = &state.as_text_state();
                     let text = text_state.as_ref().unwrap();
-                    text.utf16_to_utf8(pos)
+                    text.utf16_to_unicode(pos)
                 });
 
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr(Cow::Borrowed(s)),
+                slice: ListSlice::RawStr {
+                    str: Cow::Borrowed(s),
+                    unicode_len: s.chars().count(),
+                },
                 pos: start,
             }),
             Some(EventHint::Utf16 { pos, len: 0 }),
@@ -250,7 +260,7 @@ impl TextHandler {
                 .with_state(self.container_idx, |state| {
                     let text_state = &state.as_text_state();
                     let text = text_state.as_ref().unwrap();
-                    (text.utf16_to_utf8(pos), text.utf16_to_utf8(pos + del))
+                    (text.utf16_to_unicode(pos), text.utf16_to_unicode(pos + del))
                 });
         txn.apply_local_op(
             self.container_idx,

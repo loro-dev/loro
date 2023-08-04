@@ -228,8 +228,7 @@ impl<T: Rle, const MAX_CHILD: usize, TreeArena: Arena> RleTreeTrait<T>
         }
 
         if index > 0 {
-            dbg!(&node);
-            assert_eq!(index, 0);
+            assert_eq!(index, 0, "index out of range {}", index);
         }
         FindPosResult::new(node.children().len() - 1, last_cache, Position::End)
     }

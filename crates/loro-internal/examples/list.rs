@@ -10,12 +10,12 @@ fn main() {
     let actor = LoroDoc::default();
     let mut output = Vec::new();
     let list = actor.get_list("list");
-    let mut last_vv = actor.vv_cloned();
+    let mut last_vv = actor.oplog_vv();
     for i in 0..10000 {
         let mut txn = actor.txn().unwrap();
         list.insert(&mut txn, i, i.to_string().into()).unwrap();
         output.push(actor.export_from(&last_vv.clone()));
-        last_vv = actor.vv_cloned();
+        last_vv = actor.oplog_vv();
     }
     println!("{} ms", start.elapsed().as_millis());
     // drop(p)

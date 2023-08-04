@@ -156,18 +156,18 @@ impl Actionable for Vec<LoroDoc> {
             Action::Sync { from, to } => {
                 if from != to {
                     let (from, to) = arref::array_mut_ref!(self, [*from as usize, *to as usize]);
-                    let to_vv = to.vv_cloned();
+                    let to_vv = to.oplog_vv();
                     to.import(&from.export_from(&to_vv)).unwrap();
                 }
             }
             Action::SyncAll => {
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
                 }
                 for i in 1..self.len() {
                     let (a, b) = array_mut_ref!(self, [0, i]);
-                    b.import(&a.export_from(&b.vv_cloned())).unwrap();
+                    b.import(&a.export_from(&b.oplog_vv())).unwrap();
                 }
             }
         }
@@ -223,13 +223,13 @@ fn check_synced_refactored(sites: &mut [LoroDoc]) {
                     debug_log::group_end!();
                 } else {
                     debug_log::group!("Import {} to {}", j, i);
-                    a.import(&b.export_from(&a.vv_cloned())).unwrap();
+                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
                     debug_log::group_end!();
                 }
             }
             {
                 debug_log::group!("Import {} to {}", i, j);
-                b.import(&a.export_from(&b.vv_cloned())).unwrap();
+                b.import(&a.export_from(&b.oplog_vv())).unwrap();
                 debug_log::group_end!();
             }
             check_eq_refactored(a, b);

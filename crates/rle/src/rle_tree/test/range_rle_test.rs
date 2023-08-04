@@ -116,6 +116,4 @@ fn delete_that_causes_increase_levels() {
         tree.delete_range(Some(i), Some(i + 1));
         tree.debug_check();
     }
-
-    dbg!(tree);
 }

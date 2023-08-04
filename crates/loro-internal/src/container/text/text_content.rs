@@ -1,6 +1,5 @@
 use std::{borrow::Cow, ops::Range};
 
-use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
@@ -12,8 +11,10 @@ use crate::{delta::DeltaValue, LoroValue};
 #[derive(PartialEq, Debug, EnumAsInner, Clone, Serialize, Deserialize)]
 pub enum ListSlice<'a> {
     RawData(Cow<'a, [LoroValue]>),
-    RawStr(Cow<'a, str>),
-    RawBytes(BytesSlice),
+    RawStr {
+        str: Cow<'a, str>,
+        unicode_len: usize,
+    },
     Unknown(usize),
 }
 
@@ -94,8 +95,11 @@ impl<'a> ListSlice<'a> {
     pub fn to_static(&self) -> ListSlice<'static> {
         match self {
             ListSlice::RawData(x) => ListSlice::RawData(Cow::Owned(x.to_vec())),
-            ListSlice::RawStr(x) => ListSlice::RawStr(Cow::Owned(x.to_string())),
-            ListSlice::RawBytes(x) => ListSlice::RawBytes(x.clone()),
+            ListSlice::RawStr { str, unicode_len } => ListSlice::RawStr {
+                str: Cow::Owned(str.to_string()),
+                unicode_len: *unicode_len,
+            },
+
             ListSlice::Unknown(x) => ListSlice::Unknown(*x),
         }
     }
@@ -104,10 +108,9 @@ impl<'a> ListSlice<'a> {
 impl<'a> HasLength for ListSlice<'a> {
     fn content_len(&self) -> usize {
         match self {
-            ListSlice::RawStr(s) => s.len(),
+            ListSlice::RawStr { unicode_len, .. } => *unicode_len,
             ListSlice::Unknown(x) => *x,
             ListSlice::RawData(x) => x.len(),
-            ListSlice::RawBytes(x) => x.len(),
         }
     }
 }
@@ -115,13 +118,21 @@ impl<'a> HasLength for ListSlice<'a> {
 impl<'a> Sliceable for ListSlice<'a> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            ListSlice::RawStr(s) => ListSlice::RawStr(Cow::Owned(s[from..to].into())),
+            ListSlice::RawStr {
+                str,
+                unicode_len: _,
+            } => {
+                let ans = str.chars().skip(from).take(to - from).collect::<String>();
+                ListSlice::RawStr {
+                    str: Cow::Owned(ans),
+                    unicode_len: to - from,
+                }
+            }
             ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
             ListSlice::RawData(x) => match x {
                 Cow::Borrowed(x) => ListSlice::RawData(Cow::Borrowed(&x[from..to])),
                 Cow::Owned(x) => ListSlice::RawData(Cow::Owned(x[from..to].into())),
             },
-            ListSlice::RawBytes(x) => ListSlice::RawBytes(x.slice(from, to)),
         }
     }
 }
@@ -205,10 +216,17 @@ mod test {
     fn fix_fields_order() {
         let list_slice = vec![
             ListSlice::RawData(vec![LoroValue::Bool(true)].into()),
-            ListSlice::RawStr("".into()),
+            ListSlice::RawStr {
+                str: "".into(),
+                unicode_len: 0,
+            },
             ListSlice::Unknown(0),
         ];
-        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 3, 0];
+        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 0, 2, 0];
+        assert_eq!(
+            &postcard::to_allocvec(&list_slice).unwrap(),
+            &list_slice_buf
+        );
         assert_eq!(
             postcard::from_bytes::<Vec<ListSlice>>(&list_slice_buf).unwrap(),
             list_slice

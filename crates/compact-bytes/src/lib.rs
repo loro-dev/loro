@@ -285,7 +285,6 @@ mod tests {
         let mut bytes = CompactBytes::new();
         bytes.append(b"1234kk 123456 1234xyz");
         let ans = bytes.alloc_advance(b"012345678");
-        dbg!(&ans);
         assert_eq!(ans.len(), 3);
         assert_eq!(ans[0].len(), 1);
         assert_eq!(ans[1].len(), 6);

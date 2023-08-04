@@ -214,11 +214,6 @@ impl OpLog {
         }
     }
 
-    pub fn get_timestamp(&self) -> Timestamp {
-        // TODO: get timestamp
-        0
-    }
-
     pub fn next_lamport(&self) -> Lamport {
         self.next_lamport
     }
@@ -281,6 +276,16 @@ impl OpLog {
         changes
     }
 
+    pub fn get_change_at(&self, id: ID) -> Option<Change> {
+        if let Some(peer_changes) = self.changes.get(&id.peer) {
+            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
+                return Some(peer_changes.vec()[result.merged_index].clone());
+            }
+        }
+
+        None
+    }
+
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
@@ -324,13 +329,16 @@ impl OpLog {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
                     loro_common::ContainerType::Text => {
+                        let str = self
+                            .arena
+                            .slice_str(slice.0.start as usize..slice.0.end as usize);
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: crate::container::text::text_content::ListSlice::RawBytes(
-                                self.arena
-                                    .slice_bytes(slice.0.start as usize..slice.0.end as usize),
-                            ),
+                            slice: crate::container::text::text_content::ListSlice::RawStr {
+                                unicode_len: str.chars().count(),
+                                str: Cow::Owned(str),
+                            },
                             pos: *pos,
-                        }))
+                        }));
                     }
                     loro_common::ContainerType::List => {
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {

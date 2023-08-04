@@ -16,6 +16,8 @@ pub enum ListOp<'a> {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerListOp {
+    // Note: len may not equal to slice.len() because for text len is unicode len while the slice
+    // is utf8 bytes.
     Insert { slice: SliceRange, pos: usize },
     Delete(DeleteSpan),
 }
@@ -271,10 +273,11 @@ impl Mergable for InnerListOp {
         Self: Sized,
     {
         match self {
-            InnerListOp::Insert { pos, slice } => match _other {
+            InnerListOp::Insert { pos, slice, .. } => match _other {
                 InnerListOp::Insert {
                     pos: other_pos,
                     slice: other_slice,
+                    ..
                 } => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
                 _ => false,
             },
@@ -344,9 +347,9 @@ mod test {
             },
             ListOp::Delete(DeleteSpan::new(0, 3)),
         ];
-        // let vec = postcard::to_allocvec(&list_op);
-        // dbg!(&vec);
-        let list_op_buf = vec![2, 0, 3, 0, 0, 1, 0, 6];
+        let actual = postcard::to_allocvec(&list_op).unwrap();
+        let list_op_buf = vec![2, 0, 2, 0, 0, 1, 0, 6];
+        assert_eq!(&actual, &list_op_buf);
         assert_eq!(
             postcard::from_bytes::<Vec<ListOp>>(&list_op_buf).unwrap(),
             list_op

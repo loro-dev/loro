@@ -164,6 +164,12 @@ impl From<&[ID]> for Frontiers {
     }
 }
 
+impl From<ID> for Frontiers {
+    fn from(value: ID) -> Self {
+        Self([value].into())
+    }
+}
+
 impl From<&Vec<ID>> for Frontiers {
     fn from(value: &Vec<ID>) -> Self {
         let ids: &[ID] = value;
