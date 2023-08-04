@@ -5,6 +5,7 @@ use crate::{
         list::list_op::{DeleteSpan, ListOp},
         text::text_content::ListSlice,
     },
+    delta::MapValue,
     txn::EventHint,
 };
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -13,16 +14,19 @@ use std::{
     sync::{Mutex, Weak},
 };
 
+#[derive(Clone)]
 pub struct TextHandler {
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
+#[derive(Clone)]
 pub struct MapHandler {
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
 
+#[derive(Clone)]
 pub struct ListHandler {
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
@@ -394,6 +398,23 @@ impl ListHandler {
                 a.get(index).cloned()
             })
     }
+
+    pub fn for_each<I>(&self, f: I)
+    where
+        I: Fn(&LoroValue),
+    {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_list_state().unwrap();
+                for v in a.iter() {
+                    f(v);
+                }
+            })
+    }
 }
 
 impl MapHandler {
@@ -455,6 +476,23 @@ impl MapHandler {
             None,
             &self.state,
         )
+    }
+
+    pub fn for_each<I>(&self, f: I)
+    where
+        I: Fn(&str, &MapValue),
+    {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_map_state().unwrap();
+                for (k, v) in a.iter() {
+                    f(k, v);
+                }
+            })
     }
 
     pub fn get_value(&self) -> LoroValue {

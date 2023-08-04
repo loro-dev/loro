@@ -244,7 +244,6 @@ impl DocState {
         if self.is_recording() {
             self.record_diff(diff)
         }
-        debug_dbg!(self.get_deep_value());
     }
 
     pub fn apply_local_op(&mut self, op: RawOp) -> LoroResult<()> {

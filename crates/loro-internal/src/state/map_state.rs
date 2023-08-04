@@ -138,7 +138,13 @@ impl MapState {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&InternalString, &MapValue)> {
+    pub fn iter(
+        &self,
+    ) -> std::collections::hash_map::Iter<
+        '_,
+        string_cache::Atom<string_cache::EmptyStaticAtomSet>,
+        MapValue,
+    > {
         self.map.iter()
     }
 

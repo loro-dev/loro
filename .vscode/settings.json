@@ -21,7 +21,7 @@
   ],
   "rust-analyzer.runnableEnv": {
     "RUST_BACKTRACE": "full",
-    // "DEBUG": "*"
+    "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": ["test_utils"],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
