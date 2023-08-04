@@ -13,7 +13,7 @@ loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
 postcard = "1.0.2"
 fxhash = "0.2.1"
-serde = { version = "1.0.140", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 thiserror = "1.0.31"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
