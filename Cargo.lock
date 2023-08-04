@@ -55,9 +55,6 @@ name = "append-only-bytes"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd736657a12852ffb42ed309ac3409382d93f76f49ae0ad69fae4ca927e584d9"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "arbitrary"
