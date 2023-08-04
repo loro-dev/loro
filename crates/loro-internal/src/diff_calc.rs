@@ -1,10 +1,11 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use debug_log::debug_dbg;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
+use loro_common::{ContainerType, HasIdSpan, PeerID, ID};
 
 use crate::{
+    change::{Change, Lamport},
     container::idx::ContainerIdx,
     delta::{MapDelta, MapValue},
     event::Diff,
@@ -65,7 +66,7 @@ impl DiffCalculator {
                             ContainerDiffCalculator::Text(TextDiffCalculator::default())
                         }
                         crate::ContainerType::Map => {
-                            ContainerDiffCalculator::Map(MapDiffCalculator::default())
+                            ContainerDiffCalculator::Map(MapDiffCalculator::new(op.container))
                         }
                         crate::ContainerType::List => {
                             ContainerDiffCalculator::List(ListDiffCalculator::default())
@@ -138,8 +139,8 @@ struct TextDiffCalculator {
     tracker: Tracker,
 }
 
-#[derive(Default)]
 struct MapDiffCalculator {
+    idx: ContainerIdx,
     grouped: FxHashMap<InternalString, GroupedValues>,
 }
 
@@ -175,6 +176,13 @@ impl GroupedValues {
 }
 
 impl MapDiffCalculator {
+    pub(crate) fn new(idx: ContainerIdx) -> Self {
+        Self {
+            idx,
+            grouped: Default::default(),
+        }
+    }
+
     fn checkout(&mut self, vv: &VersionVector) {
         for (_, g) in self.grouped.iter_mut() {
             g.checkout(vv)
@@ -193,7 +201,6 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     ) {
         let map = op.op().content.as_map().unwrap();
         let value = oplog.arena.get_value(map.value as usize);
-        debug_dbg!(&value);
         self.grouped
             .entry(map.key.clone())
             .or_default()
@@ -205,7 +212,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        _oplog: &super::oplog::OpLog,
+        oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
     ) -> Diff {
@@ -233,24 +240,140 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         }
 
         let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
+        let mut extra_lookup = Vec::new();
         for key in changed {
-            let value = self
+            if let Some(value) = self
                 .grouped
                 .get(&key)
                 .unwrap()
                 .applied_or_smaller
                 .peek()
                 .cloned()
-                .unwrap_or_else(|| MapValue {
-                    counter: 0,
-                    value: None,
-                    lamport: (0, 0),
-                });
+            {
+                updated.insert(key, value);
+            } else {
+                extra_lookup.push(key);
+            }
+        }
 
-            updated.insert(key, value);
+        if !extra_lookup.is_empty() {
+            // PERF: the first time we do this, it may take a long time:
+            // it will travel the whole history with O(n) time
+            let ans = oplog.lookup_map_values_at(self.idx, &extra_lookup, to);
+            for (k, v) in extra_lookup.into_iter().zip(ans.into_iter()) {
+                updated.insert(
+                    k,
+                    v.unwrap_or_else(|| MapValue {
+                        counter: 0,
+                        value: None,
+                        lamport: (0, 0),
+                    }),
+                );
+            }
         }
 
         Diff::NewMap(MapDelta { updated })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct CompactMapValue {
+    lamport: Lamport,
+    peer: PeerID,
+    counter: Counter,
+}
+
+impl HasId for CompactMapValue {
+    fn id_start(&self) -> ID {
+        ID::new(self.peer, self.counter)
+    }
+}
+
+#[derive(Debug, Default)]
+struct CompactGroupedValues {
+    /// Each value in this set should be included in the current version or
+    /// "concurrent to the current version it is not at the peak".
+    applied_or_smaller: BinaryHeap<CompactMapValue>,
+    /// The values that are guaranteed not in the current version. (they are from the future)
+    pending: Vec<CompactMapValue>,
+}
+
+impl CompactGroupedValues {
+    fn checkout(&mut self, vv: &VersionVector) {
+        self.pending.retain(|v| {
+            if vv.includes_id(v.id_start()) {
+                self.applied_or_smaller.push(*v);
+                false
+            } else {
+                true
+            }
+        });
+
+        while let Some(top) = self.applied_or_smaller.peek() {
+            if vv.includes_id(top.id_start()) {
+                break;
+            } else {
+                let top = self.applied_or_smaller.pop().unwrap();
+                self.pending.push(top);
+            }
+        }
+    }
+
+    fn peek(&self) -> Option<CompactMapValue> {
+        self.applied_or_smaller.peek().cloned()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct GlobalMapDiffCalculator {
+    maps: FxHashMap<ContainerIdx, FxHashMap<InternalString, CompactGroupedValues>>,
+    pub(crate) last_vv: VersionVector,
+}
+
+impl GlobalMapDiffCalculator {
+    pub fn process_change(&mut self, change: &Change) {
+        if self.last_vv.includes_id(change.id_last()) {
+            return;
+        }
+
+        for op in change.ops.iter() {
+            if op.container.get_type() == ContainerType::Map {
+                let key = op.content.as_map().unwrap().key.clone();
+                self.maps
+                    .entry(op.container)
+                    .or_default()
+                    .entry(key)
+                    .or_default()
+                    .pending
+                    .push(CompactMapValue {
+                        lamport: (op.counter - change.id.counter) as Lamport + change.lamport,
+                        peer: change.id.peer,
+                        counter: op.counter,
+                    });
+            }
+        }
+
+        self.last_vv.extend_to_include_end_id(change.id_end());
+    }
+
+    pub fn get_value_at(
+        &mut self,
+        container: ContainerIdx,
+        key: &InternalString,
+        vv: &VersionVector,
+        oplog: &OpLog,
+    ) -> Option<MapValue> {
+        let group = self.maps.get_mut(&container)?.get_mut(key)?;
+        group.checkout(vv);
+        let peek = group.peek()?;
+        let op = oplog.lookup_op(peek.id_start()).unwrap();
+        let value_idx = op.content.as_map().unwrap().value;
+        let value = oplog.arena.get_value(value_idx as usize);
+        Some(MapValue {
+            counter: peek.counter,
+            value,
+            lamport: (peek.lamport, peek.peer),
+        })
     }
 }
 

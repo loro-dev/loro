@@ -1,5 +1,5 @@
 use loro_common::ID;
-use loro_internal::{version::Frontiers, LoroDoc};
+use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
 #[test]
 fn test_timestamp() {
@@ -44,4 +44,72 @@ fn test_checkout() {
     assert_eq!(text.len_unicode(), 4);
     assert_eq!(text.len_utf8(), 12);
     assert_eq!(text.len_unicode(), 4);
+}
+
+#[test]
+fn map_checkout() {
+    let mut doc = LoroDoc::new();
+    let meta = doc.get_map("meta");
+    let v_empty = doc.oplog_frontiers();
+    doc.with_txn(|txn| {
+        meta.insert(txn, "key", 0.into()).unwrap();
+    })
+    .unwrap();
+    let v0 = doc.oplog_frontiers();
+    doc.with_txn(|txn| {
+        meta.insert(txn, "key", 1.into()).unwrap();
+    })
+    .unwrap();
+    let v1 = doc.oplog_frontiers();
+    assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
+    doc.checkout(&v0);
+    assert_eq!(meta.get_deep_value().to_json(), r#"{"key":0}"#);
+    doc.checkout(&v_empty);
+    assert_eq!(meta.get_deep_value().to_json(), r#"{}"#);
+    doc.checkout(&v1);
+    assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
+}
+
+#[test]
+fn map_concurrent_checkout() {
+    let mut doc_a = LoroDoc::new();
+    let meta_a = doc_a.get_map("meta");
+    let doc_b = LoroDoc::new();
+    let meta_b = doc_b.get_map("meta");
+
+    doc_a
+        .with_txn(|txn| {
+            meta_a.insert(txn, "key", 0.into()).unwrap();
+        })
+        .unwrap();
+    let va = doc_a.oplog_frontiers();
+    doc_b
+        .with_txn(|txn| {
+            meta_b.insert(txn, "s", 1.into()).unwrap();
+        })
+        .unwrap();
+    let vb_0 = doc_b.oplog_frontiers();
+    doc_b
+        .with_txn(|txn| {
+            meta_b.insert(txn, "key", 1.into()).unwrap();
+        })
+        .unwrap();
+    let vb_1 = doc_b.oplog_frontiers();
+    doc_a.import(&doc_b.export_snapshot()).unwrap();
+    doc_a
+        .with_txn(|txn| {
+            meta_a.insert(txn, "key", 2.into()).unwrap();
+        })
+        .unwrap();
+
+    let v_merged = doc_a.oplog_frontiers();
+
+    doc_a.checkout(&va);
+    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"key":0}"#);
+    doc_a.checkout(&vb_0);
+    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1}"#);
+    doc_a.checkout(&vb_1);
+    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":1}"#);
+    doc_a.checkout(&v_merged);
+    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":2}"#);
 }

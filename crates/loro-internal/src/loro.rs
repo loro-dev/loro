@@ -115,6 +115,16 @@ impl LoroDoc {
         self.txn_with_origin("")
     }
 
+    #[inline(always)]
+    pub fn with_txn<F>(&self, f: F) -> LoroResult<()>
+    where
+        F: Fn(&mut Transaction),
+    {
+        let mut txn = self.txn().unwrap();
+        f(&mut txn);
+        txn.commit()
+    }
+
     /// Create a new transaction with specified origin.
     ///
     /// The origin will be propagated to the events.
