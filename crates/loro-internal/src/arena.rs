@@ -261,6 +261,7 @@ impl SharedArena {
         (self.inner.values.lock().unwrap()[range]).to_vec()
     }
 
+    #[inline(always)]
     pub(crate) fn with_op_converter(&self, f: impl FnOnce(&mut OpConverter)) {
         let mut op_converter = OpConverter {
             container_idx_to_id: self.inner.container_idx_to_id.lock().unwrap(),
