@@ -228,6 +228,10 @@ impl OpLog {
         ID::new(peer, cnt)
     }
 
+    pub fn get_peer_changes(&self, peer: PeerID) -> Option<&RleVec<[Change; 0]>> {
+        self.changes.get(&peer)
+    }
+
     pub(crate) fn vv(&self) -> &VersionVector {
         &self.dag.vv
     }

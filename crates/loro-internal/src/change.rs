@@ -50,6 +50,22 @@ impl<O> Change<O> {
             timestamp,
         }
     }
+
+    pub fn ops(&self) -> &RleVec<[O; 1]> {
+        &self.ops
+    }
+
+    pub fn lamport(&self) -> Lamport {
+        self.lamport
+    }
+
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    pub fn id(&self) -> ID {
+        self.id
+    }
 }
 
 impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {
@@ -119,18 +135,6 @@ impl DagNode for Change {
 }
 
 impl Change {
-    pub fn lamport(&self) -> Lamport {
-        self.lamport
-    }
-
-    pub fn timestamp(&self) -> Timestamp {
-        self.timestamp
-    }
-
-    pub fn id(&self) -> ID {
-        self.id
-    }
-
     pub fn can_merge_right(&self, other: &Self) -> bool {
         other.id.peer == self.id.peer
             && other.id.counter == self.id.counter + self.content_len() as Counter

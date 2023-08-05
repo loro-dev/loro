@@ -21,10 +21,22 @@ pub struct TextHandler {
     state: Weak<Mutex<DocState>>,
 }
 
+impl std::fmt::Debug for TextHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TextHandler")
+    }
+}
+
 #[derive(Clone)]
 pub struct MapHandler {
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
+}
+
+impl std::fmt::Debug for MapHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MapHandler")
+    }
 }
 
 #[derive(Clone)]
@@ -33,7 +45,13 @@ pub struct ListHandler {
     state: Weak<Mutex<DocState>>,
 }
 
-#[derive(Clone, EnumAsInner)]
+impl std::fmt::Debug for ListHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ListHandler")
+    }
+}
+
+#[derive(Clone, EnumAsInner, Debug)]
 pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
@@ -322,6 +340,11 @@ impl ListHandler {
         )
     }
 
+    pub fn push(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
+        let pos = self.len();
+        self.insert(txn, pos, v)
+    }
+
     pub fn insert_container(
         &self,
         txn: &mut Transaction,
@@ -435,9 +458,9 @@ impl ListHandler {
             })
     }
 
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: Fn(&LoroValue),
+        I: FnMut(&LoroValue),
     {
         self.state
             .upgrade()
@@ -465,6 +488,11 @@ impl MapHandler {
     pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) -> LoroResult<()> {
         if let Some(value) = value.as_container() {
             self.insert_container(txn, key, value.container_type())?;
+            return Ok(());
+        }
+
+        if self.get(key).map(|x| x == value).unwrap_or(false) {
+            // skip if the value is already set
             return Ok(());
         }
 
@@ -514,9 +542,9 @@ impl MapHandler {
         )
     }
 
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: Fn(&str, &MapValue),
+        I: FnMut(&str, &MapValue),
     {
         self.state
             .upgrade()
