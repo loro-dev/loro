@@ -12,7 +12,7 @@ use rle::{HasLength, RleVec};
 use smallvec::smallvec;
 
 use crate::{
-    change::{get_sys_timestamp, Change, Lamport},
+    change::{get_sys_timestamp, Change, Lamport, Timestamp},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
@@ -51,6 +51,7 @@ pub struct Transaction {
     pub(super) arena: SharedArena,
     finished: bool,
     on_commit: Option<OnCommitFn>,
+    timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -97,6 +98,7 @@ impl Transaction {
             local_ops: RleVec::new(),
             finished: false,
             on_commit: None,
+            timestamp: None,
         }
     }
 
@@ -106,6 +108,10 @@ impl Transaction {
 
     pub fn commit(mut self) -> Result<(), LoroError> {
         self._commit()
+    }
+
+    pub fn set_timestamp(&mut self, time: Timestamp) {
+        self.timestamp = Some(time);
     }
 
     pub fn set_on_commit(&mut self, f: OnCommitFn) {
@@ -147,7 +153,9 @@ impl Transaction {
             ops,
             deps,
             id: ID::new(self.peer, self.start_counter),
-            timestamp: oplog.latest_timestamp.max(get_sys_timestamp()),
+            timestamp: oplog
+                .latest_timestamp
+                .max(self.timestamp.unwrap_or_else(get_sys_timestamp)),
         };
 
         let diff = if state.is_recording() {
