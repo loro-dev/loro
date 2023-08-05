@@ -1,6 +1,5 @@
 use std::{borrow::Cow, mem::take, sync::Arc};
 
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -374,6 +373,7 @@ impl DocState {
             .as_text_state()
     }
 
+    #[inline(always)]
     pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&State) -> R,
