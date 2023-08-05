@@ -475,6 +475,21 @@ impl VersionVector {
             .collect()
     }
 
+    pub fn distance_to(&self, other: &Self) -> usize {
+        let mut ans = 0;
+        for (client_id, &counter) in self.iter() {
+            if let Some(&other_counter) = other.get(client_id) {
+                if counter > other_counter {
+                    ans += counter - other_counter;
+                }
+            } else if counter > 0 {
+                ans += counter;
+            }
+        }
+
+        ans as usize
+    }
+
     pub fn to_spans(&self) -> IdSpanVector {
         self.iter()
             .map(|(client_id, &counter)| {
@@ -570,6 +585,17 @@ impl VersionVector {
             } else {
                 self.0.insert(client_id, other_end);
             }
+        }
+    }
+
+    pub fn includes_vv(&self, other: &VersionVector) -> bool {
+        match self.partial_cmp(other) {
+            Some(ord) => match ord {
+                Ordering::Less => false,
+                Ordering::Equal => true,
+                Ordering::Greater => true,
+            },
+            None => false,
         }
     }
 

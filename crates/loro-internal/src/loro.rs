@@ -49,6 +49,7 @@ pub struct LoroDoc {
     state: Arc<Mutex<DocState>>,
     arena: SharedArena,
     observer: Arc<Observer>,
+    diff_calculator: Arc<Mutex<DiffCalculator>>,
     detached: bool,
 }
 
@@ -63,6 +64,7 @@ impl LoroDoc {
             state,
             detached: false,
             observer: Arc::new(Observer::new(arena.clone())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
             arena,
         }
     }
@@ -85,6 +87,7 @@ impl LoroDoc {
             observer: Arc::new(obs),
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
             detached: false,
         }
     }
@@ -186,20 +189,20 @@ impl LoroDoc {
         match mode {
             ConcreteEncodeMode::Updates | ConcreteEncodeMode::RleUpdates => {
                 // TODO: need to throw error if state is in transaction
-                debug_log::group!("import");
+                debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
-                let mut diff = DiffCalculator::new();
-                let diff = diff.calc_diff_internal(
-                    &oplog,
-                    &old_vv,
-                    Some(&old_frontiers),
-                    oplog.vv(),
-                    Some(oplog.dag.get_frontiers()),
-                );
                 if !self.detached {
+                    let mut diff = self.diff_calculator.lock().unwrap();
+                    let diff = diff.calc_diff_internal(
+                        &oplog,
+                        &old_vv,
+                        Some(&old_frontiers),
+                        oplog.vv(),
+                        Some(oplog.dag.get_frontiers()),
+                    );
                     let mut state = self.state.lock().unwrap();
                     state.apply_diff(InternalDocDiff {
                         origin,
@@ -225,9 +228,7 @@ impl LoroDoc {
             }
         };
 
-        debug_dbg!(&self.oplog.lock().unwrap().changes);
         self.emit_events();
-
         Ok(())
     }
 
@@ -359,7 +360,7 @@ impl LoroDoc {
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         self.detached = true;
-        let mut calc = DiffCalculator::new();
+        let mut calc = self.diff_calculator.lock().unwrap();
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers);
         let after = &oplog.dag.frontiers_to_vv(frontiers);
         let diff = calc.calc_diff_internal(

@@ -18,7 +18,7 @@ fn test_timestamp() {
 }
 
 #[test]
-fn test_checkout() {
+fn test_text_checkout() {
     let mut doc = LoroDoc::new();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
@@ -44,6 +44,12 @@ fn test_checkout() {
     assert_eq!(text.len_unicode(), 4);
     assert_eq!(text.len_utf8(), 12);
     assert_eq!(text.len_unicode(), 4);
+
+    doc.checkout_to_latest();
+    doc.with_txn(|txn| text.delete(txn, 3, 1)).unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
+    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
 }
 
 #[test]
