@@ -72,10 +72,14 @@ impl DiffCalculator {
             let empty_vv: VersionVector = Default::default();
             if !after.includes_vv(before) {
                 // if after is not after before, we need to calculate the diff from the beginning
-                before = &merged;
-                after = &empty_vv;
+                before = &empty_vv;
+                after = &merged;
                 before_frontiers = None;
                 after_frontiers = None;
+                self.has_all = true;
+            }
+
+            if before.is_empty() {
                 self.has_all = true;
             }
 

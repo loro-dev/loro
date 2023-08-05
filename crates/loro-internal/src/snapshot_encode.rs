@@ -35,18 +35,22 @@ pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
     miniz_oxide::deflate::compress_to_vec(&f.encode(), 6)
 }
 
-pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8]) -> Result<(), LoroError> {
+pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8], with_state: bool) -> Result<(), LoroError> {
     assert!(app.is_empty());
     let bytes = miniz_oxide::inflate::decompress_to_vec(bytes).unwrap();
     let data = FinalPhase::decode(&bytes)?;
-    let mut app_state = app.app_state().lock().unwrap();
-    let (state_arena, common) = decode_state(&mut app_state, &data)?;
-    let arena = app_state.arena.clone();
-    decode_oplog(
-        &mut app.oplog().lock().unwrap(),
-        &data,
-        Some((arena, state_arena, common)),
-    )?;
+    if with_state {
+        let mut app_state = app.app_state().lock().unwrap();
+        let (state_arena, common) = decode_state(&mut app_state, &data)?;
+        let arena = app_state.arena.clone();
+        decode_oplog(
+            &mut app.oplog().lock().unwrap(),
+            &data,
+            Some((arena, state_arena, common)),
+        )?;
+    } else {
+        decode_oplog(&mut app.oplog().lock().unwrap(), &data, None)?;
+    }
     Ok(())
 }
 

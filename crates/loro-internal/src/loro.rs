@@ -174,6 +174,11 @@ impl LoroDoc {
         self.import_with(bytes, Default::default())
     }
 
+    pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
+        self.detach();
+        self.import(bytes)
+    }
+
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         let (magic_bytes, input) = bytes.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
@@ -216,10 +221,10 @@ impl LoroDoc {
             }
             ConcreteEncodeMode::Snapshot => {
                 if self.is_empty() {
-                    decode_app_snapshot(self, &input[1..])?;
+                    decode_app_snapshot(self, &input[1..], !self.detached)?;
                 } else {
                     let app = LoroDoc::new();
-                    decode_app_snapshot(&app, &input[1..])?;
+                    decode_app_snapshot(&app, &input[1..], false)?;
                     let oplog = self.oplog.lock().unwrap();
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);

@@ -3,7 +3,7 @@
     "test": "cargo nextest run --features test_utils",
     "deny": "cargo deny check",
     "fuzz": "cargo +nightly fuzz run",
-    "quick-fuzz": "deno run -A ./scripts/fuzz.ts text text_refactored recursive encoding recursive_txn recursive_refactored",
+    "quick-fuzz": "deno run -A ./scripts/fuzz.ts text_refactored recursive_refactored",
     "mem": "deno run -A ./scripts/run_mem.ts",
     "flame": "CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --example encoding_refactored --root",
     "bench": "cargo bench --features test_utils"
