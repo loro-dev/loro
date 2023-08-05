@@ -191,27 +191,6 @@ impl OpLog {
         Ok(())
     }
 
-    #[allow(unused)]
-    fn convert_change(&mut self, change: Change<RemoteOp>) -> Change {
-        let mut ops = RleVec::new();
-        for op in change.ops {
-            for content in op.contents.into_iter() {
-                ops.push(
-                    self.arena
-                        .convert_single_op(&op.container, op.counter, content),
-                );
-            }
-        }
-
-        Change {
-            ops,
-            id: change.id,
-            deps: change.deps,
-            lamport: change.lamport,
-            timestamp: change.timestamp,
-        }
-    }
-
     pub fn next_lamport(&self) -> Lamport {
         self.next_lamport
     }
@@ -304,26 +283,6 @@ impl OpLog {
         }
     }
 
-    fn convert_change_to_local(&self, change: Change<RemoteOp>) -> Change {
-        let mut ops = RleVec::new();
-        for op in change.ops {
-            for content in op.contents.into_iter() {
-                let op = self
-                    .arena
-                    .convert_single_op(&op.container, op.counter, content);
-                ops.push(op);
-            }
-        }
-
-        Change {
-            ops,
-            id: change.id,
-            deps: change.deps,
-            lamport: change.lamport,
-            timestamp: change.timestamp,
-        }
-    }
-
     pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> RemoteOp<'_> {
         let container = self.arena.get_container_id(op.container).unwrap();
         let mut contents = RleVec::new();
@@ -381,17 +340,34 @@ impl OpLog {
     ) -> Result<(), LoroError> {
         let len = changes.iter().fold(0, |last, this| last + this.1.len());
         let mut change_causal_arr = Vec::with_capacity(len);
-        for (peer, changes) in changes {
-            let cur_end_cnt = self.changes.get(&peer).map(|x| x.atom_len()).unwrap_or(0);
-            for change in changes {
-                if change.id.counter < cur_end_cnt {
-                    continue;
-                }
+        self.arena.with_op_converter(|converter| {
+            for (peer, changes) in changes {
+                let cur_end_cnt = self.changes.get(&peer).map(|x| x.atom_len()).unwrap_or(0);
+                for change in changes {
+                    if change.id.counter < cur_end_cnt {
+                        continue;
+                    }
 
-                let change = self.convert_change_to_local(change);
-                change_causal_arr.push(change);
+                    let mut ops = RleVec::new();
+                    for op in change.ops {
+                        for content in op.contents.into_iter() {
+                            let op =
+                                converter.convert_single_op(&op.container, op.counter, content);
+                            ops.push(op);
+                        }
+                    }
+
+                    let change = Change {
+                        ops,
+                        id: change.id,
+                        deps: change.deps,
+                        lamport: change.lamport,
+                        timestamp: change.timestamp,
+                    };
+                    change_causal_arr.push(change);
+                }
             }
-        }
+        });
 
         // TODO: Perf
         change_causal_arr.sort_by_key(|x| x.lamport);
