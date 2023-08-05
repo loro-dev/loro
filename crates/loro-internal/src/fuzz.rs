@@ -245,7 +245,15 @@ fn check_eq_refactored(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
     let text_b = b.get_text("text");
     let value_a = text_a.get_value();
     let value_b = text_b.get_value();
-    assert_eq!(value_a, value_b);
+    assert_eq!(
+        value_a,
+        value_b,
+        "peer{}={:?}, peer{}={:?}",
+        site_a.peer_id(),
+        value_a,
+        site_b.peer_id(),
+        value_b
+    );
 }
 
 pub fn minify_error<T, F, N>(site_num: u8, actions: Vec<T>, f: F, normalize: N)
@@ -994,6 +1002,31 @@ mod test {
                     content: 10794,
                     pos: 30,
                     site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout() {
+        test_multi_sites_refactored(
+            4,
+            &mut [
+                Ins {
+                    content: 53,
+                    pos: 4,
+                    site: 2,
+                },
+                SyncAll,
+                Ins {
+                    content: 0,
+                    pos: 1,
+                    site: 0,
+                },
+                Del {
+                    pos: 4,
+                    len: 1,
+                    site: 2,
                 },
             ],
         )

@@ -4,25 +4,21 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
-use crate::container::idx::ContainerIdx;
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
-use crate::delta::MapValue;
-use crate::diff_calc::GlobalMapDiffCalculator;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use crate::{InternalString, LoroError};
+use crate::LoroError;
 
 use super::arena::SharedArena;
 
@@ -44,7 +40,6 @@ pub struct OpLog {
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
     pending_changes: FxHashMap<ID, Vec<Change>>,
-    map_diff_calc: Arc<Mutex<GlobalMapDiffCalculator>>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -75,7 +70,6 @@ impl Clone for OpLog {
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
-            map_diff_calc: Default::default(),
         }
     }
 }
@@ -100,7 +94,6 @@ impl OpLog {
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
-            map_diff_calc: Default::default(),
         }
     }
 
@@ -567,28 +560,6 @@ impl OpLog {
         println!("total ops: {}", total_ops);
         println!("total atom ops: {}", total_atom_ops);
         println!("total dag node: {}", total_dag_node);
-    }
-
-    /// lookup map values at a specific version
-    // PERF: this is slow. it needs to traverse all changes to build the cache for now
-    pub(crate) fn lookup_map_values_at(
-        &self,
-        idx: ContainerIdx,
-        extra_lookup: &[InternalString],
-        to: &VersionVector,
-    ) -> Vec<Option<MapValue>> {
-        let mut map_diff_calc = self.map_diff_calc.lock().unwrap();
-        if to.partial_cmp(&map_diff_calc.last_vv) != Some(Ordering::Less) {
-            let from = map_diff_calc.last_vv.clone();
-            self.for_each_change_within(&from, to, |change| map_diff_calc.process_change(change));
-        }
-
-        let ans = extra_lookup
-            .iter()
-            .map(|x| map_diff_calc.get_value_at(idx, x, to, self))
-            .collect();
-
-        ans
     }
 }
 
