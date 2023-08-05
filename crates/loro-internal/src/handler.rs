@@ -453,6 +453,15 @@ impl ListHandler {
             .get_container_deep_value(self.container_idx)
     }
 
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value_with_id(self.container_idx, None)
+    }
+
     pub fn id(&self) -> ContainerID {
         self.state
             .upgrade()
@@ -612,6 +621,15 @@ impl MapHandler {
             .lock()
             .unwrap()
             .get_container_deep_value(self.container_idx)
+    }
+
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value_with_id(self.container_idx, None)
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {

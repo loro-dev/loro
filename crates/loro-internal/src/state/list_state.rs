@@ -260,7 +260,6 @@ impl ListState {
 
 impl ContainerState for ListState {
     fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
-        debug_log::debug_log!("Apply List Diff {:#?}", diff);
         match diff {
             Diff::List(delta) => {
                 let mut index = 0;
@@ -300,7 +299,6 @@ impl ContainerState for ListState {
                             for slices in value.0.iter() {
                                 for i in slices.0.start..slices.0.end {
                                     let value = arena.get_value(i as usize).unwrap();
-                                    debug_dbg!(&value);
                                     if value.is_container() {
                                         let c = value.as_container().unwrap();
                                         let idx = arena.register_container(c);
@@ -321,8 +319,6 @@ impl ContainerState for ListState {
             }
             _ => unreachable!(),
         };
-        debug_dbg!(&self.idx);
-        debug_dbg!(&self.get_value());
     }
 
     fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {

@@ -101,6 +101,89 @@ fn map_checkout() {
 }
 
 #[test]
+fn a_list_of_map_checkout() {
+    let mut doc = LoroDoc::new();
+    let entry = doc.get_map("entry");
+    let (list, sub) = doc
+        .with_txn(|txn| {
+            let list = entry
+                .insert_container(txn, "list", loro_common::ContainerType::List)?
+                .into_list()
+                .unwrap();
+            let sub_map = list
+                .insert_container(txn, 0, loro_common::ContainerType::Map)?
+                .into_map()
+                .unwrap();
+            sub_map.insert(txn, "x", 100.into())?;
+            sub_map.insert(txn, "y", 1000.into())?;
+            Ok((list, sub_map))
+        })
+        .unwrap();
+    let v0 = doc.oplog_frontiers();
+    let d0 = doc.get_deep_value().to_json();
+    doc.with_txn(|txn| {
+        list.insert(txn, 0, 3.into())?;
+        list.push(txn, 4.into())?;
+        list.insert_container(txn, 2, loro_common::ContainerType::Map)?;
+        list.insert_container(txn, 3, loro_common::ContainerType::Map)?;
+        Ok(())
+    })
+    .unwrap();
+    doc.with_txn(|txn| {
+        list.delete(txn, 2, 1)?;
+        Ok(())
+    })
+    .unwrap();
+    doc.with_txn(|txn| {
+        sub.insert(txn, "x", 9.into())?;
+        sub.insert(txn, "y", 9.into())?;
+        Ok(())
+    })
+    .unwrap();
+    doc.with_txn(|txn| {
+        sub.insert(txn, "z", 9.into())?;
+        Ok(())
+    })
+    .unwrap();
+    let v1 = doc.oplog_frontiers();
+    let d1 = doc.get_deep_value().to_json();
+    doc.with_txn(|txn| {
+        sub.insert(txn, "x", 77.into())?;
+        Ok(())
+    })
+    .unwrap();
+    doc.with_txn(|txn| {
+        sub.insert(txn, "y", 88.into())?;
+        Ok(())
+    })
+    .unwrap();
+    doc.with_txn(|txn| {
+        list.delete(txn, 0, 1)?;
+        list.insert(txn, 0, 123.into())?;
+        list.push(txn, 99.into())?;
+        Ok(())
+    })
+    .unwrap();
+    let v2 = doc.oplog_frontiers();
+    let d2 = doc.get_deep_value().to_json();
+
+    doc.checkout(&v0);
+    assert_eq!(doc.get_deep_value().to_json(), d0);
+    doc.checkout(&v1);
+    assert_eq!(doc.get_deep_value().to_json(), d1);
+    doc.checkout(&v2);
+    println!("{}", doc.get_deep_value_with_id().to_json_pretty());
+    assert_eq!(doc.get_deep_value().to_json(), d2);
+    debug_log::group!("checking out v1");
+    doc.checkout(&v1);
+    debug_log::group_end!();
+    println!("{}", doc.get_deep_value_with_id().to_json_pretty());
+    assert_eq!(doc.get_deep_value().to_json(), d1);
+    doc.checkout(&v0);
+    assert_eq!(doc.get_deep_value().to_json(), d0);
+}
+
+#[test]
 fn map_concurrent_checkout() {
     let mut doc_a = LoroDoc::new();
     let meta_a = doc_a.get_map("meta");

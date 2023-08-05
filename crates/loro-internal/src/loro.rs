@@ -119,13 +119,14 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn with_txn<F>(&self, f: F) -> LoroResult<()>
+    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
     where
-        F: Fn(&mut Transaction) -> LoroResult<()>,
+        F: FnOnce(&mut Transaction) -> LoroResult<R>,
     {
         let mut txn = self.txn().unwrap();
-        f(&mut txn)?;
-        txn.commit()
+        let v = f(&mut txn)?;
+        txn.commit()?;
+        Ok(v)
     }
 
     /// Create a new transaction with specified origin.
@@ -346,6 +347,11 @@ impl LoroDoc {
         self.state.lock().unwrap().get_deep_value()
     }
 
+    /// Get deep value of the document with container id
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.state.lock().unwrap().get_deep_value_with_id()
+    }
+
     pub fn checkout_to_latest(&mut self) {
         let f = self.oplog_frontiers();
         self.checkout(&f);
@@ -371,6 +377,7 @@ impl LoroDoc {
             Some(frontiers),
         );
 
+        debug_dbg!(&diff);
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             local: true,

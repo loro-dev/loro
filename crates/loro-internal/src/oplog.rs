@@ -432,18 +432,22 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
-    /// Iterates over all changes between `from` and `to` peer by peer
+    /// Iterates over all changes between `a` and `b` peer by peer (not in causal order, fast)
     pub(crate) fn for_each_change_within(
         &self,
-        from: &VersionVector,
-        to: &VersionVector,
+        a: &VersionVector,
+        b: &VersionVector,
         mut f: impl FnMut(&Change),
     ) {
         for (peer, changes) in self.changes.iter() {
-            let from_cnt = from.get(peer).copied().unwrap_or(0);
-            let to_cnt = to.get(peer).copied().unwrap_or(0);
+            let mut from_cnt = a.get(peer).copied().unwrap_or(0);
+            let mut to_cnt = b.get(peer).copied().unwrap_or(0);
             if from_cnt == to_cnt {
                 continue;
+            }
+
+            if to_cnt < from_cnt {
+                std::mem::swap(&mut from_cnt, &mut to_cnt);
             }
 
             let Some(result) = changes.get_by_atom_index(from_cnt) else { continue };

@@ -136,13 +136,6 @@ impl SharedArena {
     }
 
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        debug_log::debug_log!(
-            "set parent {:?} {:?} {:?} {:?}",
-            child,
-            parent,
-            self.get_container_id(child),
-            parent.map(|x| self.get_container_id(x))
-        );
         self.inner.parents.lock().unwrap().insert(child, parent);
     }
 
