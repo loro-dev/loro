@@ -118,10 +118,10 @@ impl LoroDoc {
     #[inline(always)]
     pub fn with_txn<F>(&self, f: F) -> LoroResult<()>
     where
-        F: Fn(&mut Transaction),
+        F: Fn(&mut Transaction) -> LoroResult<()>,
     {
         let mut txn = self.txn().unwrap();
-        f(&mut txn);
+        f(&mut txn)?;
         txn.commit()
     }
 

@@ -53,11 +53,13 @@ fn map_checkout() {
     let v_empty = doc.oplog_frontiers();
     doc.with_txn(|txn| {
         meta.insert(txn, "key", 0.into()).unwrap();
+        Ok(())
     })
     .unwrap();
     let v0 = doc.oplog_frontiers();
     doc.with_txn(|txn| {
         meta.insert(txn, "key", 1.into()).unwrap();
+        Ok(())
     })
     .unwrap();
     let v1 = doc.oplog_frontiers();
@@ -80,18 +82,21 @@ fn map_concurrent_checkout() {
     doc_a
         .with_txn(|txn| {
             meta_a.insert(txn, "key", 0.into()).unwrap();
+            Ok(())
         })
         .unwrap();
     let va = doc_a.oplog_frontiers();
     doc_b
         .with_txn(|txn| {
             meta_b.insert(txn, "s", 1.into()).unwrap();
+            Ok(())
         })
         .unwrap();
     let vb_0 = doc_b.oplog_frontiers();
     doc_b
         .with_txn(|txn| {
             meta_b.insert(txn, "key", 1.into()).unwrap();
+            Ok(())
         })
         .unwrap();
     let vb_1 = doc_b.oplog_frontiers();
@@ -99,6 +104,7 @@ fn map_concurrent_checkout() {
     doc_a
         .with_txn(|txn| {
             meta_a.insert(txn, "key", 2.into()).unwrap();
+            Ok(())
         })
         .unwrap();
 

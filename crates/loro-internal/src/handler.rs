@@ -8,6 +8,7 @@ use crate::{
     delta::MapValue,
     txn::EventHint,
 };
+use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use std::{
     borrow::Cow,
@@ -30,6 +31,23 @@ pub struct MapHandler {
 pub struct ListHandler {
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
+}
+
+#[derive(Clone, EnumAsInner)]
+pub enum Handler {
+    Text(TextHandler),
+    Map(MapHandler),
+    List(ListHandler),
+}
+
+impl Handler {
+    fn new(value: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+        match value.get_type() {
+            ContainerType::Text => Self::Text(TextHandler::new(value, state)),
+            ContainerType::Map => Self::Map(MapHandler::new(value, state)),
+            ContainerType::List => Self::List(ListHandler::new(value, state)),
+        }
+    }
 }
 
 impl TextHandler {
@@ -343,6 +361,24 @@ impl ListHandler {
         )
     }
 
+    pub fn get_child_handler(&self, index: usize) -> Handler {
+        let mutex = &self.state.upgrade().unwrap();
+        let state = mutex.lock().unwrap();
+        let container_id = state.with_state(self.container_idx, |state| {
+            state
+                .as_list_state()
+                .as_ref()
+                .unwrap()
+                .get(index)
+                .unwrap()
+                .as_container()
+                .unwrap()
+                .clone()
+        });
+        let idx = state.arena.register_container(&container_id);
+        Handler::new(idx, self.state.clone())
+    }
+
     pub fn len(&self) -> usize {
         self.state
             .upgrade()
@@ -502,6 +538,24 @@ impl MapHandler {
             .lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn get_child_handler(&self, key: &str) -> Handler {
+        let mutex = &self.state.upgrade().unwrap();
+        let state = mutex.lock().unwrap();
+        let container_id = state.with_state(self.container_idx, |state| {
+            state
+                .as_map_state()
+                .as_ref()
+                .unwrap()
+                .get(key)
+                .unwrap()
+                .as_container()
+                .unwrap()
+                .clone()
+        });
+        let idx = state.arena.register_container(&container_id);
+        Handler::new(idx, self.state.clone())
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
