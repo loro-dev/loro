@@ -59,6 +59,24 @@ pub enum Handler {
 }
 
 impl Handler {
+    pub fn container_idx(&self) -> ContainerIdx {
+        match self {
+            Self::Text(x) => x.container_idx,
+            Self::Map(x) => x.container_idx,
+            Self::List(x) => x.container_idx,
+        }
+    }
+
+    pub fn c_type(&self) -> ContainerType {
+        match self {
+            Self::Text(_) => ContainerType::Text,
+            Self::Map(_) => ContainerType::Map,
+            Self::List(_) => ContainerType::List,
+        }
+    }
+}
+
+impl Handler {
     fn new(value: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         match value.get_type() {
             ContainerType::Text => Self::Text(TextHandler::new(value, state)),
@@ -350,7 +368,7 @@ impl ListHandler {
         txn: &mut Transaction,
         pos: usize,
         c_type: ContainerType,
-    ) -> LoroResult<ContainerIdx> {
+    ) -> LoroResult<Handler> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
@@ -365,7 +383,7 @@ impl ListHandler {
             None,
             &self.state,
         )?;
-        Ok(child_idx)
+        Ok(Handler::new(child_idx, self.state.clone()))
     }
 
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
@@ -512,7 +530,7 @@ impl MapHandler {
         txn: &mut Transaction,
         key: &str,
         c_type: ContainerType,
-    ) -> LoroResult<ContainerIdx> {
+    ) -> LoroResult<Handler> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);
@@ -526,7 +544,8 @@ impl MapHandler {
             None,
             &self.state,
         )?;
-        Ok(child_idx)
+
+        Ok(Handler::new(child_idx, self.state.clone()))
     }
 
     pub fn delete(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {

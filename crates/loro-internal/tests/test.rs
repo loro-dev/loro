@@ -48,8 +48,30 @@ fn test_text_checkout() {
     doc.checkout_to_latest();
     doc.with_txn(|txn| text.delete(txn, 3, 1)).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
+    doc.with_txn(|txn| text.delete(txn, 2, 1)).unwrap();
+    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 4)].as_slice()));
+    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 5)].as_slice()));
+    assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
+    {
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()));
+        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你");
+    }
+    {
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()));
+        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你界");
+    }
+    {
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()));
+        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好界");
+    }
+    {
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
+        assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
+    }
 }
 
 #[test]

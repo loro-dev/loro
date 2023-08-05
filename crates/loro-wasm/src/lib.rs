@@ -553,12 +553,12 @@ impl LoroMap {
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
         let t = txn.as_mut()?;
-        let idx = self.0.insert_container(t, key, type_)?;
+        let c = self.0.insert_container(t, key, type_)?;
 
         let container = match type_ {
-            ContainerType::Text => LoroText(t.get_text(idx)).into(),
-            ContainerType::Map => LoroMap(t.get_map(idx)).into(),
-            ContainerType::List => LoroList(t.get_list(idx)).into(),
+            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
+            ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
+            ContainerType::List => LoroList(c.into_list().unwrap()).into(),
         };
         Ok(container)
     }
@@ -641,11 +641,11 @@ impl LoroList {
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
         let t = txn.as_mut()?;
-        let idx = self.0.insert_container(t, pos, _type)?;
+        let c = self.0.insert_container(t, pos, _type)?;
         let container = match _type {
-            ContainerType::Text => LoroText(t.get_text(idx)).into(),
-            ContainerType::Map => LoroMap(t.get_map(idx)).into(),
-            ContainerType::List => LoroList(t.get_list(idx)).into(),
+            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
+            ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
+            ContainerType::List => LoroList(c.into_list().unwrap()).into(),
         };
         Ok(container)
     }
