@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use debug_log::debug_dbg;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 
 use crate::{
@@ -242,8 +241,6 @@ impl LoroDoc {
 
     pub fn export_snapshot(&self) -> Vec<u8> {
         debug_log::group!("export snapshot");
-        debug_dbg!(&self.oplog.lock().unwrap().changes);
-        debug_dbg!(&self.state.lock().unwrap().get_deep_value());
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
         // maybe u8 is enough
@@ -377,7 +374,6 @@ impl LoroDoc {
             Some(frontiers),
         );
 
-        debug_dbg!(&diff);
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             local: true,

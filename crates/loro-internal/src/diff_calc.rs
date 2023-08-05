@@ -1,6 +1,5 @@
 use std::collections::BinaryHeap;
 
-use debug_log::debug_log;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
@@ -64,7 +63,6 @@ impl DiffCalculator {
             || !self.last_vv.includes_vv(after)
         {
             // if we don't have all the ops, we need to calculate the diff by tracing back
-            debug_log!("DiffCalculator: calculate diff by tracing back");
             let mut after = after;
             let mut before = before;
             let mut merged = before.clone();
@@ -73,7 +71,6 @@ impl DiffCalculator {
             merged.merge(after);
             let empty_vv: VersionVector = Default::default();
             if !after.includes_vv(before) {
-                debug_log!("GO BACK TO THE BEGINNING");
                 // if after is not after before, we need to calculate the diff from the beginning
                 before = &merged;
                 after = &empty_vv;
@@ -89,20 +86,20 @@ impl DiffCalculator {
                 self.last_vv.extend_to_include_end_id(change.id_end());
                 let mut visited = FxHashSet::default();
                 for op in change.ops.iter() {
-                    let calculator = self.calculators.entry(op.container).or_insert_with(|| {
-                        debug_log::debug_log!("Create new diff calculator");
-                        match op.container.get_type() {
-                            crate::ContainerType::Text => {
-                                ContainerDiffCalculator::Text(TextDiffCalculator::default())
+                    let calculator =
+                        self.calculators.entry(op.container).or_insert_with(|| {
+                            match op.container.get_type() {
+                                crate::ContainerType::Text => {
+                                    ContainerDiffCalculator::Text(TextDiffCalculator::default())
+                                }
+                                crate::ContainerType::Map => {
+                                    ContainerDiffCalculator::Map(MapDiffCalculator::new())
+                                }
+                                crate::ContainerType::List => {
+                                    ContainerDiffCalculator::List(ListDiffCalculator::default())
+                                }
                             }
-                            crate::ContainerType::Map => {
-                                ContainerDiffCalculator::Map(MapDiffCalculator::new())
-                            }
-                            crate::ContainerType::List => {
-                                ContainerDiffCalculator::List(ListDiffCalculator::default())
-                            }
-                        }
-                    });
+                        });
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(op.container);
