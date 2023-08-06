@@ -106,6 +106,21 @@ impl OpLog {
         }
     }
 
+    pub fn latest_timestamp(&self) -> Timestamp {
+        self.latest_timestamp
+    }
+
+    pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
+        let mut timestamp = Timestamp::default();
+        for id in f.iter() {
+            if let Some(change) = self.lookup_change(*id) {
+                timestamp = timestamp.max(change.timestamp);
+            }
+        }
+
+        timestamp
+    }
+
     pub fn is_empty(&self) -> bool {
         self.dag.map.is_empty() && self.arena.is_empty()
     }

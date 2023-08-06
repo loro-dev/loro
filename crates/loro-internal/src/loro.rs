@@ -8,6 +8,7 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
+    change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{ConcreteEncodeMode, EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     id::PeerID,
@@ -105,6 +106,11 @@ impl LoroDoc {
 
     pub fn attach(&mut self) {
         self.checkout_to_latest()
+    }
+
+    pub fn state_timestamp(&self) -> Timestamp {
+        let f = &self.state.lock().unwrap().frontiers;
+        self.oplog.lock().unwrap().get_timestamp_of_version(f)
     }
 
     /// Create a new transaction.
