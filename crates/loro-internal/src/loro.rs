@@ -208,7 +208,7 @@ impl LoroDoc {
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
                 if !self.detached {
-                    let mut diff = self.diff_calculator.lock().unwrap();
+                    let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(
                         &oplog,
                         &old_vv,

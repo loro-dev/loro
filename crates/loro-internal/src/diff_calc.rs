@@ -1,3 +1,4 @@
+use debug_log::debug_dbg;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
@@ -56,11 +57,13 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
-        let include_before = self.last_vv.includes_vv(before);
-        let include_after = self.last_vv.includes_vv(after);
-        if self.has_all && (!include_after || !include_before) {
-            self.has_all = false;
-            self.last_vv = Default::default();
+        if self.has_all {
+            let include_before = self.last_vv.includes_vv(before);
+            let include_after = self.last_vv.includes_vv(after);
+            if !include_after || !include_before {
+                self.has_all = false;
+                self.last_vv = Default::default();
+            }
         }
 
         let affected_set = if !self.has_all {

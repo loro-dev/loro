@@ -1,6 +1,5 @@
-// use bench_utils::{get_automerge_actions, TextAction};
-// use loro_internal::{EncodeMode, LoroCore, VersionVector};
-// use rand::{rngs::StdRng, Rng, SeedableRng};
+use bench_utils::{get_automerge_actions, TextAction};
+use loro_internal::LoroDoc;
 
 // #[allow(dead_code)]
 // fn parallel() {
@@ -62,5 +61,24 @@
 // }
 
 fn main() {
-    //     real_time()
+    let actions = get_automerge_actions();
+    let loro = LoroDoc::default();
+    let loro_b = LoroDoc::default();
+    let text = loro.get_text("text");
+    let mut count = 0;
+    for TextAction { pos, ins, del } in actions.iter() {
+        {
+            let mut txn = loro.txn().unwrap();
+            text.delete(&mut txn, *pos, *del).unwrap();
+            text.insert(&mut txn, *pos, ins).unwrap();
+        }
+
+        loro_b
+            .import(&loro.export_from(&loro_b.oplog_vv()))
+            .unwrap();
+        count += 1;
+        if count % 1000 == 0 {
+            println!("{}", count);
+        }
+    }
 }
