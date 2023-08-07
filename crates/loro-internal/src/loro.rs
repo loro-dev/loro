@@ -108,6 +108,8 @@ impl LoroDoc {
         self.checkout_to_latest()
     }
 
+    /// Get the timestamp of the current state.
+    /// It's the last edit time of the [DocState].
     pub fn state_timestamp(&self) -> Timestamp {
         let f = &self.state.lock().unwrap().frontiers;
         self.oplog.lock().unwrap().get_timestamp_of_version(f)

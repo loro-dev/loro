@@ -58,10 +58,14 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
-        let affected_set = if !self.has_all
-            || !self.last_vv.includes_vv(before)
-            || !self.last_vv.includes_vv(after)
-        {
+        let include_before = self.last_vv.includes_vv(before);
+        let include_after = self.last_vv.includes_vv(after);
+        if self.has_all && (!include_after || !include_before) {
+            self.has_all = false;
+            self.last_vv = Default::default();
+        }
+
+        let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut after = after;
             let mut before = before;
@@ -77,17 +81,30 @@ impl DiffCalculator {
                 before_frontiers = None;
                 after_frontiers = None;
                 self.has_all = true;
-            }
-
-            if before.is_empty() {
+                self.last_vv = Default::default();
+            } else if before.is_empty() {
                 self.has_all = true;
+                self.last_vv = Default::default();
             }
 
             let (lca, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
+
             let mut started_set = FxHashSet::default();
             for (change, vv) in iter {
-                self.last_vv.extend_to_include_end_id(change.id_end());
+                if change.id.counter > 0 && self.has_all {
+                    assert!(
+                        self.last_vv.includes_id(change.id.inc(-1)),
+                        "{:?} {}",
+                        &self.last_vv,
+                        change.id
+                    );
+                }
+
+                if self.has_all {
+                    self.last_vv.extend_to_include_end_id(change.id_end());
+                }
+
                 let mut visited = FxHashSet::default();
                 for op in change.ops.iter() {
                     let calculator =

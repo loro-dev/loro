@@ -1384,6 +1384,37 @@ mod failed_tests {
     }
 
     #[test]
+    fn unknown_1() {
+        test_multi_sites(
+            5,
+            &mut [
+                SyncAll,
+                Map {
+                    site: 32,
+                    container_idx: 0,
+                    key: 110,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 90,
+                    container_idx: 90,
+                    key: 90,
+                    value: I32(5921392),
+                },
+                Text {
+                    site: 92,
+                    container_idx: 140,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                SyncAll,
+            ],
+        );
+    }
+
+    #[test]
     fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
         test_multi_sites(
             5,

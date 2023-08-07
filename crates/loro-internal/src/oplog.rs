@@ -478,7 +478,12 @@ impl OpLog {
 
             let Some(result) = changes.get_by_atom_index(from_cnt) else { continue };
             for i in result.merged_index..changes.vec().len() {
-                f(&changes.vec()[i])
+                let change = &changes.vec()[i];
+                if change.id.counter >= to_cnt {
+                    break;
+                }
+
+                f(change)
             }
         }
     }
