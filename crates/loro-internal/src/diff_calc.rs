@@ -1,5 +1,3 @@
-use std::collections::BinaryHeap;
-
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
@@ -234,21 +232,13 @@ impl std::fmt::Debug for TextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct MapDiffCalculator {
-    grouped: FxHashMap<InternalString, CompactGroupedValues>,
+    grouped: FxHashMap<InternalString, CompactRegister>,
 }
 
 impl MapDiffCalculator {
     pub(crate) fn new() -> Self {
         Self {
             grouped: Default::default(),
-        }
-    }
-
-    fn checkout(&mut self, vv: &VersionVector) {
-        for (_, g) in self.grouped.iter_mut() {
-            let a = g.len();
-            g.checkout(vv);
-            debug_assert_eq!(a, g.len());
         }
     }
 }
@@ -266,11 +256,11 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         self.grouped
             .entry(map.key.clone())
             .or_default()
-            .pending
             .push(CompactMapValue {
                 lamport: op.lamport(),
                 peer: op.client_id(),
                 counter: op.id_start().counter,
+                value: op.op().content.as_map().unwrap().value,
             });
     }
 
@@ -283,40 +273,25 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         to: &crate::VersionVector,
     ) -> Diff {
         let mut changed = Vec::new();
-        self.checkout(from);
         for (k, g) in self.grouped.iter_mut() {
-            let top = g.applied_or_smaller.peek().copied();
-            g.checkout(to);
-            match (&top, g.applied_or_smaller.peek()) {
+            let (peek_from, peek_to) = g.peek_at_ab(from, to);
+            match (peek_from, peek_to) {
                 (None, None) => {}
-                (None, Some(_)) => changed.push(k.clone()),
-                (Some(_), None) => changed.push(k.clone()),
+                (None, Some(_)) => changed.push((k.clone(), peek_to)),
+                (Some(_), None) => changed.push((k.clone(), peek_to)),
                 (Some(a), Some(b)) => {
                     if a != b {
-                        changed.push(k.clone())
+                        changed.push((k.clone(), peek_to))
                     }
                 }
             }
         }
 
         let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
-        for key in changed {
-            let value = self
-                .grouped
-                .get(&key)
-                .unwrap()
-                .applied_or_smaller
-                .peek()
-                .cloned()
+        for (key, value) in changed {
+            let value = value
                 .map(|v| {
-                    let value = oplog
-                        .lookup_op(v.id_start())
-                        .unwrap()
-                        .content
-                        .as_map()
-                        .unwrap()
-                        .value;
-                    let value = oplog.arena.get_value(value as usize);
+                    let value = oplog.arena.get_value(v.value as usize);
                     MapValue {
                         counter: v.counter,
                         value,
@@ -340,6 +315,7 @@ struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
+    value: u32,
 }
 
 impl HasId for CompactMapValue {
@@ -348,38 +324,44 @@ impl HasId for CompactMapValue {
     }
 }
 
-#[derive(Debug, Default)]
-struct CompactGroupedValues {
-    /// Each value in this set should be included in the current version or
-    /// "concurrent to the current version it is not at the peak".
-    applied_or_smaller: BinaryHeap<CompactMapValue>,
-    /// The values that are guaranteed not in the current version. (they are from the future)
-    pending: Vec<CompactMapValue>,
-}
+use compact_register::CompactRegister;
+mod compact_register {
+    use std::collections::BTreeSet;
 
-impl CompactGroupedValues {
-    fn checkout(&mut self, vv: &VersionVector) {
-        self.pending.retain(|v| {
-            if vv.includes_id(v.id_start()) {
-                self.applied_or_smaller.push(*v);
-                false
-            } else {
-                true
-            }
-        });
-
-        while let Some(top) = self.applied_or_smaller.peek() {
-            if vv.includes_id(top.id_start()) {
-                break;
-            } else {
-                let top = self.applied_or_smaller.pop().unwrap();
-                self.pending.push(top);
-            }
-        }
+    use super::*;
+    #[derive(Debug, Default)]
+    pub(super) struct CompactRegister {
+        tree: BTreeSet<CompactMapValue>,
     }
 
-    fn len(&self) -> usize {
-        self.applied_or_smaller.len() + self.pending.len()
+    impl CompactRegister {
+        pub fn push(&mut self, value: CompactMapValue) {
+            self.tree.insert(value);
+        }
+
+        pub fn peek_at_ab(
+            &self,
+            a: &VersionVector,
+            b: &VersionVector,
+        ) -> (Option<CompactMapValue>, Option<CompactMapValue>) {
+            let mut max_a: Option<CompactMapValue> = None;
+            let mut max_b: Option<CompactMapValue> = None;
+            for v in self.tree.iter().rev() {
+                if b.get(&v.peer).copied().unwrap_or(0) > v.counter {
+                    max_b = Some(*v);
+                    break;
+                }
+            }
+
+            for v in self.tree.iter().rev() {
+                if a.get(&v.peer).copied().unwrap_or(0) > v.counter {
+                    max_a = Some(*v);
+                    break;
+                }
+            }
+
+            (max_a, max_b)
+        }
     }
 }
 
