@@ -377,13 +377,12 @@ impl LoroDoc {
         let mut state = self.state.lock().unwrap();
         self.detached = true;
         let mut calc = self.diff_calculator.lock().unwrap();
-        let Some(before) = &oplog.dag.frontiers_to_vv(&state.frontiers) else {
-            return Err(LoroError::NotFoundError(format!("Cannot find the specified version {:?}", frontiers).into_boxed_str()))
-        };
-        let after = &oplog
+        let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
+        let Some(after) = &oplog
             .dag
-            .frontiers_to_vv(frontiers)
-            .expect("The specified version is not found");
+            .frontiers_to_vv(frontiers) else {
+                return Err(LoroError::NotFoundError(format!("Cannot find the specified version {:?}", frontiers).into_boxed_str()))
+            };
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
