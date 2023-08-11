@@ -8,6 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
+use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -16,8 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, ApplyDiff, ListHandler, MapHandler,
-    TextHandler,
+    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
+    ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -49,6 +50,7 @@ pub enum Action {
 }
 
 struct Actor {
+    peer: PeerID,
     loro: LoroDoc,
     value_tracker: Arc<Mutex<LoroValue>>,
     map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
@@ -57,6 +59,7 @@ struct Actor {
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
+    history: FxHashMap<Vec<ID>, LoroValue>,
 }
 
 impl Actor {
@@ -64,6 +67,7 @@ impl Actor {
         let app = LoroDoc::new();
         app.set_peer_id(id);
         let mut actor = Actor {
+            peer: id,
             loro: app,
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
             map_tracker: Default::default(),
@@ -72,6 +76,7 @@ impl Actor {
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
+            history: Default::default(),
         };
 
         let root_value = Arc::clone(&actor.value_tracker);
@@ -182,6 +187,14 @@ impl Actor {
             .list_containers
             .push(actor.loro.txn().unwrap().get_list("list"));
         actor
+    }
+
+    fn record_history(&mut self) {
+        let f = self.loro.oplog_frontiers();
+        let value = self.loro.get_deep_value();
+        let mut ids: Vec<ID> = f.iter().cloned().collect();
+        ids.sort_by_key(|x| x.peer);
+        self.history.insert(ids, value);
     }
 }
 
@@ -379,6 +392,10 @@ impl Actionable for Vec<Actor> {
                     .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
 
+                if a.peer == 1 {
+                    a.record_history();
+                }
+
                 b.map_containers.iter().for_each(|x| {
                     let id = x.id();
                     if !visited.contains(&id) {
@@ -479,6 +496,8 @@ impl Actionable for Vec<Actor> {
                         .map(|x| b.loro.get_text(x.id()))
                         .collect();
                 }
+
+                self[1].record_history();
             }
             Action::Map {
                 site,
@@ -513,6 +532,11 @@ impl Actionable for Vec<Actor> {
                         actor.add_new_container(idx, *c);
                     }
                 };
+
+                txn.commit().unwrap();
+                if actor.peer == 1 {
+                    actor.record_history();
+                }
             }
             Action::List {
                 site,
@@ -548,6 +572,10 @@ impl Actionable for Vec<Actor> {
                         actor.add_new_container(idx, *c);
                     }
                 };
+                txn.commit().unwrap();
+                if actor.peer == 1 {
+                    actor.record_history();
+                }
             }
             Action::Text {
                 site,
@@ -576,6 +604,9 @@ impl Actionable for Vec<Actor> {
                         .unwrap();
                 }
                 drop(txn);
+                if actor.peer == 1 {
+                    actor.record_history();
+                }
             }
         }
     }
@@ -624,46 +655,26 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     assert_eq!(&a_result, &b_doc.get_state_deep_value());
     assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
 
-    // let a = a_doc.get_text("text").unwrap();
-    // let value_a = a.get_value();
-    // assert_eq!(
-    //     &**value_a.as_string().unwrap(),
-    //     &*a_actor.text_tracker.lock().unwrap(),
-    // );
+    let a = a_doc.get_text("text");
+    let value_a = a.get_value();
+    assert_eq!(
+        &**value_a.as_string().unwrap(),
+        &*a_actor.text_tracker.lock().unwrap(),
+    );
 
-    // let a = a_doc.get_map("map").unwrap();
-    // let value_a = a.get_value();
-    // assert_eq!(
-    //     &**value_a.as_map().unwrap(),
-    //     &*a_actor.map_tracker.lock().unwrap()
-    // );
+    let a = a_doc.get_map("map");
+    let value_a = a.get_value();
+    assert_eq!(
+        &**value_a.as_map().unwrap(),
+        &*a_actor.map_tracker.lock().unwrap()
+    );
 
-    // let a = a_doc.get_list("list");
-    // let value_a = a.get_value();
-    // assert_eq!(
-    //     &**value_a.as_list().unwrap(),
-    //     &*a_actor.list_tracker.lock().unwrap(),
-    // );
-
-    // use itertools::Itertools;
-    // for key in a_doc
-    //     .log_store
-    //     .try_read()
-    //     .unwrap()
-    //     .changes()
-    //     .keys()
-    //     .sorted()
-    // {
-    //     let as_ = a_doc.log_store.try_read().unwrap();
-    //     let ca = as_.changes().get(key).unwrap();
-    //     let bs = b_doc.log_store.try_read().unwrap();
-    //     let cb = bs.changes().get(key).unwrap();
-    //     for (la, lb) in ca.iter().zip(cb.iter()) {
-    //         assert_eq!(la.lamport, lb.lamport);
-    //         assert_eq!(la.id, lb.id);
-    //         assert!(!la.deps.iter().any(|u| !lb.deps.contains(u)))
-    //     }
-    // }
+    let a = a_doc.get_list("list");
+    let value_a = a.get_value();
+    assert_eq!(
+        &**value_a.as_list().unwrap(),
+        &*a_actor.list_tracker.lock().unwrap(),
+    );
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -691,7 +702,23 @@ fn check_synced(sites: &mut [Actor]) {
 
             check_eq(a, b);
             debug_log::group_end!();
+            if i == 1 {
+                a.record_history();
+            }
+            if j == 1 {
+                b.record_history();
+            }
         }
+    }
+}
+
+fn check_history(actor: &mut Actor) {
+    assert!(!actor.history.is_empty());
+    for (c, (f, v)) in actor.history.iter().enumerate() {
+        let f = Frontiers::from(f);
+        actor.loro.checkout(&f);
+        let actual = actor.loro.get_deep_value();
+        assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
     }
 }
 
@@ -739,25 +766,7 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     debug_log::group!("check synced");
     check_synced(&mut sites);
     debug_log::group_end!();
-}
-
-pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
-    let mut sites = Vec::new();
-    for i in 0..site_num {
-        sites.push(Actor::new(i as u64));
-    }
-
-    let mut applied = Vec::new();
-    for action in actions.iter_mut() {
-        sites.preprocess(action);
-        applied.push(action.clone());
-        debug_log::debug_log!("\n{}", (&applied).table());
-        sites.apply_action(action);
-    }
-
-    debug_log::group!("check synced");
-    check_synced(&mut sites);
-    debug_log::group_end!();
+    check_history(&mut sites[1]);
 }
 
 #[cfg(test)]
