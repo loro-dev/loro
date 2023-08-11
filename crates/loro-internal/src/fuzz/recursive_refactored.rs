@@ -716,7 +716,7 @@ fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
     for (c, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
-        actor.loro.checkout(&f);
+        actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
         assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
     }

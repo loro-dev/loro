@@ -167,7 +167,7 @@ impl Loro {
     }
 
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
-        self.0.checkout(&ids_to_frontiers(frontiers)?);
+        self.0.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
     }
 

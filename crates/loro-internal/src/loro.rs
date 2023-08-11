@@ -272,7 +272,7 @@ impl LoroDoc {
     /// Get the version vector of the current [DocState]
     pub fn state_vv(&self) -> VersionVector {
         let f = &self.state.lock().unwrap().frontiers;
-        self.oplog.lock().unwrap().dag.frontiers_to_vv(f)
+        self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -364,7 +364,7 @@ impl LoroDoc {
 
     pub fn checkout_to_latest(&mut self) {
         let f = self.oplog_frontiers();
-        self.checkout(&f);
+        self.checkout(&f).unwrap();
         self.detached = false;
     }
 
@@ -372,13 +372,18 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
-    pub fn checkout(&mut self, frontiers: &Frontiers) {
+    pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         self.detached = true;
         let mut calc = self.diff_calculator.lock().unwrap();
-        let before = &oplog.dag.frontiers_to_vv(&state.frontiers);
-        let after = &oplog.dag.frontiers_to_vv(frontiers);
+        let Some(before) = &oplog.dag.frontiers_to_vv(&state.frontiers) else {
+            return Err(LoroError::NotFoundError(format!("Cannot find the specified version {:?}", frontiers).into_boxed_str()))
+        };
+        let after = &oplog
+            .dag
+            .frontiers_to_vv(frontiers)
+            .expect("The specified version is not found");
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
@@ -393,13 +398,15 @@ impl LoroDoc {
             diff: Cow::Owned(diff),
             new_version: Cow::Owned(frontiers.clone()),
         });
+
+        Ok(())
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.oplog.lock().unwrap().dag.vv_to_frontiers(vv)
     }
 
-    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> VersionVector {
+    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
     }
 }
@@ -439,25 +446,25 @@ mod test {
         txn.commit().unwrap();
         let mut b = LoroDoc::new();
         b.import(&loro.export_snapshot()).unwrap();
-        loro.checkout(&Frontiers::default());
+        loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
             assert_eq!(json.to_json(), r#"{"text":"","list":[],"map":{}}"#);
         }
 
-        b.checkout(&ID::new(1, 2).into());
+        b.checkout(&ID::new(1, 2).into()).unwrap();
         {
             let json = &b.get_deep_value();
             assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":0}}"#);
         }
 
-        loro.checkout(&ID::new(1, 3).into());
+        loro.checkout(&ID::new(1, 3).into()).unwrap();
         {
             let json = &loro.get_deep_value();
             assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":1}}"#);
         }
 
-        b.checkout(&ID::new(1, 29).into());
+        b.checkout(&ID::new(1, 29).into()).unwrap();
         {
             let json = &b.get_deep_value();
             assert_eq!(

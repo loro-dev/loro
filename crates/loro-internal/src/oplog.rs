@@ -445,6 +445,7 @@ impl OpLog {
         })
     }
 
+    #[allow(unused)]
     pub(crate) fn lookup_op(&self, id: ID) -> Option<&crate::op::Op> {
         self.lookup_change(id)
             .and_then(|change| change.ops.get_by_atom_index(id.counter).map(|x| x.element))
@@ -528,7 +529,7 @@ impl OpLog {
         };
 
         let common_ancestors = self.dag.find_common_ancestor(from_frontiers, to_frontiers);
-        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
+        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).right;
         let mut iter = self.dag.iter_causal(&common_ancestors, diff);

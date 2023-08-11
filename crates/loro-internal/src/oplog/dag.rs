@@ -135,19 +135,22 @@ impl AppDag {
         })
     }
 
-    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> VersionVector {
+    /// Convert a frontiers to a version vector
+    ///
+    /// If the frontiers version is not found in the dag, return None
+    pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let Some(rle) = self.map.get(&id.peer) else { continue };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { continue };
+            let Some(rle) = self.map.get(&id.peer) else { return None };
+            let Some(x) = rle.get_by_atom_index(id.counter) else { return None };
             vv.extend_to_include_vv(x.element.vv.iter());
             vv.extend_to_include_last_id(*id);
         }
 
-        vv
+        Some(vv)
     }
 
-    pub fn frontiers_to_im_vv(&self, frontiers: &Frontiers) -> ImVersionVector {
+    pub(crate) fn frontiers_to_im_vv(&self, frontiers: &Frontiers) -> ImVersionVector {
         if frontiers.is_empty() {
             return Default::default();
         }

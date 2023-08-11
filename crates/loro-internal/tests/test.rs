@@ -26,19 +26,23 @@ fn test_text_checkout() {
     text.insert(&mut txn, 1, "好世").unwrap();
     txn.commit().unwrap();
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你界");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好界");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
     }
     assert_eq!(text.len_unicode(), 4);
@@ -50,26 +54,33 @@ fn test_text_checkout() {
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
     doc.with_txn(|txn| text.delete(txn, 2, 1)).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
-    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
+        .unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
-    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 4)].as_slice()));
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 4)].as_slice()))
+        .unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
-    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 5)].as_slice()));
+    doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 5)].as_slice()))
+        .unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 1)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你界");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 2)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好界");
     }
     {
-        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()));
+        doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
+            .unwrap();
         assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世界");
     }
 }
@@ -92,11 +103,11 @@ fn map_checkout() {
     .unwrap();
     let v1 = doc.oplog_frontiers();
     assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
-    doc.checkout(&v0);
+    doc.checkout(&v0).unwrap();
     assert_eq!(meta.get_deep_value().to_json(), r#"{"key":0}"#);
-    doc.checkout(&v_empty);
+    doc.checkout(&v_empty).unwrap();
     assert_eq!(meta.get_deep_value().to_json(), r#"{}"#);
-    doc.checkout(&v1);
+    doc.checkout(&v1).unwrap();
     assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
 }
 
@@ -167,19 +178,19 @@ fn a_list_of_map_checkout() {
     let v2 = doc.oplog_frontiers();
     let d2 = doc.get_deep_value().to_json();
 
-    doc.checkout(&v0);
+    doc.checkout(&v0).unwrap();
     assert_eq!(doc.get_deep_value().to_json(), d0);
-    doc.checkout(&v1);
+    doc.checkout(&v1).unwrap();
     assert_eq!(doc.get_deep_value().to_json(), d1);
-    doc.checkout(&v2);
+    doc.checkout(&v2).unwrap();
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
     assert_eq!(doc.get_deep_value().to_json(), d2);
     debug_log::group!("checking out v1");
-    doc.checkout(&v1);
+    doc.checkout(&v1).unwrap();
     debug_log::group_end!();
     println!("{}", doc.get_deep_value_with_id().to_json_pretty());
     assert_eq!(doc.get_deep_value().to_json(), d1);
-    doc.checkout(&v0);
+    doc.checkout(&v0).unwrap();
     assert_eq!(doc.get_deep_value().to_json(), d0);
 }
 
@@ -221,12 +232,12 @@ fn map_concurrent_checkout() {
 
     let v_merged = doc_a.oplog_frontiers();
 
-    doc_a.checkout(&va);
+    doc_a.checkout(&va).unwrap();
     assert_eq!(meta_a.get_deep_value().to_json(), r#"{"key":0}"#);
-    doc_a.checkout(&vb_0);
+    doc_a.checkout(&vb_0).unwrap();
     assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1}"#);
-    doc_a.checkout(&vb_1);
+    doc_a.checkout(&vb_1).unwrap();
     assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":1}"#);
-    doc_a.checkout(&v_merged);
+    doc_a.checkout(&v_merged).unwrap();
     assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":2}"#);
 }
