@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
+use loro_common::HasId;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
@@ -349,10 +350,32 @@ impl OpLog {
         }
     }
 
+    // Changes are expected to be sorted by counter in each value in the hashmap
+    // They should also be contiuous  (TODO: check this)
     pub(crate) fn import_remote_changes(
         &mut self,
         changes: RemoteClientChanges,
     ) -> Result<(), LoroError> {
+        // check whether we can append the new changes
+        // TODO: support pending changes
+        let vv = &self.dag.vv;
+        for (peer, changes) in &changes {
+            if changes.is_empty() {
+                continue;
+            }
+
+            if let Some(end_cnt) = vv.get(peer) {
+                let first_id = changes.first().unwrap().id_start();
+                if first_id.counter > *end_cnt {
+                    return Err(LoroError::DecodeError(
+                        // TODO: Support pending changes to avoid this error
+                        format!("Changes are not appliable yet.").into_boxed_str(),
+                    ));
+                }
+            }
+        }
+
+        // TODO: should we check deps here?
         let len = changes.iter().fold(0, |last, this| last + this.1.len());
         let mut change_causal_arr = Vec::with_capacity(len);
         // op_converter is faster than using arena directly
