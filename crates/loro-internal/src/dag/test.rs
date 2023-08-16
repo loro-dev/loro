@@ -138,7 +138,7 @@ impl TestDag {
         if deps.len() == 1 && deps[0].peer == client_id {
             // can merge two op
             let arr = self.nodes.get_mut(&client_id).unwrap();
-            let mut last = arr.last_mut().unwrap();
+            let last = arr.last_mut().unwrap();
             last.len += len;
         } else {
             self.nodes.entry(client_id).or_default().push(TestNode::new(

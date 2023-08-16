@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
@@ -93,22 +93,6 @@ impl<T: Clone + InsertContentTrait> CloneContent for T {
     }
 }
 
-impl<T: Mergable + Any> MergeableContent for T {
-    fn is_mergable_content(&self, other: &dyn InsertContentTrait) -> bool {
-        if self.type_id() == other.type_id() {
-            let other: &T = utils::downcast_ref(other).unwrap();
-            self.is_mergable(other, &())
-        } else {
-            false
-        }
-    }
-
-    fn merge_content(&mut self, other: &dyn InsertContentTrait) {
-        let other: &T = utils::downcast_ref(other).unwrap();
-        self.merge(other, &());
-    }
-}
-
 impl<'a> HasLength for RawOpContent<'a> {
     fn content_len(&self) -> usize {
         match self {
@@ -195,20 +179,6 @@ impl Mergable for InnerContent {
                 _ => unreachable!(),
             },
             InnerContent::Map(_) => unreachable!(),
-        }
-    }
-}
-
-pub mod utils {
-    use super::*;
-    pub fn downcast_ref<T: Any>(content: &dyn InsertContentTrait) -> Option<&T> {
-        let t = TypeId::of::<T>();
-        let concrete = content.type_id();
-        if t == concrete {
-            // SAFETY: we know that the type is correct
-            Some(unsafe { &*(content as *const dyn InsertContentTrait as *const T) })
-        } else {
-            None
         }
     }
 }

@@ -200,7 +200,9 @@ impl LoroDoc {
 
         let mode: ConcreteEncodeMode = input[0].into();
         match mode {
-            ConcreteEncodeMode::Updates | ConcreteEncodeMode::RleUpdates => {
+            ConcreteEncodeMode::Updates
+            | ConcreteEncodeMode::RleUpdates
+            | ConcreteEncodeMode::CompressedRleUpdates => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();

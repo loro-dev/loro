@@ -4,7 +4,7 @@ use crate::{
     container::text::text_content::SliceRange,
     id::Counter,
     span::{HasCounter, HasCounterSpan, IdSpan},
-    ContentType, InsertContentTrait, ID,
+    ID,
 };
 use rle::{
     rle_tree::{tree_trait::CumulateTreeTrait, HeapMode},
@@ -183,12 +183,6 @@ impl Sliceable for YSpan {
             after_status: self.after_status,
             slice: self.slice.slice(from, to),
         }
-    }
-}
-
-impl InsertContentTrait for YSpan {
-    fn id(&self) -> ContentType {
-        ContentType::List
     }
 }
 
