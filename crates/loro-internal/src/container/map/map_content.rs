@@ -1,7 +1,7 @@
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::{ContentType, InsertContentTrait, InternalString, LoroValue};
+use crate::{InternalString, LoroValue};
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -40,12 +40,6 @@ impl Sliceable for InnerMapSet {
 impl HasLength for InnerMapSet {
     fn content_len(&self) -> usize {
         1
-    }
-}
-
-impl InsertContentTrait for MapSet {
-    fn id(&self) -> ContentType {
-        ContentType::Map
     }
 }
 

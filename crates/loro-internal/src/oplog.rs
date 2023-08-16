@@ -369,7 +369,9 @@ impl OpLog {
                 if first_id.counter > *end_cnt {
                     return Err(LoroError::DecodeError(
                         // TODO: Support pending changes to avoid this error
-                        format!("Changes are not appliable yet.").into_boxed_str(),
+                        "Changes are not appliable yet."
+                            .to_string()
+                            .into_boxed_str(),
                     ));
                 }
             }
