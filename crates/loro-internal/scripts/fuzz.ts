@@ -1,6 +1,6 @@
 import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 const { __dirname } = __(import.meta);
-import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
+import { resolve } from "https://deno.land/std@0.198.0/path/mod.ts";
 
 const validTargets = Array.from(
   Deno.readDirSync(resolve(__dirname, "../fuzz/fuzz_targets")),
