@@ -476,10 +476,12 @@ impl OpLog {
             .and_then(|change| change.ops.get_by_atom_index(id.counter).map(|x| x.element))
     }
 
+    #[inline(always)]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         encode_oplog(self, EncodeMode::Auto(vv.clone()))
     }
 
+    #[inline(always)]
     pub fn decode(&mut self, data: &[u8]) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }
