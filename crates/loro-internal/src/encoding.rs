@@ -8,6 +8,7 @@ pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
 mod encode_changes;
+mod encode_enhanced;
 mod encode_updates;
 
 use rle::HasLength;

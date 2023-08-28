@@ -70,11 +70,13 @@ impl LoroDoc {
     }
 
     /// Is the document empty? (no ops)
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
     /// Whether [OpLog] ans [DocState] are detached.
+    #[inline(always)]
     pub fn is_detached(&self) -> bool {
         self.detached
     }
@@ -92,18 +94,22 @@ impl LoroDoc {
         }
     }
 
+    #[inline(always)]
     pub fn peer_id(&self) -> PeerID {
         self.state.lock().unwrap().peer
     }
 
+    #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) {
         self.state.lock().unwrap().peer = peer;
     }
 
+    #[inline(always)]
     pub fn detach(&mut self) {
         self.detached = true;
     }
 
+    #[inline(always)]
     pub fn attach(&mut self) {
         self.checkout_to_latest()
     }
@@ -162,6 +168,7 @@ impl LoroDoc {
         Ok(txn)
     }
 
+    #[inline(always)]
     pub fn app_state(&self) -> &Arc<Mutex<DocState>> {
         &self.state
     }
