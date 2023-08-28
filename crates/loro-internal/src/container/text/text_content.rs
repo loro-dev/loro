@@ -179,7 +179,7 @@ impl From<SliceRange> for SliceRanges {
 
 impl DeltaValue for SliceRanges {
     fn value_extend(&mut self, other: Self) {
-        self.0.extend(other.0.into_iter());
+        self.0.extend(other.0);
     }
 
     fn take(&mut self, target_len: usize) -> Self {

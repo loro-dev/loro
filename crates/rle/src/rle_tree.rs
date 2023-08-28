@@ -2,7 +2,7 @@ use std::{collections::HashMap, ptr::NonNull};
 
 use self::node::{InternalNode, LeafNode, Node};
 use crate::Rle;
-pub(self) use bumpalo::collections::vec::Vec as BumpVec;
+use bumpalo::collections::vec::Vec as BumpVec;
 pub use cursor::{SafeCursor, SafeCursorMut, UnsafeCursor};
 use fxhash::FxHashMap;
 use num::FromPrimitive;

@@ -170,6 +170,7 @@ impl LoroDoc {
         self.state.lock().unwrap().get_deep_value()
     }
 
+    #[inline(always)]
     pub fn oplog(&self) -> &Arc<Mutex<OpLog>> {
         &self.oplog
     }
@@ -380,11 +381,11 @@ impl LoroDoc {
         self.detached = true;
         let mut calc = self.diff_calculator.lock().unwrap();
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
-        let Some(after) = &oplog
-            .dag
-            .frontiers_to_vv(frontiers) else {
-                return Err(LoroError::NotFoundError(format!("Cannot find the specified version {:?}", frontiers).into_boxed_str()))
-            };
+        let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
+            return Err(LoroError::NotFoundError(
+                format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
+            ));
+        };
         let diff = calc.calc_diff_internal(
             &oplog,
             before,

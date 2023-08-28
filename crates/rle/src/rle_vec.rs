@@ -652,6 +652,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn slice() {
         let mut a: RleVec<[Range<usize>; 4]> = RleVec::new();
         a.push(0..5);

@@ -116,7 +116,7 @@ impl<T> Default for MyNonNull<T> {
 
 impl<T> Clone for MyNonNull<T> {
     fn clone(&self) -> Self {
-        Self(self.0, self.1)
+        *self
     }
 }
 

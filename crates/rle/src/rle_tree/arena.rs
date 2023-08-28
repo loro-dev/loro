@@ -1,9 +1,8 @@
 use super::BumpVec;
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut, Index, RangeBounds, IndexMut},
+    ops::{Deref, DerefMut, Index, IndexMut, RangeBounds},
 };
-
 
 /// [BumpMode] will use [bumpalo] to allocate nodes, where allocation is fast but no deallocation happens before [crate::RleTree] dropped.
 ///
@@ -13,7 +12,7 @@ use std::{
 pub struct BumpMode(bumpalo::Bump);
 
 fn test() {
-    let _a = vec![1, 2];
+    let _a = [1, 2];
 }
 
 pub trait VecTrait<'v, T>:
@@ -22,7 +21,7 @@ pub trait VecTrait<'v, T>:
     type Arena;
     type Drain<'a>: Iterator<Item = T>
     where
-        Self:'a;
+        Self: 'a;
 
     fn drain<R>(&mut self, range: R) -> Self::Drain<'_>
     where
@@ -38,7 +37,6 @@ pub trait VecTrait<'v, T>:
         R: RangeBounds<usize>,
         I: IntoIterator<Item = T>;
 }
-
 
 pub trait Arena: Debug + Default {
     type Boxed<'a, T>: Debug + Deref<Target = T> + DerefMut
@@ -59,17 +57,17 @@ pub trait Arena: Debug + Default {
 }
 
 impl<'bump, T: Debug + 'bump> VecTrait<'bump, T> for BumpVec<'bump, T> {
-    type Drain<'a> = bumpalo::collections::vec::Drain<'a, 'bump, T> 
-    where 
+    type Drain<'a> = bumpalo::collections::vec::Drain<'a, 'bump, T>
+    where
         Self: 'a;
 
     #[inline(always)]
-    fn drain< R>(& mut self, range: R) -> Self::Drain<'_>
+    fn drain<R>(&mut self, range: R) -> Self::Drain<'_>
     where
         R: RangeBounds<usize>,
     {
         // SAFETY: The lifetime of the returned iterator is bound to the lifetime of the arena.
-        unsafe{ std::mem::transmute(self.drain(range))}
+        unsafe { std::mem::transmute(self.drain(range)) }
     }
 
     #[inline(always)]
@@ -110,8 +108,8 @@ impl<'bump, T: Debug + 'bump> VecTrait<'bump, T> for BumpVec<'bump, T> {
 }
 
 impl<'v, T: Debug + 'v> VecTrait<'v, T> for Vec<T> {
-    type Drain<'a> = std::vec::Drain<'a, T> 
-    where 
+    type Drain<'a> = std::vec::Drain<'a, T>
+    where
         Self: 'a,
         Self: 'v,
         T: 'a;

@@ -47,7 +47,7 @@ pub struct OpLog {
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug, Clone, Default)]
 pub struct AppDag {
-    map: FxHashMap<PeerID, RleVec<[AppDagNode; 1]>>,
+    map: FxHashMap<PeerID, RleVec<[AppDagNode; 0]>>,
     frontiers: Frontiers,
     vv: VersionVector,
 }
@@ -502,7 +502,9 @@ impl OpLog {
                 std::mem::swap(&mut from_cnt, &mut to_cnt);
             }
 
-            let Some(result) = changes.get_by_atom_index(from_cnt) else { continue };
+            let Some(result) = changes.get_by_atom_index(from_cnt) else {
+                continue;
+            };
             for i in result.merged_index..changes.vec().len() {
                 let change = &changes.vec()[i];
                 if change.id.counter >= to_cnt {
