@@ -180,8 +180,9 @@ pub(crate) struct DagCausalIter<'a, Dag> {
     dag: &'a Dag,
     frontier: Frontiers,
     target: IdSpanVector,
-    in_degrees: FxHashMap<ID, usize>,
-    succ: BTreeMap<ID, Frontiers>,
+    /// how many dependencies are inside target for each id
+    out_degrees: FxHashMap<ID, usize>,
+    succ: BTreeMap<ID, Vec<ID>>,
     stack: Vec<ID>,
 }
 
@@ -200,9 +201,8 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
-        // debug_dbg!(&from, &target);
-        let mut in_degrees: FxHashMap<ID, usize> = FxHashMap::default();
-        let mut succ: BTreeMap<ID, Frontiers> = BTreeMap::default();
+        let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
+        let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
         let mut stack = Vec::new();
         let mut q = vec![];
         for id in target.iter() {
@@ -212,36 +212,36 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             }
         }
 
-        // traverse all nodes
+        // traverse all nodes, calculate the out_degrees
+        // if out_degree is 0, then it can be iterate directly
         while let Some(id) = q.pop() {
             let client = id.peer;
             let node = dag.get(id).unwrap();
             let deps = node.deps();
-            if deps.len().is_zero() {
-                in_degrees.insert(id, 0);
-            }
-            for dep in deps.iter() {
-                let filter = if let Some(span) = target.get(&dep.peer) {
-                    dep.counter < span.min()
-                } else {
-                    true
-                };
-                if filter {
-                    in_degrees.entry(id).or_insert(0);
-                } else {
-                    in_degrees.entry(id).and_modify(|i| *i += 1).or_insert(1);
-                }
-                succ.entry(*dep).or_default().push(id);
-            }
-            let mut target_span = *target.get(&client).unwrap();
+            out_degrees.insert(
+                id,
+                deps.iter()
+                    .filter(|&dep| {
+                        if let Some(span) = target.get(&dep.peer) {
+                            let ans = dep.counter >= span.min() && dep.counter <= span.max();
+                            if ans {
+                                succ.entry(*dep).or_default().push(id);
+                            }
+                            ans
+                        } else {
+                            false
+                        }
+                    })
+                    .count(),
+            );
+            let target_span = target.get(&client).unwrap();
             let last_counter = node.id_last().counter;
-            target_span.set_start(last_counter + 1);
-            if target_span.content_len() > 0 {
+            if target_span.max() > last_counter {
                 q.push(ID::new(client, last_counter + 1))
             }
         }
 
-        in_degrees.retain(|k, v| {
+        out_degrees.retain(|k, v| {
             if v.is_zero() {
                 stack.push(*k);
                 return false;
@@ -253,7 +253,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
             dag,
             frontier: from,
             target,
-            in_degrees,
+            out_degrees,
             succ,
             stack,
         }
@@ -275,7 +275,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
             return None;
         }
         let node_id = self.stack.pop().unwrap();
-
         let target_span = self.target.get_mut(&node_id.peer).unwrap();
         debug_assert_eq!(
             node_id.counter,
@@ -311,25 +310,27 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         };
 
         let path = self.dag.find_path(&self.frontier, &deps);
-        debug_log::group!("Dag Causal");
-        debug_log::debug_dbg!(&deps);
-        debug_log::debug_dbg!(&path);
-        debug_log::group_end!();
+
+        // debug_log::group!("Dag Causal");
+        // debug_log::debug_dbg!(&deps);
+        // debug_log::debug_dbg!(&path);
+        // debug_log::group_end!();
+
         // NOTE: we expect user to update the tracker, to apply node, after visiting the node
         self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));
 
-        let current_client = node_id.peer;
+        let current_peer = node_id.peer;
         let mut keys = Vec::new();
         let mut heap = BinaryHeap::new();
         // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
         for (key, succ) in self.succ.range(node.id_start()..node.id_end()) {
             keys.push(*key);
             for succ_id in succ.iter() {
-                self.in_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
-                if let Some(in_degree) = self.in_degrees.get(succ_id) {
+                self.out_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
+                if let Some(in_degree) = self.out_degrees.get(succ_id) {
                     if in_degree.is_zero() {
-                        heap.push((succ_id.peer != current_client, *succ_id));
-                        self.in_degrees.remove(succ_id);
+                        heap.push((succ_id.peer != current_peer, *succ_id));
+                        self.out_degrees.remove(succ_id);
                     }
                 }
             }

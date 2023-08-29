@@ -47,19 +47,19 @@ pub struct OpLog {
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug, Clone, Default)]
 pub struct AppDag {
-    map: FxHashMap<PeerID, RleVec<[AppDagNode; 0]>>,
-    frontiers: Frontiers,
-    vv: VersionVector,
+    pub(crate) map: FxHashMap<PeerID, RleVec<[AppDagNode; 0]>>,
+    pub(crate) frontiers: Frontiers,
+    pub(crate) vv: VersionVector,
 }
 
 #[derive(Debug, Clone)]
 pub struct AppDagNode {
-    peer: PeerID,
-    cnt: Counter,
-    lamport: Lamport,
-    deps: Frontiers,
-    vv: ImVersionVector,
-    len: usize,
+    pub(crate) peer: PeerID,
+    pub(crate) cnt: Counter,
+    pub(crate) lamport: Lamport,
+    pub(crate) deps: Frontiers,
+    pub(crate) vv: ImVersionVector,
+    pub(crate) len: usize,
 }
 
 impl Clone for OpLog {
@@ -273,10 +273,10 @@ impl OpLog {
         changes
     }
 
-    pub fn get_change_at(&self, id: ID) -> Option<Change> {
+    pub fn get_change_at(&self, id: ID) -> Option<&Change> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
             if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                return Some(peer_changes.vec()[result.merged_index].clone());
+                return Some(&peer_changes.vec()[result.merged_index]);
             }
         }
 
@@ -602,6 +602,51 @@ impl OpLog {
                 }
             }),
         )
+    }
+
+    pub(crate) fn iter_causally(
+        &self,
+        from: VersionVector,
+        to: VersionVector,
+    ) -> impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)> {
+        let from_frontiers = from.to_frontiers(&self.dag);
+        let diff = from.diff(&to).right;
+        let mut iter = self.dag.iter_causal(&from_frontiers, diff);
+        let mut node = iter.next();
+        let mut cur_cnt = 0;
+        let vv = Rc::new(RefCell::new(VersionVector::default()));
+        std::iter::from_fn(move || {
+            if let Some(inner) = &node {
+                let mut inner_vv = vv.borrow_mut();
+                inner_vv.clear();
+                inner_vv.extend_to_include_vv(inner.data.vv.iter());
+                let peer = inner.data.peer;
+                let cnt = inner
+                    .data
+                    .cnt
+                    .max(cur_cnt)
+                    .max(from.get(&peer).copied().unwrap_or(0));
+                let end = (inner.data.cnt + inner.data.len as Counter)
+                    .min(to.get(&peer).copied().unwrap_or(0));
+                let change = self
+                    .changes
+                    .get(&peer)
+                    .and_then(|x| x.get_by_atom_index(cnt).map(|x| x.element))
+                    .unwrap();
+
+                if change.ctr_end() < end {
+                    cur_cnt = change.ctr_end();
+                } else {
+                    node = iter.next();
+                    cur_cnt = 0;
+                }
+
+                inner_vv.extend_to_include_end_id(change.id);
+                Some((change, vv.clone()))
+            } else {
+                None
+            }
+        })
     }
 
     pub(crate) fn len_changes(&self) -> usize {

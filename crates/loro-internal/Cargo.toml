@@ -37,6 +37,7 @@ jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
 generic-btree = "0.4.1"
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
+zerovec = { version = "0.9.4", features = ["serde", "derive"] }
 
 [dev-dependencies]
 serde_json = "1.0.87"

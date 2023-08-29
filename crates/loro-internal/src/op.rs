@@ -109,21 +109,13 @@ impl Sliceable for Op {
 }
 
 impl<'a> Mergable for RemoteOp<'a> {
-    fn is_mergable(&self, other: &Self, cfg: &()) -> bool {
-        self.counter + self.content_len() as Counter == other.counter
-            && other.contents.len() == 1
-            && self
-                .contents
-                .last()
-                .unwrap()
-                .is_mergable(other.contents.first().unwrap(), cfg)
-            && self.container == other.container
+    fn is_mergable(&self, _other: &Self, _cfg: &()) -> bool {
+        // don't merge remote op, because it's already merged.
+        false
     }
 
-    fn merge(&mut self, other: &Self, _: &()) {
-        for content in other.contents.iter() {
-            self.contents.push(content.clone())
-        }
+    fn merge(&mut self, _other: &Self, _: &()) {
+        unreachable!()
     }
 }
 

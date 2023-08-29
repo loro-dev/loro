@@ -18,6 +18,15 @@ pub enum ListSlice<'a> {
     Unknown(usize),
 }
 
+impl<'a> ListSlice<'a> {
+    pub fn from_str(str: &'a str) -> Self {
+        Self::RawStr {
+            str: Cow::Borrowed(str),
+            unicode_len: str.chars().count(),
+        }
+    }
+}
+
 #[repr(transparent)]
 #[derive(PartialEq, Eq, Debug, Clone, Serialize)]
 pub struct SliceRange(pub Range<u32>);
