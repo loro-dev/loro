@@ -54,8 +54,6 @@ struct ChangeEncoding {
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "DeltaRle")]
     pub(super) op_len: u32,
-    #[columnar(strategy = "DeltaRle")]
-    pub(super) lamport: u32,
     /// The length of deps that exclude the dep on the same client
     #[columnar(strategy = "Rle")]
     pub(super) deps_len: u32,
@@ -68,7 +66,7 @@ struct ChangeEncoding {
 #[columnar(vec, ser, de)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "usize")]
+    #[columnar(strategy = "DeltaRle")]
     container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
@@ -77,7 +75,7 @@ struct OpEncoding {
     is_del: bool,
     // if is_del == true, then the following fields is the length of the deletion
     // if is_del != true, then the following fields is the length of unknown insertion
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     gc: isize,
     #[columnar(strategy = "Rle", original_type = "usize")]
     insert_len: usize,
@@ -142,17 +140,12 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         peers.push(peer_id);
         peer_id_to_idx.insert(peer_id, idx);
         start_counter.push(changes.id.counter);
-
-        if let Some(peer_changes) = oplog.changes.get(&id.peer) {
-            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                for change in &peer_changes.vec()[result.merged_index..] {
-                    diff_changes.push(change);
-                }
-            }
-        }
     }
 
-    debug_log::debug_dbg!(&start_vv, &self_vv);
+    for (change, _) in oplog.iter_causally(start_vv, self_vv.clone()) {
+        diff_changes.push(change);
+    }
+
     let (root_containers, container_idx2index, normal_containers) =
         extract_containers(&diff_changes, oplog, &mut peer_id_to_idx, &mut peers);
 
@@ -250,7 +243,6 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         changes.push(ChangeEncoding {
             peer_idx: client_idx as PeerIdx,
             timestamp: change.timestamp,
-            lamport: change.lamport,
             deps_len,
             op_len,
             dep_on_self,
@@ -359,7 +351,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
     let DocEncoding {
-        changes: mut change_encodings,
+        changes: change_encodings,
         ops,
         deps,
         normal_containers,
@@ -411,7 +403,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
 
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
-    change_encodings.sort_by_key(|x| x.lamport);
     let change_iter = change_encodings.into_iter().map(|change_encoding| {
         let counter = start_counter
             .get_mut(change_encoding.peer_idx as usize)
@@ -422,7 +413,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             op_len,
             deps_len,
             dep_on_self,
-            lamport: _,
         } = change_encoding;
 
         let peer_id = peers[peer_idx as usize];
@@ -599,5 +589,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
 
     // update dag frontiers
     oplog.dag.frontiers = oplog.dag.vv_to_frontiers(&oplog.dag.vv);
+    assert_eq!(str_index, str.len());
     Ok(())
 }
