@@ -603,7 +603,9 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         idx
     };
 
-    let Cow::Owned(mut peers) = std::mem::take(&mut common.peer_ids) else {unreachable!()};
+    let Cow::Owned(mut peers) = std::mem::take(&mut common.peer_ids) else {
+        unreachable!()
+    };
     let mut record_peer = |peer: PeerID| {
         if let Some(idx) = peer_lookup.get(&peer) {
             return *idx as u32;
