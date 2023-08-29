@@ -85,8 +85,10 @@ pub(crate) fn encode_oplog(oplog: &OpLog, mode: EncodeMode) -> Vec<u8> {
                 .values()
                 .map(|value| value.atom_len())
                 .sum::<usize>();
-            if update_total_len > COMPRESS_RLE_THRESHOLD {
-                EncodeMode::CompressRleUpdates(vv)
+
+            // EncodeMode::RleUpdates(vv)
+            if update_total_len <= UPDATE_ENCODE_THRESHOLD {
+                EncodeMode::Updates(vv)
             } else {
                 EncodeMode::RleUpdatesV2(vv)
             }
@@ -101,10 +103,7 @@ pub(crate) fn encode_oplog(oplog: &OpLog, mode: EncodeMode) -> Vec<u8> {
             miniz_oxide::deflate::compress_to_vec(&bytes, 7)
         }
         EncodeMode::Snapshot => unimplemented!(),
-        EncodeMode::RleUpdatesV2(vv) => {
-            let bytes = encode_oplog_v2(oplog, vv);
-            miniz_oxide::deflate::compress_to_vec(&bytes, 7)
-        }
+        EncodeMode::RleUpdatesV2(vv) => encode_oplog_v2(oplog, vv),
         _ => unreachable!(),
     };
     ans.push(mode.to_byte());
@@ -134,8 +133,6 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroEr
                 .and_then(|bytes| decode_oplog_changes(oplog, &bytes))
         }
         ConcreteEncodeMode::Snapshot => unimplemented!(),
-        ConcreteEncodeMode::RleUpdatesV2 => miniz_oxide::inflate::decompress_to_vec(decoded)
-            .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
-            .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
+        ConcreteEncodeMode::RleUpdatesV2 => decode_oplog_v2(oplog, decoded),
     }
 }

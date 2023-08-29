@@ -4,7 +4,7 @@ use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
-use zerovec::{vecs::VarZeroVecOwned, VarZeroVec};
+use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -110,9 +110,9 @@ struct DocEncoding<'a> {
     normal_containers: Vec<NormalContainer>,
 
     #[serde(borrow)]
-    str: VarZeroVec<'a, str>,
+    str: VarZeroVec<'a, str, Index32>,
     #[serde(borrow)]
-    root_containers: VarZeroVec<'a, RootContainerULE>,
+    root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
 
     start_counter: Vec<Counter>,
     values: Vec<LoroValue>,
@@ -164,7 +164,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
     let mut values = Vec::new();
-    let mut strings = VarZeroVecOwned::new();
+    let mut strings: Vec<String> = Vec::new();
 
     for change in &diff_changes {
         let client_idx = peer_id_to_idx[&change.id.peer];
@@ -190,7 +190,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             for content in op.contents.into_iter() {
                 let (prop, gc, is_del) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                        values.push(value);
+                        values.push(value.clone());
                         (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key.clone());
@@ -202,7 +202,11 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                     }
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => {
-                            match &slice {
+                            let gc = match &slice {
+                                ListSlice::Unknown(v) => *v as isize,
+                                _ => 0,
+                            };
+                            match slice {
                                 ListSlice::RawData(v) => {
                                     values.push(LoroValue::List(Arc::new(v.to_vec())));
                                 }
@@ -210,18 +214,15 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     str,
                                     unicode_len: _,
                                 } => {
-                                    strings.push(str);
+                                    strings.push(match str {
+                                        Cow::Borrowed(s) => s.to_string(),
+                                        Cow::Owned(s) => s,
+                                    });
                                 }
+
                                 ListSlice::Unknown(_) => {}
                             };
-                            (
-                                pos,
-                                match &slice {
-                                    ListSlice::Unknown(v) => *v as isize,
-                                    _ => 0,
-                                },
-                                false,
-                            )
+                            (pos, gc, false)
                         }
                         ListOp::Delete(span) => (span.pos as usize, span.len, true),
                     },
@@ -249,11 +250,11 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         changes,
         ops,
         deps,
-        str: VarZeroVec::Owned(strings),
+        str: VarZeroVec::from(&strings),
         clients: peers,
         keys,
         start_counter,
-        root_containers: VarZeroVec::Owned(root_containers),
+        root_containers: VarZeroVec::from(&root_containers),
         normal_containers,
         values,
     };
@@ -271,11 +272,11 @@ fn extract_containers(
     peer_id_to_idx: &mut FxHashMap<PeerID, PeerIdx>,
     peers: &mut Vec<PeerID>,
 ) -> (
-    VarZeroVecOwned<RootContainerULE>,
+    Vec<RootContainer<'static>>,
     FxHashMap<ContainerIdx, usize>,
     Vec<NormalContainer>,
 ) {
-    let mut root_containers: VarZeroVecOwned<RootContainerULE> = VarZeroVecOwned::new();
+    let mut root_containers = Vec::new();
     let mut container_idx2index = FxHashMap::default();
     let normal_containers = {
         // register containers in sorted order
@@ -296,7 +297,7 @@ fn extract_containers(
                         container_type,
                     } => {
                         container_idx2index.insert(container, root_containers.len());
-                        root_containers.push(&RootContainer {
+                        root_containers.push(RootContainer {
                             name: Cow::Owned(name.to_string()),
                             type_: container_type,
                         });
