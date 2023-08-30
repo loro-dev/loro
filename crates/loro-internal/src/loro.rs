@@ -10,7 +10,7 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{ConcreteEncodeMode, EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -206,12 +206,13 @@ impl LoroDoc {
             return Err(LoroError::DecodeError("Invalid version".into()));
         }
 
-        let mode: ConcreteEncodeMode = input[0].into();
+        let mode: EncodeMode = input[0].into();
         match mode {
-            ConcreteEncodeMode::Updates
-            | ConcreteEncodeMode::RleUpdates
-            | ConcreteEncodeMode::RleUpdatesV2
-            | ConcreteEncodeMode::CompressedRleUpdates => {
+            EncodeMode::Updates
+            | EncodeMode::RleUpdates
+            | EncodeMode::RleUpdatesV2
+            | EncodeMode::CompressedRleUpdatesV2
+            | EncodeMode::CompressedRleUpdates => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
@@ -238,7 +239,7 @@ impl LoroDoc {
 
                 debug_log::group_end!();
             }
-            ConcreteEncodeMode::Snapshot => {
+            EncodeMode::Snapshot => {
                 if self.is_empty() {
                     decode_app_snapshot(self, &input[1..], !self.detached)?;
                 } else {
@@ -250,6 +251,7 @@ impl LoroDoc {
                     return self.import_with(&updates, origin);
                 }
             }
+            EncodeMode::Auto => unreachable!(),
         };
 
         self.emit_events();

@@ -19,7 +19,7 @@ pub enum ListSlice<'a> {
 }
 
 impl<'a> ListSlice<'a> {
-    pub fn from_str(str: &'a str) -> Self {
+    pub fn from_borrowed_str(str: &'a str) -> Self {
         Self::RawStr {
             str: Cow::Borrowed(str),
             unicode_len: str.chars().count(),

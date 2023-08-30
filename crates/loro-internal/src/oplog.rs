@@ -478,7 +478,7 @@ impl OpLog {
 
     #[inline(always)]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog(self, EncodeMode::Auto(vv.clone()))
+        encode_oplog(self, vv, EncodeMode::Auto)
     }
 
     #[inline(always)]

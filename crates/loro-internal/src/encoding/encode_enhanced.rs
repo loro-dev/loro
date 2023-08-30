@@ -455,7 +455,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                 let s = &str[str_index..str_index + insert_len];
                                 str_index += insert_len;
                                 RawOpContent::List(ListOp::Insert {
-                                    slice: ListSlice::from_str(s),
+                                    slice: ListSlice::from_borrowed_str(s),
                                     pos,
                                 })
                             }
