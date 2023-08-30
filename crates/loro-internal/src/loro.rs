@@ -186,6 +186,7 @@ impl LoroDoc {
         self.oplog.lock().unwrap().export_from(vv)
     }
 
+    #[inline(always)]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.import_with(bytes, Default::default())
     }
@@ -196,6 +197,10 @@ impl LoroDoc {
     }
 
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+        if bytes.len() <= 6 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let (magic_bytes, input) = bytes.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -206,7 +211,7 @@ impl LoroDoc {
             return Err(LoroError::DecodeError("Invalid version".into()));
         }
 
-        let mode: EncodeMode = input[0].into();
+        let mode: EncodeMode = input[0].try_into()?;
         match mode {
             EncodeMode::Updates
             | EncodeMode::RleUpdates
@@ -219,6 +224,7 @@ impl LoroDoc {
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
+                debug_log::debug_dbg!(&oplog);
                 if !self.detached {
                     let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(

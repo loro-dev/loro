@@ -386,133 +386,146 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut deps_iter = deps.into_iter();
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
-            let container = root_containers.get(idx).unwrap();
-            ContainerID::Root {
+            let Some(container) = root_containers.get(idx) else {
+                return None;
+            };
+            Some(ContainerID::Root {
                 name: container.name.into(),
                 container_type: ContainerType::from_u8(container.type_),
-            }
+            })
         } else {
-            let container = normal_containers.get(idx - root_containers.len()).unwrap();
-            ContainerID::Normal {
+            let Some(container) = normal_containers.get(idx - root_containers.len()) else {
+                return None;
+            };
+            Some(ContainerID::Normal {
                 peer: peers[container.peer_idx as usize],
                 counter: container.counter,
                 container_type: ContainerType::from_u8(container.type_),
-            }
+            })
         }
     };
 
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
-    let change_iter = change_encodings.into_iter().map(|change_encoding| {
-        let counter = start_counter
-            .get_mut(change_encoding.peer_idx as usize)
-            .unwrap();
-        let ChangeEncoding {
-            peer_idx,
-            timestamp,
-            op_len,
-            deps_len,
-            dep_on_self,
-        } = change_encoding;
+    let changes = change_encodings
+        .into_iter()
+        .map(|change_encoding| {
+            let counter = start_counter
+                .get_mut(change_encoding.peer_idx as usize)
+                .unwrap();
+            let ChangeEncoding {
+                peer_idx,
+                timestamp,
+                op_len,
+                deps_len,
+                dep_on_self,
+            } = change_encoding;
 
-        let peer_id = peers[peer_idx as usize];
-        let mut ops = RleVec::<[RemoteOp; 1]>::new();
-        let mut delta = 0;
-        for op in op_iter.by_ref().take(op_len as usize) {
-            let OpEncoding {
-                container: container_idx,
-                insert_len,
-                prop,
-                gc,
-                is_del,
-            } = op;
+            let peer_id = peers[peer_idx as usize];
+            let mut ops = RleVec::<[RemoteOp; 1]>::new();
+            let mut delta = 0;
+            for op in op_iter.by_ref().take(op_len as usize) {
+                let OpEncoding {
+                    container: container_idx,
+                    insert_len,
+                    prop,
+                    gc,
+                    is_del,
+                } = op;
 
-            let container_id = get_container(container_idx);
-            let container_type = container_id.container_type();
-            let content = match container_type {
-                ContainerType::Map => {
-                    let key = keys[prop].clone();
-                    RawOpContent::Map(MapSet {
-                        key,
-                        value: value_iter.next().unwrap(),
-                    })
-                }
-                ContainerType::List | ContainerType::Text => {
-                    let pos = prop;
-                    if is_del {
-                        RawOpContent::List(ListOp::Delete(DeleteSpan {
-                            pos: pos as isize,
-                            len: gc,
-                        }))
-                    } else if gc > 0 {
-                        RawOpContent::List(ListOp::Insert {
-                            pos,
-                            slice: ListSlice::Unknown(gc as usize),
+                let Some(container_id) = get_container(container_idx) else {
+                    return Err(LoroError::DecodeError("".into()));
+                };
+                let container_type = container_id.container_type();
+                let content = match container_type {
+                    ContainerType::Map => {
+                        let key = keys[prop].clone();
+                        RawOpContent::Map(MapSet {
+                            key,
+                            value: value_iter.next().unwrap(),
                         })
-                    } else {
-                        match container_type {
-                            ContainerType::Text => {
-                                let s = &str[str_index..str_index + insert_len];
-                                str_index += insert_len;
-                                RawOpContent::List(ListOp::Insert {
-                                    slice: ListSlice::from_borrowed_str(s),
-                                    pos,
-                                })
+                    }
+                    ContainerType::List | ContainerType::Text => {
+                        let pos = prop;
+                        if is_del {
+                            RawOpContent::List(ListOp::Delete(DeleteSpan {
+                                pos: pos as isize,
+                                len: gc,
+                            }))
+                        } else if gc > 0 {
+                            RawOpContent::List(ListOp::Insert {
+                                pos,
+                                slice: ListSlice::Unknown(gc as usize),
+                            })
+                        } else {
+                            match container_type {
+                                ContainerType::Text => {
+                                    let s = &str[str_index..str_index + insert_len];
+                                    str_index += insert_len;
+                                    RawOpContent::List(ListOp::Insert {
+                                        slice: ListSlice::from_borrowed_str(s),
+                                        pos,
+                                    })
+                                }
+                                ContainerType::List => {
+                                    let value = value_iter.next().unwrap();
+                                    RawOpContent::List(ListOp::Insert {
+                                        slice: ListSlice::RawData(Cow::Owned(
+                                            match Arc::try_unwrap(value.into_list().unwrap()) {
+                                                Ok(v) => v,
+                                                Err(v) => v.deref().clone(),
+                                            },
+                                        )),
+                                        pos,
+                                    })
+                                }
+                                ContainerType::Map => unreachable!(),
                             }
-                            ContainerType::List => {
-                                let value = value_iter.next().unwrap();
-                                RawOpContent::List(ListOp::Insert {
-                                    slice: ListSlice::RawData(Cow::Owned(
-                                        match Arc::try_unwrap(value.into_list().unwrap()) {
-                                            Ok(v) => v,
-                                            Err(v) => v.deref().clone(),
-                                        },
-                                    )),
-                                    pos,
-                                })
-                            }
-                            ContainerType::Map => unreachable!(),
                         }
                     }
-                }
+                };
+                let remote_op = RemoteOp {
+                    container: container_id,
+                    counter: *counter + delta,
+                    contents: vec![content].into(),
+                };
+                delta += remote_op.content_len() as i32;
+                ops.push(remote_op);
+            }
+
+            let mut deps: Frontiers = (0..deps_len)
+                .map(|_| {
+                    let raw = deps_iter.next().unwrap();
+                    ID::new(peers[raw.client_idx as usize], raw.counter)
+                })
+                .collect();
+            if dep_on_self {
+                deps.push(ID::new(peer_id, *counter - 1));
+            }
+
+            let change = Change {
+                id: ID {
+                    peer: peer_id,
+                    counter: *counter,
+                },
+                // calc lamport after parsing all changes
+                lamport: 0,
+                timestamp,
+                ops,
+                deps,
             };
-            let remote_op = RemoteOp {
-                container: container_id,
-                counter: *counter + delta,
-                contents: vec![content].into(),
-            };
-            delta += remote_op.content_len() as i32;
-            ops.push(remote_op);
-        }
 
-        let mut deps: Frontiers = (0..deps_len)
-            .map(|_| {
-                let raw = deps_iter.next().unwrap();
-                ID::new(peers[raw.client_idx as usize], raw.counter)
-            })
-            .collect();
-        if dep_on_self {
-            deps.push(ID::new(peer_id, *counter - 1));
-        }
-
-        let change = Change {
-            id: ID {
-                peer: peer_id,
-                counter: *counter,
-            },
-            // calc lamport after parsing all changes
-            lamport: 0,
-            timestamp,
-            ops,
-            deps,
-        };
-
-        *counter += delta;
-        change
-    });
+            *counter += delta;
+            Ok(change)
+        })
+        .collect::<Result<Vec<_>, LoroError>>();
+    let changes = match changes {
+        Ok(changes) => changes,
+        Err(err) => return Err(err),
+    };
 
     oplog.arena.clone().with_op_converter(|converter| {
-        for mut change in change_iter {
+        for mut change in changes {
             if change.id.counter < oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 // skip included changes
                 continue;

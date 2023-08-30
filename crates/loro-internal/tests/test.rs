@@ -1,6 +1,24 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
+#[ctor::ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+}
+
+#[test]
+fn import() {
+    let doc = LoroDoc::new();
+    doc.import(&[
+        108, 111, 114, 111, 0, 0, 10, 10, 255, 255, 68, 255, 255, 4, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 255, 255, 108, 111, 114, 111, 255, 255, 0, 255, 207, 207, 255, 255, 255, 255,
+        255,
+    ])
+    .unwrap_or_default();
+}
+
 #[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();

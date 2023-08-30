@@ -41,3 +41,9 @@ name = "recursive_refactored"
 path = "fuzz_targets/recursive_refactored.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "import"
+path = "fuzz_targets/import.rs"
+test = false
+doc = false

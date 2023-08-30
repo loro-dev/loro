@@ -55,16 +55,18 @@ impl EncodeMode {
     }
 }
 
-impl From<u8> for EncodeMode {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for EncodeMode {
+    type Error = LoroError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => EncodeMode::Updates,
-            1 => EncodeMode::RleUpdates,
-            2 => EncodeMode::Snapshot,
-            3 => EncodeMode::CompressedRleUpdates,
-            4 => EncodeMode::RleUpdatesV2,
-            5 => EncodeMode::CompressedRleUpdatesV2,
-            _ => unreachable!(),
+            0 => Ok(EncodeMode::Updates),
+            1 => Ok(EncodeMode::RleUpdates),
+            2 => Ok(EncodeMode::Snapshot),
+            3 => Ok(EncodeMode::CompressedRleUpdates),
+            4 => Ok(EncodeMode::RleUpdatesV2),
+            5 => Ok(EncodeMode::CompressedRleUpdatesV2),
+            _ => Err(LoroError::DecodeError("Unknown encode mode".into())),
         }
     }
 }
@@ -115,6 +117,10 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
 }
 
 pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
+    if input.len() < 6 {
+        return Err(LoroError::DecodeError("".into()));
+    }
+
     let (magic_bytes, input) = input.split_at(4);
     let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
     if magic_bytes != MAGIC_BYTES {
@@ -125,8 +131,9 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroEr
         return Err(LoroError::DecodeError("Invalid version".into()));
     }
 
-    let mode: EncodeMode = input[0].into();
+    let mode: EncodeMode = input[0].try_into()?;
     let decoded = &input[1..];
+    debug_log::debug_dbg!(&mode);
     match mode {
         EncodeMode::Updates => decode_oplog_updates(oplog, decoded),
         EncodeMode::RleUpdates => decode_oplog_changes(oplog, decoded),
