@@ -369,16 +369,17 @@ impl OpLog {
             for change in changes.iter() {
                 if change.id.counter < 0 {
                     return Err(LoroError::DecodeError(
-                        "Invalid data".to_string().into_boxed_str(),
+                        "Invalid data. Negative id counter.".into(),
                     ));
                 }
                 if let Some(last_end_counter) = &mut last_end_counter {
                     if change.id.counter != *last_end_counter {
-                        *last_end_counter = change.id_end().counter;
                         return Err(LoroError::DecodeError(
-                            "Invalid data".to_string().into_boxed_str(),
+                            "Invalid data. Not continuous counter.".into(),
                         ));
                     }
+
+                    *last_end_counter = change.id_end().counter;
                 } else {
                     last_end_counter = Some(change.id_end().counter);
                 }

@@ -20,6 +20,12 @@ fn import() {
 }
 
 #[test]
+fn import_history() {
+    let doc = LoroDoc::new();
+    doc.import(include_bytes!("./history_data_v1.dat")).unwrap();
+}
+
+#[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
