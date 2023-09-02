@@ -7,6 +7,7 @@ mod run {
     use super::*;
     use bench_utils::TextAction;
     use criterion::black_box;
+    use loro_common::LoroValue;
     use loro_internal::loro::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
@@ -24,6 +25,38 @@ mod run {
                     text.insert(&mut txn, *pos, ins).unwrap();
                 }
             })
+        });
+
+        b.bench_function("B4 with 100K actors history", |b| {
+            let store = LoroDoc::default();
+            for i in 0..100_000 {
+                store.set_peer_id(i);
+                let list = store.get_list("list");
+                let value: LoroValue = i.to_string().into();
+                let mut txn = store.txn().unwrap();
+                list.insert(&mut txn, 0, value).unwrap();
+                txn.commit().unwrap();
+            }
+
+            let update = store.export_snapshot();
+            drop(store);
+            b.iter_batched(
+                || {
+                    let loro = LoroDoc::default();
+                    loro.import(&update).unwrap();
+                    loro
+                },
+                |loro| {
+                    let text = loro.get_text("text");
+                    let mut txn = loro.txn().unwrap();
+
+                    for TextAction { pos, ins, del } in actions.iter() {
+                        text.delete(&mut txn, *pos, *del).unwrap();
+                        text.insert(&mut txn, *pos, ins).unwrap();
+                    }
+                },
+                criterion::BatchSize::SmallInput,
+            )
         });
 
         b.bench_function("B4 Obs", |b| {
