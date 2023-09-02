@@ -6,13 +6,13 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
-use loro_common::HasId;
+use loro_common::{HasCounter, HasId};
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
-use crate::dag::DagUtils;
+use crate::dag::{Dag, DagUtils};
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
@@ -41,6 +41,9 @@ pub struct OpLog {
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
     pending_changes: FxHashMap<ID, Vec<Change>>,
+    /// Whether we are importing a batch of changes.
+    /// If so the Dag's frontiers won't be updated until the batch is finished.
+    pub(crate) batch_importing: bool,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -59,6 +62,7 @@ pub struct AppDagNode {
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
     pub(crate) vv: ImVersionVector,
+    pub(crate) has_succ: bool,
     pub(crate) len: usize,
 }
 
@@ -71,7 +75,40 @@ impl Clone for OpLog {
             next_lamport: self.next_lamport,
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
+            batch_importing: false,
         }
+    }
+}
+
+impl AppDag {
+    pub fn get_mut(&mut self, id: ID) -> Option<&mut AppDagNode> {
+        let ID {
+            peer: client_id,
+            counter,
+        } = id;
+        self.map.get_mut(&client_id).and_then(|rle| {
+            if counter >= rle.atom_len() {
+                return None;
+            }
+
+            let index = rle.search_atom_index(counter);
+            Some(&mut rle.vec_mut()[index])
+        })
+    }
+
+    pub(crate) fn refresh_frontiers(&mut self) {
+        self.frontiers = self
+            .map
+            .iter()
+            .filter(|(_, vec)| {
+                if vec.is_empty() {
+                    return false;
+                }
+
+                !vec.last().unwrap().has_succ
+            })
+            .map(|(peer, vec)| ID::new(*peer, vec.last().unwrap().ctr_last()))
+            .collect();
     }
 }
 
@@ -95,6 +132,7 @@ impl OpLog {
             next_lamport: 0,
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
+            batch_importing: false,
         }
     }
 
@@ -169,6 +207,7 @@ impl OpLog {
             assert_eq!(last.cnt + last.len as Counter, change.id.counter);
             assert_eq!(last.lamport + last.len as Lamport, change.lamport);
             last.len = change.id.counter as usize + len - last.cnt as usize;
+            last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
             self.dag
@@ -181,8 +220,16 @@ impl OpLog {
                     cnt: change.id.counter,
                     lamport: change.lamport,
                     deps: change.deps.clone(),
+                    has_succ: false,
                     len,
                 });
+
+            for dep in change.deps.iter() {
+                let target = self.dag.get_mut(*dep).unwrap();
+                if target.ctr_last() == dep.counter {
+                    target.has_succ = true;
+                }
+            }
         }
         self.changes.entry(change.id.peer).or_default().push(change);
         Ok(())
@@ -453,6 +500,7 @@ impl OpLog {
                 assert_eq!(last.cnt + last.len as Counter, change.id.counter);
                 assert_eq!(last.lamport + last.len as Lamport, change.lamport);
                 last.len = change.id.counter as usize + len - last.cnt as usize;
+                last.has_succ = false;
             } else {
                 let vv = self.dag.frontiers_to_im_vv(&change.deps);
                 self.dag
@@ -465,13 +513,23 @@ impl OpLog {
                         cnt: change.id.counter,
                         lamport: change.lamport,
                         deps: change.deps.clone(),
+                        has_succ: false,
                         len,
                     });
+                for dep in change.deps.iter() {
+                    let target = self.dag.get_mut(*dep).unwrap();
+                    if target.ctr_last() == dep.counter {
+                        target.has_succ = true;
+                    }
+                }
             }
+
             self.changes.entry(change.id.peer).or_default().push(change);
         }
 
-        self.dag.frontiers = self.dag.vv_to_frontiers(&self.dag.vv);
+        if !self.batch_importing {
+            self.dag.refresh_frontiers();
+        }
         Ok(())
     }
 

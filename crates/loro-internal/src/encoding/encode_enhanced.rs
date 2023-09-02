@@ -1,5 +1,5 @@
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::HasLamportSpan;
+use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, from_bytes, to_vec};
@@ -570,6 +570,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 assert_eq!(last.cnt + last.len as Counter, change.id.counter);
                 assert_eq!(last.lamport + last.len as Lamport, change.lamport);
                 last.len = change.id.counter as usize + len - last.cnt as usize;
+                last.has_succ = false;
             } else {
                 let vv = oplog.dag.frontiers_to_im_vv(&change.deps);
                 oplog
@@ -583,8 +584,15 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                         cnt: change.id.counter,
                         lamport: change.lamport,
                         deps: change.deps.clone(),
+                        has_succ: false,
                         len,
                     });
+                for dep in change.deps.iter() {
+                    let target = oplog.dag.get_mut(*dep).unwrap();
+                    if target.ctr_last() == dep.counter {
+                        target.has_succ = true;
+                    }
+                }
             }
             oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
             oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
@@ -601,7 +609,9 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     });
 
     // update dag frontiers
-    oplog.dag.frontiers = oplog.dag.vv_to_frontiers(&oplog.dag.vv);
+    if !oplog.batch_importing {
+        oplog.dag.refresh_frontiers();
+    }
     assert_eq!(str_index, str.len());
     Ok(())
 }

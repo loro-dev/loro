@@ -28,6 +28,7 @@ impl Sliceable for AppDagNode {
             lamport: self.lamport + from as Lamport,
             deps: Default::default(),
             vv: Default::default(),
+            has_succ: if to == self.len { self.has_succ } else { true },
             len: to - from,
         }
     }
@@ -141,8 +142,12 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let Some(rle) = self.map.get(&id.peer) else { return None };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { return None };
+            let Some(rle) = self.map.get(&id.peer) else {
+                return None;
+            };
+            let Some(x) = rle.get_by_atom_index(id.counter) else {
+                return None;
+            };
             vv.extend_to_include_vv(x.element.vv.iter());
             vv.extend_to_include_last_id(*id);
         }
@@ -157,16 +162,24 @@ impl AppDag {
 
         let mut vv = {
             let id = frontiers[0];
-            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            let Some(rle) = self.map.get(&id.peer) else {
+                unreachable!()
+            };
+            let Some(x) = rle.get_by_atom_index(id.counter) else {
+                unreachable!()
+            };
             let mut vv = x.element.vv.clone();
             vv.extend_to_include_last_id(id);
             vv
         };
 
         for id in frontiers[1..].iter() {
-            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            let Some(rle) = self.map.get(&id.peer) else {
+                unreachable!()
+            };
+            let Some(x) = rle.get_by_atom_index(id.counter) else {
+                unreachable!()
+            };
             vv.extend_to_include_vv(x.element.vv.iter());
             vv.extend_to_include_last_id(*id);
         }
@@ -186,14 +199,22 @@ impl AppDag {
 
         let mut lamport = {
             let id = frontiers[0];
-            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!("{} not found", id) };
+            let Some(rle) = self.map.get(&id.peer) else {
+                unreachable!()
+            };
+            let Some(x) = rle.get_by_atom_index(id.counter) else {
+                unreachable!("{} not found", id)
+            };
             (id.counter - x.element.cnt) as Lamport + x.element.lamport + 1
         };
 
         for id in frontiers[1..].iter() {
-            let Some(rle) = self.map.get(&id.peer) else { unreachable!() };
-            let Some(x) = rle.get_by_atom_index(id.counter) else { unreachable!() };
+            let Some(rle) = self.map.get(&id.peer) else {
+                unreachable!()
+            };
+            let Some(x) = rle.get_by_atom_index(id.counter) else {
+                unreachable!()
+            };
             lamport = lamport.max((id.counter - x.element.cnt) as Lamport + x.element.lamport + 1);
         }
 

@@ -336,6 +336,16 @@ where
             return None;
         }
 
+        let merged_index = self.search_atom_index(index);
+        let value = &self.vec[merged_index];
+        Some(SearchResult {
+            merged_index,
+            element: value,
+            offset: index - self[merged_index].get_start_index(),
+        })
+    }
+
+    pub fn search_atom_index(&self, index: <<A as Array>::Item as HasIndex>::Int) -> usize {
         let mut start = 0;
         let mut end = self.vec.len() - 1;
         while start < end {
@@ -357,13 +367,7 @@ where
         if index < self[start].get_start_index() {
             start -= 1;
         }
-
-        let value = &self.vec[start];
-        Some(SearchResult {
-            element: value,
-            merged_index: start,
-            offset: index - self[start].get_start_index(),
-        })
+        start
     }
 
     pub fn slice_iter(

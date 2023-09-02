@@ -363,9 +363,31 @@ impl LoroDoc {
     }
 
     // PERF: opt
-    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        let is_detached = self.is_detached();
+        self.detach();
+        self.oplog.lock().unwrap().batch_importing = true;
+        let mut err = None;
         for data in bytes.iter() {
-            self.import(data)?;
+            match self.import(data) {
+                Ok(_) => {}
+                Err(e) => {
+                    err = Some(e);
+                }
+            }
+        }
+
+        let mut oplog = self.oplog.lock().unwrap();
+        oplog.batch_importing = false;
+        oplog.dag.refresh_frontiers();
+        drop(oplog);
+
+        if !is_detached {
+            self.checkout_to_latest();
+        }
+
+        if let Some(err) = err {
+            return Err(err);
         }
 
         Ok(())
