@@ -1,25 +1,58 @@
-use std::time::Instant;
+use std::{thread::spawn, time::Instant};
 
 use loro_internal::{LoroDoc, LoroValue};
 // #[global_allocator]
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    let start = Instant::now();
-    // let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
-    let mut actors: Vec<_> = (0..1540).map(|_| LoroDoc::default()).collect();
-    let mut updates: Vec<Vec<u8>> = Vec::new();
-    for (i, actor) in actors.iter_mut().enumerate() {
-        let list = actor.get_list("list");
+    with_100K_actors_then_action();
+    // import_with_many_actors();
+}
+
+fn import_with_many_actors() {
+    let store = LoroDoc::default();
+    for i in 0..10000 {
+        store.set_peer_id(i);
+        let list = store.get_list("list");
         let value: LoroValue = i.to_string().into();
-        let mut txn = actor.txn().unwrap();
+        let mut txn = store.txn().unwrap();
         list.insert(&mut txn, 0, value).unwrap();
-        updates.push(actor.export_from(&Default::default()));
+        txn.commit().unwrap();
     }
 
-    // drop(profiler);
-    println!("{}", start.elapsed().as_millis());
+    {
+        let start = Instant::now();
+        let bytes = store.export_snapshot();
+        LoroDoc::default().import(&bytes).unwrap();
+        println!("{} ms", start.elapsed().as_millis());
+    }
 
-    todo!();
-    // actors[0].decode_batch(&updates).unwrap();
+    // let profiler = dhat::Profiler::builder().trim_backtraces(None).build();
+    // let start = Instant::now();
+    // let mut actor = LoroDoc::default();
+    // actor.import_batch(&updates).unwrap();
+    // println!("{} bytes", updates.iter().map(|x| x.len()).sum::<usize>());
+    // // dbg!(actor.get_state_deep_value());
+    // println!("{} ms", start.elapsed().as_millis());
+    // drop(profiler);
+}
+
+fn with_100K_actors_then_action() {
+    let store = LoroDoc::default();
+    for i in 0..100_000 {
+        store.set_peer_id(i);
+        let list = store.get_list("list");
+        let value: LoroValue = i.to_string().into();
+        let mut txn = store.txn().unwrap();
+        list.insert(&mut txn, 0, value).unwrap();
+        txn.commit().unwrap();
+    }
+
+    for i in 0..200_000 {
+        let list = store.get_list("list");
+        let value: LoroValue = i.to_string().into();
+        let mut txn = store.txn().unwrap();
+        list.insert(&mut txn, 0, value).unwrap();
+        txn.commit().unwrap();
+    }
 }

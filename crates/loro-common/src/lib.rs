@@ -11,6 +11,7 @@ mod value;
 pub use error::{LoroError, LoroResult};
 pub use span::*;
 pub use value::LoroValue;
+use zerovec::ule::AsULE;
 pub type PeerID = u64;
 pub type Counter = i32;
 pub type Lamport = u32;
@@ -47,8 +48,11 @@ pub enum ContainerID {
 }
 
 pub type InternalString = string_cache::DefaultAtom;
+// TODO: add non_exausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[derive(
+    Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub enum ContainerType {
     /// See [`crate::text::TextContent`]
     Text,
@@ -58,12 +62,50 @@ pub enum ContainerType {
     // Custom(u16),
 }
 
+impl AsULE for ContainerType {
+    type ULE = u8;
+
+    fn to_unaligned(self) -> Self::ULE {
+        match self {
+            ContainerType::Text => 0,
+            ContainerType::Map => 1,
+            ContainerType::List => 2,
+        }
+    }
+
+    fn from_unaligned(unaligned: Self::ULE) -> Self {
+        match unaligned {
+            0 => ContainerType::Text,
+            1 => ContainerType::Map,
+            2 => ContainerType::List,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl ContainerType {
     pub fn default_value(&self) -> LoroValue {
         match self {
             ContainerType::Text => LoroValue::String(Arc::new(String::new())),
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        match self {
+            ContainerType::Text => 0,
+            ContainerType::Map => 1,
+            ContainerType::List => 2,
+        }
+    }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => ContainerType::Text,
+            1 => ContainerType::Map,
+            2 => ContainerType::List,
+            _ => unreachable!(),
         }
     }
 }

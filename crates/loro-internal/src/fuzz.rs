@@ -659,6 +659,47 @@ mod test {
     }
 
     #[test]
+    fn new_encode() {
+        test_multi_sites_refactored(
+            8,
+            &mut [
+                Ins {
+                    content: 3871,
+                    pos: 2755657778,
+                    site: 0,
+                },
+                Sync { from: 0, to: 31 },
+                Ins {
+                    content: 3840,
+                    pos: 55040529478965,
+                    site: 212,
+                },
+                Ins {
+                    content: 0,
+                    pos: 17381979229574397952,
+                    site: 15,
+                },
+                Ins {
+                    content: 12815,
+                    pos: 2248762090699358208,
+                    site: 15,
+                },
+                Sync { from: 0, to: 212 },
+                Ins {
+                    content: 25896,
+                    pos: 14090375187464448,
+                    site: 64,
+                },
+                Ins {
+                    content: 0,
+                    pos: 6067790159959556096,
+                    site: 212,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn snapshot() {
         test_multi_sites_refactored(
             8,

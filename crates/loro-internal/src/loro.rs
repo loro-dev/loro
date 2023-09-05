@@ -10,7 +10,7 @@ use crate::{
     arena::SharedArena,
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
-    encoding::{ConcreteEncodeMode, EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -186,6 +186,7 @@ impl LoroDoc {
         self.oplog.lock().unwrap().export_from(vv)
     }
 
+    #[inline(always)]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.import_with(bytes, Default::default())
     }
@@ -196,6 +197,10 @@ impl LoroDoc {
     }
 
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+        if bytes.len() <= 6 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let (magic_bytes, input) = bytes.split_at(4);
         let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
         if magic_bytes != MAGIC_BYTES {
@@ -206,17 +211,20 @@ impl LoroDoc {
             return Err(LoroError::DecodeError("Invalid version".into()));
         }
 
-        let mode: ConcreteEncodeMode = input[0].into();
+        let mode: EncodeMode = input[0].try_into()?;
         match mode {
-            ConcreteEncodeMode::Updates
-            | ConcreteEncodeMode::RleUpdates
-            | ConcreteEncodeMode::CompressedRleUpdates => {
+            EncodeMode::Updates
+            | EncodeMode::RleUpdates
+            | EncodeMode::RleUpdatesV2
+            | EncodeMode::CompressedRleUpdatesV2
+            | EncodeMode::CompressedRleUpdates => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
+                debug_log::debug_dbg!(&oplog);
                 if !self.detached {
                     let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(
@@ -237,7 +245,7 @@ impl LoroDoc {
 
                 debug_log::group_end!();
             }
-            ConcreteEncodeMode::Snapshot => {
+            EncodeMode::Snapshot => {
                 if self.is_empty() {
                     decode_app_snapshot(self, &input[1..], !self.detached)?;
                 } else {
@@ -249,6 +257,7 @@ impl LoroDoc {
                     return self.import_with(&updates, origin);
                 }
             }
+            EncodeMode::Auto => unreachable!(),
         };
 
         self.emit_events();
@@ -354,9 +363,31 @@ impl LoroDoc {
     }
 
     // PERF: opt
-    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        let is_detached = self.is_detached();
+        self.detach();
+        self.oplog.lock().unwrap().batch_importing = true;
+        let mut err = None;
         for data in bytes.iter() {
-            self.import(data)?;
+            match self.import(data) {
+                Ok(_) => {}
+                Err(e) => {
+                    err = Some(e);
+                }
+            }
+        }
+
+        let mut oplog = self.oplog.lock().unwrap();
+        oplog.batch_importing = false;
+        oplog.dag.refresh_frontiers();
+        drop(oplog);
+
+        if !is_detached {
+            self.checkout_to_latest();
+        }
+
+        if let Some(err) = err {
+            return Err(err);
         }
 
         Ok(())

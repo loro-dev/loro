@@ -37,7 +37,8 @@ pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
 
 pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8], with_state: bool) -> Result<(), LoroError> {
     assert!(app.is_empty());
-    let bytes = miniz_oxide::inflate::decompress_to_vec(bytes).unwrap();
+    let bytes = miniz_oxide::inflate::decompress_to_vec(bytes)
+        .map_err(|_| LoroError::DecodeError("".into()))?;
     let data = FinalPhase::decode(&bytes)?;
     if with_state {
         let mut app_state = app.app_state().lock().unwrap();
@@ -603,7 +604,9 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         idx
     };
 
-    let Cow::Owned(mut peers) = std::mem::take(&mut common.peer_ids) else {unreachable!()};
+    let Cow::Owned(mut peers) = std::mem::take(&mut common.peer_ids) else {
+        unreachable!()
+    };
     let mut record_peer = |peer: PeerID| {
         if let Some(idx) = peer_lookup.get(&peer) {
             return *idx as u32;

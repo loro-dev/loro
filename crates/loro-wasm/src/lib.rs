@@ -266,7 +266,7 @@ impl Loro {
     }
 
     #[wasm_bindgen(js_name = "importUpdateBatch")]
-    pub fn import_update_batch(&self, data: Array) -> JsResult<()> {
+    pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
         let data = data
             .iter()
             .map(|x| {

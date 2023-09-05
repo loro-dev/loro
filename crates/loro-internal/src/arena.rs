@@ -262,7 +262,7 @@ impl SharedArena {
     }
 
     #[inline(always)]
-    pub(crate) fn with_op_converter(&self, f: impl FnOnce(&mut OpConverter)) {
+    pub(crate) fn with_op_converter<R>(&self, f: impl FnOnce(&mut OpConverter) -> R) -> R {
         let mut op_converter = OpConverter {
             container_idx_to_id: self.inner.container_idx_to_id.lock().unwrap(),
             container_id_to_idx: self.inner.container_id_to_idx.lock().unwrap(),
@@ -271,7 +271,7 @@ impl SharedArena {
             root_c_idx: self.inner.root_c_idx.lock().unwrap(),
             parents: self.inner.parents.lock().unwrap(),
         };
-        f(&mut op_converter);
+        f(&mut op_converter)
     }
 
     pub fn convert_single_op(

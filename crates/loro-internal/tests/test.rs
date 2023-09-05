@@ -1,6 +1,30 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
+#[ctor::ctor]
+fn init_color_backtrace() {
+    color_backtrace::install();
+}
+
+#[test]
+fn import() {
+    let doc = LoroDoc::new();
+    doc.import(&[
+        108, 111, 114, 111, 0, 0, 10, 10, 255, 255, 68, 255, 255, 4, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 255, 255, 108, 111, 114, 111, 255, 255, 0, 255, 207, 207, 255, 255, 255, 255,
+        255,
+    ])
+    .unwrap_or_default();
+}
+
+#[test]
+fn import_history() {
+    let doc = LoroDoc::new();
+    doc.import(include_bytes!("./history_data_v1.dat")).unwrap();
+}
+
 #[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();
@@ -8,12 +32,8 @@ fn test_timestamp() {
     let mut txn = doc.txn().unwrap();
     text.insert(&mut txn, 0, "123").unwrap();
     txn.commit().unwrap();
-    let change = doc
-        .oplog()
-        .lock()
-        .unwrap()
-        .get_change_at(ID::new(doc.peer_id(), 0))
-        .unwrap();
+    let op_log = &doc.oplog().lock().unwrap();
+    let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
     assert!(change.timestamp() > 1690966970);
 }
 

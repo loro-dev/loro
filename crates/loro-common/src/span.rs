@@ -90,6 +90,14 @@ impl CounterSpan {
         }
     }
 
+    pub fn set_min(&mut self, min: Counter) {
+        if self.start < self.end {
+            self.start = min;
+        } else {
+            self.end = min - 1;
+        }
+    }
+
     #[inline(always)]
     pub fn max(&self) -> Counter {
         if self.start > self.end {

@@ -744,6 +744,16 @@ impl VersionVector {
 
         shrink_frontiers(last_ids, dag)
     }
+
+    pub(crate) fn trim(&self, vv: &&VersionVector) -> VersionVector {
+        let mut ans = VersionVector::new();
+        for (client_id, &counter) in self.iter() {
+            if let Some(&other_counter) = vv.get(client_id) {
+                ans.insert(*client_id, counter.min(other_counter));
+            }
+        }
+        ans
+    }
 }
 
 impl ImVersionVector {
