@@ -1,3 +1,4 @@
+pub mod draw;
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
