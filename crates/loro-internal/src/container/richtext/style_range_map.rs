@@ -53,7 +53,7 @@ impl RangeNumMap {
                 if style.info.mergeable() {
                     // only leave one value with the greatest lamport if the style is mergeable
                     if let Some(StyleValue::One(old)) = x.styles.get_mut(&style.key) {
-                        if &**old < &*style {
+                        if **old < *style {
                             *old = style.clone();
                         }
                     } else {
@@ -81,7 +81,18 @@ impl RangeNumMap {
     }
 
     pub fn insert(&mut self, pos: usize, len: usize) {
-        todo!()
+        let range = self.0.range::<LengthFinder>(pos..pos + 1);
+        let mut done = false;
+        self.0.update(&range.start..&range.end, &mut |slice| {
+            if done {
+                return (false, None);
+            }
+
+            let index = slice.start.map(|x| x.0).unwrap_or(0);
+            slice.elements[index].len += len;
+            done = true;
+            (true, Some(len as isize))
+        })
     }
 
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
@@ -221,10 +232,9 @@ impl Sliceable for Elem {
 }
 
 impl BTreeTrait for RangeNumMapTrait {
-    /// value
     type Elem = Elem;
-    /// len
     type Cache = usize;
+    type CacheDiff = isize;
 
     const MAX_LEN: usize = 8;
 
@@ -257,8 +267,6 @@ impl BTreeTrait for RangeNumMapTrait {
         *cache = new_cache;
         diff
     }
-
-    type CacheDiff = isize;
 
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2;
