@@ -18,6 +18,7 @@ pub struct TextState {
     pub(crate) rope: JumpRope,
     in_txn: bool,
     deleted_bytes: Vec<u8>,
+    // TODO: should be merged when possible
     undo_stack: Vec<UndoItem>,
 }
 
@@ -89,6 +90,7 @@ impl ContainerState for TextState {
                 crate::container::list::list_op::ListOp::Delete(del) => {
                     self.delete_unicode(del.pos as usize..del.pos as usize + del.len as usize);
                 }
+                crate::container::list::list_op::ListOp::Style { .. } => unreachable!(),
             },
             _ => unreachable!(),
         }
@@ -125,11 +127,15 @@ impl ContainerState for TextState {
         }
 
         self.deleted_bytes.clear();
+        self.deleted_bytes.shrink_to_fit();
+        self.undo_stack.shrink_to_fit();
     }
 
     fn commit_txn(&mut self) {
         self.deleted_bytes.clear();
         self.undo_stack.clear();
+        self.deleted_bytes.shrink_to_fit();
+        self.undo_stack.shrink_to_fit();
         self.in_txn = false;
     }
 

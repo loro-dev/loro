@@ -4,22 +4,46 @@ use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
-use crate::container::text::text_content::{ListSlice, SliceRange};
+use crate::{
+    container::{
+        richtext::TextStyleInfo,
+        text::text_content::{ListSlice, SliceRange},
+    },
+    InternalString,
+};
 
-/// `pos` and `len` in [ListOp] are always measured in utf8 bytes for text op.
+/// `len` and `pos` is measured in unicode char for text.
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(EnumAsInner, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ListOp<'a> {
-    Insert { slice: ListSlice<'a>, pos: usize },
+    Insert {
+        slice: ListSlice<'a>,
+        pos: usize,
+    },
     Delete(DeleteSpan),
+    Style {
+        start: u32,
+        end: u32,
+        key: InternalString,
+        info: TextStyleInfo,
+    },
 }
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerListOp {
     // Note: len may not equal to slice.len() because for text len is unicode len while the slice
     // is utf8 bytes.
-    Insert { slice: SliceRange, pos: usize },
+    Insert {
+        slice: SliceRange,
+        pos: usize,
+    },
     Delete(DeleteSpan),
+    Style {
+        start: u32,
+        end: u32,
+        key: InternalString,
+        info: TextStyleInfo,
+    },
 }
 
 /// `len` can be negative so that we can merge text deletions efficiently.
@@ -222,6 +246,7 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.is_mergable(other_span, &()),
                 _ => false,
             },
+            ListOp::Style { .. } => false,
         }
     }
 
@@ -242,6 +267,12 @@ impl<'a> Mergable for ListOp<'a> {
                 ListOp::Delete(other_span) => span.merge(other_span, &()),
                 _ => unreachable!(),
             },
+            ListOp::Style {
+                start,
+                end,
+                key,
+                info,
+            } => unreachable!(),
         }
     }
 }
@@ -251,6 +282,7 @@ impl<'a> HasLength for ListOp<'a> {
         match self {
             ListOp::Insert { slice, .. } => slice.content_len(),
             ListOp::Delete(span) => span.atom_len(),
+            ListOp::Style { .. } => 1,
         }
     }
 }
@@ -263,6 +295,7 @@ impl<'a> Sliceable for ListOp<'a> {
                 pos: *pos + from,
             },
             ListOp::Delete(span) => ListOp::Delete(span.slice(from, to)),
+            a @ ListOp::Style { .. } => a.clone(),
         }
     }
 }
@@ -285,6 +318,7 @@ impl Mergable for InnerListOp {
                 InnerListOp::Delete(other_span) => span.is_mergable(other_span, &()),
                 _ => false,
             },
+            InnerListOp::Style { .. } => false,
         }
     }
 
@@ -305,6 +339,7 @@ impl Mergable for InnerListOp {
                 InnerListOp::Delete(other_span) => span.merge(other_span, &()),
                 _ => unreachable!(),
             },
+            InnerListOp::Style { .. } => unreachable!(),
         }
     }
 }
@@ -314,6 +349,7 @@ impl HasLength for InnerListOp {
         match self {
             InnerListOp::Insert { slice, .. } => slice.content_len(),
             InnerListOp::Delete(span) => span.atom_len(),
+            InnerListOp::Style { .. } => 1,
         }
     }
 }
@@ -326,6 +362,7 @@ impl Sliceable for InnerListOp {
                 pos: *pos + from,
             },
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
+            InnerListOp::Style { .. } => self.clone(),
         }
     }
 }

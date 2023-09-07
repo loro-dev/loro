@@ -20,6 +20,7 @@ use crate::{
 
 mod list_state;
 mod map_state;
+mod richtext_state;
 mod text_state;
 
 pub(crate) use list_state::ListState;
@@ -224,7 +225,9 @@ impl DocState {
         }
 
         self.pre_txn(diff.origin.clone(), diff.local);
-        let Cow::Owned(inner) = &mut diff.diff else {unreachable!()};
+        let Cow::Owned(inner) = &mut diff.diff else {
+            unreachable!()
+        };
         for diff in inner.iter_mut() {
             let state = self
                 .states
@@ -566,7 +569,10 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        debug_log::debug_log!("ignore because cannot find path {:#?}", &container_diff);
+                        debug_log::debug_log!(
+                            "ignore because cannot find path {:#?}",
+                            &container_diff
+                        );
                     }
                     continue;
                 };

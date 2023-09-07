@@ -16,6 +16,7 @@
     "RUSTFLAGS",
     "smstring",
     "thiserror",
+    "tinyvec",
     "txns",
     "yspan"
   ],

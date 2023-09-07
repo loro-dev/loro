@@ -353,6 +353,7 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::Delete(del) => {
                     self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
                 }
+                crate::container::list::list_op::ListOp::Style { .. } => unreachable!(),
             },
         }
     }

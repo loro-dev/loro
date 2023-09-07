@@ -189,6 +189,12 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                         ListOp::Delete(span) => {
                             (span.pos as usize, 0, LoroValue::I32(span.len as i32))
                         }
+                        ListOp::Style {
+                            start,
+                            end,
+                            key,
+                            info,
+                        } => todo!("impl style encode"),
                     },
                 };
                 op_len += 1;

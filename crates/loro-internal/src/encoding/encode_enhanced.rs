@@ -227,6 +227,12 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             (pos, gc, false, len)
                         }
                         ListOp::Delete(span) => (span.pos as usize, span.len, true, 0),
+                        ListOp::Style {
+                            start,
+                            end,
+                            key,
+                            info,
+                        } => unimplemented!("style encode"),
                     },
                 };
                 op_len += 1;

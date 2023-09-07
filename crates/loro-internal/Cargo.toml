@@ -11,25 +11,25 @@ rle = { path = "../rle" }
 loro-preload = { path = "../loro-preload" }
 loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
-postcard = "1.0.2"
+postcard = "1"
 fxhash = "0.2.1"
 serde = { version = "1", features = ["derive"] }
-thiserror = "1.0.31"
+thiserror = "1"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
 crdt-list = { version = "0.4.0" }
 rand = { version = "0.8.5", optional = true }
-arbitrary = { version = "1.1.7", optional = true }
+arbitrary = { version = "1", optional = true }
 tabled = { version = "0.10.0", optional = true }
 wasm-bindgen = { version = "0.2.83", optional = true }
 serde-wasm-bindgen = { version = "0.5.0", optional = true }
 js-sys = { version = "0.3.60", optional = true }
-serde_json = { version = "1.0.87", optional = true }
+serde_json = { version = "1", optional = true }
 arref = "0.1.0"
 debug-log = { version = "0.1.4", features = [] }
 serde_columnar = { version = "0.2.5" }
 tracing = { version = "0.1.37" }
-append-only-bytes = { version = "0.1.8", features = ["u32_range"] }
+append-only-bytes = { version = "0.1.11", features = ["u32_range"] }
 itertools = "0.10.5"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
@@ -80,3 +80,7 @@ harness = false
 [[bench]]
 name = "encode"
 harness = false
+
+
+[patch.crates-io]
+generic-btree = { path = "../../../generic-btree" }

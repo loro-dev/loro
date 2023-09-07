@@ -15,7 +15,7 @@ use crate::{
         ContainerID,
     },
     id::Counter,
-    op::{Op, RawOp, RawOpContent},
+    op::{InnerContent, Op, RawOp, RawOpContent},
     LoroValue,
 };
 
@@ -131,7 +131,22 @@ impl<'a> OpConverter<'a> {
                 ListOp::Delete(span) => Op {
                     counter,
                     container,
-                    content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
+                    content: InnerContent::List(InnerListOp::Delete(span)),
+                },
+                ListOp::Style {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Style {
+                        start,
+                        end,
+                        key,
+                        info,
+                    }),
                 },
             },
         }
@@ -350,6 +365,21 @@ impl SharedArena {
                     counter,
                     container,
                     content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
+                },
+                ListOp::Style {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => Op {
+                    counter,
+                    container,
+                    content: InnerContent::List(InnerListOp::Style {
+                        start,
+                        end,
+                        key,
+                        info,
+                    }),
                 },
             },
         }
