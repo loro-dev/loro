@@ -235,7 +235,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
     let encoded = iter_from_bytes::<DocEncoding>(input)
         .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let TableIterDocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,

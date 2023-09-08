@@ -347,7 +347,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let encoded = iter_from_bytes::<DocEncoding>(input)
         .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let TableIterDocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,
