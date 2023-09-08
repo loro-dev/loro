@@ -7,8 +7,7 @@ use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, to_vec};
+use serde_columnar::{columnar, iterable::*, to_vec};
 use smallvec::smallvec;
 
 use crate::{
@@ -269,13 +268,13 @@ pub fn decode_state<'b>(
 type ClientIdx = u32;
 
 #[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct OplogEncoded {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedChange")]
     pub(crate) changes: Vec<EncodedChange>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedSnapshotOp")]
     ops: Vec<EncodedSnapshotOp>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
 }
 
@@ -290,12 +289,12 @@ impl OplogEncoded {
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedChange {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "Rle")]
     pub(super) op_len: u32,
@@ -308,10 +307,10 @@ struct EncodedChange {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedSnapshotOp {
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     container: u32,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
@@ -434,12 +433,12 @@ impl EncodedSnapshotOp {
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     counter: Counter,
 }
 
