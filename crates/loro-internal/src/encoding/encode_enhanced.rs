@@ -1,7 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
-use serde_columnar::{columnar, from_bytes, iterable::*, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, iterable::*, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
@@ -100,15 +100,14 @@ impl DepsEncoding {
 
 #[columnar(ser, de)]
 struct DocEncoding<'a> {
-    #[columnar(class = "vec")]
+    #[columnar(class = "vec", iter = "ChangeEncoding")]
     changes: Vec<ChangeEncoding>,
-    #[columnar(class = "vec")]
+    #[columnar(class = "vec", iter = "OpEncoding")]
     ops: Vec<OpEncoding>,
-    #[columnar(class = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
     #[columnar(class = "vec")]
     normal_containers: Vec<NormalContainer>,
-
     #[columnar(borrow)]
     str: Cow<'a, str>,
     // #[columnar(borrow)]
@@ -345,10 +344,10 @@ fn extract_containers(
 }
 
 pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let TableIterDocEncoding {
         changes: change_encodings,
         ops,
         deps,

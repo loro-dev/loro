@@ -3,7 +3,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
-use serde_columnar::{columnar, from_bytes, iterable::*, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, iterable::*, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -232,10 +232,10 @@ pub(super) fn decode_changes_to_inner_format_oplog(
     input: &[u8],
     store: &OpLog,
 ) -> Result<RemoteClientChanges<'static>, LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let TableIterDocEncoding {
         changes: change_encodings,
         ops,
         deps,
@@ -245,13 +245,11 @@ pub(super) fn decode_changes_to_inner_format_oplog(
         start_counter,
     } = encoded;
 
-    let mut op_iter = ops.into_iter();
+    let mut op_iter = ops;
     let mut changes = FxHashMap::default();
-    let mut deps_iter = deps.into_iter();
+    let mut deps_iter = deps;
 
-    for (client_idx, this_change_encodings) in
-        &change_encodings.into_iter().group_by(|c| c.client_idx)
-    {
+    for (client_idx, this_change_encodings) in &change_encodings.group_by(|c| c.client_idx) {
         let mut counter = start_counter[client_idx as usize];
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
