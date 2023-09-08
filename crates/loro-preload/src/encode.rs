@@ -84,7 +84,7 @@ impl<'a> FinalPhase<'a> {
     }
 }
 
-#[columnar(ser, de)]
+// #[columnar(ser, de)]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CommonArena<'a> {
     #[serde(borrow)]

@@ -74,14 +74,14 @@ pub fn decode_oplog(
     let mut keys = state_arena.keywords;
     keys.append(&mut extra_arena.keywords);
 
-    let oplog_data = OplogEncoded::decode(data)?;
+    let oplog_data = OplogEncoded::decode_iter(data)?;
 
     let mut changes = Vec::new();
-    let mut dep_iter = oplog_data.deps.iter();
-    let mut op_iter = oplog_data.ops.iter();
+    let mut dep_iter = oplog_data.deps;
+    let mut op_iter = oplog_data.ops;
     let mut counters = FxHashMap::default();
     let mut text_idx = 0;
-    for change in oplog_data.changes.iter() {
+    for change in oplog_data.changes {
         let peer_idx = change.peer_idx as usize;
         let peer_id = common.peer_ids[peer_idx];
         let timestamp = change.timestamp;
@@ -281,6 +281,13 @@ struct OplogEncoded {
 impl OplogEncoded {
     fn decode(data: &FinalPhase) -> Result<Self, LoroError> {
         serde_columnar::from_bytes(&data.oplog)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
+    }
+
+    fn decode_iter<'f: 'iter, 'iter>(
+        data: &'f FinalPhase,
+    ) -> Result<<Self as TableIter<'iter>>::Iter, LoroError> {
+        serde_columnar::iter_from_bytes::<Self>(&data.oplog)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
 
