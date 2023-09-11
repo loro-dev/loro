@@ -338,7 +338,6 @@ mod compact_register {
 
     impl CompactRegister {
         pub fn push(&mut self, value: CompactMapValue) {
-            println!("btree len {}", self.tree.len());
             self.tree.insert(value);
         }
 

@@ -7,7 +7,7 @@ use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
-use serde_columnar::{columnar, iterable::*, to_vec};
+use serde_columnar::{columnar, to_vec};
 use smallvec::smallvec;
 
 use crate::{
@@ -279,11 +279,6 @@ struct OplogEncoded {
 }
 
 impl OplogEncoded {
-    fn decode(data: &FinalPhase) -> Result<Self, LoroError> {
-        serde_columnar::from_bytes(&data.oplog)
-            .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
-    }
-
     fn decode_iter<'f: 'iter, 'iter>(
         data: &'f FinalPhase,
     ) -> Result<<Self as TableIter<'iter>>::Iter, LoroError> {

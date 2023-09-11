@@ -1,7 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
-use serde_columnar::{columnar, iter_from_bytes, iterable::*, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
@@ -110,9 +110,8 @@ struct DocEncoding<'a> {
     normal_containers: Vec<NormalContainer>,
     #[columnar(borrow)]
     str: Cow<'a, str>,
-    // #[columnar(borrow)]
+    #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
-
     start_counter: Vec<Counter>,
     values: Vec<LoroValue>,
     clients: Vec<PeerID>,
@@ -379,8 +378,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         ));
     }
 
-    let mut op_iter = ops.into_iter();
-    let mut deps_iter = deps.into_iter();
+    let mut op_iter = ops;
+    let mut deps_iter = deps;
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
             let Some(container) = root_containers.get(idx) else {
@@ -405,7 +404,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
     let changes = change_encodings
-        .into_iter()
         .map(|change_encoding| {
             let counter = start_counter
                 .get_mut(change_encoding.peer_idx as usize)

@@ -3,7 +3,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
-use serde_columnar::{columnar, iter_from_bytes, iterable::*, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
