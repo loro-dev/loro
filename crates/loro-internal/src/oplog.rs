@@ -1,4 +1,5 @@
 pub(crate) mod dag;
+mod pending_changes;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -398,7 +399,7 @@ impl OpLog {
     }
 
     // Changes are expected to be sorted by counter in each value in the hashmap
-    // They should also be contiuous  (TODO: check this)
+    // They should also be continuous  (TODO: check this)
     pub(crate) fn import_remote_changes(
         &mut self,
         changes: RemoteClientChanges,
@@ -437,11 +438,14 @@ impl OpLog {
                 if first_id.counter > *end_cnt {
                     return Err(LoroError::DecodeError(
                         // TODO: Support pending changes to avoid this error
-                        "Changes are not appliable yet."
-                            .to_string()
-                            .into_boxed_str(),
+                        "Changes are not appliable yet.".into(),
                     ));
                 }
+            } else if changes.first().unwrap().id_start().counter > 0 {
+                return Err(LoroError::DecodeError(
+                    // TODO: Support pending changes to avoid this error
+                    "Changes are not appliable yet.".into(),
+                ));
             }
         }
 
