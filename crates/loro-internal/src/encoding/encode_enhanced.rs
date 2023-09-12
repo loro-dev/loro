@@ -1,8 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, from_bytes, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
@@ -34,23 +33,23 @@ struct RootContainer<'a> {
     type_: ContainerType,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct NormalContainer {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     peer_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     counter: Counter,
     #[columnar(strategy = "Rle")]
     type_: u8,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct ChangeEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) peer_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "DeltaRle")]
     pub(super) op_len: u32,
@@ -63,8 +62,8 @@ struct ChangeEncoding {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct OpEncoding {
     #[columnar(strategy = "DeltaRle")]
     container: usize,
@@ -77,16 +76,16 @@ struct OpEncoding {
     // if is_del != true, then the following fields is the length of unknown insertion
     #[columnar(strategy = "Rle")]
     gc: isize,
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     insert_len: usize,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 pub(super) struct DepsEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) client_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) counter: Counter,
 }
 
@@ -100,22 +99,19 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Serialize, Deserialize)]
 struct DocEncoding<'a> {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "ChangeEncoding")]
     changes: Vec<ChangeEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "OpEncoding")]
     ops: Vec<OpEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec")]
     normal_containers: Vec<NormalContainer>,
-
-    #[serde(borrow)]
+    #[columnar(borrow)]
     str: Cow<'a, str>,
-    #[serde(borrow)]
+    #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
-
     start_counter: Vec<Counter>,
     values: Vec<LoroValue>,
     clients: Vec<PeerID>,
@@ -347,10 +343,10 @@ fn extract_containers(
 }
 
 pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,
@@ -382,8 +378,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         ));
     }
 
-    let mut op_iter = ops.into_iter();
-    let mut deps_iter = deps.into_iter();
+    let mut op_iter = ops;
+    let mut deps_iter = deps;
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
             let Some(container) = root_containers.get(idx) else {
@@ -408,7 +404,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
     let changes = change_encodings
-        .into_iter()
         .map(|change_encoding| {
             let counter = start_counter
                 .get_mut(change_encoding.peer_idx as usize)

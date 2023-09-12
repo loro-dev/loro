@@ -3,8 +3,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, from_bytes, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -27,12 +26,12 @@ type ClientIdx = u32;
 type Clients = Vec<PeerID>;
 type Containers = Vec<ContainerID>;
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 pub struct ChangeEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
     /// The length of deps that exclude the dep on the same client
@@ -44,10 +43,10 @@ pub struct ChangeEncoding {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct OpEncoding {
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
@@ -57,12 +56,12 @@ struct OpEncoding {
     value: LoroValue,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 pub(super) struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) counter: Counter,
 }
 
@@ -76,13 +75,13 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct DocEncoding {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "ChangeEncoding")]
     changes: Vec<ChangeEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "OpEncoding")]
     ops: Vec<OpEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
     clients: Clients,
     containers: Containers,
@@ -233,10 +232,10 @@ pub(super) fn decode_changes_to_inner_format_oplog(
     input: &[u8],
     store: &OpLog,
 ) -> Result<RemoteClientChanges<'static>, LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,
@@ -246,13 +245,11 @@ pub(super) fn decode_changes_to_inner_format_oplog(
         start_counter,
     } = encoded;
 
-    let mut op_iter = ops.into_iter();
+    let mut op_iter = ops;
     let mut changes = FxHashMap::default();
-    let mut deps_iter = deps.into_iter();
+    let mut deps_iter = deps;
 
-    for (client_idx, this_change_encodings) in
-        &change_encodings.into_iter().group_by(|c| c.client_idx)
-    {
+    for (client_idx, this_change_encodings) in &change_encodings.group_by(|c| c.client_idx) {
         let mut counter = start_counter[client_idx as usize];
         for change_encoding in this_change_encodings {
             let ChangeEncoding {

@@ -7,7 +7,6 @@ use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, to_vec};
 use smallvec::smallvec;
 
@@ -75,14 +74,14 @@ pub fn decode_oplog(
     let mut keys = state_arena.keywords;
     keys.append(&mut extra_arena.keywords);
 
-    let oplog_data = OplogEncoded::decode(data)?;
+    let oplog_data = OplogEncoded::decode_iter(data)?;
 
     let mut changes = Vec::new();
-    let mut dep_iter = oplog_data.deps.iter();
-    let mut op_iter = oplog_data.ops.iter();
+    let mut dep_iter = oplog_data.deps;
+    let mut op_iter = oplog_data.ops;
     let mut counters = FxHashMap::default();
     let mut text_idx = 0;
-    for change in oplog_data.changes.iter() {
+    for change in oplog_data.changes {
         let peer_idx = change.peer_idx as usize;
         let peer_id = common.peer_ids[peer_idx];
         let timestamp = change.timestamp;
@@ -269,19 +268,21 @@ pub fn decode_state<'b>(
 type ClientIdx = u32;
 
 #[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct OplogEncoded {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedChange")]
     pub(crate) changes: Vec<EncodedChange>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedSnapshotOp")]
     ops: Vec<EncodedSnapshotOp>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
 }
 
 impl OplogEncoded {
-    fn decode(data: &FinalPhase) -> Result<Self, LoroError> {
-        serde_columnar::from_bytes(&data.oplog)
+    fn decode_iter<'f: 'iter, 'iter>(
+        data: &'f FinalPhase,
+    ) -> Result<<Self as TableIter<'iter>>::Iter, LoroError> {
+        serde_columnar::iter_from_bytes::<Self>(&data.oplog)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
 
@@ -290,12 +291,12 @@ impl OplogEncoded {
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedChange {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "Rle")]
     pub(super) op_len: u32,
@@ -308,10 +309,10 @@ struct EncodedChange {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedSnapshotOp {
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     container: u32,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
@@ -434,12 +435,12 @@ impl EncodedSnapshotOp {
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     counter: Counter,
 }
 

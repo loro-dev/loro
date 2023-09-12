@@ -6,13 +6,13 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
-use loro_common::{HasCounter, HasId};
+use loro_common::HasId;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
-use crate::dag::{Dag, DagUtils};
+use crate::dag::DagUtils;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
