@@ -119,14 +119,6 @@ impl<'a> OpConverter<'a> {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::Unknown(u) => Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::List(InnerListOp::Insert {
-                            slice: SliceRange::new_unknown(u as u32),
-                            pos,
-                        }),
-                    },
                 },
                 ListOp::Delete(span) => Op {
                     counter,
@@ -337,14 +329,6 @@ impl SharedArena {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::Unknown(u) => Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::List(InnerListOp::Insert {
-                            slice: SliceRange::new_unknown(u as u32),
-                            pos,
-                        }),
-                    },
                 },
                 ListOp::Delete(span) => Op {
                     counter,

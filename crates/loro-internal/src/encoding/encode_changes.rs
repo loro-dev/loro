@@ -51,8 +51,6 @@ struct OpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // TODO: can be compressed
-    gc: usize,
     value: LoroValue,
 }
 
@@ -159,22 +157,17 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
 
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, gc, value) = match content {
+                let (prop, value) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
                             keys.push(key);
                             keys.len() - 1
                         }),
-                        0,
                         value,
                     ),
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => (
                             pos,
-                            match &slice {
-                                ListSlice::Unknown(v) => *v,
-                                _ => 0,
-                            },
                             // TODO: perf may be optimized by using borrow type instead
                             match slice {
                                 ListSlice::RawData(v) => LoroValue::List(Arc::new(v.to_vec())),
@@ -182,11 +175,10 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                                     str,
                                     unicode_len: _,
                                 } => LoroValue::String(Arc::new(str.to_string())),
-                                ListSlice::Unknown(_) => LoroValue::Null,
                             },
                         ),
                         ListOp::Delete(span) => {
-                            (span.pos as usize, 0, LoroValue::I32(span.len as i32))
+                            (span.pos as usize, LoroValue::I32(span.len as i32))
                         }
                     },
                 };
@@ -195,7 +187,6 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                     container: container_idx,
                     prop,
                     value,
-                    gc,
                 })
             }
         }
@@ -268,7 +259,6 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                     container: container_idx,
                     prop,
                     value,
-                    gc,
                 } = op;
                 let container_id = containers[container_idx].clone();
 
@@ -285,10 +275,6 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                                 pos: pos as isize,
                                 len: len as isize,
                             }),
-                            LoroValue::Null => ListOp::Insert {
-                                pos,
-                                slice: ListSlice::Unknown(gc),
-                            },
                             _ => {
                                 let slice = match value {
                                     LoroValue::String(s) => ListSlice::RawStr {

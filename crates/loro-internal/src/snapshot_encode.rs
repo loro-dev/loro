@@ -118,11 +118,6 @@ pub fn decode_oplog(
                             InnerContent::List(InnerListOp::new_del(pos, len)),
                             container_idx,
                         ),
-                        SnapshotOp::TextOrListUnknown { len, pos } => Op::new(
-                            id,
-                            InnerContent::List(InnerListOp::new_unknown(pos, len)),
-                            container_idx,
-                        ),
                         SnapshotOp::Map { .. } => {
                             unreachable!()
                         }
@@ -322,11 +317,11 @@ struct EncodedSnapshotOp {
     // Map: always 0
     #[columnar(strategy = "DeltaRle")]
     len: i64,
-    // List: insert 0 | unkonwn -2 | deletion -1
-    // Text: insert 0 | unkonwn -2 | deletion -1
+    // List: insert 0 | deletion -1
+    // Text: insert 0 | deletion -1
     // Map: always 0
-    #[columnar(strategy = "Rle")]
-    kind: i64,
+    #[columnar(strategy = "BoolRle")]
+    is_del: bool,
     // Text: 0
     // List: 0 | value index
     // Map: value index
@@ -338,21 +333,15 @@ enum SnapshotOp {
     TextInsert { pos: usize, len: usize },
     ListInsert { pos: usize, value_idx: u32 },
     TextOrListDelete { pos: usize, len: isize },
-    TextOrListUnknown { pos: usize, len: usize },
     Map { key: usize, value_idx_plus_one: u32 },
 }
 
 impl EncodedSnapshotOp {
     pub fn get_text(&self) -> SnapshotOp {
-        if self.kind == -1 {
+        if self.is_del {
             SnapshotOp::TextOrListDelete {
                 pos: self.prop,
                 len: self.len as isize,
-            }
-        } else if self.kind == -2 {
-            SnapshotOp::TextOrListUnknown {
-                pos: self.prop,
-                len: self.len as usize,
             }
         } else {
             SnapshotOp::TextInsert {
@@ -363,15 +352,10 @@ impl EncodedSnapshotOp {
     }
 
     pub fn get_list(&self) -> SnapshotOp {
-        if self.kind == -1 {
+        if self.is_del {
             SnapshotOp::TextOrListDelete {
                 pos: self.prop,
                 len: self.len as isize,
-            }
-        } else if self.kind == -2 {
-            SnapshotOp::TextOrListUnknown {
-                pos: self.prop,
-                len: self.len as usize,
             }
         } else {
             SnapshotOp::ListInsert {
@@ -397,21 +381,14 @@ impl EncodedSnapshotOp {
                 container,
                 prop: pos,
                 len: 0,
-                kind: 0,
+                is_del: false,
                 value: start as usize,
             },
             SnapshotOp::TextOrListDelete { pos, len } => Self {
                 container,
                 prop: pos,
                 len: len as i64,
-                kind: -1,
-                value: 0,
-            },
-            SnapshotOp::TextOrListUnknown { pos, len } => Self {
-                container,
-                prop: pos,
-                len: len as i64,
-                kind: -2,
+                is_del: true,
                 value: 0,
             },
             SnapshotOp::Map {
@@ -421,14 +398,14 @@ impl EncodedSnapshotOp {
                 container,
                 prop: key,
                 len: 0,
-                kind: 0,
+                is_del: false,
                 value: value as usize,
             },
             SnapshotOp::TextInsert { pos, len } => Self {
                 container,
                 prop: pos,
                 len: len as i64,
-                kind: 0,
+                is_del: false,
                 value: 0,
             },
         }
@@ -644,51 +621,39 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         for op in change.ops.iter() {
             match &op.content {
                 InnerContent::List(list) => match list {
-                    InnerListOp::Insert { slice, pos } => {
-                        if slice.is_unknown() {
-                            encoded_ops.push(EncodedSnapshotOp::from(
-                                SnapshotOp::TextOrListUnknown {
-                                    pos: *pos,
-                                    len: slice.atom_len(),
-                                },
-                                op.container.to_index(),
-                            ));
-                        } else {
-                            match op.container.get_type() {
-                                loro_common::ContainerType::Text => {
-                                    let range = slice.0.start as usize..slice.0.end as usize;
-                                    let mut pos = *pos;
-                                    oplog.arena.with_text_slice(range, |slice| {
-                                        encoded_ops.push(record_str(
-                                            slice.as_bytes(),
-                                            pos,
-                                            op.container.to_index(),
-                                        ));
+                    InnerListOp::Insert { slice, pos } => match op.container.get_type() {
+                        loro_common::ContainerType::Text => {
+                            let range = slice.0.start as usize..slice.0.end as usize;
+                            let mut pos = *pos;
+                            oplog.arena.with_text_slice(range, |slice| {
+                                encoded_ops.push(record_str(
+                                    slice.as_bytes(),
+                                    pos,
+                                    op.container.to_index(),
+                                ));
 
-                                        pos += slice.chars().count();
-                                    })
-                                }
-                                loro_common::ContainerType::List => {
-                                    let values = oplog
-                                        .arena
-                                        .get_values(slice.0.start as usize..slice.0.end as usize);
-                                    let mut pos = *pos;
-                                    for value in values {
-                                        let idx = record_value(&value);
-                                        encoded_ops.push(EncodedSnapshotOp::from(
-                                            SnapshotOp::ListInsert {
-                                                pos,
-                                                value_idx: idx as u32,
-                                            },
-                                            op.container.to_index(),
-                                        ));
-                                        pos += 1;
-                                    }
-                                }
-                                loro_common::ContainerType::Map => unreachable!(),
+                                pos += slice.chars().count();
+                            })
+                        }
+                        loro_common::ContainerType::List => {
+                            let values = oplog
+                                .arena
+                                .get_values(slice.0.start as usize..slice.0.end as usize);
+                            let mut pos = *pos;
+                            for value in values {
+                                let idx = record_value(&value);
+                                encoded_ops.push(EncodedSnapshotOp::from(
+                                    SnapshotOp::ListInsert {
+                                        pos,
+                                        value_idx: idx as u32,
+                                    },
+                                    op.container.to_index(),
+                                ));
+                                pos += 1;
                             }
                         }
-                    }
+                        loro_common::ContainerType::Map => unreachable!(),
+                    },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::TextOrListDelete {
