@@ -70,12 +70,9 @@ struct OpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    #[columnar(strategy = "BoolRle")]
-    is_del: bool,
-    // if is_del == true, then the following fields is the length of the deletion
-    // if is_del != true, then the following fields is the length of unknown insertion
+    // the length of the deletion
     #[columnar(strategy = "Rle")]
-    gc: isize,
+    del_len: isize,
     #[columnar(strategy = "Rle")]
     insert_len: usize,
 }
@@ -186,7 +183,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let container_index = *container_idx2index.get(&container).unwrap();
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, gc, is_del, insert_len) = match content {
+                let (prop, del_len, insert_len) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
                         values.push(value.clone());
                         (
@@ -194,17 +191,12 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                 keys.push(key.clone());
                                 keys.len() - 1
                             }),
-                            0,
-                            false, // always insert
+                            -1,
                             0,
                         )
                     }
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => {
-                            let gc = match &slice {
-                                ListSlice::Unknown(v) => *v as isize,
-                                _ => 0,
-                            };
                             let mut len = 0;
                             match slice {
                                 ListSlice::RawData(v) => {
@@ -217,19 +209,19 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     len = str.len();
                                     string.push_str(str.deref());
                                 }
-
-                                ListSlice::Unknown(_) => {}
                             };
-                            (pos, gc, false, len)
+                            (pos, -1, len)
                         }
-                        ListOp::Delete(span) => (span.pos as usize, span.len, true, 0),
+                        ListOp::Delete(span) => {
+                            assert!(span.len >= 0);
+                            (span.pos as usize, span.len, 0)
+                        }
                     },
                 };
                 op_len += 1;
                 ops.push(OpEncoding {
-                    gc,
                     prop,
-                    is_del,
+                    del_len,
                     insert_len,
                     container: container_index,
                 })
@@ -424,8 +416,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     container: container_idx,
                     insert_len,
                     prop,
-                    gc,
-                    is_del,
+                    del_len,
                 } = op;
 
                 let Some(container_id) = get_container(container_idx) else {
@@ -442,16 +433,11 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
-                        if is_del {
+                        if del_len >= 0 {
                             RawOpContent::List(ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: gc,
+                                len: del_len,
                             }))
-                        } else if gc > 0 {
-                            RawOpContent::List(ListOp::Insert {
-                                pos,
-                                slice: ListSlice::Unknown(gc as usize),
-                            })
                         } else {
                             match container_type {
                                 ContainerType::Text => {

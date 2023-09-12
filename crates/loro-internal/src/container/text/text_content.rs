@@ -15,7 +15,6 @@ pub enum ListSlice<'a> {
         str: Cow<'a, str>,
         unicode_len: usize,
     },
-    Unknown(usize),
 }
 
 impl<'a> ListSlice<'a> {
@@ -40,12 +39,6 @@ impl SliceRange {
 
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
-    }
-}
-
-impl<'a> Default for ListSlice<'a> {
-    fn default() -> Self {
-        ListSlice::Unknown(0)
     }
 }
 
@@ -108,8 +101,6 @@ impl<'a> ListSlice<'a> {
                 str: Cow::Owned(str.to_string()),
                 unicode_len: *unicode_len,
             },
-
-            ListSlice::Unknown(x) => ListSlice::Unknown(*x),
         }
     }
 }
@@ -118,7 +109,6 @@ impl<'a> HasLength for ListSlice<'a> {
     fn content_len(&self) -> usize {
         match self {
             ListSlice::RawStr { unicode_len, .. } => *unicode_len,
-            ListSlice::Unknown(x) => *x,
             ListSlice::RawData(x) => x.len(),
         }
     }
@@ -137,7 +127,6 @@ impl<'a> Sliceable for ListSlice<'a> {
                     unicode_len: to - from,
                 }
             }
-            ListSlice::Unknown(_) => ListSlice::Unknown(to - from),
             ListSlice::RawData(x) => match x {
                 Cow::Borrowed(x) => ListSlice::RawData(Cow::Borrowed(&x[from..to])),
                 Cow::Owned(x) => ListSlice::RawData(Cow::Owned(x[from..to].into())),
@@ -148,19 +137,7 @@ impl<'a> Sliceable for ListSlice<'a> {
 
 impl<'a> Mergable for ListSlice<'a> {
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        matches!(
-            (self, other),
-            (ListSlice::Unknown(_), ListSlice::Unknown(_))
-        )
-    }
-
-    fn merge(&mut self, other: &Self, _: &()) {
-        match (self, other) {
-            (ListSlice::Unknown(x), ListSlice::Unknown(y)) => {
-                *x += y;
-            }
-            _ => unreachable!(),
-        }
+        false
     }
 }
 
@@ -229,9 +206,8 @@ mod test {
                 str: "".into(),
                 unicode_len: 0,
             },
-            ListSlice::Unknown(0),
         ];
-        let list_slice_buf = vec![3, 0, 1, 1, 1, 1, 0, 0, 2, 0];
+        let list_slice_buf = vec![2, 0, 1, 1, 1, 1, 0, 0];
         assert_eq!(
             &postcard::to_allocvec(&list_slice).unwrap(),
             &list_slice_buf

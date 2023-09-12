@@ -343,12 +343,12 @@ mod test {
         let list_op = vec![
             ListOp::Insert {
                 pos: 0,
-                slice: ListSlice::Unknown(0),
+                slice: ListSlice::from_borrowed_str(""),
             },
             ListOp::Delete(DeleteSpan::new(0, 3)),
         ];
         let actual = postcard::to_allocvec(&list_op).unwrap();
-        let list_op_buf = vec![2, 0, 2, 0, 0, 1, 0, 6];
+        let list_op_buf = vec![2, 0, 1, 0, 0, 0, 1, 0, 6];
         assert_eq!(&actual, &list_op_buf);
         assert_eq!(
             postcard::from_bytes::<Vec<ListOp>>(&list_op_buf).unwrap(),
