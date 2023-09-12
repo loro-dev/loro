@@ -1,4 +1,5 @@
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
+use fxhash::FxHashMap;
 use generic_btree::{
     rle::{insert_with_split, HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, LengthFinder, Query, UseLengthFinder,
@@ -13,20 +14,24 @@ use std::{
 };
 
 use crate::{
-    change::Lamport, container::text::utf16::count_utf16_chars, InternalString, VersionVector,
+    change::Lamport,
+    container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
+    InternalString, VersionVector,
 };
 
 use self::query::{EntityQueryT, UnicodeQuery};
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
+    style_range_map::StyleRangeMap,
     tinyvec::TinyVec,
-    RichtextSpan, StyleInner, TextStyleInfo,
+    RichtextSpan, Style, StyleInner, TextStyleInfo,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
+    style_ranges: StyleRangeMap,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +46,12 @@ impl Elem {
             unicode_len: std::str::from_utf8(&s)?.chars().count() as i32,
             text: s,
         })
+    }
+
+    pub fn from_style(style: TextStyleInfo) -> Self {
+        let mut v = TinyVec::new();
+        v.push(style);
+        Self::Style(v)
     }
 }
 
@@ -93,7 +104,7 @@ impl Mergeable for Elem {
                 *unicode_len += *left_len;
                 // TODO: small PERF improvement
                 let mut new_text = left_text.clone();
-                new_text.try_merge(text);
+                new_text.try_merge(text).unwrap();
                 *text = new_text;
             }
             (Elem::Style(a), Elem::Style(b)) => {
@@ -141,6 +152,11 @@ fn unicode_to_byte_index(s: &str, unicode_index: usize) -> Option<usize> {
         }
         current_unicode_index += 1;
     }
+
+    if current_unicode_index == unicode_index {
+        return Some(s.len());
+    }
+
     None
 }
 
@@ -323,15 +339,24 @@ mod query {
 impl RichtextState {
     /// Insert text at a unicode index. Return the entity index.
     pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
-        let right = self.tree.query::<UnicodeQuery>(&pos);
+        let right = self.find_best_insert_pos_from_unicode_index(pos);
         let entity_index = self.get_entity_index_from_path(right);
 
         // TODO: find the best insert position
         let insert_pos = right;
-        self.tree
-            .insert_by_query_result(insert_pos, Elem::try_from_bytes(text).unwrap());
+        let elem = Elem::try_from_bytes(text).unwrap();
+        self.style_ranges.insert(entity_index, elem.rle_len());
+        self.tree.insert_by_query_result(insert_pos, elem);
 
         entity_index
+    }
+
+    fn find_best_insert_pos_from_unicode_index(
+        &mut self,
+        pos: usize,
+    ) -> generic_btree::QueryResult {
+        self.tree.query::<UnicodeQuery>(&pos)
+        // TODO: impl peritext find pos
     }
 
     fn get_entity_index_from_path(&mut self, right: generic_btree::QueryResult) -> usize {
@@ -353,11 +378,12 @@ impl RichtextState {
     /// Delete a range of text.
     ///
     /// Delete a range of text. (The style anchors included in the range are not deleted.)
-    pub(crate) fn delete(&mut self, pos: usize, len: usize) {
+    pub(crate) fn delete(&mut self, pos: usize, len: usize) -> Vec<Range<usize>> {
         let mut style_anchors: Vec<Elem> = Vec::new();
         let mut removed_entity_ranges: Vec<Range<usize>> = Vec::new();
         let q = self.tree.query::<UnicodeQuery>(&pos);
         let mut entity_index = self.get_entity_index_from_path(q);
+        let mut deleted = 0;
 
         for span in self.tree.drain::<UnicodeQuery>(pos..pos + len) {
             match span {
@@ -380,6 +406,10 @@ impl RichtextState {
                     unicode_len,
                     text: _,
                 } => {
+                    self.style_ranges.delete(
+                        entity_index - deleted..entity_index - deleted + unicode_len as usize,
+                    );
+                    deleted += unicode_len as usize;
                     if let Some(last) = removed_entity_ranges.last_mut() {
                         if last.end == entity_index {
                             last.end += unicode_len as usize;
@@ -399,21 +429,166 @@ impl RichtextState {
 
         let q = self.tree.query::<UnicodeQuery>(&pos);
         self.tree.insert_many_by_query_result(&q, style_anchors);
-        todo!("delete ranges in style range map");
+
+        removed_entity_ranges
     }
 
     /// Mark a range of text with a style.
     ///
-    /// Return the entity index ranges.
+    /// Return the corresponding entity index ranges.
     pub(crate) fn mark(&mut self, range: Range<usize>, style: Arc<StyleInner>) -> Range<usize> {
-        todo!()
+        let end_pos = self.find_best_insert_pos_from_unicode_index(range.end);
+        let end_entity_index = self.get_entity_index_from_path(end_pos);
+        self.tree
+            .insert_by_query_result(end_pos, Elem::from_style(style.info.to_end()));
+
+        let start_pos = self.find_best_insert_pos_from_unicode_index(range.start);
+        let start_entity_index = self.get_entity_index_from_path(start_pos);
+        self.tree
+            .insert_by_query_result(start_pos, Elem::from_style(style.info.to_start()));
+
+        self.style_ranges.insert(end_entity_index, 1);
+        self.style_ranges.insert(start_entity_index, 1);
+        self.style_ranges
+            .annotate(start_entity_index..end_entity_index + 1, style);
+
+        start_entity_index..end_entity_index
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan<'_>> {
-        None.into_iter()
+        let mut entity_index = 0;
+        let mut style_range_iter = self.style_ranges.iter();
+        let mut cur_range = style_range_iter.next();
+
+        fn to_styles(
+            (_, style_map): &(Range<usize>, &FxHashMap<InternalString, StyleValue>),
+        ) -> Vec<Style> {
+            let mut styles = Vec::with_capacity(style_map.len());
+            for style in style_map.iter().flat_map(|(_, values)| values.to_styles()) {
+                styles.push(style);
+            }
+            styles
+        }
+
+        let mut cur_styles = cur_range.as_ref().map(to_styles);
+
+        self.tree.iter().filter_map(move |x| match x {
+            Elem::Text { unicode_len, text } => {
+                let mut styles = Vec::new();
+                while let Some((inner_cur_range, _)) = cur_range.as_ref() {
+                    if entity_index < inner_cur_range.start {
+                        break;
+                    }
+
+                    if entity_index < inner_cur_range.end {
+                        styles = cur_styles.as_ref().unwrap().clone();
+                        break;
+                    } else {
+                        cur_range = style_range_iter.next();
+                        cur_styles = cur_range.as_ref().map(to_styles);
+                    }
+                }
+
+                entity_index += *unicode_len as usize;
+                Some(RichtextSpan {
+                    // SAFETY: We know for sure text is valid utf8
+                    text: Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(text.as_bytes()) }),
+                    styles,
+                })
+            }
+            Elem::Style(s) => {
+                entity_index += s.len();
+                None
+            }
+        })
     }
 
     pub fn to_vec(&self) -> Vec<RichtextSpan<'_>> {
         self.iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[derive(Debug, Default, Clone)]
+    struct SimpleWrapper {
+        state: RichtextState,
+        bytes: AppendOnlyBytes,
+    }
+
+    impl SimpleWrapper {
+        fn insert(&mut self, pos: usize, text: &str) {
+            let start = self.bytes.len();
+            self.bytes.push_str(text);
+            self.state.insert(pos, self.bytes.slice(start..));
+        }
+    }
+
+    #[test]
+    fn test() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.state.mark(
+            0..5,
+            Arc::new(StyleInner::new_for_test(0, TextStyleInfo::BOLD)),
+        );
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "0".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                }
+            ]
+        );
+        wrapper.state.mark(
+            2..7,
+            Arc::new(StyleInner::new_for_test(1, TextStyleInfo::LINK)),
+        );
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("He"),
+                    styles: vec![Style {
+                        key: "0".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("llo"),
+                    styles: vec![
+                        Style {
+                            key: "0".into(),
+                            data: LoroValue::Null,
+                        },
+                        Style {
+                            key: "1".into(),
+                            data: LoroValue::Null,
+                        }
+                    ]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" W"),
+                    styles: vec![Style {
+                        key: "1".into(),
+                        data: LoroValue::Null,
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("orld!"),
+                    styles: vec![]
+                }
+            ]
+        );
     }
 }

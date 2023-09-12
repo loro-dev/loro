@@ -10,17 +10,22 @@ use generic_btree::{
     },
     BTree, BTreeTrait, LengthFinder, UseLengthFinder,
 };
+use loro_common::{ContainerID, LoroValue};
 
 use crate::InternalString;
 
-use super::StyleInner;
+use super::{Style, StyleInner};
 
 /// This struct keep the mapping of ranges to numbers
-#[derive(Debug)]
-pub(super) struct RangeNumMap(BTree<RangeNumMapTrait>);
+///
+/// It's initialized with usize::MAX/2 length.
+#[derive(Debug, Clone)]
+pub(super) struct StyleRangeMap(BTree<RangeNumMapTrait>);
+
+#[derive(Debug, Clone)]
 struct RangeNumMapTrait;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Elem {
     styles: FxHashMap<InternalString, StyleValue>,
     len: usize,
@@ -32,14 +37,31 @@ pub(super) enum StyleValue {
     Set(FxHashSet<Arc<StyleInner>>),
 }
 
-impl RangeNumMap {
+impl Default for StyleRangeMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StyleValue {
+    pub fn to_styles(&self) -> Vec<Style> {
+        match self {
+            StyleValue::One(x) => {
+                vec![x.to_style()]
+            }
+            StyleValue::Set(set) => set.iter().map(|x| x.to_style()).collect(),
+        }
+    }
+}
+
+impl StyleRangeMap {
     pub fn new() -> Self {
         let mut tree = BTree::new();
         tree.insert_by_query_result(
             tree.first_full_path(),
             Elem {
                 styles: Default::default(),
-                len: usize::MAX / 2,
+                len: usize::MAX / 4,
             },
         );
 
@@ -101,7 +123,7 @@ impl RangeNumMap {
     }
 
     pub fn iter(
-        &mut self,
+        &self,
     ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
         let mut index = 0;
         self.0.iter().filter_map(move |elem| {
@@ -117,22 +139,8 @@ impl RangeNumMap {
         })
     }
 
-    pub fn drain(
-        &mut self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = (Range<usize>, FxHashMap<InternalString, StyleValue>)> + '_ {
-        let mut index = range.start;
-        self.0.drain::<LengthFinder>(range).filter_map(move |elem| {
-            let len = elem.len;
-            let value = elem.styles;
-            let range = index..index + len;
-            index += len;
-            if value.is_empty() {
-                return None;
-            }
-
-            Some((range, value))
-        })
+    pub fn delete(&mut self, range: Range<usize>) {
+        self.0.drain::<LengthFinder>(range);
     }
 
     pub fn len(&self) -> usize {
@@ -270,5 +278,84 @@ impl BTreeTrait for RangeNumMapTrait {
 
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use loro_common::PeerID;
+
+    use crate::{change::Lamport, container::richtext::TextStyleInfo};
+
+    use super::*;
+
+    fn new_style(n: i32) -> Arc<StyleInner> {
+        Arc::new(StyleInner {
+            lamport: n as Lamport,
+            peer: n as PeerID,
+            cnt: n,
+            key: n.to_string().into(),
+            info: TextStyleInfo::default(),
+        })
+    }
+
+    #[test]
+    fn test_basic_insert() {
+        let mut map = StyleRangeMap::default();
+        map.annotate(1..10, new_style(1));
+        {
+            map.insert(0, 1);
+            assert_eq!(map.iter().count(), 1);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 2..11);
+                assert_eq!(map.len(), 1);
+            }
+        }
+        {
+            map.insert(11, 1);
+            assert_eq!(map.iter().count(), 1);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 2..11);
+                assert_eq!(map.len(), 1);
+            }
+        }
+        {
+            map.insert(10, 1);
+            assert_eq!(map.iter().count(), 1);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 2..12);
+                assert_eq!(map.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn delete_style() {
+        let mut map = StyleRangeMap::default();
+        map.annotate(1..10, new_style(1));
+        {
+            map.delete(0..2);
+            assert_eq!(map.iter().count(), 1);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 0..8);
+                assert_eq!(map.len(), 1);
+            }
+        }
+        {
+            map.delete(2..4);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 0..6);
+                assert_eq!(map.len(), 1);
+            }
+            assert_eq!(map.iter().count(), 1);
+        }
+        {
+            map.delete(6..8);
+            assert_eq!(map.iter().count(), 1);
+            for (range, map) in map.iter() {
+                assert_eq!(range, 0..6);
+                assert_eq!(map.len(), 1);
+            }
+        }
     }
 }

@@ -53,6 +53,37 @@ pub(crate) struct StyleInner {
     pub(crate) info: TextStyleInfo,
 }
 
+impl StyleInner {
+    pub fn to_style(&self) -> Style {
+        if self.info.is_container() {
+            Style {
+                key: self.key.clone(),
+                data: LoroValue::Container(loro_common::ContainerID::Normal {
+                    peer: self.peer,
+                    counter: self.cnt,
+                    container_type: loro_common::ContainerType::Map,
+                }),
+            }
+        } else {
+            Style {
+                key: self.key.clone(),
+                data: LoroValue::Null,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(n: isize, info: TextStyleInfo) -> Self {
+        Self {
+            lamport: n as Lamport,
+            peer: n as PeerID,
+            cnt: n as Counter,
+            key: n.to_string().into(),
+            info,
+        }
+    }
+}
+
 impl PartialOrd for StyleInner {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -86,6 +117,13 @@ impl Ord for StyleInner {
 pub struct TextStyleInfo {
     data: u8,
 }
+
+const MERGEABLE_MASK: u8 = 0b0000_0001;
+const EXPAND_BEFORE_MASK: u8 = 0b0000_0010;
+const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
+const IS_END_MASK: u8 = 0b0000_1000;
+const DELETE_MASK: u8 = 0b0001_0000;
+const CONTAINER_MASK: u8 = 0b0010_0000;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub enum ExpandType {
@@ -161,22 +199,22 @@ impl TextStyleInfo {
     ) -> Self {
         let mut data = 1;
         if mergeable {
-            data |= 0b0000_0001;
+            data |= MERGEABLE_MASK;
         }
         if expand_type.expand_before() {
-            data |= 0b0000_0010;
+            data |= EXPAND_BEFORE_MASK;
         }
         if expand_type.expand_after() {
-            data |= 0b0000_0100;
+            data |= EXPAND_AFTER_MASK;
         }
         if matches!(anchor_type, AnchorType::End) {
-            data |= 0b0000_1000;
+            data |= IS_END_MASK;
         }
         if is_delete {
-            data |= 0b0001_0000;
+            data |= DELETE_MASK;
         }
         if is_container {
-            data |= 0b0010_0000;
+            data |= CONTAINER_MASK;
         }
 
         TextStyleInfo { data }
@@ -190,10 +228,14 @@ impl TextStyleInfo {
     #[inline(always)]
     pub const fn to_delete(self) -> Self {
         let mut data = self.data;
+        if data & DELETE_MASK > 0 {
+            return Self { data };
+        }
+
         // set is_delete
-        data |= 0b0001_0000;
+        data |= DELETE_MASK;
         // invert expand type
-        data ^= 0b0000_0110;
+        data ^= EXPAND_AFTER_MASK | EXPAND_BEFORE_MASK;
         Self { data }
     }
 
@@ -201,7 +243,15 @@ impl TextStyleInfo {
     pub const fn to_end(self) -> Self {
         Self {
             // set is_end
-            data: self.data | 0b0000_1000,
+            data: self.data | IS_END_MASK,
+        }
+    }
+
+    #[inline(always)]
+    pub const fn to_start(self) -> Self {
+        Self {
+            // set is_end
+            data: self.data & (!IS_END_MASK),
         }
     }
 
