@@ -209,7 +209,7 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
 pub mod wasm {
     use std::sync::Arc;
 
-    use js_sys::{Array, Object};
+    use js_sys::{Array, Object, Uint8Array};
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
@@ -253,6 +253,14 @@ pub mod wasm {
                 map.into_js_result().unwrap()
             }
             LoroValue::Container(container_id) => JsValue::from(container_id),
+            LoroValue::Binary(binary) => {
+                let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
+                let arr = Uint8Array::new_with_length(binary.len() as u32);
+                for (i, v) in binary.into_iter().enumerate() {
+                    arr.set_index(i as u32, v);
+                }
+                arr.into_js_result().unwrap()
+            }
         }
     }
 
