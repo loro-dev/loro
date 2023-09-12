@@ -16,6 +16,7 @@ pub enum LoroValue {
     Double(f64),
     I32(i32),
     // i64?
+    Binary(Arc<Vec<u8>>),
     String(Arc<String>),
     List(Arc<Vec<LoroValue>>),
     Map(Arc<FxHashMap<String, LoroValue>>),
@@ -35,6 +36,9 @@ impl Hash for LoroValue {
             }
             LoroValue::I32(v) => {
                 state.write_i32(*v);
+            }
+            LoroValue::Binary(v) => {
+                v.hash(state);
             }
             LoroValue::String(v) => {
                 v.hash(state);
@@ -134,7 +138,7 @@ pub mod wasm {
     use std::sync::Arc;
 
     use fxhash::FxHashMap;
-    use js_sys::{Array, Object};
+    use js_sys::{Array, Object, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
     use crate::{ContainerID, LoroError, LoroValue};
@@ -146,6 +150,14 @@ pub mod wasm {
             LoroValue::Double(f) => JsValue::from_f64(f),
             LoroValue::I32(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s),
+            LoroValue::Binary(binary) => {
+                let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
+                let arr = Uint8Array::new_with_length(binary.len() as u32);
+                for (i, v) in binary.into_iter().enumerate() {
+                    arr.set_index(i as u32, v);
+                }
+                arr.into_js_result().unwrap()
+            }
             LoroValue::List(list) => {
                 let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());
                 let arr = Array::new_with_length(list.len() as u32);
@@ -254,6 +266,7 @@ impl Serialize for LoroValue {
                 LoroValue::Double(d) => serializer.serialize_f64(*d),
                 LoroValue::I32(i) => serializer.serialize_i32(*i),
                 LoroValue::String(s) => serializer.serialize_str(s),
+                LoroValue::Binary(b) => serializer.collect_seq(b.iter()),
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
                 LoroValue::Container(id) => {
@@ -276,6 +289,7 @@ impl Serialize for LoroValue {
                 LoroValue::String(s) => {
                     serializer.serialize_newtype_variant("LoroValue", 4, "String", &**s)
                 }
+
                 LoroValue::List(l) => {
                     serializer.serialize_newtype_variant("LoroValue", 5, "List", &**l)
                 }
@@ -284,6 +298,9 @@ impl Serialize for LoroValue {
                 }
                 LoroValue::Container(id) => {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Container", id)
+                }
+                LoroValue::Binary(b) => {
+                    serializer.serialize_newtype_variant("LoroValue", 8, "Binary", &**b)
                 }
             }
         }
@@ -309,6 +326,7 @@ impl<'de> Deserialize<'de> for LoroValue {
                     "List",
                     "Map",
                     "Container",
+                    "Binary",
                 ],
                 LoroValueEnumVisitor,
             )
@@ -374,6 +392,22 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
         Ok(LoroValue::String(v.into()))
     }
 
+    fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let binary = Vec::from_iter(v.iter().copied());
+        Ok(LoroValue::Binary(binary.into()))
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let binary = Vec::from_iter(v.iter().copied());
+        Ok(LoroValue::Binary(binary.into()))
+    }
+
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
         A: serde::de::SeqAccess<'de>,
@@ -410,6 +444,7 @@ enum LoroValueFields {
     List,
     Map,
     Container,
+    Binary,
 }
 
 struct LoroValueEnumVisitor;
@@ -437,6 +472,9 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::List, v) => v.newtype_variant().map(|x| LoroValue::List(Arc::new(x))),
             (LoroValueFields::Map, v) => v.newtype_variant().map(|x| LoroValue::Map(Arc::new(x))),
             (LoroValueFields::Container, v) => v.newtype_variant().map(LoroValue::Container),
+            (LoroValueFields::Binary, v) => {
+                v.newtype_variant().map(|x| LoroValue::Binary(Arc::new(x)))
+            }
         }
     }
 }

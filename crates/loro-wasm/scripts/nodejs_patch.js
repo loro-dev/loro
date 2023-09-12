@@ -1,2 +1,5 @@
 const { webcrypto } = require("crypto");
-globalThis.crypto = webcrypto;
+Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    writable: true
+});

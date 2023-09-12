@@ -85,6 +85,7 @@ export type Value =
   | number
   | null
   | { [key: string]: Value }
+  | Uint8Array
   | Value[];
 
 export type Prelim = PrelimList | PrelimMap | PrelimText;
