@@ -1,5 +1,3 @@
-use std::fs::File;
-
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 

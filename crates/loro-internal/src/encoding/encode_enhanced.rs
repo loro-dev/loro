@@ -70,11 +70,11 @@ struct OpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // the length of the deletion
+    #[columnar(strategy = "BoolRle")]
+    is_del: bool,
+    // the length of the deletion or insertion
     #[columnar(strategy = "Rle")]
-    del_len: isize,
-    #[columnar(strategy = "Rle")]
-    insert_len: usize,
+    insert_del_len: isize,
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -183,7 +183,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let container_index = *container_idx2index.get(&container).unwrap();
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, del_len, insert_len) = match content {
+                let (prop, is_del, insert_del_len) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
                         values.push(value.clone());
                         (
@@ -191,7 +191,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                 keys.push(key.clone());
                                 keys.len() - 1
                             }),
-                            -1,
+                            false,
                             0,
                         )
                     }
@@ -210,19 +210,20 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     string.push_str(str.deref());
                                 }
                             };
-                            (pos, -1, len)
+                            assert!(len > 0);
+                            (pos, false, len as isize)
                         }
                         ListOp::Delete(span) => {
-                            assert!(span.len >= 0);
-                            (span.pos as usize, span.len, 0)
+                            // span.len maybe negative
+                            (span.pos as usize, true, span.len)
                         }
                     },
                 };
                 op_len += 1;
                 ops.push(OpEncoding {
                     prop,
-                    del_len,
-                    insert_len,
+                    is_del,
+                    insert_del_len,
                     container: container_index,
                 })
             }
@@ -414,9 +415,9 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             for op in op_iter.by_ref().take(op_len as usize) {
                 let OpEncoding {
                     container: container_idx,
-                    insert_len,
                     prop,
-                    del_len,
+                    is_del,
+                    insert_del_len,
                 } = op;
 
                 let Some(container_id) = get_container(container_idx) else {
@@ -433,14 +434,15 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
-                        if del_len >= 0 {
+                        if is_del {
                             RawOpContent::List(ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: del_len,
+                                len: insert_del_len,
                             }))
                         } else {
                             match container_type {
                                 ContainerType::Text => {
+                                    let insert_len = insert_del_len as usize;
                                     let s = &str[str_index..str_index + insert_len];
                                     str_index += insert_len;
                                     RawOpContent::List(ListOp::Insert {

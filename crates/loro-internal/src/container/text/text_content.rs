@@ -136,7 +136,7 @@ impl<'a> Sliceable for ListSlice<'a> {
 }
 
 impl<'a> Mergable for ListSlice<'a> {
-    fn is_mergable(&self, other: &Self, _: &()) -> bool {
+    fn is_mergable(&self, _other: &Self, _: &()) -> bool {
         false
     }
 }

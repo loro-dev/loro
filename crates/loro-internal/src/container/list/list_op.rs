@@ -54,14 +54,6 @@ impl InnerListOp {
         })
     }
 
-    pub fn new_unknown(pos: usize, len: usize) -> Self {
-        assert!(len != 0);
-        Self::Insert {
-            slice: SliceRange::new_unknown(len as u32),
-            pos,
-        }
-    }
-
     pub fn new_insert(slice: Range<u32>, pos: usize) -> Self {
         Self::Insert {
             slice: SliceRange(slice),
