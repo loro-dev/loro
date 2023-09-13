@@ -591,7 +591,7 @@ impl RichtextState {
 #[cfg(test)]
 mod test {
     use append_only_bytes::AppendOnlyBytes;
-    use loro_common::LoroValue;
+    use loro_common::{ContainerID, ContainerType, LoroValue, ID};
 
     use super::*;
 
@@ -611,6 +611,14 @@ mod test {
 
     fn bold(n: isize) -> Arc<StyleInner> {
         Arc::new(StyleInner::new_for_test(n, "bold", TextStyleInfo::BOLD))
+    }
+
+    fn comment(n: isize) -> Arc<StyleInner> {
+        Arc::new(StyleInner::new_for_test(
+            n,
+            "comment",
+            TextStyleInfo::COMMENT,
+        ))
     }
 
     fn unbold(n: isize) -> Arc<StyleInner> {
@@ -882,8 +890,8 @@ mod test {
     fn bold_and_link_at_the_same_place() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello");
-        wrapper.state.mark(0..5, bold(1));
         wrapper.state.mark(0..5, link(0));
+        wrapper.state.mark(0..5, bold(1));
         wrapper.insert(5, "A");
         assert_eq!(
             wrapper.state.to_vec(),
@@ -907,6 +915,62 @@ mod test {
                         key: "bold".into(),
                         data: LoroValue::Null
                     }]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn comments() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.state.mark(0..5, comment(0));
+        wrapper.state.mark(1..6, comment(1));
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("H"),
+                    styles: vec![Style {
+                        key: "comment".into(),
+                        data: LoroValue::Container(ContainerID::new_normal(
+                            ID::new(0, 0),
+                            ContainerType::Map
+                        ))
+                    },]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("ello"),
+                    styles: vec![
+                        Style {
+                            key: "comment".into(),
+                            data: LoroValue::Container(ContainerID::new_normal(
+                                ID::new(0, 0),
+                                ContainerType::Map
+                            ))
+                        },
+                        Style {
+                            key: "comment".into(),
+                            data: LoroValue::Container(ContainerID::new_normal(
+                                ID::new(1, 1),
+                                ContainerType::Map
+                            ))
+                        },
+                    ]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" "),
+                    styles: vec![Style {
+                        key: "comment".into(),
+                        data: LoroValue::Container(ContainerID::new_normal(
+                            ID::new(1, 1),
+                            ContainerType::Map
+                        ))
+                    },]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("World!"),
+                    styles: vec![]
                 },
             ]
         );

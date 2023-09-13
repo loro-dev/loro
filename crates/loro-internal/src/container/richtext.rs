@@ -136,6 +136,7 @@ const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
 const IS_END_MASK: u8 = 0b0000_1000;
 const DELETE_MASK: u8 = 0b0001_0000;
 const CONTAINER_MASK: u8 = 0b0010_0000;
+const ALIVE_MASK: u8 = 0b1000_0000;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub enum ExpandType {
@@ -216,12 +217,12 @@ impl TextStyleInfo {
 
     #[inline(always)]
     pub fn is_delete(&self) -> bool {
-        self.data & 0b0001_0000 != 0
+        self.data & DELETE_MASK != 0
     }
 
     #[inline(always)]
     pub fn is_container(&self) -> bool {
-        self.data & 0b0010_0000 != 0
+        self.data & CONTAINER_MASK != 0
     }
 
     pub const fn new(
@@ -231,7 +232,7 @@ impl TextStyleInfo {
         is_delete: bool,
         is_container: bool,
     ) -> Self {
-        let mut data = 1;
+        let mut data = ALIVE_MASK;
         if mergeable {
             data |= MERGEABLE_MASK;
         }
@@ -255,8 +256,8 @@ impl TextStyleInfo {
     }
 
     pub const fn is_dead(self) -> bool {
-        debug_assert!((self.data & 1 != 0) || self.data == 0);
-        (self.data & 1) == 0
+        debug_assert!((self.data & ALIVE_MASK != 0) || self.data == 0);
+        (self.data & ALIVE_MASK) == 0
     }
 
     #[inline(always)]
@@ -294,7 +295,7 @@ impl TextStyleInfo {
     pub const LINK: TextStyleInfo =
         TextStyleInfo::new(true, ExpandType::None, AnchorType::Start, false, false);
     pub const COMMENT: TextStyleInfo =
-        TextStyleInfo::new(true, ExpandType::None, AnchorType::Start, false, true);
+        TextStyleInfo::new(false, ExpandType::None, AnchorType::Start, false, true);
 }
 
 #[cfg(test)]

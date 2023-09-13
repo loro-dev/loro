@@ -55,7 +55,7 @@ impl StyleValue {
         if self.should_merge {
             Box::new(self.set.iter().rev().take(1).filter_map(|x| x.to_style()))
         } else {
-            Box::new(self.set.iter().map(|x| x.to_style().unwrap()))
+            Box::new(self.set.iter().filter_map(|x| x.to_style()))
         }
     }
 }
