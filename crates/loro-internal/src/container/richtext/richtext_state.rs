@@ -83,7 +83,7 @@ impl Mergeable for Elem {
                 text.try_merge(rhs_text).unwrap();
             }
             (Elem::Style(a), Elem::Style(b)) => {
-                a.merge(&b);
+                a.merge(b);
             }
             _ => unreachable!(),
         }
@@ -105,7 +105,7 @@ impl Mergeable for Elem {
                 *text = new_text;
             }
             (Elem::Style(a), Elem::Style(b)) => {
-                a.merge_left(&b);
+                a.merge_left(b);
             }
             _ => unreachable!(),
         }
@@ -126,8 +126,14 @@ impl Sliceable for Elem {
             std::ops::Bound::Unbounded => self.rle_len(),
         };
 
-        let Elem::Text { unicode_len, text } = self else {
-            return self.slice(start_index..end_index);
+        let text = match self {
+            Elem::Text {
+                unicode_len: _,
+                text,
+            } => text,
+            Elem::Style(styles) => {
+                return Elem::Style(styles.slice(start_index, end_index));
+            }
         };
 
         let s = std::str::from_utf8(text).unwrap();
@@ -868,6 +874,40 @@ mod test {
                     text: Cow::Borrowed(" World!"),
                     styles: vec![]
                 }
+            ]
+        );
+    }
+
+    #[test]
+    fn bold_and_link_at_the_same_place() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello");
+        wrapper.state.mark(0..5, bold(1));
+        wrapper.state.mark(0..5, link(0));
+        wrapper.insert(5, "A");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![
+                        Style {
+                            key: "bold".into(),
+                            data: LoroValue::Null
+                        },
+                        Style {
+                            key: "link".into(),
+                            data: LoroValue::Null
+                        }
+                    ]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("A"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
             ]
         );
     }

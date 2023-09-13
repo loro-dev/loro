@@ -70,6 +70,10 @@ impl<T: Default + Copy, const N: usize> TinyVec<T, N> {
     }
 
     pub fn can_merge(&self, other: &Self) -> bool {
+        if self.len + other.len >= N as u8 {
+            return false;
+        }
+
         self.len + other.len <= self.data.len() as u8
     }
 
@@ -81,6 +85,7 @@ impl<T: Default + Copy, const N: usize> TinyVec<T, N> {
         for value in other.iter() {
             self.push(*value);
         }
+        self.len += other.len;
     }
 
     pub fn merge_left(&mut self, left: &Self) {
@@ -95,6 +100,7 @@ impl<T: Default + Copy, const N: usize> TinyVec<T, N> {
         for i in 0..left.len as usize {
             self.data[i] = left.data[i];
         }
+        self.len += left.len;
     }
 
     pub fn slice(&self, start: usize, end: usize) -> Self {
