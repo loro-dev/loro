@@ -13,7 +13,7 @@ pub(crate) struct PendingChanges {
 }
 
 impl PendingChanges {
-    /// when
+    #[allow(dead_code)]
     pub(crate) fn try_apply_pending_changes(&mut self, vv: &VersionVector) -> Vec<Change> {
         let mut can_be_applied_changes = Vec::new();
         let last_vv = self.last_pending_vv.clone();
@@ -27,25 +27,6 @@ impl PendingChanges {
             }
         }
         can_be_applied_changes
-    }
-
-    fn convert_remote_to_pending_op(change: Change<RemoteOp>, arena: &SharedArena) -> Change {
-        arena.with_op_converter(|converter| {
-            let mut ops = RleVec::new();
-            for op in change.ops {
-                for content in op.contents.into_iter() {
-                    let op = converter.convert_single_op(&op.container, op.counter, content);
-                    ops.push(op);
-                }
-            }
-            Change {
-                ops,
-                id: change.id,
-                deps: change.deps,
-                lamport: change.lamport,
-                timestamp: change.timestamp,
-            }
-        })
     }
 
     pub(crate) fn filter_and_pending_remote_changes(
@@ -63,7 +44,7 @@ impl PendingChanges {
             .flat_map(|c| c.into_iter())
             .sorted_unstable_by_key(|c| c.lamport)
         {
-            let local_change = Self::convert_remote_to_pending_op(change, arena);
+            let local_change = convert_remote_to_pending_op(change, arena);
             if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
                 self.pending_changes
                     .get_mut(pre_dep)
@@ -121,35 +102,54 @@ impl PendingChanges {
     }
 
     fn try_apply_pending(&mut self, id: &ID, can_be_applied_changes: &mut Vec<Change>) {
-        if let Some(may_apply_changes) = self.pending_changes.remove(id) {
-            let mut may_apply_iter = may_apply_changes
-                .into_iter()
-                .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
-                .peekable();
-            while let Some(peek_c) = may_apply_iter.peek() {
-                match remote_change_apply_state(&self.last_pending_vv, peek_c) {
-                    ChangeApplyState::Directly => {
-                        let c = may_apply_iter.next().unwrap();
-                        let last_id = c.id_last();
-                        self.last_pending_vv.set_end(c.id_end());
-                        // other pending
-                        can_be_applied_changes.push(c);
-                        self.try_apply_pending(&last_id, can_be_applied_changes);
-                    }
-                    ChangeApplyState::Existing => {
-                        may_apply_iter.next();
-                    }
-                    ChangeApplyState::Future(id) => {
-                        self.pending_changes
-                            .entry(id)
-                            .or_insert_with(Vec::new)
-                            .extend(may_apply_iter);
-                        break;
-                    }
+        let Some(may_apply_changes) = self.pending_changes.remove(id) else{return;};
+        let mut may_apply_iter = may_apply_changes
+            .into_iter()
+            .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
+            .peekable();
+        while let Some(peek_c) = may_apply_iter.peek() {
+            match remote_change_apply_state(&self.last_pending_vv, peek_c) {
+                ChangeApplyState::Directly => {
+                    let c = may_apply_iter.next().unwrap();
+                    let last_id = c.id_last();
+                    self.last_pending_vv.set_end(c.id_end());
+                    // other pending
+                    can_be_applied_changes.push(c);
+                    self.try_apply_pending(&last_id, can_be_applied_changes);
+                }
+                ChangeApplyState::Existing => {
+                    may_apply_iter.next();
+                }
+                ChangeApplyState::Future(id) => {
+                    self.pending_changes
+                        .entry(id)
+                        .or_insert_with(Vec::new)
+                        .extend(may_apply_iter);
+                    break;
                 }
             }
         }
     }
+}
+
+fn convert_remote_to_pending_op(change: Change<RemoteOp>, arena: &SharedArena) -> Change {
+    // op_converter is faster than using arena directly
+    arena.with_op_converter(|converter| {
+        let mut ops = RleVec::new();
+        for op in change.ops {
+            for content in op.contents.into_iter() {
+                let op = converter.convert_single_op(&op.container, op.counter, content);
+                ops.push(op);
+            }
+        }
+        Change {
+            ops,
+            id: change.id,
+            deps: change.deps,
+            lamport: change.lamport,
+            timestamp: change.timestamp,
+        }
+    })
 }
 
 enum ChangeApplyState {
@@ -226,6 +226,7 @@ mod test {
         let update2 = a.export_from(&version1);
         let _version2 = a.oplog_vv();
         b.import(&update2).unwrap();
+        // snapshot will be converted to updates
         b.import(&update1).unwrap();
         assert_eq!(a.get_deep_value(), b.get_deep_value());
     }

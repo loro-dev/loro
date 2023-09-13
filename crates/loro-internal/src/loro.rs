@@ -72,8 +72,7 @@ impl LoroDoc {
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        true
-        // self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
+        self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
     /// Whether [OpLog] ans [DocState] are detached.

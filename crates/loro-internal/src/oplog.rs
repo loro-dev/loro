@@ -406,7 +406,6 @@ impl OpLog {
         changes: RemoteClientChanges,
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
-        // TODO: support pending changes
 
         let vv = &self.dag.vv;
         let local_changes = self.pending_changes.filter_and_pending_remote_changes(
@@ -416,15 +415,8 @@ impl OpLog {
         )?;
 
         // TODO: should we check deps here?
-        // op_converter is faster than using arena directly
         self.apply_local_change_from_remote(local_changes);
         Ok(())
-    }
-
-    pub(crate) fn try_apply_pending_changes(&mut self) {
-        let vv = self.vv().clone();
-        let changes = self.pending_changes.try_apply_pending_changes(&vv);
-        self.apply_local_change_from_remote(changes);
     }
 
     fn apply_local_change_from_remote(&mut self, local_changes: Vec<Change>) {

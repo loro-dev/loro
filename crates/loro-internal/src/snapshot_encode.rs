@@ -184,8 +184,6 @@ pub fn decode_oplog(
         change.lamport = lamport;
         oplog.import_local_change(change)?;
     }
-    // try to apply pending changes
-    oplog.try_apply_pending_changes();
     Ok(())
 }
 
@@ -193,7 +191,7 @@ pub fn decode_state<'b>(
     app_state: &'_ mut DocState,
     data: &'b FinalPhase,
 ) -> Result<(TempArena<'b>, CommonArena<'b>), LoroError> {
-    // assert!(app_state.is_empty());
+    assert!(app_state.is_empty());
     assert!(!app_state.is_in_txn());
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(data)?;
