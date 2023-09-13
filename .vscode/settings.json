@@ -18,6 +18,7 @@
     "thiserror",
     "tinyvec",
     "txns",
+    "unbold",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {

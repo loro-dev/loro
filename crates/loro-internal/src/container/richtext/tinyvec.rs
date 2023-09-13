@@ -1,7 +1,26 @@
-#[derive(Debug, Clone)]
+use std::fmt::Debug;
+
+#[derive(Clone)]
 pub(crate) struct TinyVec<T, const N: usize> {
     len: u8,
     data: [T; N],
+}
+
+impl<T: Debug, const N: usize> Debug for TinyVec<T, N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.data[0..self.len as usize].iter())
+            .finish()
+    }
+}
+
+impl<T, const N: usize> std::ops::Index<usize> for TinyVec<T, N> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        assert!(index < self.len as usize);
+        &self.data[index]
+    }
 }
 
 impl<T: Default + Copy, const N: usize> TinyVec<T, N> {
@@ -73,7 +92,9 @@ impl<T: Default + Copy, const N: usize> TinyVec<T, N> {
             self.data[i] = self.data[i - left.len()];
         }
 
-        self.data.copy_from_slice(&left.data[..left.len as usize]);
+        for i in 0..left.len as usize {
+            self.data[i] = left.data[i];
+        }
     }
 
     pub fn slice(&self, start: usize, end: usize) -> Self {

@@ -1,7 +1,7 @@
 //! This map a Range<usize> to a set of style
 //!
 
-use std::{ops::Range, sync::Arc, usize};
+use std::{collections::BTreeSet, ops::Range, sync::Arc, usize};
 
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
@@ -31,10 +31,10 @@ struct Elem {
     len: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum StyleValue {
-    One(Arc<StyleInner>),
-    Set(FxHashSet<Arc<StyleInner>>),
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub(super) struct StyleValue {
+    set: BTreeSet<Arc<StyleInner>>,
+    should_merge: bool,
 }
 
 impl Default for StyleRangeMap {
@@ -44,12 +44,18 @@ impl Default for StyleRangeMap {
 }
 
 impl StyleValue {
-    pub fn to_styles(&self) -> Vec<Style> {
-        match self {
-            StyleValue::One(x) => {
-                vec![x.to_style()]
-            }
-            StyleValue::Set(set) => set.iter().map(|x| x.to_style()).collect(),
+    pub fn new(mergeable: bool) -> Self {
+        Self {
+            set: Default::default(),
+            should_merge: mergeable,
+        }
+    }
+
+    pub fn to_styles(&self) -> Box<dyn Iterator<Item = Style> + '_> {
+        if self.should_merge {
+            Box::new(self.set.iter().rev().take(1).filter_map(|x| x.to_style()))
+        } else {
+            Box::new(self.set.iter().map(|x| x.to_style().unwrap()))
         }
     }
 }
@@ -72,28 +78,20 @@ impl StyleRangeMap {
         let range = self.0.range::<LengthFinder>(range);
         self.0.update(&range.start..&range.end, &mut |mut slice| {
             let ans = update_slice::<Elem, _>(&mut slice, &mut |x| {
-                if style.info.mergeable() {
-                    // only leave one value with the greatest lamport if the style is mergeable
-                    if let Some(StyleValue::One(old)) = x.styles.get_mut(&style.key) {
-                        if **old < *style {
-                            *old = style.clone();
-                        }
-                    } else {
-                        x.styles
-                            .insert(style.key.clone(), StyleValue::One(style.clone()));
-                    }
+                // only leave one value with the greatest lamport if the style is mergeable
+                if let Some(set) = x.styles.get_mut(&style.key) {
+                    set.set.insert(style.clone());
+                    // TODO: Doc this, and validate it earlier
+                    assert_eq!(
+                        set.should_merge,
+                        style.info.mergeable(),
+                        "Merge behavior should be the same for the same style key"
+                    );
                 } else {
-                    // styles can coexist
-                    let StyleValue::Set(set) = x
-                        .styles
-                        .entry(style.key.clone())
-                        .or_insert_with(|| StyleValue::Set(FxHashSet::default()))
-                    else {
-                        unreachable!()
-                    };
-                    set.insert(style.clone());
+                    let mut style_set = StyleValue::new(style.info.mergeable());
+                    style_set.set.insert(style.clone());
+                    x.styles.insert(style.key.clone(), style_set);
                 }
-
                 false
             });
 
@@ -102,19 +100,58 @@ impl StyleRangeMap {
         });
     }
 
+    /// Insert entities at `pos` with length of `len`
+    ///
+    /// # Internal
+    ///
+    /// When inserting new text, we need to calculate the StyleSet of the new text based on the StyleSet before and after the insertion position.
+    /// (It should be the intersection of the StyleSet before and after). The proof is as follows:
+    ///
+    /// Suppose when inserting text at position pos, the style set at positions pos - 1 and pos are called leftStyleSet and rightStyleSet respectively.
+    ///
+    /// - If there is a style x that exists in leftStyleSet but not in rightStyleSet, it means that the position pos - 1 is the end anchor of x.
+    ///   The newly inserted text is after the end anchor of x, so the StyleSet of the new text should not include this style.
+    /// - If there is a style x that exists in rightStyleSet but not in leftStyleSet, it means that the position pos is the start anchor of x.
+    ///   The newly inserted text is before the start anchor of x, so the StyleSet of the new text should not include this style.
+    /// - If both leftStyleSet and rightStyleSet contain style x, it means that the newly inserted text is within the style range, so the StyleSet should include x.
     pub fn insert(&mut self, pos: usize, len: usize) {
-        let range = self.0.range::<LengthFinder>(pos..pos + 1);
-        let mut done = false;
-        self.0.update(&range.start..&range.end, &mut |slice| {
-            if done {
-                return (false, None);
+        if pos == 0 {
+            self.0.prepend(Elem {
+                len,
+                styles: Default::default(),
+            });
+            return;
+        }
+
+        if pos == *self.0.root_cache() {
+            self.0.push(Elem {
+                len,
+                styles: Default::default(),
+            });
+            return;
+        }
+
+        let right = self.0.query::<LengthFinder>(&pos);
+        let left = self.0.query::<LengthFinder>(&(pos - 1));
+        if left.elem_index == right.elem_index && left.leaf == right.leaf {
+            // left and right are in the same element, we can increase the length of the element directly
+            self.0.get_elem_mut(&left).unwrap().len += len;
+            return;
+        }
+
+        // insert by the intersection of left styles and right styles
+        let mut styles = self.0.get_elem(&left).unwrap().styles.clone();
+        let right_styles = &self.0.get_elem(&right).unwrap().styles;
+        styles.retain(|key, value| {
+            if let Some(right_value) = right_styles.get(key) {
+                value.set.retain(|x| right_value.set.contains(x));
+                return !value.set.is_empty();
             }
 
-            let index = slice.start.map(|x| x.0).unwrap_or(0);
-            slice.elements[index].len += len;
-            done = true;
-            (true, Some(len as isize))
-        })
+            false
+        });
+
+        self.0.insert_by_query_result(right, Elem { len, styles });
     }
 
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {

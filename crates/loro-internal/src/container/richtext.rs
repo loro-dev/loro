@@ -15,15 +15,10 @@ mod richtext_state;
 mod style_range_map;
 mod tinyvec;
 
-use loro_common::{Counter, LoroValue, PeerID, ID};
-use std::{
-    borrow::Cow,
-    ops::{Range, RangeBounds},
-};
+use loro_common::{Counter, LoroValue, PeerID};
+use std::{borrow::Cow, fmt::Debug};
 
-use crate::{change::Lamport, InternalString, VersionVector};
-
-use super::list::list_op::ListOp;
+use crate::{change::Lamport, InternalString};
 
 /// This is the data structure that represents a span of rich text.
 /// It's used to communicate with the frontend.
@@ -54,31 +49,35 @@ pub(crate) struct StyleInner {
 }
 
 impl StyleInner {
-    pub fn to_style(&self) -> Style {
+    pub fn to_style(&self) -> Option<Style> {
+        if self.info.is_delete() {
+            return None;
+        }
+
         if self.info.is_container() {
-            Style {
+            Some(Style {
                 key: self.key.clone(),
                 data: LoroValue::Container(loro_common::ContainerID::Normal {
                     peer: self.peer,
                     counter: self.cnt,
                     container_type: loro_common::ContainerType::Map,
                 }),
-            }
+            })
         } else {
-            Style {
+            Some(Style {
                 key: self.key.clone(),
                 data: LoroValue::Null,
-            }
+            })
         }
     }
 
     #[cfg(test)]
-    pub fn new_for_test(n: isize, info: TextStyleInfo) -> Self {
+    pub fn new_for_test(n: isize, key: &str, info: TextStyleInfo) -> Self {
         Self {
             lamport: n as Lamport,
             peer: n as PeerID,
             cnt: n as Counter,
-            key: n.to_string().into(),
+            key: key.to_string().into(),
             info,
         }
     }
@@ -111,11 +110,24 @@ impl Ord for StyleInner {
 /// - isContainer    (6th bit): whether the style also store other data in a associated map container with the same OpID.
 /// - 0              (7th bit)
 /// - isAlive        (8th bit): always 1 unless the style is garbage collected. If this is 0, all other bits should be 0 as well.
-#[derive(
-    Default, Clone, Copy, Eq, PartialEq, Debug, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Default, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TextStyleInfo {
     data: u8,
+}
+
+impl Debug for TextStyleInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextStyleInfo")
+            // write data in binary format
+            .field("data", &format!("{:#010b}", self.data))
+            .field("mergeable", &self.mergeable())
+            .field("expand_before", &self.expand_before())
+            .field("expand_after", &self.expand_after())
+            .field("is_end", &self.is_end())
+            .field("is_delete", &self.is_delete())
+            .field("is_container", &self.is_container())
+            .finish()
+    }
 }
 
 const MERGEABLE_MASK: u8 = 0b0000_0001;
@@ -155,28 +167,50 @@ impl TextStyleInfo {
     /// Whether two styles with the same key can be merged into one.
     /// If false, the styles will coexist in the same range.
     #[inline(always)]
-    pub fn mergeable(&self) -> bool {
-        self.data & 0b0000_0001 != 0
+    pub fn mergeable(self) -> bool {
+        self.data & MERGEABLE_MASK != 0
     }
 
     /// When inserting new text around this style, prefer inserting after it.
     #[inline(always)]
-    pub fn expand_before(&self) -> bool {
-        self.data & 0b0000_0010 != 0
+    pub fn expand_before(self) -> bool {
+        self.data & EXPAND_BEFORE_MASK != 0
     }
 
     /// When inserting new text around this style, prefer inserting before it.
     #[inline(always)]
-    pub fn expand_after(&self) -> bool {
-        self.data & 0b0000_0100 != 0
+    pub fn expand_after(self) -> bool {
+        self.data & EXPAND_AFTER_MASK != 0
     }
 
     #[inline(always)]
-    pub fn anchor_type(&self) -> AnchorType {
-        if self.data & 0b0000_1000 != 0 {
+    pub fn anchor_type(self) -> AnchorType {
+        if self.data & IS_END_MASK != 0 {
             AnchorType::End
         } else {
             AnchorType::Start
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_end(self) -> bool {
+        self.data & IS_END_MASK != 0
+    }
+
+    #[inline(always)]
+    pub fn is_start(self) -> bool {
+        self.data & IS_END_MASK == 0
+    }
+
+    /// This method tells that when we can insert text before/after this style anchor, whether we insert the new text before the anchor.
+    #[inline]
+    pub fn prefer_insert_before(self) -> bool {
+        if self.is_end() {
+            // If we need to expand the style, the new text should be inserted **before** the end anchor
+            self.expand_after()
+        } else {
+            // If we need to expand the style, the new text should be inserted **after** the start anchor
+            !self.expand_before()
         }
     }
 

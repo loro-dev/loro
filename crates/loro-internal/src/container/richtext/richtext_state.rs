@@ -1,11 +1,9 @@
-use append_only_bytes::{AppendOnlyBytes, BytesSlice};
+use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
 use generic_btree::{
     rle::{insert_with_split, HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait, LengthFinder, Query, UseLengthFinder,
+    BTree, BTreeTrait,
 };
-use loro_common::{Counter, LoroValue, PeerID, ID};
-use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Range, RangeBounds, Sub},
@@ -14,9 +12,8 @@ use std::{
 };
 
 use crate::{
-    change::Lamport,
     container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
-    InternalString, VersionVector,
+    InternalString,
 };
 
 use self::query::{EntityQueryT, UnicodeQuery};
@@ -25,7 +22,7 @@ use super::{
     query_by_len::{IndexQuery, QueryByLen},
     style_range_map::StyleRangeMap,
     tinyvec::TinyVec,
-    RichtextSpan, Style, StyleInner, TextStyleInfo,
+    AnchorType, RichtextSpan, Style, StyleInner, TextStyleInfo,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -341,22 +338,88 @@ impl RichtextState {
     pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
         let right = self.find_best_insert_pos_from_unicode_index(pos);
         let entity_index = self.get_entity_index_from_path(right);
-
-        // TODO: find the best insert position
         let insert_pos = right;
         let elem = Elem::try_from_bytes(text).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
         self.tree.insert_by_query_result(insert_pos, elem);
-
         entity_index
     }
 
+    /// Find the best insert position based on algorithm similar to Peritext.
+    /// Returns the right neighbor of the insert pos.
+    ///
+    /// 1. Insertions occur before tombstones that contain the beginning of new marks.
+    /// 2. Insertions occur before tombstones that contain the end of bold-like marks
+    /// 3. Insertions occur after tombstones that contain the end of link-like marks
+    ///
+    /// Rule 1 should be satisfied before rules 2 and 3 to avoid this problem.
+    ///
+    /// The current method will scan forward to find the last position that satisfies 1 and 2.
+    /// Then it scans backward to find the first position that satisfies 3.
     fn find_best_insert_pos_from_unicode_index(
         &mut self,
         pos: usize,
     ) -> generic_btree::QueryResult {
-        self.tree.query::<UnicodeQuery>(&pos)
-        // TODO: impl peritext find pos
+        // There are a range of elements may share the same unicode index
+        // because style anchors don't have zero lengths in unicode index.
+
+        // Find the start of the range
+        let mut iter = if pos == 0 {
+            self.tree.first_full_path()
+        } else {
+            let q = self.tree.query::<UnicodeQuery>(&(pos - 1));
+            match self.tree.shift_path_by_one_offset(q) {
+                Some(x) => x,
+                // If next is None, we know the range is empty, return directly
+                None => return self.tree.last_full_path(),
+            }
+        };
+
+        // Find the end of the range
+        let right = self.tree.query::<UnicodeQuery>(&pos);
+        if iter == right {
+            // no style anchor between unicode index (pos-1) and (pos)
+            return iter;
+        }
+
+        // need to scan from left to right
+        let mut visited = Vec::new();
+        while iter != right {
+            let Some(elem) = self.tree.get_elem(&iter) else {
+                break;
+            };
+            let style = match elem {
+                Elem::Text { .. } => unreachable!(),
+                Elem::Style(style) => style[iter.offset],
+            };
+
+            visited.push((style, iter));
+            if style.anchor_type() == AnchorType::Start {
+                // case 1. should be before this anchor
+                break;
+            }
+
+            if style.prefer_insert_before() {
+                // case 2.
+                break;
+            }
+
+            iter = match self.tree.shift_path_by_one_offset(iter) {
+                Some(x) => x,
+                None => self.tree.last_full_path(),
+            };
+        }
+
+        while let Some((style, top_elem)) = visited.pop() {
+            if !style.prefer_insert_before() {
+                // case 3.
+                break;
+            }
+
+            iter = top_elem;
+        }
+
+        iter
     }
 
     fn get_entity_index_from_path(&mut self, right: generic_btree::QueryResult) -> usize {
@@ -384,6 +447,7 @@ impl RichtextState {
         let q = self.tree.query::<UnicodeQuery>(&pos);
         let mut entity_index = self.get_entity_index_from_path(q);
         let mut deleted = 0;
+        // TODO: Delete style anchors whose inner text content is empty
 
         for span in self.tree.drain::<UnicodeQuery>(pos..pos + len) {
             match span {
@@ -449,8 +513,11 @@ impl RichtextState {
 
         self.style_ranges.insert(end_entity_index, 1);
         self.style_ranges.insert(start_entity_index, 1);
+        // end_entity_index + 2, because
+        // 1. We inserted a start anchor before end_entity_index, so we need to +1
+        // 2. We need to include the end anchor in the range, so we need to +1
         self.style_ranges
-            .annotate(start_entity_index..end_entity_index + 1, style);
+            .annotate(start_entity_index..end_entity_index + 2, style);
 
         start_entity_index..end_entity_index
     }
@@ -506,10 +573,20 @@ impl RichtextState {
     pub fn to_vec(&self) -> Vec<RichtextSpan<'_>> {
         self.iter().collect()
     }
+
+    #[cfg(test)]
+    #[allow(unused)]
+    pub(crate) fn debug(&self) {
+        dbg!(&self.tree);
+        dbg!(&self.style_ranges);
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use append_only_bytes::AppendOnlyBytes;
+    use loro_common::LoroValue;
+
     use super::*;
 
     #[derive(Debug, Default, Clone)]
@@ -526,21 +603,34 @@ mod test {
         }
     }
 
+    fn bold(n: isize) -> Arc<StyleInner> {
+        Arc::new(StyleInner::new_for_test(n, "bold", TextStyleInfo::BOLD))
+    }
+
+    fn unbold(n: isize) -> Arc<StyleInner> {
+        Arc::new(StyleInner::new_for_test(
+            n,
+            "bold",
+            TextStyleInfo::BOLD.to_delete(),
+        ))
+    }
+
+    fn link(n: isize) -> Arc<StyleInner> {
+        Arc::new(StyleInner::new_for_test(n, "link", TextStyleInfo::LINK))
+    }
+
     #[test]
     fn test() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(
-            0..5,
-            Arc::new(StyleInner::new_for_test(0, TextStyleInfo::BOLD)),
-        );
+        wrapper.state.mark(0..5, bold(0));
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
                 RichtextSpan {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
-                        key: "0".into(),
+                        key: "bold".into(),
                         data: LoroValue::Null
                     }]
                 },
@@ -550,17 +640,14 @@ mod test {
                 }
             ]
         );
-        wrapper.state.mark(
-            2..7,
-            Arc::new(StyleInner::new_for_test(1, TextStyleInfo::LINK)),
-        );
+        wrapper.state.mark(2..7, link(1));
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
                 RichtextSpan {
                     text: Cow::Borrowed("He"),
                     styles: vec![Style {
-                        key: "0".into(),
+                        key: "bold".into(),
                         data: LoroValue::Null
                     }]
                 },
@@ -568,11 +655,11 @@ mod test {
                     text: Cow::Borrowed("llo"),
                     styles: vec![
                         Style {
-                            key: "0".into(),
+                            key: "bold".into(),
                             data: LoroValue::Null,
                         },
                         Style {
-                            key: "1".into(),
+                            key: "link".into(),
                             data: LoroValue::Null,
                         }
                     ]
@@ -580,12 +667,205 @@ mod test {
                 RichtextSpan {
                     text: Cow::Borrowed(" W"),
                     styles: vec![Style {
-                        key: "1".into(),
+                        key: "link".into(),
                         data: LoroValue::Null,
                     }]
                 },
                 RichtextSpan {
                     text: Cow::Borrowed("orld!"),
+                    styles: vec![]
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn bold_should_expand() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.state.mark(0..5, bold(0));
+        wrapper.insert(5, " Test");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" Test"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn link_should_not_expand() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.state.mark(0..5, link(0));
+        wrapper.insert(5, " Test");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "link".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" Test"),
+                    styles: vec![]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn continuous_text_insert_should_be_merged() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello");
+        wrapper.insert(5, " World!");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![RichtextSpan {
+                text: Cow::Borrowed("Hello World!"),
+                styles: vec![]
+            },]
+        );
+    }
+
+    #[test]
+    fn continuous_text_insert_should_be_merged_and_have_bold() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello");
+        wrapper.state.mark(0..5, bold(0));
+        wrapper.insert(5, " World!");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![RichtextSpan {
+                text: Cow::Borrowed("Hello World!"),
+                styles: vec![Style {
+                    key: "bold".into(),
+                    data: LoroValue::Null
+                }]
+            },]
+        );
+    }
+
+    #[test]
+    fn continuous_text_insert_should_not_be_merged_when_prev_is_link() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello");
+        wrapper.state.mark(0..5, link(0));
+        wrapper.insert(5, " World!");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "link".into(),
+                        data: LoroValue::Null
+                    },]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_bold() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.state.mark(0..12, bold(0));
+        wrapper.state.mark(5..12, unbold(1));
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                }
+            ]
+        );
+        wrapper.insert(5, "A");
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("A"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
+                    styles: vec![]
+                }
+            ]
+        );
+
+        wrapper.insert(0, "A");
+
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: Cow::Borrowed("A"),
+                    styles: vec![]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("Hello"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed("A"),
+                    styles: vec![Style {
+                        key: "bold".into(),
+                        data: LoroValue::Null
+                    }]
+                },
+                RichtextSpan {
+                    text: Cow::Borrowed(" World!"),
                     styles: vec![]
                 }
             ]
