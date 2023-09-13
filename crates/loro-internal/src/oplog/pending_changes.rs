@@ -1,20 +1,33 @@
 use crate::{
     arena::SharedArena, change::Change, encoding::RemoteClientChanges, op::RemoteOp, VersionVector,
 };
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, LoroError, PeerID};
+use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, LoroError, ID};
 use rle::RleVec;
-
-type LocalChanges = FxHashMap<PeerID, Vec<Change>>;
 
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
-    pending_changes: LocalChanges,
+    pending_changes: FxHashMap<ID, Vec<Change>>,
+    last_pending_vv: VersionVector,
 }
 
 impl PendingChanges {
-    pub(crate) fn try_apply_pending_changes(&mut self) {}
+    /// when
+    pub(crate) fn try_apply_pending_changes(&mut self, vv: &VersionVector) -> Vec<Change> {
+        let mut can_be_applied_changes = Vec::new();
+        let last_vv = self.last_pending_vv.clone();
+        self.last_pending_vv = vv.clone();
+        let ids: Vec<_> = self.pending_changes.keys().cloned().collect();
+        for id in ids {
+            for id_span in vv.sub_iter(&last_vv) {
+                if id_span.contains(id) {
+                    self.try_apply_pending(&id, &mut can_be_applied_changes);
+                }
+            }
+        }
+        can_be_applied_changes
+    }
 
     fn convert_remote_to_pending_op(change: Change<RemoteOp>, arena: &SharedArena) -> Change {
         arena.with_op_converter(|converter| {
@@ -37,47 +50,44 @@ impl PendingChanges {
 
     pub(crate) fn filter_and_pending_remote_changes(
         &mut self,
-        changes: RemoteClientChanges,
+        remote_changes: RemoteClientChanges,
         arena: &SharedArena,
-        mut latest_vv: VersionVector,
+        latest_vv: VersionVector,
     ) -> Result<Vec<Change>, LoroError> {
-        self.check_changes(&changes)?;
+        self.check_changes(&remote_changes)?;
+        self.last_pending_vv = latest_vv;
         let mut can_be_applied_changes = Vec::new();
-        let mut pending_peers = FxHashSet::default();
-        // Changes will be sorted by lamport.
-        for change in changes
+        let mut peer_to_pending_dep = FxHashMap::default();
+        for change in remote_changes
             .into_values()
             .flat_map(|c| c.into_iter())
             .sorted_unstable_by_key(|c| c.lamport)
         {
-            let peer = change.id.peer;
             let local_change = Self::convert_remote_to_pending_op(change, arena);
-            // If the first change cannot be applied, then all subsequent changes with the same client id cannot be applied either.
-            if pending_peers.contains(&peer) {
+            if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
                 self.pending_changes
-                    .entry(peer)
-                    .or_insert_with(Vec::new)
+                    .get_mut(pre_dep)
+                    .unwrap()
                     .push(local_change);
                 continue;
             }
-
-            match remote_change_apply_state(&latest_vv, &local_change) {
+            match remote_change_apply_state(&self.last_pending_vv, &local_change) {
                 ChangeApplyState::Directly => {
-                    latest_vv.set_end(local_change.id_end());
+                    self.last_pending_vv.set_end(local_change.id_end());
+                    let id_last = local_change.id_last();
                     can_be_applied_changes.push(local_change);
-                    self.try_apply_pending(&peer, &mut latest_vv, &mut can_be_applied_changes);
+                    self.try_apply_pending(&id_last, &mut can_be_applied_changes);
                 }
                 ChangeApplyState::Existing => {}
-                ChangeApplyState::Future(this_dep_client) => {
-                    pending_peers.insert(this_dep_client);
+                ChangeApplyState::Future(id) => {
+                    peer_to_pending_dep.insert(local_change.id.peer, id);
                     self.pending_changes
-                        .entry(this_dep_client)
+                        .entry(id)
                         .or_insert_with(Vec::new)
                         .push(local_change);
                 }
             }
         }
-
         Ok(can_be_applied_changes)
     }
 
@@ -110,33 +120,28 @@ impl PendingChanges {
         Ok(())
     }
 
-    fn try_apply_pending(
-        &mut self,
-        peer: &PeerID,
-        latest_vv: &mut VersionVector,
-        can_be_applied_changes: &mut Vec<Change>,
-    ) {
-        if let Some(may_apply_changes) = self.pending_changes.remove(peer) {
+    fn try_apply_pending(&mut self, id: &ID, can_be_applied_changes: &mut Vec<Change>) {
+        if let Some(may_apply_changes) = self.pending_changes.remove(id) {
             let mut may_apply_iter = may_apply_changes
                 .into_iter()
                 .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
                 .peekable();
             while let Some(peek_c) = may_apply_iter.peek() {
-                match remote_change_apply_state(latest_vv, peek_c) {
+                match remote_change_apply_state(&self.last_pending_vv, peek_c) {
                     ChangeApplyState::Directly => {
                         let c = may_apply_iter.next().unwrap();
-                        let c_peer = c.id.peer;
-                        latest_vv.set_end(c.id_end());
+                        let last_id = c.id_last();
+                        self.last_pending_vv.set_end(c.id_end());
                         // other pending
                         can_be_applied_changes.push(c);
-                        self.try_apply_pending(&c_peer, latest_vv, can_be_applied_changes);
+                        self.try_apply_pending(&last_id, can_be_applied_changes);
                     }
                     ChangeApplyState::Existing => {
                         may_apply_iter.next();
                     }
-                    ChangeApplyState::Future(this_dep_client) => {
+                    ChangeApplyState::Future(id) => {
                         self.pending_changes
-                            .entry(this_dep_client)
+                            .entry(id)
                             .or_insert_with(Vec::new)
                             .extend(may_apply_iter);
                         break;
@@ -150,8 +155,8 @@ impl PendingChanges {
 enum ChangeApplyState {
     Existing,
     Directly,
-    // The client id of first missing dep
-    Future(PeerID),
+    // The id of first missing dep
+    Future(ID),
 }
 
 fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
@@ -159,7 +164,7 @@ fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApply
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
     if vv_latest_ctr < start {
-        return ChangeApplyState::Future(peer);
+        return ChangeApplyState::Future(change.id.inc(-1));
     }
     if vv_latest_ctr >= end {
         return ChangeApplyState::Existing;
@@ -167,7 +172,7 @@ fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApply
     for dep in change.deps.as_ref().iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeApplyState::Future(dep.peer);
+            return ChangeApplyState::Future(*dep);
         }
     }
     ChangeApplyState::Directly
