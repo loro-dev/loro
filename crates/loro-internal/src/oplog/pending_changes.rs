@@ -1,25 +1,23 @@
 use crate::{
-    change::Change,
-    encoding::RemoteClientChanges,
-    op::{Op, RemoteOp},
-    OpLog, VersionVector,
+    arena::SharedArena, change::Change, encoding::RemoteClientChanges, op::RemoteOp, VersionVector,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, PeerID};
+use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, LoroError, PeerID};
 use rle::RleVec;
 
 type LocalChanges = FxHashMap<PeerID, Vec<Change>>;
 
+#[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
     pending_changes: LocalChanges,
 }
 
 impl PendingChanges {
-    pub(crate) fn try_apply_pending_changes(&mut self, op_log: &mut OpLog) {}
+    pub(crate) fn try_apply_pending_changes(&mut self) {}
 
-    fn convert_remote_to_pending_op(change: Change<RemoteOp>, op_log: &OpLog) -> Change {
-        op_log.arena.with_op_converter(|converter| {
+    fn convert_remote_to_pending_op(change: Change<RemoteOp>, arena: &SharedArena) -> Change {
+        arena.with_op_converter(|converter| {
             let mut ops = RleVec::new();
             for op in change.ops {
                 for content in op.contents.into_iter() {
@@ -40,11 +38,11 @@ impl PendingChanges {
     pub(crate) fn filter_and_pending_remote_changes(
         &mut self,
         changes: RemoteClientChanges,
-        op_log: &OpLog,
-    ) -> LocalChanges {
-        let mut latest_vv = op_log.vv().clone();
-        let mut can_be_applied_changes = FxHashMap::default();
-
+        arena: &SharedArena,
+        mut latest_vv: VersionVector,
+    ) -> Result<Vec<Change>, LoroError> {
+        self.check_changes(&changes)?;
+        let mut can_be_applied_changes = Vec::new();
         let mut pending_peers = FxHashSet::default();
         // Changes will be sorted by lamport.
         for change in changes
@@ -53,7 +51,7 @@ impl PendingChanges {
             .sorted_unstable_by_key(|c| c.lamport)
         {
             let peer = change.id.peer;
-            let local_change = Self::convert_remote_to_pending_op(change, op_log);
+            let local_change = Self::convert_remote_to_pending_op(change, arena);
             // If the first change cannot be applied, then all subsequent changes with the same client id cannot be applied either.
             if pending_peers.contains(&peer) {
                 self.pending_changes
@@ -66,10 +64,7 @@ impl PendingChanges {
             match remote_change_apply_state(&latest_vv, &local_change) {
                 ChangeApplyState::Directly => {
                     latest_vv.set_end(local_change.id_end());
-                    can_be_applied_changes
-                        .entry(peer)
-                        .or_insert_with(Vec::new)
-                        .push(local_change);
+                    can_be_applied_changes.push(local_change);
                     self.try_apply_pending(&peer, &mut latest_vv, &mut can_be_applied_changes);
                 }
                 ChangeApplyState::Existing => {}
@@ -83,14 +78,43 @@ impl PendingChanges {
             }
         }
 
-        can_be_applied_changes
+        Ok(can_be_applied_changes)
+    }
+
+    fn check_changes(&self, changes: &RemoteClientChanges) -> Result<(), LoroError> {
+        for changes in changes.values() {
+            if changes.is_empty() {
+                continue;
+            }
+            // detect invalid d
+            let mut last_end_counter = None;
+            for change in changes.iter() {
+                if change.id.counter < 0 {
+                    return Err(LoroError::DecodeError(
+                        "Invalid data. Negative id counter.".into(),
+                    ));
+                }
+                if let Some(last_end_counter) = &mut last_end_counter {
+                    if change.id.counter != *last_end_counter {
+                        return Err(LoroError::DecodeError(
+                            "Invalid data. Not continuous counter.".into(),
+                        ));
+                    }
+
+                    *last_end_counter = change.id_end().counter;
+                } else {
+                    last_end_counter = Some(change.id_end().counter);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn try_apply_pending(
         &mut self,
         peer: &PeerID,
         latest_vv: &mut VersionVector,
-        can_be_applied_changes: &mut LocalChanges,
+        can_be_applied_changes: &mut Vec<Change>,
     ) {
         if let Some(may_apply_changes) = self.pending_changes.remove(peer) {
             let mut may_apply_iter = may_apply_changes
@@ -104,10 +128,7 @@ impl PendingChanges {
                         let c_peer = c.id.peer;
                         latest_vv.set_end(c.id_end());
                         // other pending
-                        can_be_applied_changes
-                            .entry(c_peer)
-                            .or_insert_with(Vec::new)
-                            .push(c);
+                        can_be_applied_changes.push(c);
                         self.try_apply_pending(&c_peer, latest_vv, can_be_applied_changes);
                     }
                     ChangeApplyState::Existing => {
@@ -230,69 +251,76 @@ mod test {
         a.with_txn(|txn| text_a.insert(txn, 2, "c")).unwrap();
         let update_a2 = a.export_from(&version_a1b1);
         c.import(&update_a2).unwrap();
-        assert_eq!(c.get_deep_value().to_json(), "{}");
+        assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
         c.import(&update_a1).unwrap();
         assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"a\"}");
         c.import(&update_b1).unwrap();
         assert_eq!(a.get_deep_value(), c.get_deep_value());
 
         d.import(&update_a2).unwrap();
-        assert_eq!(d.get_deep_value().to_json(), "{}");
+        assert_eq!(d.get_deep_value().to_json(), "{\"text\":\"\"}");
         d.import(&update_b1).unwrap();
-        assert_eq!(d.get_deep_value().to_json(), "{}");
+        assert_eq!(d.get_deep_value().to_json(), "{\"text\":\"\"}");
         d.import(&update_a1).unwrap();
         assert_eq!(a.get_deep_value(), d.get_deep_value());
     }
 
-    // #[test]
-    // fn should_activate_pending_change_when() {
-    //     // 0@a <- 0@b
-    //     // 0@a <- 1@a, where 0@a and 1@a will be merged
-    //     // In this case, c apply b's change first, then apply all the changes from a.
-    //     // C is expected to have the same content as a, after a imported b's change
-    //     let a = LoroDoc::new(Default::default(), Some(1));
-    //     let b = LoroDoc::new(Default::default(), Some(2));
-    //     let c = LoroDoc::new(Default::default(), Some(3));
-    //     let text_a = a.get_text("text");
-    //     let text_b = b.get_text("text");
-    //     text_a.insert(&a, 0, "1").unwrap();
-    //     b.import(&a.export_snapshot()).unwrap();
-    //     text_b.insert(&b, 0, "1").unwrap();
-    //     let b_change = b.export_from(a.oplog_vv());
-    //     text_a.insert(&a, 0, "1").unwrap();
-    //     c.import(&b_change).unwrap();
-    //     c.import(&a.export_snapshot()).unwrap();
-    //     a.import(&b_change).unwrap();
-    //     assert_eq!(c.get_deep_value(), a.get_deep_value());
-    // }
+    #[test]
+    fn should_activate_pending_change_when() {
+        // 0@a <- 0@b
+        // 0@a <- 1@a, where 0@a and 1@a will be merged
+        // In this case, c apply b's change first, then apply all the changes from a.
+        // C is expected to have the same content as a, after a imported b's change
+        let a = LoroDoc::new();
+        a.set_peer_id(1);
+        let b = LoroDoc::new();
+        b.set_peer_id(2);
+        let c = LoroDoc::new();
+        c.set_peer_id(3);
+        let text_a = a.get_text("text");
+        let text_b = b.get_text("text");
+        a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();
+        b.import(&a.export_snapshot()).unwrap();
+        b.with_txn(|txn| text_b.insert(txn, 0, "1")).unwrap();
+        let b_change = b.export_from(&a.oplog_vv());
+        a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();
+        c.import(&b_change).unwrap();
+        c.import(&a.export_snapshot()).unwrap();
+        a.import(&b_change).unwrap();
+        assert_eq!(c.get_deep_value(), a.get_deep_value());
+    }
 
+    // Change cannot be merged now
     // #[test]
     // fn pending_changes_may_deps_merged_change() {
     //     // a:  (a1 <-- a2 <-- a3) <-- a4       a1~a3 is a merged change
     //     //                \         /
     //     // b:                b1
-    //     let a = LoroDoc::new(Default::default(), Some(1));
-    //     let b = LoroDoc::new(Default::default(), Some(2));
-    //     let c = LoroDoc::new(Default::default(), Some(3));
+    //     let a = LoroDoc::new();
+    //     a.set_peer_id(1);
+    //     let b = LoroDoc::new();
+    //     b.set_peer_id(2);
+    //     let c = LoroDoc::new();
+    //     c.set_peer_id(3);
     //     let text_a = a.get_text("text");
     //     let text_b = b.get_text("text");
-    //     text_a.insert(&a, 0, "a").unwrap();
-    //     text_a.insert(&a, 1, "b").unwrap();
+    //     a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
+    //     a.with_txn(|txn| text_a.insert(txn, 1, "b")).unwrap();
     //     let version_a12 = a.oplog_vv();
     //     let updates_a12 = a.export_snapshot();
-    //     text_a.insert(&a, 2, "c").unwrap();
+    //     a.with_txn(|txn| text_a.insert(txn, 2, "c")).unwrap();
     //     let updates_a123 = a.export_snapshot();
     //     b.import(&updates_a12).unwrap();
-    //     text_b.insert(&b, 2, "d").unwrap();
-    //     let update_b1 = b.export_from(version_a12);
+    //     b.with_txn(|txn| text_b.insert(txn, 2, "d")).unwrap();
+    //     let update_b1 = b.export_from(&version_a12);
     //     a.import(&update_b1).unwrap();
     //     let version_a123_b1 = a.oplog_vv();
-    //     text_a.insert(&a, 4, "e").unwrap();
-    //     let update_a4 = a.export_from(version_a123_b1);
+    //     a.with_txn(|txn| text_a.insert(txn, 4, "e")).unwrap();
+    //     let update_a4 = a.export_from(&version_a123_b1);
     //     c.import(&update_b1).unwrap();
-    //     assert_eq!(c.get_deep_value().get_deep_value(), "{}");
+    //     assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
     //     c.import(&update_a4).unwrap();
-    //     assert_eq!(c.get_deep_value().get_deep_value(), "{}");
+    //     assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
     //     c.import(&updates_a123).unwrap();
     //     assert_eq!(c.get_deep_value(), a.get_deep_value());
     // }

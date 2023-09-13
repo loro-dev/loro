@@ -22,6 +22,8 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
+use self::pending_changes::PendingChanges;
+
 use super::arena::SharedArena;
 
 /// [OpLog] store all the ops i.e. the history.
@@ -41,7 +43,7 @@ pub struct OpLog {
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
-    pending_changes: FxHashMap<ID, Vec<Change>>,
+    pending_changes: PendingChanges,
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
@@ -178,7 +180,6 @@ impl OpLog {
     pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
         self.check_id_is_not_duplicated(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
-            self.pending_changes.entry(id).or_default().push(change);
             return Err(LoroError::DecodeError(
                 format!("Missing dep {:?}", id).into_boxed_str(),
             ));
@@ -406,95 +407,28 @@ impl OpLog {
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
         // TODO: support pending changes
+
         let vv = &self.dag.vv;
-        for (peer, changes) in &changes {
-            if changes.is_empty() {
-                continue;
-            }
-
-            // detect invalid d
-            let mut last_end_counter = None;
-            for change in changes.iter() {
-                if change.id.counter < 0 {
-                    return Err(LoroError::DecodeError(
-                        "Invalid data. Negative id counter.".into(),
-                    ));
-                }
-                if let Some(last_end_counter) = &mut last_end_counter {
-                    if change.id.counter != *last_end_counter {
-                        return Err(LoroError::DecodeError(
-                            "Invalid data. Not continuous counter.".into(),
-                        ));
-                    }
-
-                    *last_end_counter = change.id_end().counter;
-                } else {
-                    last_end_counter = Some(change.id_end().counter);
-                }
-            }
-
-            if let Some(end_cnt) = vv.get(peer) {
-                let first_id = changes.first().unwrap().id_start();
-                if first_id.counter > *end_cnt {
-                    return Err(LoroError::DecodeError(
-                        // TODO: Support pending changes to avoid this error
-                        "Changes are not appliable yet.".into(),
-                    ));
-                }
-            } else if changes.first().unwrap().id_start().counter > 0 {
-                return Err(LoroError::DecodeError(
-                    // TODO: Support pending changes to avoid this error
-                    "Changes are not appliable yet.".into(),
-                ));
-            }
-        }
+        let local_changes = self.pending_changes.filter_and_pending_remote_changes(
+            changes,
+            &self.arena,
+            vv.clone(),
+        )?;
 
         // TODO: should we check deps here?
-        let len = changes.iter().fold(0, |last, this| last + this.1.len());
-        let mut change_causal_arr = Vec::with_capacity(len);
         // op_converter is faster than using arena directly
-        self.arena.with_op_converter(|converter| {
-            for (peer, changes) in changes {
-                if changes.is_empty() {
-                    continue;
-                }
 
-                let cur_end_cnt = self.changes.get(&peer).map(|x| x.atom_len()).unwrap_or(0);
-                let last_change = changes.last().unwrap();
-                self.dag.vv.extend_to_include_last_id(last_change.id_last());
-                self.next_lamport = self.next_lamport.max(last_change.lamport_end());
-                self.latest_timestamp = self.latest_timestamp.max(last_change.timestamp);
-                for change in changes {
-                    if change.id.counter < cur_end_cnt {
-                        // truncate included changes
-                        continue;
-                    }
+        if !local_changes.is_empty() {
+            self.next_lamport = self
+                .next_lamport
+                .max(local_changes.last().unwrap().lamport_end());
+        }
 
-                    let mut ops = RleVec::new();
-                    for op in change.ops {
-                        for content in op.contents.into_iter() {
-                            let op =
-                                converter.convert_single_op(&op.container, op.counter, content);
-                            ops.push(op);
-                        }
-                    }
-
-                    let change = Change {
-                        ops,
-                        id: change.id,
-                        deps: change.deps,
-                        lamport: change.lamport,
-                        timestamp: change.timestamp,
-                    };
-                    change_causal_arr.push(change);
-                }
-            }
-        });
-
-        // TODO: Perf
-        change_causal_arr.sort_by_key(|x| x.lamport);
         // debug_dbg!(&change_causal_arr);
-        for change in change_causal_arr {
+        for change in local_changes {
+            self.dag.vv.extend_to_include_last_id(change.id_last());
+            self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
+
             let len = change.content_len();
             if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
                 // don't need to push new element to dag because it only depends on itself
