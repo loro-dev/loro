@@ -382,10 +382,13 @@ impl OpLog {
                 }
             },
             crate::op::InnerContent::Map(map) => {
-                let value = self.arena.get_value(map.value as usize);
+                let value = map
+                    .value
+                    .map(|v| self.arena.get_value(v as usize))
+                    .flatten();
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
-                    value: value.unwrap_or(crate::LoroValue::Null), // TODO: decide map delete value
+                    value,
                 }))
             }
         };

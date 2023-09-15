@@ -527,7 +527,7 @@ impl MapHandler {
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
-                value,
+                value: Some(value),
             }),
             None,
             &self.state,
@@ -548,7 +548,7 @@ impl MapHandler {
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
-                value: LoroValue::Container(container_id),
+                value: Some(LoroValue::Container(container_id)),
             }),
             None,
             &self.state,
@@ -562,8 +562,7 @@ impl MapHandler {
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
-                // TODO: use another special value to delete?
-                value: LoroValue::Null,
+                value: None,
             }),
             None,
             &self.state,
