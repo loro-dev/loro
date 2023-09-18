@@ -1,12 +1,11 @@
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
-    change::{Change, Lamport, Timestamp},
+    change::{Change, Timestamp},
     container::text::text_content::ListSlice,
     container::{
         idx::ContainerIdx,
@@ -14,9 +13,10 @@ use crate::{
         map::MapSet,
         ContainerID, ContainerType,
     },
+    encoding::RemoteClientChanges,
     id::{Counter, PeerID, ID},
     op::{RawOpContent, RemoteOp},
-    oplog::{AppDagNode, OpLog},
+    oplog::OpLog,
     span::HasId,
     version::Frontiers,
     InternalString, LoroError, LoroValue, VersionVector,
@@ -396,200 +396,116 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
 
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
-    let changes = change_encodings
-        .map(|change_encoding| {
-            let counter = start_counter
-                .get_mut(change_encoding.peer_idx as usize)
-                .unwrap();
-            let ChangeEncoding {
-                peer_idx,
-                timestamp,
-                op_len,
-                deps_len,
-                dep_on_self,
-            } = change_encoding;
+    let mut remote_changes = RemoteClientChanges::default();
+    for change_encoding in change_encodings {
+        let counter = start_counter
+            .get_mut(change_encoding.peer_idx as usize)
+            .unwrap();
+        let ChangeEncoding {
+            peer_idx,
+            timestamp,
+            op_len,
+            deps_len,
+            dep_on_self,
+        } = change_encoding;
 
-            let peer_id = peers[peer_idx as usize];
-            let mut ops = RleVec::<[RemoteOp; 1]>::new();
-            let mut delta = 0;
-            for op in op_iter.by_ref().take(op_len as usize) {
-                let OpEncoding {
-                    container: container_idx,
-                    prop,
-                    is_del,
-                    insert_del_len,
-                } = op;
+        let peer_id = peers[peer_idx as usize];
+        let mut ops = RleVec::<[RemoteOp; 1]>::new();
+        let mut delta = 0;
+        for op in op_iter.by_ref().take(op_len as usize) {
+            let OpEncoding {
+                container: container_idx,
+                prop,
+                is_del,
+                insert_del_len,
+            } = op;
 
-                let Some(container_id) = get_container(container_idx) else {
+            let Some(container_id) = get_container(container_idx) else {
                     return Err(LoroError::DecodeError("".into()));
                 };
-                let container_type = container_id.container_type();
-                let content = match container_type {
-                    ContainerType::Map => {
-                        let key = keys[prop].clone();
-                        RawOpContent::Map(MapSet {
-                            key,
-                            value: value_iter.next().unwrap(),
-                        })
-                    }
-                    ContainerType::List | ContainerType::Text => {
-                        let pos = prop;
-                        if is_del {
-                            RawOpContent::List(ListOp::Delete(DeleteSpan {
-                                pos: pos as isize,
-                                len: insert_del_len,
-                            }))
-                        } else {
-                            match container_type {
-                                ContainerType::Text => {
-                                    let insert_len = insert_del_len as usize;
-                                    let s = &str[str_index..str_index + insert_len];
-                                    str_index += insert_len;
-                                    RawOpContent::List(ListOp::Insert {
-                                        slice: ListSlice::from_borrowed_str(s),
-                                        pos,
-                                    })
-                                }
-                                ContainerType::List => {
-                                    let value = value_iter.next().unwrap();
-                                    RawOpContent::List(ListOp::Insert {
-                                        slice: ListSlice::RawData(Cow::Owned(
-                                            match Arc::try_unwrap(value.into_list().unwrap()) {
-                                                Ok(v) => v,
-                                                Err(v) => v.deref().clone(),
-                                            },
-                                        )),
-                                        pos,
-                                    })
-                                }
-                                ContainerType::Map => unreachable!(),
+            let container_type = container_id.container_type();
+            let content = match container_type {
+                ContainerType::Map => {
+                    let key = keys[prop].clone();
+                    RawOpContent::Map(MapSet {
+                        key,
+                        value: value_iter.next().unwrap(),
+                    })
+                }
+                ContainerType::List | ContainerType::Text => {
+                    let pos = prop;
+                    if is_del {
+                        RawOpContent::List(ListOp::Delete(DeleteSpan {
+                            pos: pos as isize,
+                            len: insert_del_len,
+                        }))
+                    } else {
+                        match container_type {
+                            ContainerType::Text => {
+                                let insert_len = insert_del_len as usize;
+                                let s = &str[str_index..str_index + insert_len];
+                                str_index += insert_len;
+                                RawOpContent::List(ListOp::Insert {
+                                    slice: ListSlice::from_borrowed_str(s),
+                                    pos,
+                                })
                             }
+                            ContainerType::List => {
+                                let value = value_iter.next().unwrap();
+                                RawOpContent::List(ListOp::Insert {
+                                    slice: ListSlice::RawData(Cow::Owned(
+                                        match Arc::try_unwrap(value.into_list().unwrap()) {
+                                            Ok(v) => v,
+                                            Err(v) => v.deref().clone(),
+                                        },
+                                    )),
+                                    pos,
+                                })
+                            }
+                            ContainerType::Map => unreachable!(),
                         }
                     }
-                };
-                let remote_op = RemoteOp {
-                    container: container_id,
-                    counter: *counter + delta,
-                    contents: vec![content].into(),
-                };
-                delta += remote_op.content_len() as i32;
-                ops.push(remote_op);
-            }
-
-            let mut deps: Frontiers = (0..deps_len)
-                .map(|_| {
-                    let raw = deps_iter.next().unwrap();
-                    ID::new(peers[raw.client_idx as usize], raw.counter)
-                })
-                .collect();
-            if dep_on_self {
-                deps.push(ID::new(peer_id, *counter - 1));
-            }
-
-            let change = Change {
-                id: ID {
-                    peer: peer_id,
-                    counter: *counter,
-                },
-                // calc lamport after parsing all changes
-                lamport: 0,
-                timestamp,
-                ops,
-                deps,
+                }
             };
-
-            *counter += delta;
-            Ok(change)
-        })
-        .collect::<Result<Vec<_>, LoroError>>();
-    let changes = match changes {
-        Ok(changes) => changes,
-        Err(err) => return Err(err),
-    };
-
-    oplog.arena.clone().with_op_converter(|converter| {
-        for mut change in changes {
-            if change.id.counter < oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
-                // skip included changes
-                continue;
-            }
-
-            // calc lamport or pending if its deps are not satisfied
-            for dep in change.deps.iter() {
-                match oplog.dag.get_lamport(dep) {
-                    Some(lamport) => {
-                        change.lamport = change.lamport.max(lamport + 1);
-                    }
-                    None => {
-                        todo!("pending")
-                    }
-                }
-            }
-
-            // convert change into inner format
-            let mut ops = RleVec::new();
-            for op in change.ops {
-                for content in op.contents.into_iter() {
-                    let op = converter.convert_single_op(&op.container, op.counter, content);
-                    ops.push(op);
-                }
-            }
-
-            let change = Change {
-                ops,
-                id: change.id,
-                deps: change.deps,
-                lamport: change.lamport,
-                timestamp: change.timestamp,
+            let remote_op = RemoteOp {
+                container: container_id,
+                counter: *counter + delta,
+                contents: vec![content].into(),
             };
-
-            // update dag and push the change
-            let len = change.content_len();
-            if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
-                // don't need to push new element to dag because it only depends on itself
-                let nodes = oplog.dag.map.get_mut(&change.id.peer).unwrap();
-                let last = nodes.vec_mut().last_mut().unwrap();
-                assert_eq!(last.peer, change.id.peer);
-                assert_eq!(last.cnt + last.len as Counter, change.id.counter);
-                assert_eq!(last.lamport + last.len as Lamport, change.lamport);
-                last.len = change.id.counter as usize + len - last.cnt as usize;
-                last.has_succ = false;
-            } else {
-                let vv = oplog.dag.frontiers_to_im_vv(&change.deps);
-                oplog
-                    .dag
-                    .map
-                    .entry(change.id.peer)
-                    .or_default()
-                    .push(AppDagNode {
-                        vv,
-                        peer: change.id.peer,
-                        cnt: change.id.counter,
-                        lamport: change.lamport,
-                        deps: change.deps.clone(),
-                        has_succ: false,
-                        len,
-                    });
-                for dep in change.deps.iter() {
-                    let target = oplog.dag.get_mut(*dep).unwrap();
-                    if target.ctr_last() == dep.counter {
-                        target.has_succ = true;
-                    }
-                }
-            }
-            oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
-            oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
-            oplog.dag.vv.extend_to_include_end_id(ID {
-                peer: change.id.peer,
-                counter: change.id.counter + change.atom_len() as Counter,
-            });
-            oplog
-                .changes
-                .entry(change.id.peer)
-                .or_default()
-                .push(change);
+            delta += remote_op.content_len() as i32;
+            ops.push(remote_op);
         }
-    });
+
+        let mut deps: Frontiers = (0..deps_len)
+            .map(|_| {
+                let raw = deps_iter.next().unwrap();
+                ID::new(peers[raw.client_idx as usize], raw.counter)
+            })
+            .collect();
+        if dep_on_self {
+            deps.push(ID::new(peer_id, *counter - 1));
+        }
+
+        let change = Change {
+            id: ID {
+                peer: peer_id,
+                counter: *counter,
+            },
+            // calc lamport after parsing all changes
+            lamport: 0,
+            timestamp,
+            ops,
+            deps,
+        };
+
+        *counter += delta;
+        remote_changes
+            .entry(peer_id)
+            .or_insert_with(Vec::new)
+            .push(change);
+    }
+
+    oplog.import_remote_changes(remote_changes, true)?;
 
     // update dag frontiers
     if !oplog.batch_importing {

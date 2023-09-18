@@ -1,83 +1,23 @@
 use crate::{
-    arena::{OpConverter, SharedArena},
-    change::Change,
-    encoding::RemoteClientChanges,
-    op::RemoteOp,
+    arena::OpConverter, change::Change, encoding::RemoteClientChanges, op::RemoteOp, OpLog,
     VersionVector,
 };
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, LoroError, ID};
-use rle::RleVec;
+use loro_common::{
+    Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, Lamport, LoroError, ID,
+};
+use rle::{HasLength, RleVec};
+
+use super::AppDagNode;
 
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
-    pending_changes: FxHashMap<ID, Vec<Change>>,
-    last_pending_vv: VersionVector,
+    pub(crate) pending_changes: FxHashMap<ID, Vec<Change>>,
+    pub(crate) pending_unknown_lamport_changes: FxHashMap<ID, Change>,
 }
 
-impl PendingChanges {
-    #[allow(dead_code)]
-    pub(crate) fn try_apply_pending_changes(&mut self, vv: &VersionVector) -> Vec<Change> {
-        let mut can_be_applied_changes = Vec::new();
-        let last_vv = self.last_pending_vv.clone();
-        self.last_pending_vv = vv.clone();
-        let ids: Vec<_> = self.pending_changes.keys().cloned().collect();
-        for id in ids {
-            for id_span in vv.sub_iter(&last_vv) {
-                if id_span.contains(id) {
-                    self.try_apply_pending(&id, &mut can_be_applied_changes);
-                }
-            }
-        }
-        can_be_applied_changes
-    }
-
-    pub(crate) fn get_can_be_applied_changes(
-        &mut self,
-        remote_changes: RemoteClientChanges,
-        arena: &SharedArena,
-        latest_vv: VersionVector,
-    ) -> Result<Vec<Change>, LoroError> {
-        self.last_pending_vv = latest_vv;
-        let mut can_be_applied_changes = Vec::new();
-        let mut peer_to_pending_dep = FxHashMap::default();
-        // op_converter is faster than using arena directly
-        arena.with_op_converter(|converter| {
-            for change in remote_changes
-                .into_values()
-                .flat_map(|c| c.into_iter())
-                .sorted_unstable_by_key(|c| c.lamport)
-            {
-                let local_change = to_local_op(change, converter);
-                if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
-                    self.pending_changes
-                        .get_mut(pre_dep)
-                        .unwrap()
-                        .push(local_change);
-                    continue;
-                }
-                match remote_change_apply_state(&self.last_pending_vv, &local_change) {
-                    ChangeApplyState::Directly => {
-                        self.last_pending_vv.set_end(local_change.id_end());
-                        let id_last = local_change.id_last();
-                        can_be_applied_changes.push(local_change);
-                        self.try_apply_pending(&id_last, &mut can_be_applied_changes);
-                    }
-                    ChangeApplyState::Existing => {}
-                    ChangeApplyState::Future(id) => {
-                        peer_to_pending_dep.insert(local_change.id.peer, id);
-                        self.pending_changes
-                            .entry(id)
-                            .or_insert_with(Vec::new)
-                            .push(local_change);
-                    }
-                }
-            }
-        });
-        Ok(can_be_applied_changes)
-    }
-
+impl OpLog {
     pub(super) fn check_changes(&self, changes: &RemoteClientChanges) -> Result<(), LoroError> {
         for changes in changes.values() {
             if changes.is_empty() {
@@ -107,38 +47,107 @@ impl PendingChanges {
         Ok(())
     }
 
-    fn try_apply_pending(&mut self, id: &ID, can_be_applied_changes: &mut Vec<Change>) {
-        let Some(may_apply_changes) = self.pending_changes.remove(id) else{return;};
-        let mut may_apply_iter = may_apply_changes
-            .into_iter()
-            .sorted_by(|a, b| a.lamport.cmp(&b.lamport))
-            .peekable();
-        while let Some(peek_c) = may_apply_iter.peek() {
-            match remote_change_apply_state(&self.last_pending_vv, peek_c) {
-                ChangeApplyState::Directly => {
-                    let c = may_apply_iter.next().unwrap();
-                    let last_id = c.id_last();
-                    self.last_pending_vv.set_end(c.id_end());
-                    // other pending
-                    can_be_applied_changes.push(c);
-                    self.try_apply_pending(&last_id, can_be_applied_changes);
+    pub(super) fn try_apply_pending(&mut self, id: ID, latest_vv: &mut VersionVector) {
+        let mut id_stack = vec![id];
+        while let Some(id) = id_stack.pop() {
+            if let Some(may_apply_changes) = self.pending_changes.pending_changes.remove(&id) {
+                let mut may_apply_iter = may_apply_changes
+                    .into_iter()
+                    .sorted_unstable_by_key(|a| a.lamport)
+                    .peekable();
+                while let Some(peek_c) = may_apply_iter.peek() {
+                    match remote_change_apply_state(latest_vv, peek_c) {
+                        ChangeApplyState::Directly => {
+                            let c = may_apply_iter.next().unwrap();
+                            let last_id = c.id_last();
+                            latest_vv.set_end(c.id_end());
+                            self.apply_local_change_from_remote(c);
+                            // other pending
+                            id_stack.push(last_id);
+                        }
+                        ChangeApplyState::Existing => {
+                            may_apply_iter.next();
+                        }
+                        ChangeApplyState::Future(id) => {
+                            self.pending_changes
+                                .pending_changes
+                                .entry(id)
+                                .or_insert_with(Vec::new)
+                                .extend(may_apply_iter);
+                            break;
+                        }
+                    }
                 }
-                ChangeApplyState::Existing => {
-                    may_apply_iter.next();
-                }
-                ChangeApplyState::Future(id) => {
-                    self.pending_changes
-                        .entry(id)
-                        .or_insert_with(Vec::new)
-                        .extend(may_apply_iter);
-                    break;
+            }
+            if let Some(mut unknown_lamport_change) = self
+                .pending_changes
+                .pending_unknown_lamport_changes
+                .remove(&id)
+            {
+                match remote_change_apply_state(latest_vv, &unknown_lamport_change) {
+                    ChangeApplyState::Directly => {
+                        let last_id = unknown_lamport_change.id_last();
+                        latest_vv.set_end(unknown_lamport_change.id_end());
+                        self.dag
+                            .calc_unknown_lamport_change(&mut unknown_lamport_change)
+                            .unwrap();
+                        self.apply_local_change_from_remote(unknown_lamport_change);
+                        id_stack.push(last_id);
+                    }
+                    ChangeApplyState::Existing => unreachable!(),
+                    ChangeApplyState::Future(id) => {
+                        self.pending_changes
+                            .pending_unknown_lamport_changes
+                            .insert(id, unknown_lamport_change);
+                    }
                 }
             }
         }
     }
+
+    pub(super) fn apply_local_change_from_remote(&mut self, change: Change) {
+        self.next_lamport = self.next_lamport.max(change.lamport_end());
+        // debug_dbg!(&change_causal_arr);
+        self.dag.vv.extend_to_include_last_id(change.id_last());
+        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
+
+        let len = change.content_len();
+        if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
+            // don't need to push new element to dag because it only depends on itself
+            let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
+            let last = nodes.vec_mut().last_mut().unwrap();
+            assert_eq!(last.peer, change.id.peer);
+            assert_eq!(last.cnt + last.len as Counter, change.id.counter);
+            assert_eq!(last.lamport + last.len as Lamport, change.lamport);
+            last.len = change.id.counter as usize + len - last.cnt as usize;
+            last.has_succ = false;
+        } else {
+            let vv = self.dag.frontiers_to_im_vv(&change.deps);
+            self.dag
+                .map
+                .entry(change.id.peer)
+                .or_default()
+                .push(AppDagNode {
+                    vv,
+                    peer: change.id.peer,
+                    cnt: change.id.counter,
+                    lamport: change.lamport,
+                    deps: change.deps.clone(),
+                    has_succ: false,
+                    len,
+                });
+            for dep in change.deps.iter() {
+                let target = self.dag.get_mut(*dep).unwrap();
+                if target.ctr_last() == dep.counter {
+                    target.has_succ = true;
+                }
+            }
+        }
+        self.changes.entry(change.id.peer).or_default().push(change);
+    }
 }
 
-fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
+pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
     let mut ops = RleVec::new();
     for op in change.ops {
         for content in op.contents.into_iter() {
@@ -155,14 +164,14 @@ fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change 
     }
 }
 
-enum ChangeApplyState {
+pub enum ChangeApplyState {
     Existing,
     Directly,
     // The id of first missing dep
     Future(ID),
 }
 
-fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
+pub(super) fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
     let peer = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);

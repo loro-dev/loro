@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
-use loro_common::HasId;
+use itertools::Itertools;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
@@ -22,7 +22,9 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
-use self::pending_changes::PendingChanges;
+use self::pending_changes::{
+    remote_change_apply_state, to_local_op, ChangeApplyState, PendingChanges,
+};
 
 use super::arena::SharedArena;
 
@@ -112,6 +114,19 @@ impl AppDag {
             })
             .map(|(peer, vec)| ID::new(*peer, vec.last().unwrap().ctr_last()))
             .collect();
+    }
+
+    /// If the lamport of change can be calculated, return Ok, otherwise, Err
+    pub(crate) fn calc_unknown_lamport_change(&self, change: &mut Change) -> Result<(), ()> {
+        for dep in change.deps.iter() {
+            match self.get_lamport(dep) {
+                Some(lamport) => {
+                    change.lamport = change.lamport.max(lamport + 1);
+                }
+                None => return Err(()),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -403,71 +418,65 @@ impl OpLog {
     // They should also be continuous  (TODO: check this)
     pub(crate) fn import_remote_changes(
         &mut self,
-        changes: RemoteClientChanges,
+        remote_changes: RemoteClientChanges,
+        unknown_lamport: bool,
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
-        self.pending_changes.check_changes(&changes)?;
-        let vv = &self.dag.vv;
-        let local_changes =
-            self.pending_changes
-                .get_can_be_applied_changes(changes, &self.arena, vv.clone())?;
-
-        // TODO: should we check deps here?
-        self.apply_local_change_from_remote(local_changes);
-        Ok(())
-    }
-
-    fn apply_local_change_from_remote(&mut self, mut local_changes: Vec<Change>) {
-        local_changes.sort_by_key(|x| x.lamport);
-        if !local_changes.is_empty() {
-            self.next_lamport = self
-                .next_lamport
-                .max(local_changes.last().unwrap().lamport_end());
-        }
-        // debug_dbg!(&change_causal_arr);
-        for change in local_changes {
-            self.dag.vv.extend_to_include_last_id(change.id_last());
-            self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-
-            let len = change.content_len();
-            if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
-                // don't need to push new element to dag because it only depends on itself
-                let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
-                let last = nodes.vec_mut().last_mut().unwrap();
-                assert_eq!(last.peer, change.id.peer);
-                assert_eq!(last.cnt + last.len as Counter, change.id.counter);
-                assert_eq!(last.lamport + last.len as Lamport, change.lamport);
-                last.len = change.id.counter as usize + len - last.cnt as usize;
-                last.has_succ = false;
-            } else {
-                let vv = self.dag.frontiers_to_im_vv(&change.deps);
-                self.dag
-                    .map
-                    .entry(change.id.peer)
-                    .or_default()
-                    .push(AppDagNode {
-                        vv,
-                        peer: change.id.peer,
-                        cnt: change.id.counter,
-                        lamport: change.lamport,
-                        deps: change.deps.clone(),
-                        has_succ: false,
-                        len,
-                    });
-                for dep in change.deps.iter() {
-                    let target = self.dag.get_mut(*dep).unwrap();
-                    if target.ctr_last() == dep.counter {
-                        target.has_succ = true;
+        self.check_changes(&remote_changes)?;
+        let mut latest_vv = self.dag.vv.clone();
+        let mut peer_to_pending_dep = FxHashMap::default();
+        // op_converter is faster than using arena directly
+        self.arena.clone().with_op_converter(|converter| {
+            for change in remote_changes
+                .into_values()
+                .flat_map(|c| c.into_iter())
+                .sorted_unstable_by_key(|c| c.lamport)
+            {
+                let mut local_change = to_local_op(change, converter);
+                if !unknown_lamport {
+                    if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
+                        self.pending_changes
+                            .pending_changes
+                            .get_mut(pre_dep)
+                            .unwrap()
+                            .push(local_change);
+                        continue;
+                    }
+                }
+                match remote_change_apply_state(&latest_vv, &local_change) {
+                    ChangeApplyState::Directly => {
+                        latest_vv.set_end(local_change.id_end());
+                        let id_last = local_change.id_last();
+                        if unknown_lamport {
+                            self.dag
+                                .calc_unknown_lamport_change(&mut local_change)
+                                .unwrap();
+                        }
+                        self.apply_local_change_from_remote(local_change);
+                        self.try_apply_pending(id_last, &mut latest_vv);
+                    }
+                    ChangeApplyState::Existing => {}
+                    ChangeApplyState::Future(id) => {
+                        if unknown_lamport {
+                            self.pending_changes
+                                .pending_unknown_lamport_changes
+                                .insert(id, local_change);
+                        } else {
+                            peer_to_pending_dep.insert(local_change.id.peer, id);
+                            self.pending_changes
+                                .pending_changes
+                                .entry(id)
+                                .or_insert_with(Vec::new)
+                                .push(local_change);
+                        }
                     }
                 }
             }
-
-            self.changes.entry(change.id.peer).or_default().push(change);
-        }
-
+        });
         if !self.batch_importing {
             self.dag.refresh_frontiers();
         }
+        Ok(())
     }
 
     /// lookup change by id.

@@ -215,7 +215,7 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
 
 pub(crate) fn decode_oplog_changes(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
     let changes = decode_changes_to_inner_format_oplog(input, oplog)?;
-    oplog.import_remote_changes(changes)?;
+    oplog.import_remote_changes(changes, false)?;
     Ok(())
 }
 
