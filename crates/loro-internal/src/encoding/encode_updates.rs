@@ -63,7 +63,7 @@ pub(crate) fn encode_oplog_updates(oplog: &OpLog, from: &VersionVector) -> Vec<u
 
 pub(crate) fn decode_oplog_updates(oplog: &mut OpLog, updates: &[u8]) -> Result<(), LoroError> {
     let changes = decode_updates(updates)?;
-    oplog.import_remote_changes(changes, false)?;
+    oplog.import_remote_changes(changes)?;
     Ok(())
 }
 

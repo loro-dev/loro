@@ -45,7 +45,7 @@ pub struct OpLog {
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
-    pending_changes: PendingChanges,
+    pub(crate) pending_changes: PendingChanges,
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
@@ -419,7 +419,6 @@ impl OpLog {
     pub(crate) fn import_remote_changes(
         &mut self,
         remote_changes: RemoteClientChanges,
-        unknown_lamport: bool,
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
         self.check_changes(&remote_changes)?;
@@ -433,42 +432,31 @@ impl OpLog {
                 .sorted_unstable_by_key(|c| c.lamport)
             {
                 let mut local_change = to_local_op(change, converter);
-                if !unknown_lamport {
-                    if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
-                        self.pending_changes
-                            .pending_changes
-                            .get_mut(pre_dep)
-                            .unwrap()
-                            .push(local_change);
-                        continue;
-                    }
+
+                if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
+                    self.pending_changes
+                        .pending_changes
+                        .get_mut(pre_dep)
+                        .unwrap()
+                        .push(local_change);
+                    continue;
                 }
+
                 match remote_change_apply_state(&latest_vv, &local_change) {
                     ChangeApplyState::Directly => {
                         latest_vv.set_end(local_change.id_end());
                         let id_last = local_change.id_last();
-                        if unknown_lamport {
-                            self.dag
-                                .calc_unknown_lamport_change(&mut local_change)
-                                .unwrap();
-                        }
                         self.apply_local_change_from_remote(local_change);
                         self.try_apply_pending(id_last, &mut latest_vv);
                     }
                     ChangeApplyState::Existing => {}
                     ChangeApplyState::Future(id) => {
-                        if unknown_lamport {
-                            self.pending_changes
-                                .pending_unknown_lamport_changes
-                                .insert(id, local_change);
-                        } else {
-                            peer_to_pending_dep.insert(local_change.id.peer, id);
-                            self.pending_changes
-                                .pending_changes
-                                .entry(id)
-                                .or_insert_with(Vec::new)
-                                .push(local_change);
-                        }
+                        peer_to_pending_dep.insert(local_change.id.peer, id);
+                        self.pending_changes
+                            .pending_changes
+                            .entry(id)
+                            .or_insert_with(Vec::new)
+                            .push(local_change);
                     }
                 }
             }
