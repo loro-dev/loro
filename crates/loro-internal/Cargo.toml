@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "encode"
 harness = false
+
+[[bench]]
+name = "pending"
+harness = false

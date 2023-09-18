@@ -7,7 +7,6 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
-use itertools::Itertools;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
@@ -22,9 +21,7 @@ use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
-use self::pending_changes::{
-    remote_change_apply_state, to_local_op, ChangeApplyState, PendingChanges,
-};
+use self::pending_changes::PendingChanges;
 
 use super::arena::SharedArena;
 
@@ -422,48 +419,27 @@ impl OpLog {
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
         self.check_changes(&remote_changes)?;
-        let mut latest_vv = self.dag.vv.clone();
-        let mut peer_to_pending_dep = FxHashMap::default();
+        let latest_vv = self.dag.vv.clone();
         // op_converter is faster than using arena directly
-        self.arena.clone().with_op_converter(|converter| {
-            for change in remote_changes
-                .into_values()
-                .flat_map(|c| c.into_iter())
-                .sorted_unstable_by_key(|c| c.lamport)
-            {
-                let mut local_change = to_local_op(change, converter);
-
-                if let Some(pre_dep) = peer_to_pending_dep.get(&local_change.id.peer) {
-                    self.pending_changes
-                        .pending_changes
-                        .get_mut(pre_dep)
-                        .unwrap()
-                        .push(local_change);
-                    continue;
-                }
-
-                match remote_change_apply_state(&latest_vv, &local_change) {
-                    ChangeApplyState::Directly => {
-                        latest_vv.set_end(local_change.id_end());
-                        let id_last = local_change.id_last();
-                        self.apply_local_change_from_remote(local_change);
-                        self.try_apply_pending(id_last, &mut latest_vv);
-                    }
-                    ChangeApplyState::Existing => {}
-                    ChangeApplyState::Future(id) => {
-                        peer_to_pending_dep.insert(local_change.id.peer, id);
-                        self.pending_changes
-                            .pending_changes
-                            .entry(id)
-                            .or_insert_with(Vec::new)
-                            .push(local_change);
-                    }
-                }
-            }
+        let ids = self.arena.clone().with_op_converter(|converter| {
+            self.calc_pending_changes(remote_changes, converter, latest_vv)
         });
+        let mut latest_vv = self.dag.vv.clone();
+        self.try_apply_pending(ids, &mut latest_vv);
         if !self.batch_importing {
             self.dag.refresh_frontiers();
         }
+        Ok(())
+    }
+
+    pub(crate) fn import_unknown_lamport_remote_changes(
+        &mut self,
+        remote_changes: Vec<Change<RemoteOp>>,
+    ) -> Result<(), LoroError> {
+        let latest_vv = self.dag.vv.clone();
+        self.arena.clone().with_op_converter(|converter| {
+            self.extend_unknown_pending_changes(remote_changes, converter, &latest_vv)
+        });
         Ok(())
     }
 

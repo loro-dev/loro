@@ -506,12 +506,25 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         Ok(changes) => changes,
         Err(err) => return Err(err),
     };
-
+    let mut pending_remote_changes = Vec::new();
     oplog.arena.clone().with_op_converter(|converter| {
-        'outer: for change in changes {
+        'outer: for mut change in changes {
             if change.id.counter < oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 // skip included changes
                 continue;
+            }
+
+            // calc lamport or pending if its deps are not satisfied
+            for dep in change.deps.iter() {
+                match oplog.dag.get_lamport(dep) {
+                    Some(lamport) => {
+                        change.lamport = change.lamport.max(lamport + 1);
+                    }
+                    None => {
+                        pending_remote_changes.push(change);
+                        continue 'outer;
+                    }
+                }
             }
 
             // convert change into inner format
@@ -523,28 +536,14 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 }
             }
 
-            let mut change = Change {
+            let change = Change {
                 ops,
                 id: change.id,
                 deps: change.deps,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
             };
-            // calc lamport or pending if its deps are not satisfied
-            for dep in change.deps.iter() {
-                match oplog.dag.get_lamport(dep) {
-                    Some(lamport) => {
-                        change.lamport = change.lamport.max(lamport + 1);
-                    }
-                    None => {
-                        oplog
-                            .pending_changes
-                            .pending_unknown_lamport_changes
-                            .insert(*dep, change);
-                        continue 'outer;
-                    }
-                }
-            }
+
             // update dag and push the change
             let len = change.content_len();
             if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
@@ -592,11 +591,11 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 .push(change);
         }
     });
-
-    // update dag frontiers
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }
+
+    oplog.import_unknown_lamport_remote_changes(pending_remote_changes)?;
     assert_eq!(str_index, str.len());
     Ok(())
 }
