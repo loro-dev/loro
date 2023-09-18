@@ -406,26 +406,24 @@ impl OpLog {
         changes: RemoteClientChanges,
     ) -> Result<(), LoroError> {
         // check whether we can append the new changes
-
+        self.pending_changes.check_changes(&changes)?;
         let vv = &self.dag.vv;
-        let local_changes = self.pending_changes.filter_and_pending_remote_changes(
-            changes,
-            &self.arena,
-            vv.clone(),
-        )?;
+        let local_changes =
+            self.pending_changes
+                .get_can_be_applied_changes(changes, &self.arena, vv.clone())?;
 
         // TODO: should we check deps here?
         self.apply_local_change_from_remote(local_changes);
         Ok(())
     }
 
-    fn apply_local_change_from_remote(&mut self, local_changes: Vec<Change>) {
+    fn apply_local_change_from_remote(&mut self, mut local_changes: Vec<Change>) {
+        local_changes.sort_by_key(|x| x.lamport);
         if !local_changes.is_empty() {
             self.next_lamport = self
                 .next_lamport
                 .max(local_changes.last().unwrap().lamport_end());
         }
-
         // debug_dbg!(&change_causal_arr);
         for change in local_changes {
             self.dag.vv.extend_to_include_last_id(change.id_last());
