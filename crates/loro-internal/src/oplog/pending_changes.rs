@@ -55,13 +55,13 @@ impl OpLog {
             let local_change = to_local_op(change, converter);
             let local_change = PendingChange::Known(local_change);
             match remote_change_apply_state(&latest_vv, &local_change) {
-                ChangeApplyState::Directly => {
+                ChangeApplyState::CanApplyDirectly => {
                     latest_vv.set_end(local_change.id_end());
                     ans.push(local_change.id_last());
                     self.apply_local_change_from_remote(local_change);
                 }
-                ChangeApplyState::Existing => {}
-                ChangeApplyState::Future(miss_dep) => self
+                ChangeApplyState::Applied => {}
+                ChangeApplyState::AwaitingDependency(miss_dep) => self
                     .pending_changes
                     .changes
                     .entry(miss_dep)
@@ -82,7 +82,7 @@ impl OpLog {
             let local_change = to_local_op(change, converter);
             let local_change = PendingChange::Unknown(local_change);
             match remote_change_apply_state(latest_vv, &local_change) {
-                ChangeApplyState::Future(miss_dep) => self
+                ChangeApplyState::AwaitingDependency(miss_dep) => self
                     .pending_changes
                     .changes
                     .entry(miss_dep)
@@ -133,13 +133,13 @@ impl OpLog {
             let Some(pending_changes) = self.pending_changes.changes.remove(&id) else{continue;};
             for pending_change in pending_changes {
                 match remote_change_apply_state(latest_vv, &pending_change) {
-                    ChangeApplyState::Directly => {
+                    ChangeApplyState::CanApplyDirectly => {
                         id_stack.push(pending_change.id_last());
                         latest_vv.set_end(pending_change.id_end());
                         self.apply_local_change_from_remote(pending_change);
                     }
-                    ChangeApplyState::Existing => {}
-                    ChangeApplyState::Future(miss_dep) => self
+                    ChangeApplyState::Applied => {}
+                    ChangeApplyState::AwaitingDependency(miss_dep) => self
                         .pending_changes
                         .changes
                         .entry(miss_dep)
@@ -217,30 +217,30 @@ pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter)
     }
 }
 
-pub enum ChangeApplyState {
-    Existing,
-    Directly,
+enum ChangeApplyState {
+    Applied,
+    CanApplyDirectly,
     // The id of first missing dep
-    Future(ID),
+    AwaitingDependency(ID),
 }
 
-pub(super) fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
+fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeApplyState {
     let peer = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
     if vv_latest_ctr < start {
-        return ChangeApplyState::Future(change.id.inc(-1));
+        return ChangeApplyState::AwaitingDependency(change.id.inc(-1));
     }
     if vv_latest_ctr >= end {
-        return ChangeApplyState::Existing;
+        return ChangeApplyState::Applied;
     }
     for dep in change.deps.as_ref().iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeApplyState::Future(*dep);
+            return ChangeApplyState::AwaitingDependency(*dep);
         }
     }
-    ChangeApplyState::Directly
+    ChangeApplyState::CanApplyDirectly
 }
 
 #[cfg(test)]
