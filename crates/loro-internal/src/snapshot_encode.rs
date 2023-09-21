@@ -184,7 +184,6 @@ pub fn decode_oplog(
         change.lamport = lamport;
         oplog.import_local_change(change)?;
     }
-
     Ok(())
 }
 
