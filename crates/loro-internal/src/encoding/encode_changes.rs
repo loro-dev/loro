@@ -51,7 +51,7 @@ struct OpEncoding {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    value: LoroValue,
+    value: Option<LoroValue>,
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -169,16 +169,16 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                         ListOp::Insert { slice, pos } => (
                             pos,
                             // TODO: perf may be optimized by using borrow type instead
-                            match slice {
+                            Some(match slice {
                                 ListSlice::RawData(v) => LoroValue::List(Arc::new(v.to_vec())),
                                 ListSlice::RawStr {
                                     str,
                                     unicode_len: _,
                                 } => LoroValue::String(Arc::new(str.to_string())),
-                            },
+                            }),
                         ),
                         ListOp::Delete(span) => {
-                            (span.pos as usize, LoroValue::I32(span.len as i32))
+                            (span.pos as usize, Some(LoroValue::I32(span.len as i32)))
                         }
                     },
                 };
@@ -270,6 +270,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
+                        let value = value.unwrap();
                         let list_op = match value {
                             LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,

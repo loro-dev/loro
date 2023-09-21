@@ -5,7 +5,7 @@ use loro_common::ContainerID;
 
 use crate::{
     arena::SharedArena,
-    container::idx::ContainerIdx,
+    container::{idx::ContainerIdx, map::MapSet},
     delta::MapValue,
     event::{Diff, Index},
     op::{RawOp, RawOpContent},
@@ -39,18 +39,30 @@ impl ContainerState for MapState {
 
     fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
         match op.content {
-            RawOpContent::Map(map) => {
-                if map.value.is_container() {
-                    let idx = arena.register_container(map.value.as_container().unwrap());
+            RawOpContent::Map(MapSet { key, value }) => {
+                if value.is_none() {
+                    self.insert(
+                        key,
+                        MapValue {
+                            lamport: (op.lamport, op.id.peer),
+                            counter: op.id.counter,
+                            value: None,
+                        },
+                    );
+                    return;
+                }
+                let value = value.unwrap();
+                if value.is_container() {
+                    let idx = arena.register_container(value.as_container().unwrap());
                     arena.set_parent(idx, Some(self.idx));
                 }
 
                 self.insert(
-                    map.key,
+                    key,
                     MapValue {
                         lamport: (op.lamport, op.id.peer),
                         counter: op.id.counter,
-                        value: Some(map.value),
+                        value: Some(value),
                     },
                 )
             }

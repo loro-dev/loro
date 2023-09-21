@@ -110,7 +110,7 @@ struct DocEncoding<'a> {
     #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
     start_counter: Vec<Counter>,
-    values: Vec<LoroValue>,
+    values: Vec<Option<LoroValue>>,
     clients: Vec<PeerID>,
     keys: Vec<InternalString>,
 }
@@ -200,7 +200,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             let mut len = 0;
                             match slice {
                                 ListSlice::RawData(v) => {
-                                    values.push(LoroValue::List(Arc::new(v.to_vec())));
+                                    values.push(Some(LoroValue::List(Arc::new(v.to_vec()))));
                                 }
                                 ListSlice::RawStr {
                                     str,
@@ -451,7 +451,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                     })
                                 }
                                 ContainerType::List => {
-                                    let value = value_iter.next().unwrap();
+                                    let value = value_iter.next().flatten().unwrap();
                                     RawOpContent::List(ListOp::Insert {
                                         slice: ListSlice::RawData(Cow::Owned(
                                             match Arc::try_unwrap(value.into_list().unwrap()) {

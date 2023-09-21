@@ -293,7 +293,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = oplog.arena.get_value(v.value as usize);
+                    let value = v.value.map(|v| oplog.arena.get_value(v as usize)).flatten();
                     MapValue {
                         counter: v.counter,
                         value,
@@ -317,7 +317,7 @@ struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
-    value: u32,
+    value: Option<u32>,
 }
 
 impl HasId for CompactMapValue {
