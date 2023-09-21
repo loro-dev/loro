@@ -141,14 +141,21 @@ pub fn decode_oplog(
                         SnapshotOp::Map {
                             key,
                             value_idx_plus_one,
-                        } => Op::new(
-                            id,
-                            InnerContent::Map(InnerMapSet {
-                                key: (&*keys[key]).into(),
-                                value: value_idx_plus_one.map(|v| v - 1),
-                            }),
-                            container_idx,
-                        ),
+                        } => {
+                            let value = if value_idx_plus_one == 0 {
+                                None
+                            } else {
+                                Some(value_idx_plus_one - 1)
+                            };
+                            Op::new(
+                                id,
+                                InnerContent::Map(InnerMapSet {
+                                    key: (&*keys[key]).into(),
+                                    value,
+                                }),
+                                container_idx,
+                            )
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -324,28 +331,16 @@ struct EncodedSnapshotOp {
     is_del: bool,
     // Text: 0
     // List: 0 | value index
-    // Map: value index
+    // Map: 0 (deleted) | value index + 1
     #[columnar(strategy = "DeltaRle")]
     value: isize,
 }
 
 enum SnapshotOp {
-    TextInsert {
-        pos: usize,
-        len: usize,
-    },
-    ListInsert {
-        pos: usize,
-        value_idx: u32,
-    },
-    TextOrListDelete {
-        pos: usize,
-        len: isize,
-    },
-    Map {
-        key: usize,
-        value_idx_plus_one: Option<u32>,
-    },
+    TextInsert { pos: usize, len: usize },
+    ListInsert { pos: usize, value_idx: u32 },
+    TextOrListDelete { pos: usize, len: isize },
+    Map { key: usize, value_idx_plus_one: u32 },
 }
 
 impl EncodedSnapshotOp {
@@ -378,11 +373,7 @@ impl EncodedSnapshotOp {
     }
 
     pub fn get_map(&self) -> SnapshotOp {
-        let value_idx_plus_one = if self.value < 0 {
-            None
-        } else {
-            Some(self.value as u32)
-        };
+        let value_idx_plus_one = if self.value < 0 { 0 } else { self.value as u32 };
         SnapshotOp::Map {
             key: self.prop,
             value_idx_plus_one,
@@ -412,7 +403,7 @@ impl EncodedSnapshotOp {
                 key,
                 value_idx_plus_one: value,
             } => {
-                let value = if let Some(v) = value { v as isize } else { -1 };
+                let value = if value == 0 { -1 } else { value as isize };
                 Self {
                     container,
                     prop: key,
@@ -686,14 +677,11 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                 },
                 InnerContent::Map(map) => {
                     let key = record_key(&map.key);
-                    let value = map
-                        .value
-                        .map(|v| oplog.arena.get_value(v as usize))
-                        .flatten();
+                    let value = map.value.and_then(|v| oplog.arena.get_value(v as usize));
                     let value = if let Some(value) = value {
-                        Some((record_value(&value) + 1) as u32)
+                        (record_value(&value) + 1) as u32
                     } else {
-                        None
+                        0
                     };
                     encoded_ops.push(EncodedSnapshotOp::from(
                         SnapshotOp::Map {
