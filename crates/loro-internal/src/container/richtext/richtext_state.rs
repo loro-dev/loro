@@ -1,12 +1,9 @@
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
-use generic_btree::{
-    rle::{insert_with_split, HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait,
-};
+use generic_btree::{rle::{HasLength, Mergeable, Sliceable}, BTree, BTreeTrait, LengthFinder, iter};
 use std::{
     borrow::Cow,
-    ops::{Add, AddAssign, Range, RangeBounds, Sub},
+    ops::{Add, AddAssign, Range, Sub},
     str::Utf8Error,
     sync::Arc,
 };
@@ -16,6 +13,7 @@ use crate::{
     InternalString,
 };
 
+// FIXME: Check splice and other things are using unicode index
 use self::query::{EntityQueryT, UnicodeQuery};
 
 use super::{
@@ -113,18 +111,9 @@ impl Mergeable for Elem {
 }
 
 impl Sliceable for Elem {
-    fn slice(&self, range: impl RangeBounds<usize>) -> Self {
-        let start_index = match range.start_bound() {
-            std::ops::Bound::Included(s) => *s,
-            std::ops::Bound::Excluded(s) => *s + 1,
-            std::ops::Bound::Unbounded => 0,
-        };
-
-        let end_index = match range.end_bound() {
-            std::ops::Bound::Included(s) => *s + 1,
-            std::ops::Bound::Excluded(s) => *s,
-            std::ops::Bound::Unbounded => self.rle_len(),
-        };
+    fn _slice(&self, range: Range<usize>) -> Self {
+        let start_index = range.start;
+        let end_index = range.end;
 
         let text = match self {
             Elem::Text {
@@ -137,17 +126,17 @@ impl Sliceable for Elem {
         };
 
         let s = std::str::from_utf8(text).unwrap();
-        let from = unicode_to_byte_index(s, start_index).unwrap();
-        let len = unicode_to_byte_index(&s[from..], end_index - start_index).unwrap();
+        let from = unicode_to_utf8_index(s, start_index).unwrap();
+        let len = unicode_to_utf8_index(&s[from..], end_index - start_index).unwrap();
         let to = from + len;
-        return Elem::Text {
+        Elem::Text {
             unicode_len: (end_index - start_index) as i32,
             text: text.slice_clone(from..to),
-        };
+        }
     }
 }
 
-fn unicode_to_byte_index(s: &str, unicode_index: usize) -> Option<usize> {
+fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
         if current_unicode_index == unicode_index {
@@ -158,6 +147,23 @@ fn unicode_to_byte_index(s: &str, unicode_index: usize) -> Option<usize> {
 
     if current_unicode_index == unicode_index {
         return Some(s.len());
+    }
+
+    None
+}
+
+fn utf16_to_unicode_index(s: &str, utf16_idex: usize) -> Option<usize> {
+    if utf16_idex == 0 {
+        return Some(0);
+    }
+
+    let mut current_utf16_index = 0;
+    for (i, c) in s.chars().enumerate() {
+        let len = c.len_utf16();
+        current_utf16_index += len;
+        if current_utf16_index == utf16_idex {
+            return Some(i + 1);
+        }
     }
 
     None
@@ -211,72 +217,45 @@ impl BTreeTrait for RichtextTreeTrait {
 
     type CacheDiff = Cache;
 
-    const MAX_LEN: usize = 16;
-
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
-        diff: Option<Self::CacheDiff>,
-    ) -> Option<Self::CacheDiff> {
-        match diff {
-            Some(diff) => {
-                *cache += diff;
-                Some(diff)
-            }
-            None => {
-                let mut new_cache = Cache::default();
-                for child in caches {
-                    new_cache += child.cache;
-                }
-
-                let diff = new_cache - *cache;
-                *cache = new_cache;
-                Some(diff)
-            }
-        }
-    }
-
-    fn calc_cache_leaf(
-        cache: &mut Self::Cache,
-        elements: &[Self::Elem],
-        diff: Option<Self::CacheDiff>,
     ) -> Self::CacheDiff {
-        match diff {
-            Some(diff) => {
-                *cache += diff;
-                diff
-            }
-            None => {
-                let mut new_cache = Cache::default();
-                for elem in elements {
-                    match elem {
-                        Elem::Text { unicode_len, .. } => {
-                            new_cache.unicode_len += unicode_len;
-                            new_cache.utf16_len += unicode_len;
-                            new_cache.entity_len += 1;
-                        }
-                        Elem::Style(size) => new_cache.entity_len += size.len() as i32,
-                    }
-                }
-
-                let diff = new_cache - *cache;
-                *cache = new_cache;
-                diff
-            }
+        let mut new_cache = Cache::default();
+        for child in caches {
+            new_cache += child.cache;
         }
+
+        let diff = new_cache - *cache;
+        *cache = new_cache;
+        diff
     }
 
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += *diff2;
     }
 
-    fn insert(
-        elements: &mut generic_btree::HeapVec<Self::Elem>,
-        index: usize,
-        offset: usize,
-        elem: Self::Elem,
-    ) {
-        insert_with_split(elements, index, offset, elem)
+    fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+        *cache += *diff;
+    }
+
+    fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
+        match elem {
+            Elem::Text { unicode_len, text } => Cache {
+                unicode_len: *unicode_len,
+                utf16_len: count_utf16_chars(&text) as i32,
+                entity_len: *unicode_len,
+            },
+            Elem::Style(styles) => Cache {
+                unicode_len: 0,
+                utf16_len: 0,
+                entity_len: styles.len() as i32,
+            },
+        }
+    }
+
+    fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
+        *cache
     }
 }
 
@@ -294,8 +273,30 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                Elem::Text { unicode_len, text } => *unicode_len as usize,
+                Elem::Text {
+                    unicode_len,
+                    text: _,
+                } => *unicode_len as usize,
                 Elem::Style(_) => 0,
+            }
+        }
+
+        fn get_offset_and_found(
+            left: usize,
+            elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            match elem {
+                Elem::Text {
+                    unicode_len,
+                    text: _,
+                } => {
+                    if *unicode_len as usize >= left {
+                        return (left, true);
+                    }
+
+                    (left, false)
+                }
+                Elem::Style(s) => (s.len(), false),
             }
         }
     }
@@ -317,6 +318,27 @@ mod query {
                 Elem::Style(_) => 0,
             }
         }
+
+        fn get_offset_and_found(
+            left: usize,
+            elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            match elem {
+                Elem::Text {
+                    unicode_len: _,
+                    text,
+                } => {
+                    if left == 0 {
+                        return (0, true);
+                    }
+
+                    let s = std::str::from_utf8(text).unwrap();
+                    let offset = utf16_to_unicode_index(s, left).unwrap();
+                    (offset, true)
+                }
+                Elem::Style(s) => (s.len(), false),
+            }
+        }
     }
 
     pub(super) struct EntityQueryT;
@@ -336,18 +358,51 @@ mod query {
                 Elem::Style(data) => data.len(),
             }
         }
+
+        fn get_offset_and_found(
+            left: usize,
+            elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
+        ) -> (usize, bool) {
+            match elem {
+                Elem::Text {
+                    unicode_len,
+                    text: _,
+                } => {
+                    if *unicode_len as usize >= left {
+                        return (left, true);
+                    }
+
+                    (left, false)
+                }
+                Elem::Style(data) => {
+                    if data.len() >= left {
+                        return (left, true);
+                    }
+
+                    (left, true)
+                }
+            }
+        }
     }
 }
 
 impl RichtextState {
     /// Insert text at a unicode index. Return the entity index.
     pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
-        let right = self.find_best_insert_pos_from_unicode_index(pos);
+        if self.tree.is_empty() {
+            let elem = Elem::try_from_bytes(text).unwrap();
+            self.style_ranges.insert(0, elem.rle_len());
+            self.tree.push(elem);
+            return 0;
+        }
+
+        let right = self.find_best_insert_pos_from_unicode_index(pos).unwrap();
+        let right = self.tree.prefer_left(right).unwrap_or(right);
         let entity_index = self.get_entity_index_from_path(right);
         let insert_pos = right;
         let elem = Elem::try_from_bytes(text).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
-        self.tree.insert_by_query_result(insert_pos, elem);
+        self.tree.insert_by_path(insert_pos, elem);
         entity_index
     }
 
@@ -365,33 +420,37 @@ impl RichtextState {
     fn find_best_insert_pos_from_unicode_index(
         &mut self,
         pos: usize,
-    ) -> generic_btree::QueryResult {
+    ) -> Option<generic_btree::Cursor> {
+        if self.tree.is_empty() {
+            return None;
+        }
+
         // There are a range of elements may share the same unicode index
-        // because style anchors don't have zero lengths in unicode index.
+        // because style anchors' lengths are zero in unicode index.
 
         // Find the start of the range
         let mut iter = if pos == 0 {
             self.tree.first_full_path()
         } else {
-            let q = self.tree.query::<UnicodeQuery>(&(pos - 1));
-            match self.tree.shift_path_by_one_offset(q) {
+            let q = self.tree.query::<UnicodeQuery>(&(pos - 1)).unwrap();
+            match self.tree.shift_path_by_one_offset(q.cursor) {
                 Some(x) => x,
                 // If next is None, we know the range is empty, return directly
-                None => return self.tree.last_full_path(),
+                None => return Some(self.tree.last_full_path()),
             }
         };
 
         // Find the end of the range
-        let right = self.tree.query::<UnicodeQuery>(&pos);
+        let right = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
         if iter == right {
             // no style anchor between unicode index (pos-1) and (pos)
-            return iter;
+            return Some(iter);
         }
 
         // need to scan from left to right
         let mut visited = Vec::new();
         while iter != right {
-            let Some(elem) = self.tree.get_elem(&iter) else {
+            let Some(elem) = self.tree.get_elem(iter.leaf) else {
                 break;
             };
             let style = match elem {
@@ -425,10 +484,10 @@ impl RichtextState {
             iter = top_elem;
         }
 
-        iter
+        Some(iter)
     }
 
-    fn get_entity_index_from_path(&mut self, right: generic_btree::QueryResult) -> usize {
+    fn get_entity_index_from_path(&mut self, right: generic_btree::Cursor) -> usize {
         let mut entity_index = 0;
         self.tree.visit_previous_caches(right, |cache| match cache {
             generic_btree::PreviousCache::NodeCache(cache) => {
@@ -448,14 +507,18 @@ impl RichtextState {
     ///
     /// Delete a range of text. (The style anchors included in the range are not deleted.)
     pub(crate) fn delete(&mut self, pos: usize, len: usize) -> Vec<Range<usize>> {
+        if self.tree.is_empty() {
+            return Vec::new();
+        }
+
         let mut style_anchors: Vec<Elem> = Vec::new();
         let mut removed_entity_ranges: Vec<Range<usize>> = Vec::new();
-        let q = self.tree.query::<UnicodeQuery>(&pos);
+        let q = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
         let mut entity_index = self.get_entity_index_from_path(q);
         let mut deleted = 0;
         // TODO: Delete style anchors whose inner text content is empty
 
-        for span in self.tree.drain::<UnicodeQuery>(pos..pos + len) {
+        for span in self.tree.drain_by_query::<UnicodeQuery>(pos..pos + len) {
             match span {
                 Elem::Style(style) => {
                     entity_index += style.len();
@@ -498,7 +561,8 @@ impl RichtextState {
         }
 
         let q = self.tree.query::<UnicodeQuery>(&pos);
-        self.tree.insert_many_by_query_result(&q, style_anchors);
+        self.tree
+            .insert_many_by_cursor(q.map(|x| x.cursor), style_anchors);
 
         removed_entity_ranges
     }
@@ -507,15 +571,23 @@ impl RichtextState {
     ///
     /// Return the corresponding entity index ranges.
     pub(crate) fn mark(&mut self, range: Range<usize>, style: Arc<StyleInner>) -> Range<usize> {
-        let end_pos = self.find_best_insert_pos_from_unicode_index(range.end);
+        if self.tree.is_empty() {
+            panic!("Cannot mark an empty tree");
+        }
+
+        let end_pos = self
+            .find_best_insert_pos_from_unicode_index(range.end)
+            .unwrap();
         let end_entity_index = self.get_entity_index_from_path(end_pos);
         self.tree
-            .insert_by_query_result(end_pos, Elem::from_style(style.info.to_end()));
+            .insert_by_path(end_pos, Elem::from_style(style.info.to_end()));
 
-        let start_pos = self.find_best_insert_pos_from_unicode_index(range.start);
+        let start_pos = self
+            .find_best_insert_pos_from_unicode_index(range.start)
+            .unwrap();
         let start_entity_index = self.get_entity_index_from_path(start_pos);
         self.tree
-            .insert_by_query_result(start_pos, Elem::from_style(style.info.to_start()));
+            .insert_by_path(start_pos, Elem::from_style(style.info.to_start()));
 
         self.style_ranges.insert(end_entity_index, 1);
         self.style_ranges.insert(start_entity_index, 1);
@@ -531,7 +603,7 @@ impl RichtextState {
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan<'_>> {
         let mut entity_index = 0;
         let mut style_range_iter = self.style_ranges.iter();
-        let mut cur_range = style_range_iter.next();
+        let mut cur_style_range = style_range_iter.next();
 
         fn to_styles(
             (_, style_map): &(Range<usize>, &FxHashMap<InternalString, StyleValue>),
@@ -543,12 +615,12 @@ impl RichtextState {
             styles
         }
 
-        let mut cur_styles = cur_range.as_ref().map(to_styles);
+        let mut cur_styles = cur_style_range.as_ref().map(to_styles);
 
         self.tree.iter().filter_map(move |x| match x {
             Elem::Text { unicode_len, text } => {
                 let mut styles = Vec::new();
-                while let Some((inner_cur_range, _)) = cur_range.as_ref() {
+                while let Some((inner_cur_range, _)) = cur_style_range.as_ref() {
                     if entity_index < inner_cur_range.start {
                         break;
                     }
@@ -557,8 +629,8 @@ impl RichtextState {
                         styles = cur_styles.as_ref().unwrap().clone();
                         break;
                     } else {
-                        cur_range = style_range_iter.next();
-                        cur_styles = cur_range.as_ref().map(to_styles);
+                        cur_style_range = style_range_iter.next();
+                        cur_styles = cur_style_range.as_ref().map(to_styles);
                     }
                 }
 
@@ -856,7 +928,6 @@ mod test {
         );
 
         wrapper.insert(0, "A");
-
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
@@ -893,6 +964,7 @@ mod test {
         wrapper.state.mark(0..5, link(0));
         wrapper.state.mark(0..5, bold(1));
         wrapper.insert(5, "A");
+
         assert_eq!(
             wrapper.state.to_vec(),
             vec![

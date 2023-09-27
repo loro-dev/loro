@@ -96,7 +96,6 @@ mod test {
                     .0,
                 &"h223ello"
             );
-            dbg!(event);
         }));
         let mut txn = loro.txn().unwrap();
         let text = loro.get_text("id");

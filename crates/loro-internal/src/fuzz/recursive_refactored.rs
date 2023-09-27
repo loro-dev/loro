@@ -1742,9 +1742,4 @@ mod failed_tests {
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }
-
-    #[ctor::ctor]
-    fn init_color_backtrace() {
-        color_backtrace::install();
-    }
 }

@@ -730,6 +730,5 @@ pub mod fuzz {
         ];
 
         crdt_list::test::normalize_actions(&mut actions, 5, 100);
-        dbg!(actions);
     }
 }

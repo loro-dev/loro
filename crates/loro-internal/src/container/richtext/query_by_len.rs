@@ -13,6 +13,7 @@ pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait> {
 pub trait QueryByLen<B: BTreeTrait> {
     fn get_cache_len(cache: &B::Cache) -> usize;
     fn get_elem_len(elem: &B::Elem) -> usize;
+    fn get_offset_and_found(left: usize, elem: &B::Elem) -> (usize, bool);
 }
 
 impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQuery<T, B> {
@@ -45,26 +46,7 @@ impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQuery<T, B> {
         FindResult::new_missing(child_caches.len() - 1, last_left)
     }
 
-    fn find_element(
-        &mut self,
-        _: &Self::QueryArg,
-        elements: &[<B as BTreeTrait>::Elem],
-    ) -> generic_btree::FindResult {
-        let mut last_left = self.left;
-        for (i, elem) in elements.iter().enumerate() {
-            let len = T::get_elem_len(elem);
-            if self.left >= len {
-                last_left = self.left;
-                self.left -= len;
-            } else {
-                return FindResult::new_found(i, self.left);
-            }
-        }
-
-        generic_btree::FindResult {
-            index: elements.len(),
-            offset: last_left,
-            found: false,
-        }
+    fn confirm_elem(&self, q: &Self::QueryArg, elem: &<B as BTreeTrait>::Elem) -> (usize, bool) {
+        T::get_offset_and_found(self.left, elem)
     }
 }

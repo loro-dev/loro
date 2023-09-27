@@ -14,6 +14,7 @@ mod query_by_len;
 mod richtext_state;
 mod style_range_map;
 mod tinyvec;
+mod tracker;
 
 use loro_common::{Counter, LoroValue, PeerID};
 use std::{borrow::Cow, fmt::Debug};

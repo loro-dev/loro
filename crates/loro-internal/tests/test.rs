@@ -1,11 +1,6 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
-#[ctor::ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-}
-
 #[test]
 fn import() {
     let doc = LoroDoc::new();

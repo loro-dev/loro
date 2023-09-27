@@ -3,14 +3,11 @@
 
 use std::{collections::BTreeSet, ops::Range, sync::Arc, usize};
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use generic_btree::{
-    rle::{
-        delete_range_in_elements, scan_and_merge, update_slice, HasLength, Mergeable, Sliceable,
-    },
+    rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, LengthFinder, UseLengthFinder,
 };
-use loro_common::{ContainerID, LoroValue};
 
 use crate::InternalString;
 
@@ -20,13 +17,13 @@ use super::{Style, StyleInner};
 ///
 /// It's initialized with usize::MAX/2 length.
 #[derive(Debug, Clone)]
-pub(super) struct StyleRangeMap(BTree<RangeNumMapTrait>);
+pub(super) struct StyleRangeMap(pub(super) BTree<RangeNumMapTrait>);
 
 #[derive(Debug, Clone)]
-struct RangeNumMapTrait;
+pub(super) struct RangeNumMapTrait;
 
 #[derive(Debug, Clone)]
-struct Elem {
+pub(super) struct Elem {
     styles: FxHashMap<InternalString, StyleValue>,
     len: usize,
 }
@@ -63,21 +60,23 @@ impl StyleValue {
 impl StyleRangeMap {
     pub fn new() -> Self {
         let mut tree = BTree::new();
-        tree.insert_by_query_result(
-            tree.first_full_path(),
-            Elem {
-                styles: Default::default(),
-                len: usize::MAX / 4,
-            },
-        );
+        tree.push(Elem {
+            styles: Default::default(),
+            len: usize::MAX / 4,
+        });
 
         Self(tree)
     }
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleInner>) {
         let range = self.0.range::<LengthFinder>(range);
-        self.0.update(&range.start..&range.end, &mut |mut slice| {
-            let ans = update_slice::<Elem, _>(&mut slice, &mut |x| {
+        if range.is_none() {
+            unreachable!();
+        }
+
+        let range = range.unwrap();
+        self.0
+            .update(range.start.cursor..range.end.cursor, &mut |mut x| {
                 // only leave one value with the greatest lamport if the style is mergeable
                 if let Some(set) = x.styles.get_mut(&style.key) {
                     set.set.insert(style.clone());
@@ -92,12 +91,9 @@ impl StyleRangeMap {
                     style_set.set.insert(style.clone());
                     x.styles.insert(style.key.clone(), style_set);
                 }
-                false
-            });
 
-            scan_and_merge(slice.elements, slice.start.map(|x| x.0).unwrap_or(0));
-            (ans, None)
-        });
+                (false, None)
+            });
     }
 
     /// Insert entities at `pos` with length of `len`
@@ -123,7 +119,7 @@ impl StyleRangeMap {
             return;
         }
 
-        if pos == *self.0.root_cache() {
+        if pos as isize == *self.0.root_cache() {
             self.0.push(Elem {
                 len,
                 styles: Default::default(),
@@ -131,17 +127,20 @@ impl StyleRangeMap {
             return;
         }
 
-        let right = self.0.query::<LengthFinder>(&pos);
-        let left = self.0.query::<LengthFinder>(&(pos - 1));
-        if left.elem_index == right.elem_index && left.leaf == right.leaf {
+        let right = self.0.query::<LengthFinder>(&pos).unwrap().cursor;
+        let left = self.0.query::<LengthFinder>(&(pos - 1)).unwrap().cursor;
+        if left.leaf == right.leaf {
             // left and right are in the same element, we can increase the length of the element directly
-            self.0.get_elem_mut(&left).unwrap().len += len;
+            self.0.update_leaf(left.leaf, |mut x| {
+                x.len += len;
+                (true, Some(len as isize), None, None)
+            });
             return;
         }
 
         // insert by the intersection of left styles and right styles
-        let mut styles = self.0.get_elem(&left).unwrap().styles.clone();
-        let right_styles = &self.0.get_elem(&right).unwrap().styles;
+        let mut styles = self.0.get_elem(left.leaf).unwrap().styles.clone();
+        let right_styles = &self.0.get_elem(right.leaf).unwrap().styles;
         styles.retain(|key, value| {
             if let Some(right_value) = right_styles.get(key) {
                 value.set.retain(|x| right_value.set.contains(x));
@@ -151,12 +150,12 @@ impl StyleRangeMap {
             false
         });
 
-        self.0.insert_by_query_result(right, Elem { len, styles });
+        self.0.insert_by_path(right, Elem { len, styles });
     }
 
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
-        let result = self.0.query::<LengthFinder>(&index);
-        self.0.get_elem(&result).map(|x| &x.styles)
+        let result = self.0.query::<LengthFinder>(&index)?.cursor;
+        self.0.get_elem(result.leaf).map(|x| &x.styles)
     }
 
     pub fn iter(
@@ -177,47 +176,28 @@ impl StyleRangeMap {
     }
 
     pub fn delete(&mut self, range: Range<usize>) {
-        self.0.drain::<LengthFinder>(range);
+        let start = self.0.query::<LengthFinder>(&range.start).unwrap();
+        let end = self.0.query::<LengthFinder>(&range.end).unwrap();
+        if start.cursor.leaf == end.cursor.leaf {
+            // delete in the same element
+            self.0.update_leaf(start.cursor.leaf, |mut x| {
+                x.len -= range.len();
+                (true, Some(-(range.len() as isize)), None, None)
+            });
+            return;
+        }
+
+        self.0.drain(start..end);
     }
 
     pub fn len(&self) -> usize {
-        *self.0.root_cache()
+        *self.0.root_cache() as usize
     }
 }
 
 impl UseLengthFinder<RangeNumMapTrait> for RangeNumMapTrait {
-    fn get_len(cache: &usize) -> usize {
-        *cache
-    }
-
-    fn find_element_by_offset(elements: &[Elem], offset: usize) -> generic_btree::FindResult {
-        let mut left = offset;
-        for (i, elem) in elements.iter().enumerate() {
-            if left >= elem.len {
-                left -= elem.len;
-            } else {
-                return generic_btree::FindResult::new_found(i, left);
-            }
-        }
-
-        generic_btree::FindResult::new_missing(elements.len(), left)
-    }
-
-    #[inline]
-    fn finder_drain_range(
-        elements: &mut generic_btree::HeapVec<<RangeNumMapTrait as BTreeTrait>::Elem>,
-        start: Option<generic_btree::QueryResult>,
-        end: Option<generic_btree::QueryResult>,
-    ) -> Box<dyn Iterator<Item = Elem> + '_> {
-        Box::new(delete_range_in_elements(elements, start, end).into_iter())
-    }
-
-    fn finder_delete_range(
-        elements: &mut generic_btree::HeapVec<<RangeNumMapTrait as BTreeTrait>::Elem>,
-        start: Option<generic_btree::QueryResult>,
-        end: Option<generic_btree::QueryResult>,
-    ) {
-        delete_range_in_elements(elements, start, end);
+    fn get_len(cache: &isize) -> usize {
+        *cache as usize
     }
 }
 
@@ -242,72 +222,25 @@ impl Mergeable for Elem {
 }
 
 impl Sliceable for Elem {
-    fn slice(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
-        let len = match range.end_bound() {
-            std::ops::Bound::Included(x) => x + 1,
-            std::ops::Bound::Excluded(x) => *x,
-            std::ops::Bound::Unbounded => self.len,
-        } - match range.start_bound() {
-            std::ops::Bound::Included(x) => *x,
-            std::ops::Bound::Excluded(x) => x + 1,
-            std::ops::Bound::Unbounded => 0,
-        };
+    fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+        let len = range.len();
         Elem {
             styles: self.styles.clone(),
             len,
         }
     }
-
-    fn slice_(&mut self, range: impl std::ops::RangeBounds<usize>)
-    where
-        Self: Sized,
-    {
-        let len = match range.end_bound() {
-            std::ops::Bound::Included(x) => x + 1,
-            std::ops::Bound::Excluded(x) => *x,
-            std::ops::Bound::Unbounded => self.len,
-        } - match range.start_bound() {
-            std::ops::Bound::Included(x) => *x,
-            std::ops::Bound::Excluded(x) => x + 1,
-            std::ops::Bound::Unbounded => 0,
-        };
-
-        self.len = len;
-    }
 }
 
 impl BTreeTrait for RangeNumMapTrait {
     type Elem = Elem;
-    type Cache = usize;
+    type Cache = isize;
     type CacheDiff = isize;
-
-    const MAX_LEN: usize = 8;
 
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
-        diff: Option<isize>,
-    ) -> Option<isize> {
-        match diff {
-            Some(diff) => {
-                *cache = (*cache as isize + diff) as usize;
-                Some(diff)
-            }
-            None => {
-                let new_cache = caches.iter().map(|c| c.cache).sum();
-                let diff = new_cache as isize - *cache as isize;
-                *cache = new_cache;
-                Some(diff)
-            }
-        }
-    }
-
-    fn calc_cache_leaf(
-        cache: &mut Self::Cache,
-        elements: &[Self::Elem],
-        _: Option<Self::CacheDiff>,
     ) -> isize {
-        let new_cache = elements.iter().map(|c| c.len).sum();
+        let new_cache = caches.iter().map(|c| c.cache).sum();
         let diff = new_cache as isize - *cache as isize;
         *cache = new_cache;
         diff
@@ -315,6 +248,18 @@ impl BTreeTrait for RangeNumMapTrait {
 
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2;
+    }
+
+    fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+        *cache += diff;
+    }
+
+    fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
+        elem.len as isize
+    }
+
+    fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
+        *cache
     }
 }
 
