@@ -34,7 +34,7 @@ itertools = "0.10.5"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
-generic-btree = { version = "0.7.0" }
+generic-btree = { path = "../../../generic-btree" }
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
 zerovec = { version = "0.9.4", features = ["serde", "derive"] }

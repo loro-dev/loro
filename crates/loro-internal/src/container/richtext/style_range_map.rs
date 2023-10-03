@@ -92,7 +92,7 @@ impl StyleRangeMap {
                     x.styles.insert(style.key.clone(), style_set);
                 }
 
-                (false, None)
+                None
             });
     }
 

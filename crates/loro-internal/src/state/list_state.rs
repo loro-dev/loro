@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::ContainerState;
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
@@ -13,8 +14,12 @@ use crate::{
 };
 use debug_log::debug_dbg;
 use fxhash::FxHashMap;
-use generic_btree::{rle::{HasLength, Mergeable, Sliceable}, ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, QueryResult, UseLengthFinder, iter, SplittedLeaves};
-use super::ContainerState;
+use generic_btree::{
+    iter,
+    rle::{HasLength, Mergeable, Sliceable},
+    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, QueryResult, SplittedLeaves,
+    UseLengthFinder,
+};
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
@@ -272,14 +277,14 @@ impl ListState {
 
     // PERF: use &[LoroValue]
     pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>) {
-        let (leaf, data) =
-            if self.list.is_empty() {
-                let leaf = self.list.push(Elem {
-                    vec: values.clone(),
-                });
-                (leaf, SplittedLeaves::default())
-            } else {
-                let (cursor , s) = self.list
+        let (leaf, data) = if self.list.is_empty() {
+            let leaf = self.list.push(Elem {
+                vec: values.clone(),
+            });
+            (leaf, SplittedLeaves::default())
+        } else {
+            let (cursor, s) =
+                self.list
                     .update_leaf_by_search::<LengthFinder>(&index, |elem, cursor| {
                         if elem.rle_len() + values.len() < MAX_LEN {
                             elem.vec
@@ -295,13 +300,12 @@ impl ListState {
                             ))
                         }
                     });
-                (cursor.unwrap().leaf, s)
-            };
+            (cursor.unwrap().leaf, s)
+        };
 
         for value in values {
             if let Ok(c) = value.into_container() {
-                self.child_container_to_leaf
-                    .insert(c, leaf);
+                self.child_container_to_leaf.insert(c, leaf);
             }
         }
 

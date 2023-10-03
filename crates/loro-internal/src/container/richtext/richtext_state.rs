@@ -1,6 +1,10 @@
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
-use generic_btree::{rle::{HasLength, Mergeable, Sliceable}, BTree, BTreeTrait, LengthFinder, iter};
+use generic_btree::{
+    iter,
+    rle::{HasLength, Mergeable, Sliceable},
+    BTree, BTreeTrait, LengthFinder,
+};
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Range, Sub},
@@ -430,13 +434,13 @@ impl RichtextState {
 
         // Find the start of the range
         let mut iter = if pos == 0 {
-            self.tree.first_full_path()
+            self.tree.start_cursor()
         } else {
             let q = self.tree.query::<UnicodeQuery>(&(pos - 1)).unwrap();
             match self.tree.shift_path_by_one_offset(q.cursor) {
                 Some(x) => x,
                 // If next is None, we know the range is empty, return directly
-                None => return Some(self.tree.last_full_path()),
+                None => return Some(self.tree.end_cursor()),
             }
         };
 
@@ -471,7 +475,7 @@ impl RichtextState {
 
             iter = match self.tree.shift_path_by_one_offset(iter) {
                 Some(x) => x,
-                None => self.tree.last_full_path(),
+                None => self.tree.end_cursor(),
             };
         }
 
