@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use loro_common::{ContainerID, InternalString, LoroError, LoroValue, ID};
-use serde_columnar::{columnar, to_vec};
+use serde_columnar::to_vec;
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
@@ -84,7 +84,6 @@ impl<'a> FinalPhase<'a> {
     }
 }
 
-#[columnar(ser, de)]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CommonArena<'a> {
     #[serde(borrow)]

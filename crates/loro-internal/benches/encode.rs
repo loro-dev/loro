@@ -57,17 +57,17 @@ mod run {
             if !ran {
                 let actions = bench_utils::get_automerge_actions();
                 let text = loro.get_text("text");
-                let mut txn = loro.txn().unwrap();
                 for TextAction { pos, ins, del } in actions.iter() {
+                    let mut txn = loro.txn().unwrap();
                     text.delete(&mut txn, *pos, *del).unwrap();
                     text.insert(&mut txn, *pos, ins).unwrap();
                 }
-                drop(txn);
                 ran = true;
             }
         };
 
         let mut b = c.benchmark_group("encode");
+        b.sample_size(10);
         b.bench_function("B4_encode_updates", |b| {
             ensure_ran();
             b.iter(|| {
@@ -80,6 +80,16 @@ mod run {
 
             b.iter(|| {
                 let store2 = LoroDoc::default();
+                store2.import(&buf).unwrap();
+            })
+        });
+        b.bench_function("B4_decode_updates detached mode", |b| {
+            ensure_ran();
+            let buf = loro.export_from(&Default::default());
+
+            b.iter(|| {
+                let mut store2 = LoroDoc::default();
+                store2.detach();
                 store2.import(&buf).unwrap();
             })
         });

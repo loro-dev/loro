@@ -209,10 +209,10 @@ mod test {
             RawOpContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
             RawOpContent::Map(MapSet {
                 key: "a".to_string().into(),
-                value: "b".to_string().into(),
+                value: Some("b".to_string().into()),
             }),
         ];
-        let remote_content_buf = vec![2, 1, 1, 0, 2, 0, 1, 97, 4, 1, 98];
+        let remote_content_buf = vec![2, 1, 1, 0, 2, 0, 1, 97, 1, 4, 1, 98];
         assert_eq!(
             postcard::from_bytes::<Vec<RawOpContent>>(&remote_content_buf).unwrap(),
             remote_content

@@ -10,7 +10,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
-        map::InnerMapSet,
+        map::{InnerMapSet, MapSet},
         text::text_content::SliceRange,
         ContainerID,
     },
@@ -81,15 +81,16 @@ impl<'a> OpConverter<'a> {
         };
 
         match content {
-            crate::op::RawOpContent::Map(map) => {
-                let value = _alloc_value(&mut self.values, map.value) as u32;
+            crate::op::RawOpContent::Map(MapSet { key, value }) => {
+                let value = if let Some(value) = value {
+                    Some(_alloc_value(&mut self.values, value) as u32)
+                } else {
+                    None
+                };
                 Op {
                     counter,
                     container,
-                    content: crate::op::InnerContent::Map(InnerMapSet {
-                        key: map.key,
-                        value,
-                    }),
+                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
                 }
             }
             crate::op::RawOpContent::List(list) => match list {
@@ -119,14 +120,6 @@ impl<'a> OpConverter<'a> {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::Unknown(u) => Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::List(InnerListOp::Insert {
-                            slice: SliceRange::new_unknown(u as u32),
-                            pos,
-                        }),
-                    },
                 },
                 ListOp::Delete(span) => Op {
                     counter,
@@ -314,15 +307,16 @@ impl SharedArena {
         container: ContainerIdx,
     ) -> Op {
         match content {
-            crate::op::RawOpContent::Map(map) => {
-                let value = self.alloc_value(map.value) as u32;
+            crate::op::RawOpContent::Map(MapSet { key, value }) => {
+                let value = if let Some(value) = value {
+                    Some(self.alloc_value(value) as u32)
+                } else {
+                    None
+                };
                 Op {
                     counter,
                     container,
-                    content: crate::op::InnerContent::Map(InnerMapSet {
-                        key: map.key,
-                        value,
-                    }),
+                    content: crate::op::InnerContent::Map(InnerMapSet { key, value }),
                 }
             }
             crate::op::RawOpContent::List(list) => match list {
@@ -352,14 +346,6 @@ impl SharedArena {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::Unknown(u) => Op {
-                        counter,
-                        container,
-                        content: crate::op::InnerContent::List(InnerListOp::Insert {
-                            slice: SliceRange::new_unknown(u as u32),
-                            pos,
-                        }),
-                    },
                 },
                 ListOp::Delete(span) => Op {
                     counter,

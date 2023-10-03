@@ -7,7 +7,6 @@ use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, to_vec};
 use smallvec::smallvec;
 
@@ -75,14 +74,14 @@ pub fn decode_oplog(
     let mut keys = state_arena.keywords;
     keys.append(&mut extra_arena.keywords);
 
-    let oplog_data = OplogEncoded::decode(data)?;
+    let oplog_data = OplogEncoded::decode_iter(data)?;
 
     let mut changes = Vec::new();
-    let mut dep_iter = oplog_data.deps.iter();
-    let mut op_iter = oplog_data.ops.iter();
+    let mut dep_iter = oplog_data.deps;
+    let mut op_iter = oplog_data.ops;
     let mut counters = FxHashMap::default();
     let mut text_idx = 0;
-    for change in oplog_data.changes.iter() {
+    for change in oplog_data.changes {
         let peer_idx = change.peer_idx as usize;
         let peer_id = common.peer_ids[peer_idx];
         let timestamp = change.timestamp;
@@ -119,11 +118,6 @@ pub fn decode_oplog(
                             InnerContent::List(InnerListOp::new_del(pos, len)),
                             container_idx,
                         ),
-                        SnapshotOp::TextOrListUnknown { len, pos } => Op::new(
-                            id,
-                            InnerContent::List(InnerListOp::new_unknown(pos, len)),
-                            container_idx,
-                        ),
                         SnapshotOp::Map { .. } => {
                             unreachable!()
                         }
@@ -147,14 +141,21 @@ pub fn decode_oplog(
                         SnapshotOp::Map {
                             key,
                             value_idx_plus_one,
-                        } => Op::new(
-                            id,
-                            InnerContent::Map(InnerMapSet {
-                                key: (&*keys[key]).into(),
-                                value: value_idx_plus_one - 1,
-                            }),
-                            container_idx,
-                        ),
+                        } => {
+                            let value = if value_idx_plus_one == 0 {
+                                None
+                            } else {
+                                Some(value_idx_plus_one - 1)
+                            };
+                            Op::new(
+                                id,
+                                InnerContent::Map(InnerMapSet {
+                                    key: (&*keys[key]).into(),
+                                    value,
+                                }),
+                                container_idx,
+                            )
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -190,7 +191,6 @@ pub fn decode_oplog(
         change.lamport = lamport;
         oplog.import_local_change(change)?;
     }
-
     Ok(())
 }
 
@@ -269,19 +269,21 @@ pub fn decode_state<'b>(
 type ClientIdx = u32;
 
 #[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct OplogEncoded {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedChange")]
     pub(crate) changes: Vec<EncodedChange>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "EncodedSnapshotOp")]
     ops: Vec<EncodedSnapshotOp>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
 }
 
 impl OplogEncoded {
-    fn decode(data: &FinalPhase) -> Result<Self, LoroError> {
-        serde_columnar::from_bytes(&data.oplog)
+    fn decode_iter<'f: 'iter, 'iter>(
+        data: &'f FinalPhase,
+    ) -> Result<<Self as TableIter<'iter>>::Iter, LoroError> {
+        serde_columnar::iter_from_bytes::<Self>(&data.oplog)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
 
@@ -290,12 +292,12 @@ impl OplogEncoded {
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedChange {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "Rle")]
     pub(super) op_len: u32,
@@ -308,10 +310,10 @@ struct EncodedChange {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct EncodedSnapshotOp {
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     container: u32,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
@@ -321,37 +323,31 @@ struct EncodedSnapshotOp {
     // Map: always 0
     #[columnar(strategy = "DeltaRle")]
     len: i64,
-    // List: insert 0 | unkonwn -2 | deletion -1
-    // Text: insert 0 | unkonwn -2 | deletion -1
+    // List: insert 0 | deletion -1
+    // Text: insert 0 | deletion -1
     // Map: always 0
-    #[columnar(strategy = "Rle")]
-    kind: i64,
+    #[columnar(strategy = "BoolRle")]
+    is_del: bool,
     // Text: 0
     // List: 0 | value index
-    // Map: value index
+    // Map: 0 (deleted) | value index + 1
     #[columnar(strategy = "DeltaRle")]
-    value: usize,
+    value: isize,
 }
 
 enum SnapshotOp {
     TextInsert { pos: usize, len: usize },
     ListInsert { pos: usize, value_idx: u32 },
     TextOrListDelete { pos: usize, len: isize },
-    TextOrListUnknown { pos: usize, len: usize },
     Map { key: usize, value_idx_plus_one: u32 },
 }
 
 impl EncodedSnapshotOp {
     pub fn get_text(&self) -> SnapshotOp {
-        if self.kind == -1 {
+        if self.is_del {
             SnapshotOp::TextOrListDelete {
                 pos: self.prop,
                 len: self.len as isize,
-            }
-        } else if self.kind == -2 {
-            SnapshotOp::TextOrListUnknown {
-                pos: self.prop,
-                len: self.len as usize,
             }
         } else {
             SnapshotOp::TextInsert {
@@ -362,15 +358,10 @@ impl EncodedSnapshotOp {
     }
 
     pub fn get_list(&self) -> SnapshotOp {
-        if self.kind == -1 {
+        if self.is_del {
             SnapshotOp::TextOrListDelete {
                 pos: self.prop,
                 len: self.len as isize,
-            }
-        } else if self.kind == -2 {
-            SnapshotOp::TextOrListUnknown {
-                pos: self.prop,
-                len: self.len as usize,
             }
         } else {
             SnapshotOp::ListInsert {
@@ -381,9 +372,10 @@ impl EncodedSnapshotOp {
     }
 
     pub fn get_map(&self) -> SnapshotOp {
+        let value_idx_plus_one = if self.value < 0 { 0 } else { self.value as u32 };
         SnapshotOp::Map {
             key: self.prop,
-            value_idx_plus_one: self.value as u32,
+            value_idx_plus_one,
         }
     }
 
@@ -396,50 +388,46 @@ impl EncodedSnapshotOp {
                 container,
                 prop: pos,
                 len: 0,
-                kind: 0,
-                value: start as usize,
+                is_del: false,
+                value: start as isize,
             },
             SnapshotOp::TextOrListDelete { pos, len } => Self {
                 container,
                 prop: pos,
                 len: len as i64,
-                kind: -1,
-                value: 0,
-            },
-            SnapshotOp::TextOrListUnknown { pos, len } => Self {
-                container,
-                prop: pos,
-                len: len as i64,
-                kind: -2,
+                is_del: true,
                 value: 0,
             },
             SnapshotOp::Map {
                 key,
                 value_idx_plus_one: value,
-            } => Self {
-                container,
-                prop: key,
-                len: 0,
-                kind: 0,
-                value: value as usize,
-            },
+            } => {
+                let value = if value == 0 { -1 } else { value as isize };
+                Self {
+                    container,
+                    prop: key,
+                    len: 0,
+                    is_del: false,
+                    value,
+                }
+            }
             SnapshotOp::TextInsert { pos, len } => Self {
                 container,
                 prop: pos,
                 len: len as i64,
-                kind: 0,
+                is_del: false,
                 value: 0,
             },
         }
     }
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     peer_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     counter: Counter,
 }
 
@@ -643,51 +631,39 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         for op in change.ops.iter() {
             match &op.content {
                 InnerContent::List(list) => match list {
-                    InnerListOp::Insert { slice, pos } => {
-                        if slice.is_unknown() {
-                            encoded_ops.push(EncodedSnapshotOp::from(
-                                SnapshotOp::TextOrListUnknown {
-                                    pos: *pos,
-                                    len: slice.atom_len(),
-                                },
-                                op.container.to_index(),
-                            ));
-                        } else {
-                            match op.container.get_type() {
-                                loro_common::ContainerType::Text => {
-                                    let range = slice.0.start as usize..slice.0.end as usize;
-                                    let mut pos = *pos;
-                                    oplog.arena.with_text_slice(range, |slice| {
-                                        encoded_ops.push(record_str(
-                                            slice.as_bytes(),
-                                            pos,
-                                            op.container.to_index(),
-                                        ));
+                    InnerListOp::Insert { slice, pos } => match op.container.get_type() {
+                        loro_common::ContainerType::Text => {
+                            let range = slice.0.start as usize..slice.0.end as usize;
+                            let mut pos = *pos;
+                            oplog.arena.with_text_slice(range, |slice| {
+                                encoded_ops.push(record_str(
+                                    slice.as_bytes(),
+                                    pos,
+                                    op.container.to_index(),
+                                ));
 
-                                        pos += slice.chars().count();
-                                    })
-                                }
-                                loro_common::ContainerType::List => {
-                                    let values = oplog
-                                        .arena
-                                        .get_values(slice.0.start as usize..slice.0.end as usize);
-                                    let mut pos = *pos;
-                                    for value in values {
-                                        let idx = record_value(&value);
-                                        encoded_ops.push(EncodedSnapshotOp::from(
-                                            SnapshotOp::ListInsert {
-                                                pos,
-                                                value_idx: idx as u32,
-                                            },
-                                            op.container.to_index(),
-                                        ));
-                                        pos += 1;
-                                    }
-                                }
-                                loro_common::ContainerType::Map => unreachable!(),
+                                pos += slice.chars().count();
+                            })
+                        }
+                        loro_common::ContainerType::List => {
+                            let values = oplog
+                                .arena
+                                .get_values(slice.0.start as usize..slice.0.end as usize);
+                            let mut pos = *pos;
+                            for value in values {
+                                let idx = record_value(&value);
+                                encoded_ops.push(EncodedSnapshotOp::from(
+                                    SnapshotOp::ListInsert {
+                                        pos,
+                                        value_idx: idx as u32,
+                                    },
+                                    op.container.to_index(),
+                                ));
+                                pos += 1;
                             }
                         }
-                    }
+                        loro_common::ContainerType::Map => unreachable!(),
+                    },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::TextOrListDelete {
@@ -706,17 +682,16 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                 },
                 InnerContent::Map(map) => {
                     let key = record_key(&map.key);
-                    let value = oplog.arena.get_value(map.value as usize);
-                    // FIXME: delete in map
+                    let value = map.value.and_then(|v| oplog.arena.get_value(v as usize));
                     let value = if let Some(value) = value {
-                        record_value(&value) + 1
+                        (record_value(&value) + 1) as u32
                     } else {
                         0
                     };
                     encoded_ops.push(EncodedSnapshotOp::from(
                         SnapshotOp::Map {
                             key,
-                            value_idx_plus_one: value as u32,
+                            value_idx_plus_one: value,
                         },
                         op.container.to_index(),
                     ));

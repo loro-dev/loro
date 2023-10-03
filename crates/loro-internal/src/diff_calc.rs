@@ -75,7 +75,10 @@ impl DiffCalculator {
             merged.merge(after);
             let empty_vv: VersionVector = Default::default();
             if !after.includes_vv(before) {
-                // if after is not after before, we need to calculate the diff from the beginning
+                // If after is not after before, we need to calculate the diff from the beginning
+                //
+                // This is required because of [MapDiffCalculator]. It can be removed with
+                // a better data structure. See #114.
                 before = &empty_vv;
                 after = &merged;
                 before_frontiers = None;
@@ -293,7 +296,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = oplog.arena.get_value(v.value as usize);
+                    let value = v.value.map(|v| oplog.arena.get_value(v as usize)).flatten();
                     MapValue {
                         counter: v.counter,
                         value,
@@ -317,7 +320,7 @@ struct CompactMapValue {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
-    value: u32,
+    value: Option<u32>,
 }
 
 impl HasId for CompactMapValue {

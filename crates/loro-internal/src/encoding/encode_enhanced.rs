@@ -1,8 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan};
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, from_bytes, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
@@ -34,23 +33,23 @@ struct RootContainer<'a> {
     type_: ContainerType,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct NormalContainer {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     peer_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     counter: Counter,
     #[columnar(strategy = "Rle")]
     type_: u8,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct ChangeEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) peer_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     #[columnar(strategy = "DeltaRle")]
     pub(super) op_len: u32,
@@ -63,8 +62,8 @@ struct ChangeEncoding {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct OpEncoding {
     #[columnar(strategy = "DeltaRle")]
     container: usize,
@@ -73,20 +72,17 @@ struct OpEncoding {
     prop: usize,
     #[columnar(strategy = "BoolRle")]
     is_del: bool,
-    // if is_del == true, then the following fields is the length of the deletion
-    // if is_del != true, then the following fields is the length of unknown insertion
+    // the length of the deletion or insertion
     #[columnar(strategy = "Rle")]
-    gc: isize,
-    #[columnar(strategy = "Rle", original_type = "usize")]
-    insert_len: usize,
+    insert_del_len: isize,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 pub(super) struct DepsEncoding {
-    #[columnar(strategy = "DeltaRle", original_type = "u32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) client_idx: PeerIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) counter: Counter,
 }
 
@@ -100,24 +96,21 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Serialize, Deserialize)]
 struct DocEncoding<'a> {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "ChangeEncoding")]
     changes: Vec<ChangeEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "OpEncoding")]
     ops: Vec<OpEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec")]
     normal_containers: Vec<NormalContainer>,
-
-    #[serde(borrow)]
+    #[columnar(borrow)]
     str: Cow<'a, str>,
-    #[serde(borrow)]
+    #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
-
     start_counter: Vec<Counter>,
-    values: Vec<LoroValue>,
+    values: Vec<Option<LoroValue>>,
     clients: Vec<PeerID>,
     keys: Vec<InternalString>,
 }
@@ -190,7 +183,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let container_index = *container_idx2index.get(&container).unwrap();
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, gc, is_del, insert_len) = match content {
+                let (prop, is_del, insert_del_len) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
                         values.push(value.clone());
                         (
@@ -198,21 +191,16 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                 keys.push(key.clone());
                                 keys.len() - 1
                             }),
-                            0,
-                            false, // always insert
+                            false,
                             0,
                         )
                     }
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => {
-                            let gc = match &slice {
-                                ListSlice::Unknown(v) => *v as isize,
-                                _ => 0,
-                            };
                             let mut len = 0;
                             match slice {
                                 ListSlice::RawData(v) => {
-                                    values.push(LoroValue::List(Arc::new(v.to_vec())));
+                                    values.push(Some(LoroValue::List(Arc::new(v.to_vec()))));
                                 }
                                 ListSlice::RawStr {
                                     str,
@@ -221,12 +209,14 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     len = str.len();
                                     string.push_str(str.deref());
                                 }
-
-                                ListSlice::Unknown(_) => {}
                             };
-                            (pos, gc, false, len)
+                            assert!(len > 0);
+                            (pos, false, len as isize)
                         }
-                        ListOp::Delete(span) => (span.pos as usize, span.len, true, 0),
+                        ListOp::Delete(span) => {
+                            // span.len maybe negative
+                            (span.pos as usize, true, span.len)
+                        }
                         ListOp::Style {
                             start,
                             end,
@@ -237,10 +227,9 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 };
                 op_len += 1;
                 ops.push(OpEncoding {
-                    gc,
                     prop,
                     is_del,
-                    insert_len,
+                    insert_del_len,
                     container: container_index,
                 })
             }
@@ -353,10 +342,10 @@ fn extract_containers(
 }
 
 pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,
@@ -388,8 +377,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         ));
     }
 
-    let mut op_iter = ops.into_iter();
-    let mut deps_iter = deps.into_iter();
+    let mut op_iter = ops;
+    let mut deps_iter = deps;
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
             let Some(container) = root_containers.get(idx) else {
@@ -414,7 +403,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut value_iter = values.into_iter();
     let mut str_index = 0;
     let changes = change_encodings
-        .into_iter()
         .map(|change_encoding| {
             let counter = start_counter
                 .get_mut(change_encoding.peer_idx as usize)
@@ -433,10 +421,9 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             for op in op_iter.by_ref().take(op_len as usize) {
                 let OpEncoding {
                     container: container_idx,
-                    insert_len,
                     prop,
-                    gc,
                     is_del,
+                    insert_del_len,
                 } = op;
 
                 let Some(container_id) = get_container(container_idx) else {
@@ -456,16 +443,12 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                         if is_del {
                             RawOpContent::List(ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: gc,
+                                len: insert_del_len,
                             }))
-                        } else if gc > 0 {
-                            RawOpContent::List(ListOp::Insert {
-                                pos,
-                                slice: ListSlice::Unknown(gc as usize),
-                            })
                         } else {
                             match container_type {
                                 ContainerType::Text => {
+                                    let insert_len = insert_del_len as usize;
                                     let s = &str[str_index..str_index + insert_len];
                                     str_index += insert_len;
                                     RawOpContent::List(ListOp::Insert {
@@ -474,7 +457,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                     })
                                 }
                                 ContainerType::List => {
-                                    let value = value_iter.next().unwrap();
+                                    let value = value_iter.next().flatten().unwrap();
                                     RawOpContent::List(ListOp::Insert {
                                         slice: ListSlice::RawData(Cow::Owned(
                                             match Arc::try_unwrap(value.into_list().unwrap()) {
@@ -529,9 +512,9 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         Ok(changes) => changes,
         Err(err) => return Err(err),
     };
-
+    let mut pending_remote_changes = Vec::new();
     oplog.arena.clone().with_op_converter(|converter| {
-        for mut change in changes {
+        'outer: for mut change in changes {
             if change.id.counter < oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 // skip included changes
                 continue;
@@ -544,7 +527,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                         change.lamport = change.lamport.max(lamport + 1);
                     }
                     None => {
-                        todo!("pending")
+                        pending_remote_changes.push(change);
+                        continue 'outer;
                     }
                 }
             }
@@ -613,11 +597,11 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 .push(change);
         }
     });
-
-    // update dag frontiers
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }
+
+    oplog.import_unknown_lamport_remote_changes(pending_remote_changes)?;
     assert_eq!(str_index, str.len());
     Ok(())
 }

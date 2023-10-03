@@ -17,7 +17,11 @@ fn import() {
 #[test]
 fn import_history() {
     let doc = LoroDoc::new();
-    doc.import(include_bytes!("./history_data_v1.dat")).unwrap();
+    doc.import(include_bytes!("./history_compressed_rle_updates.dat"))
+        .unwrap();
+    let doc2 = LoroDoc::new();
+    doc2.import(include_bytes!("./history_snapshot.dat"))
+        .unwrap();
 }
 
 #[test]

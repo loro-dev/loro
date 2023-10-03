@@ -3,8 +3,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, from_bytes, to_vec};
+use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -27,12 +26,12 @@ type ClientIdx = u32;
 type Clients = Vec<PeerID>;
 type Containers = Vec<ContainerID>;
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 pub struct ChangeEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i64")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) timestamp: Timestamp,
     pub(super) op_len: u32,
     /// The length of deps that exclude the dep on the same client
@@ -44,25 +43,23 @@ pub struct ChangeEncoding {
     pub(super) dep_on_self: bool,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
 struct OpEncoding {
-    #[columnar(strategy = "Rle", original_type = "usize")]
+    #[columnar(strategy = "Rle")]
     container: usize,
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // TODO: can be compressed
-    gc: usize,
-    value: LoroValue,
+    value: Option<LoroValue>,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Copy, Clone)]
 pub(super) struct DepsEncoding {
-    #[columnar(strategy = "Rle", original_type = "u32")]
+    #[columnar(strategy = "Rle")]
     pub(super) client_idx: ClientIdx,
-    #[columnar(strategy = "DeltaRle", original_type = "i32")]
+    #[columnar(strategy = "DeltaRle")]
     pub(super) counter: Counter,
 }
 
@@ -76,13 +73,13 @@ impl DepsEncoding {
 }
 
 #[columnar(ser, de)]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct DocEncoding {
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "ChangeEncoding")]
     changes: Vec<ChangeEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "OpEncoding")]
     ops: Vec<OpEncoding>,
-    #[columnar(type = "vec")]
+    #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
     clients: Clients,
     containers: Containers,
@@ -160,34 +157,28 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
 
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, gc, value) = match content {
+                let (prop, value) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
                             keys.push(key);
                             keys.len() - 1
                         }),
-                        0,
                         value,
                     ),
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => (
                             pos,
-                            match &slice {
-                                ListSlice::Unknown(v) => *v,
-                                _ => 0,
-                            },
                             // TODO: perf may be optimized by using borrow type instead
-                            match slice {
+                            Some(match slice {
                                 ListSlice::RawData(v) => LoroValue::List(Arc::new(v.to_vec())),
                                 ListSlice::RawStr {
                                     str,
                                     unicode_len: _,
                                 } => LoroValue::String(Arc::new(str.to_string())),
-                                ListSlice::Unknown(_) => LoroValue::Null,
-                            },
+                            }),
                         ),
                         ListOp::Delete(span) => {
-                            (span.pos as usize, 0, LoroValue::I32(span.len as i32))
+                            (span.pos as usize, Some(LoroValue::I32(span.len as i32)))
                         }
                         ListOp::Style {
                             start,
@@ -202,7 +193,6 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                     container: container_idx,
                     prop,
                     value,
-                    gc,
                 })
             }
         }
@@ -239,10 +229,10 @@ pub(super) fn decode_changes_to_inner_format_oplog(
     input: &[u8],
     store: &OpLog,
 ) -> Result<RemoteClientChanges<'static>, LoroError> {
-    let encoded: DocEncoding =
-        from_bytes(input).map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+    let encoded = iter_from_bytes::<DocEncoding>(input)
+        .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
 
-    let DocEncoding {
+    let DocEncodingIter {
         changes: change_encodings,
         ops,
         deps,
@@ -252,13 +242,11 @@ pub(super) fn decode_changes_to_inner_format_oplog(
         start_counter,
     } = encoded;
 
-    let mut op_iter = ops.into_iter();
+    let mut op_iter = ops;
     let mut changes = FxHashMap::default();
-    let mut deps_iter = deps.into_iter();
+    let mut deps_iter = deps;
 
-    for (client_idx, this_change_encodings) in
-        &change_encodings.into_iter().group_by(|c| c.client_idx)
-    {
+    for (client_idx, this_change_encodings) in &change_encodings.group_by(|c| c.client_idx) {
         let mut counter = start_counter[client_idx as usize];
         for change_encoding in this_change_encodings {
             let ChangeEncoding {
@@ -277,7 +265,6 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                     container: container_idx,
                     prop,
                     value,
-                    gc,
                 } = op;
                 let container_id = containers[container_idx].clone();
 
@@ -289,15 +276,12 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
+                        let value = value.unwrap();
                         let list_op = match value {
                             LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
                                 len: len as isize,
                             }),
-                            LoroValue::Null => ListOp::Insert {
-                                pos,
-                                slice: ListSlice::Unknown(gc),
-                            },
                             _ => {
                                 let slice = match value {
                                     LoroValue::String(s) => ListSlice::RawStr {

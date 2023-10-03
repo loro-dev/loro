@@ -24,7 +24,7 @@ fn main() {
 
     let data = loro.export_from(&Default::default());
     let start = Instant::now();
-    for _ in 0..100 {
+    for _ in 0..10 {
         let mut b = LoroDoc::default();
         b.detach();
         b.import(&data).unwrap();

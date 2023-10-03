@@ -337,6 +337,17 @@ describe("type", () => {
     const v1 = list.getTyped(loro, 1);
     expectTypeOf(v1).toEqualTypeOf<number>();
   });
+
+  it("test binary type", () => {
+    const loro = new Loro<{ list: LoroList<[string, number]> }>();
+    const list = loro.getTypedList("list");
+    console.dir((list as any).__proto__);
+    loro.transact(txn => {
+      list.insertTyped(txn, 0, new Uint8Array(10));
+    });
+    const v0 = list.getTyped(loro, 0);
+    expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
+  });
 });
 
 function one_ms(): Promise<void> {
