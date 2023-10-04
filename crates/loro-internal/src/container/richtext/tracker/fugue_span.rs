@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable};
-use loro_common::{Counter, HasId, ID};
+use loro_common::{Counter, HasId, IdSpan, ID};
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(super) struct Content {
@@ -149,6 +149,17 @@ pub(super) struct FugueSpan {
     pub content: Content,
 }
 
+impl FugueSpan {
+    #[inline(always)]
+    pub fn id_span(&self) -> IdSpan {
+        IdSpan::new(
+            self.id.peer,
+            self.id.counter,
+            self.id.counter + self.content.len() as Counter,
+        )
+    }
+}
+
 impl Sliceable for FugueSpan {
     fn _slice(&self, range: Range<usize>) -> Self {
         Self {
@@ -231,7 +242,7 @@ impl HasId for FugueSpan {
 pub(super) struct Status {
     /// is this span from a future operation
     pub future: bool,
-    pub delete_times: u16,
+    pub delete_times: i16,
 }
 
 impl Status {
