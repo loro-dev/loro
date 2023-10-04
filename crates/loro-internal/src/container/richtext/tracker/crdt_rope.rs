@@ -79,11 +79,7 @@ impl CrdtRope {
                 Some(left_node.elem().id.inc(start.offset() as Counter - 1))
             };
 
-            let (origin_right, parent_right, parent_right_leaf, in_between) = if pos
-                == self.tree.root_cache().len
-            {
-                (None, None, None, Vec::new())
-            } else {
+            let (origin_right, parent_right, parent_right_leaf, in_between) = {
                 let mut in_between = Vec::new();
                 let mut origin_right = None;
                 let mut parent_right = None;
@@ -93,7 +89,7 @@ impl CrdtRope {
                         origin_right = Some(iter.elem.id.inc(iter.start.unwrap_or(0) as Counter));
                         parent_right = match iter.start {
                             Some(_) => {
-                                // It's guaranted that origin_right's origin_left == this.origin_left.
+                                // It's guaranteed that origin_right's origin_left == this.origin_left.
                                 // Because the first non-future node is just the leaf node in `start.cursor` node (iter.start.is_some())
                                 // Thus parent_right = origin_right
                                 Some(origin_right)
@@ -129,12 +125,12 @@ impl CrdtRope {
             // find insert pos
             let mut scanning = false;
             let mut visited: SmallVec<[IdSpan; 4]> = Default::default();
-            for (i, (other_leaf, other_elem)) in in_between.iter().enumerate() {
-                let other_orign_left = other_elem.origin_left;
-                if other_orign_left
+            for (other_leaf, other_elem) in in_between.iter() {
+                let other_origin_left = other_elem.origin_left;
+                if other_origin_left
                     .map(|left| visited.iter().all(|x| !x.contains_id(left)))
                     .unwrap_or(true)
-                    && other_orign_left != content.origin_left
+                    && other_origin_left != content.origin_left
                 {
                     // The other_elem's origin_left must be at the left side of content's origin_left.
                     // So the content must be at the left side of other_elem.
@@ -147,7 +143,7 @@ impl CrdtRope {
                     other_elem.id.counter + other_elem.rle_len() as Counter,
                 ));
 
-                if content.origin_left == other_orign_left {
+                if content.origin_left == other_origin_left {
                     if other_elem.origin_right == content.origin_right {
                         // Same right parent
                         if other_elem.id.peer > content.id.peer {
@@ -177,7 +173,7 @@ impl CrdtRope {
                             Ordering::Less => {
                                 scanning = true;
                             }
-                            Ordering::Equal if content.id.peer > other_elem.id.peer => {
+                            Ordering::Equal if other_elem.id.peer > content.id.peer => {
                                 break;
                             }
                             _ => {

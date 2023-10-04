@@ -22,7 +22,7 @@ pub(crate) struct Tracker {
 }
 
 impl Tracker {
-    pub fn new() -> Self {
+    pub fn new_with_unknown() -> Self {
         let mut this = Self {
             rope: CrdtRope::new(),
             id_to_cursor: IdToCursor::default(),
@@ -36,6 +36,15 @@ impl Tracker {
             Content::new_unknown(u32::MAX / 2),
         );
         this
+    }
+
+    pub fn new() -> Self {
+        Self {
+            rope: CrdtRope::new(),
+            id_to_cursor: IdToCursor::default(),
+            applied_vv: Default::default(),
+            current_vv: Default::default(),
+        }
     }
 
     fn insert(&mut self, op_id: ID, pos: usize, content: Content) {
@@ -57,6 +66,10 @@ impl Tracker {
         );
 
         self.update_insert_by_split(&result.splitted.arr);
+
+        let end_id = op_id.inc(content.len() as Counter);
+        self.current_vv.extend_to_include_end_id(end_id);
+        self.applied_vv.extend_to_include_end_id(end_id);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -75,7 +88,11 @@ impl Tracker {
             cur_id = cur_id.inc(span.content.len() as Counter);
         });
 
-        self.update_insert_by_split(&splitted.arr)
+        self.update_insert_by_split(&splitted.arr);
+
+        let end_id = op_id.inc(len as Counter);
+        self.current_vv.extend_to_include_end_id(end_id);
+        self.applied_vv.extend_to_include_end_id(end_id);
     }
 
     fn checkout(&mut self, vv: &VersionVector) {
@@ -142,7 +159,45 @@ impl Tracker {
             }
         }
 
+        self.current_vv = vv.clone();
         let leaf_indexes = self.rope.update(&updates);
         self.update_insert_by_split(&leaf_indexes);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::vv;
+
+    use super::*;
+
+    #[test]
+    fn test_len() {
+        let mut t = Tracker::new();
+        t.insert(ID::new(1, 0), 0, Content::new_text(0..2));
+        assert_eq!(t.rope.len(), 2);
+        t.checkout(&Default::default());
+        assert_eq!(t.rope.len(), 0);
+        t.insert(ID::new(2, 0), 0, Content::new_text(2..4));
+        let v = vv!(1 => 2, 2 => 2);
+        t.checkout(&v);
+        assert_eq!(&t.applied_vv, &v);
+        assert_eq!(t.rope.len(), 4);
+        dbg!(&t);
+    }
+
+    #[test]
+    fn test_retreat_and_forward_delete() {
+        let mut t = Tracker::new();
+        t.insert(ID::new(1, 0), 0, Content::new_text(0..10));
+        t.delete(ID::new(2, 0), 0, 10);
+        t.checkout(&vv!(1 => 10, 2=>5));
+        assert_eq!(t.rope.len(), 5);
+        t.checkout(&vv!(1 => 10, 2=>0));
+        assert_eq!(t.rope.len(), 10);
+        t.checkout(&vv!(1 => 10, 2=>10));
+        assert_eq!(t.rope.len(), 0);
+        t.checkout(&vv!(1 => 10, 2=>0));
+        assert_eq!(t.rope.len(), 10);
     }
 }

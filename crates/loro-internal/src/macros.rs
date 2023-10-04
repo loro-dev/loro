@@ -21,6 +21,26 @@ macro_rules! fx_map {
     };
 }
 
+/// ```no_run
+/// use loro_internal::vv;
+///
+/// let v = vv!(1 => 2, 2 => 3);
+/// assert_eq!(v.get(&1), Some(&2));
+/// assert_eq!(v.get(&2), Some(&3));
+/// ```
+#[macro_export]
+macro_rules! vv {
+    ($($key:expr => $value:expr),*) => {
+        {
+            let mut m = $crate::version::VersionVector::default();
+            $(
+                m.insert($key, $value);
+            )*
+            m
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! array_mut_ref {
     ($arr:expr, [$a0:expr, $a1:expr]) => {{

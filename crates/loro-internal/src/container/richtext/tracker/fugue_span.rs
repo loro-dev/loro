@@ -63,7 +63,8 @@ impl Content {
     #[inline(always)]
     pub fn len(&self) -> usize {
         match self.start {
-            Self::UNKOWN_START | Self::SYMBOL_START => 1,
+            Self::UNKOWN_START => self.end as usize,
+            Self::SYMBOL_START => 1,
             _ => (self.end - self.start) as usize,
         }
     }
