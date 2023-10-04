@@ -4,7 +4,7 @@ use generic_btree::{
     LeafIndex,
 };
 use loro_common::{Counter, IdSpan, PeerID, ID};
-use rle::{HasLength as RHasLength, Mergable as RMergeable};
+use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
 use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::collections::BTreeSet;
@@ -56,16 +56,63 @@ impl IdToCursor {
         )
     }
 
-    pub fn iter(&self, id_span: IdSpan) -> impl Iterator<Item = &Fragment> + '_ {
+    pub fn iter(&self, mut id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
+        id_span.normalize_();
         let list = self.map.get(&id_span.client_id).unwrap();
-        let index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
+        let mut index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
             Ok(index) => index,
             Err(index) => index - 1,
         };
 
-        list[index..]
-            .iter()
-            .take_while(move |x| x.counter < id_span.counter.end)
+        let mut offset = 0;
+        let mut counter = list[index].counter;
+        std::iter::from_fn(move || loop {
+            if index >= list.len() || counter >= id_span.counter.end {
+                return None;
+            }
+
+            let f = &list[index];
+            match &f.cursor {
+                Cursor::Insert { set, len: _ } => {
+                    if offset == set.len() {
+                        index += 1;
+                        offset = 0;
+                        continue;
+                    }
+
+                    offset += 1;
+                    let start_counter = counter;
+                    let elem = set[offset - 1];
+                    counter += elem.len as Counter;
+                    let end_counter = counter;
+                    if end_counter <= id_span.counter.start {
+                        continue;
+                    }
+
+                    return Some(IterCursor::Insert {
+                        leaf: elem.leaf,
+                        id_span: IdSpan::new(
+                            id_span.client_id,
+                            start_counter.max(id_span.counter.start),
+                            end_counter.min(id_span.counter.end),
+                        ),
+                    });
+                }
+                Cursor::Delete(span) => {
+                    let start_counter = counter;
+                    counter += span.atom_len() as Counter;
+                    if counter <= id_span.counter.start {
+                        continue;
+                    }
+
+                    let from = (id_span.counter.start - start_counter).max(0);
+                    let to = (id_span.counter.end - start_counter)
+                        .max(0)
+                        .min(span.atom_len() as Counter);
+                    return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
+                }
+            }
+        })
     }
 
     pub fn get_insert(&self, id: ID) -> Option<LeafIndex> {
@@ -107,6 +154,13 @@ impl Ord for Fragment {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum IterCursor {
+    Insert { leaf: LeafIndex, id_span: IdSpan },
+    // deleted id_span
+    Delete(IdSpan),
+}
+
 #[derive(Debug)]
 pub(super) enum Cursor {
     Insert {
@@ -116,7 +170,7 @@ pub(super) enum Cursor {
     Delete(IdSpan),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(super) struct Insert {
     leaf: LeafIndex,
     len: u32,
