@@ -151,7 +151,7 @@ impl Sliceable for Elem {
     }
 }
 
-fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
+pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
         if current_unicode_index == unicode_index {
@@ -167,7 +167,7 @@ fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
     None
 }
 
-fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usize> {
+pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usize> {
     if utf16_index == 0 {
         return Some(0);
     }

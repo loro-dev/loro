@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 
-use fxhash::FxHashSet;
 use generic_btree::{
     rle::{HasLength, Sliceable},
     BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,

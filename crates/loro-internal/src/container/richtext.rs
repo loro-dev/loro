@@ -22,7 +22,7 @@ use fugue_span::*;
 use loro_common::{Counter, LoroValue, PeerID};
 use std::{borrow::Cow, fmt::Debug};
 
-pub(crate) use fugue_span::{RichtextChunk, RichtextChunkKind, RichtextChunkValue};
+pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
 pub(crate) use richtext_state::RichtextState;
 
 /// This is the data structure that represents a span of rich text.

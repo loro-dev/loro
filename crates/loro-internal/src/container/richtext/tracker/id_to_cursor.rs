@@ -7,7 +7,6 @@ use loro_common::{Counter, IdSpan, PeerID, ID};
 use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
 use smallvec::smallvec;
 use smallvec::SmallVec;
-use std::collections::BTreeSet;
 
 const MAX_FRAGMENT_LEN: usize = 256;
 

@@ -36,7 +36,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        let bytes = arena.slice_bytes(..);
         let mut index = 0;
         for span in richtext.vec.iter() {
             match span {
@@ -46,8 +45,10 @@ impl ContainerState for RichtextState {
                 crate::delta::DeltaItem::Insert { value, meta } => {
                     match value.value() {
                         crate::container::richtext::RichtextChunkValue::Text(r) => {
-                            self.state
-                                .insert(index, bytes.slice_clone(r.start as usize..r.end as usize));
+                            self.state.insert(
+                                index,
+                                arena.slice_by_unicode(r.start as usize..r.end as usize),
+                            );
                         }
                         crate::container::richtext::RichtextChunkValue::Symbol(s) => {
                             unimplemented!()

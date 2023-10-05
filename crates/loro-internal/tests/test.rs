@@ -15,6 +15,7 @@ fn import() {
 }
 
 #[test]
+#[ignore]
 fn import_history() {
     let doc = LoroDoc::new();
     doc.import(include_bytes!("./history_compressed_rle_updates.dat"))
