@@ -11,7 +11,7 @@ use generic_btree::{
 
 use crate::InternalString;
 
-use super::{Style, StyleInner};
+use super::{Style, StyleOp};
 
 /// This struct keep the mapping of ranges to numbers
 ///
@@ -30,7 +30,7 @@ pub(super) struct Elem {
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub(super) struct StyleValue {
-    set: BTreeSet<Arc<StyleInner>>,
+    set: BTreeSet<Arc<StyleOp>>,
     should_merge: bool,
 }
 
@@ -68,7 +68,7 @@ impl StyleRangeMap {
         Self(tree)
     }
 
-    pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleInner>) {
+    pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
         let range = self.0.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
@@ -267,17 +267,17 @@ impl BTreeTrait for RangeNumMapTrait {
 mod test {
     use loro_common::PeerID;
 
-    use crate::{change::Lamport, container::richtext::TextStyleInfo};
+    use crate::{change::Lamport, container::richtext::TextStyleInfoFlag};
 
     use super::*;
 
-    fn new_style(n: i32) -> Arc<StyleInner> {
-        Arc::new(StyleInner {
+    fn new_style(n: i32) -> Arc<StyleOp> {
+        Arc::new(StyleOp {
             lamport: n as Lamport,
             peer: n as PeerID,
             cnt: n,
             key: n.to_string().into(),
-            info: TextStyleInfo::default(),
+            info: TextStyleInfoFlag::default(),
         })
     }
 

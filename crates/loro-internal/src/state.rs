@@ -25,6 +25,7 @@ mod text_state;
 
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
+pub(crate) use richtext_state::RichtextState;
 pub(crate) use text_state::TextState;
 
 use super::{
@@ -52,8 +53,7 @@ pub struct DocState {
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena);
     fn apply_op(&mut self, op: RawOp, arena: &SharedArena);
-    /// Convert a state to a diff that when apply this diff on a empty state,
-    /// the state will be the same as this state.
+    /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&self) -> Diff;
 
     /// Start a transaction
@@ -86,6 +86,7 @@ pub enum State {
     ListState,
     MapState,
     TextState,
+    RichtextState,
 }
 
 impl State {

@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 
-use super::fugue_span::{FugueSpan, Status};
 use fxhash::FxHashSet;
 use generic_btree::{
     rle::{HasLength, Sliceable},
@@ -8,6 +7,8 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, ID};
 use smallvec::SmallVec;
+
+use crate::container::richtext::{FugueSpan, Status};
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct CrdtRope {
@@ -410,28 +411,28 @@ mod test {
 
     use loro_common::{Counter, PeerID, ID};
 
-    use crate::container::richtext::tracker::fugue_span::Content;
+    use crate::container::richtext::RichtextChunk;
 
     use super::*;
 
     fn span(id: u32, range: Range<u32>) -> FugueSpan {
         FugueSpan::new(
             ID::new(id as PeerID, 0 as Counter),
-            Content::new_text(range),
+            RichtextChunk::new_text(range),
         )
     }
 
     fn unknown_span(id: u32, len: usize) -> FugueSpan {
         FugueSpan::new(
             ID::new(id as PeerID, 0 as Counter),
-            Content::new_unknown(len as u32),
+            RichtextChunk::new_unknown(len as u32),
         )
     }
 
     fn future_span(id: u32, range: Range<u32>) -> FugueSpan {
         let mut fugue = FugueSpan::new(
             ID::new(id as PeerID, 0 as Counter),
-            Content::new_text(range),
+            RichtextChunk::new_text(range),
         );
 
         fugue.status.future = true;
@@ -441,7 +442,7 @@ mod test {
     fn dead_span(id: u32, range: Range<u32>) -> FugueSpan {
         let mut span = FugueSpan::new(
             ID::new(id as PeerID, 0 as Counter),
-            Content::new_text(range),
+            RichtextChunk::new_text(range),
         );
 
         span.status.delete_times += 1;

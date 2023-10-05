@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
+    container::richtext::RichtextChunk,
     delta::{Delta, MapDelta, MapDiff},
     text::text_content::SliceRanges,
     InternalString, LoroValue,
@@ -118,18 +119,20 @@ pub enum Index {
 ///
 /// # Internal
 ///
-/// SeqRaw & SeqRawUtf16 is internal stuff, it should not be exposed to user.
+/// SeqRaw & SeqRawUtf16 & RichtextRaw is internal stuff, it should not be exposed to user.
 /// The len inside SeqRaw uses utf8 for Text by default.
 ///
 /// Text always uses platform specific indexes:
 ///
 /// - When `wasm` is enabled, it should use utf16 indexes.
 /// - When `wasm` is disabled, it should use utf8 indexes.
+#[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     SeqRaw(Delta<SliceRanges>),
     SeqRawUtf16(Delta<SliceRanges>),
+    RichtextRaw(Delta<RichtextChunk>),
     Text(Delta<String>),
     /// @deprecated
     Map(MapDiff<LoroValue>),

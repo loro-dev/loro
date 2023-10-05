@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     container::{
-        richtext::TextStyleInfo,
+        richtext::TextStyleInfoFlag,
         text::text_content::{ListSlice, SliceRange},
     },
     InternalString,
@@ -25,7 +25,7 @@ pub enum ListOp<'a> {
         start: u32,
         end: u32,
         key: InternalString,
-        info: TextStyleInfo,
+        info: TextStyleInfoFlag,
     },
 }
 
@@ -42,7 +42,7 @@ pub enum InnerListOp {
         start: u32,
         end: u32,
         key: InternalString,
-        info: TextStyleInfo,
+        info: TextStyleInfoFlag,
     },
 }
 

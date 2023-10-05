@@ -528,6 +528,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                     .states
                     .push(EncodedContainerState::Text { len: text.len() })
             }
+            State::RichtextState(_) => todo!(),
         }
     }
 

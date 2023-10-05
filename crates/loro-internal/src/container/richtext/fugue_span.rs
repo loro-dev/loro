@@ -2,29 +2,31 @@ use std::ops::Range;
 
 use generic_btree::rle::{HasLength, Mergeable, Sliceable};
 use loro_common::{Counter, HasId, IdSpan, ID};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub(super) struct Content {
-    pub(crate) end: u32,
-    pub(crate) start: u32,
+// TODO: change visibility back to crate after #116 is done
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+pub struct RichtextChunk {
+    start: u32,
+    end: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub(super) enum ContentKind {
+pub(crate) enum RichtextChunkKind {
     Text,
     Symbol,
     Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ContentValue {
+pub(crate) enum RichtextChunkValue {
     Text(Range<u32>),
     Symbol(u32),
     Unknown(u32),
 }
 
-impl Content {
-    pub(crate) const UNKOWN_START: u32 = u32::MAX;
+impl RichtextChunk {
+    pub(crate) const UNKNOWN_START: u32 = u32::MAX;
     pub(crate) const SYMBOL_START: u32 = u32::MAX - 1;
 
     #[inline]
@@ -46,90 +48,90 @@ impl Content {
     #[inline]
     pub fn new_unknown(len: u32) -> Self {
         Self {
-            start: Self::UNKOWN_START,
+            start: Self::UNKNOWN_START,
             end: len,
         }
     }
 
     #[inline]
-    pub fn kind(&self) -> ContentKind {
+    pub(crate) fn kind(&self) -> RichtextChunkKind {
         match self.start {
-            Self::SYMBOL_START => ContentKind::Symbol,
-            Self::UNKOWN_START => ContentKind::Unknown,
-            _ => ContentKind::Text,
+            Self::SYMBOL_START => RichtextChunkKind::Symbol,
+            Self::UNKNOWN_START => RichtextChunkKind::Unknown,
+            _ => RichtextChunkKind::Text,
         }
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
         match self.start {
-            Self::UNKOWN_START => self.end as usize,
+            Self::UNKNOWN_START => self.end as usize,
             Self::SYMBOL_START => 1,
             _ => (self.end - self.start) as usize,
         }
     }
 
     #[inline]
-    pub fn value(&self) -> ContentValue {
+    pub(crate) fn value(&self) -> RichtextChunkValue {
         match self.start {
-            Self::UNKOWN_START => ContentValue::Unknown(self.end),
-            Self::SYMBOL_START => ContentValue::Symbol(self.end),
-            _ => ContentValue::Text(self.start..self.end),
+            Self::UNKNOWN_START => RichtextChunkValue::Unknown(self.end),
+            Self::SYMBOL_START => RichtextChunkValue::Symbol(self.end),
+            _ => RichtextChunkValue::Text(self.start..self.end),
         }
     }
 }
 
-impl Mergeable for Content {
+impl Mergeable for RichtextChunk {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self.kind(), rhs.kind()) {
-            (ContentKind::Text, ContentKind::Text) => self.end == rhs.start,
-            (ContentKind::Unknown, ContentKind::Unknown) => true,
+            (RichtextChunkKind::Text, RichtextChunkKind::Text) => self.end == rhs.start,
+            (RichtextChunkKind::Unknown, RichtextChunkKind::Unknown) => true,
             _ => false,
         }
     }
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self.kind(), rhs.kind()) {
-            (ContentKind::Text, ContentKind::Text) => self.end = rhs.end,
-            (ContentKind::Unknown, ContentKind::Unknown) => self.end += rhs.end,
+            (RichtextChunkKind::Text, RichtextChunkKind::Text) => self.end = rhs.end,
+            (RichtextChunkKind::Unknown, RichtextChunkKind::Unknown) => self.end += rhs.end,
             _ => unreachable!(),
         }
     }
 
     fn merge_left(&mut self, left: &Self) {
         match (self.kind(), left.kind()) {
-            (ContentKind::Text, ContentKind::Text) => self.start = left.start,
-            (ContentKind::Unknown, ContentKind::Unknown) => self.end += left.end,
+            (RichtextChunkKind::Text, RichtextChunkKind::Text) => self.start = left.start,
+            (RichtextChunkKind::Unknown, RichtextChunkKind::Unknown) => self.end += left.end,
             _ => unreachable!(),
         }
     }
 }
 
-impl HasLength for Content {
+impl HasLength for RichtextChunk {
     #[inline(always)]
     fn rle_len(&self) -> usize {
         self.len()
     }
 }
 
-impl Sliceable for Content {
+impl Sliceable for RichtextChunk {
     fn _slice(&self, range: Range<usize>) -> Self {
         match self.kind() {
-            ContentKind::Text => {
+            RichtextChunkKind::Text => {
                 assert!(range.len() <= self.len());
                 Self {
                     start: self.start + range.start as u32,
                     end: self.start + range.end as u32,
                 }
             }
-            ContentKind::Symbol => {
-                assert!(range.len() == 1);
+            RichtextChunkKind::Symbol => {
+                assert_eq!(range.len(), 1);
                 *self
             }
-            ContentKind::Unknown => {
+            RichtextChunkKind::Unknown => {
                 assert!(range.len() <= self.len());
                 Self {
-                    start: Self::UNKOWN_START,
+                    start: Self::UNKNOWN_START,
                     end: range.len() as u32,
                 }
             }
@@ -147,7 +149,7 @@ pub(super) struct FugueSpan {
     pub after_status: Option<Status>,
     pub origin_left: Option<ID>,
     pub origin_right: Option<ID>,
-    pub content: Content,
+    pub content: RichtextChunk,
 }
 
 impl FugueSpan {
@@ -207,7 +209,7 @@ impl Mergeable for FugueSpan {
 }
 
 impl FugueSpan {
-    pub fn new(id: ID, content: Content) -> Self {
+    pub fn new(id: ID, content: RichtextChunk) -> Self {
         Self {
             id,
             status: Status::default(),

@@ -1,8 +1,9 @@
 use std::{
-    ops::Range,
+    ops::{Range, RangeBounds},
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use fxhash::FxHashMap;
 use jumprope::JumpRope;
 
@@ -30,6 +31,7 @@ struct InnerSharedArena {
     text: Mutex<JumpRope>,
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
+    bytes: AppendOnlyBytes,
 }
 
 /// This is shared between [OpLog] and [AppState].
@@ -261,6 +263,11 @@ impl SharedArena {
         }
     }
 
+    #[inline]
+    pub fn slice_bytes(&self, range: impl RangeBounds<usize>) -> BytesSlice {
+        self.inner.bytes.slice(range)
+    }
+
     pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
         self.inner.values.lock().unwrap().get(idx).cloned()
     }
@@ -308,11 +315,7 @@ impl SharedArena {
     ) -> Op {
         match content {
             crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = if let Some(value) = value {
-                    Some(self.alloc_value(value) as u32)
-                } else {
-                    None
-                };
+                let value = value.map(|value| self.alloc_value(value) as u32);
                 Op {
                     counter,
                     container,

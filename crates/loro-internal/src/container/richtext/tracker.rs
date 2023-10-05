@@ -3,14 +3,14 @@ use loro_common::{Counter, PeerID, ID};
 
 use crate::VersionVector;
 
-use self::{
-    crdt_rope::CrdtRope,
-    fugue_span::{Content, FugueSpan, Status},
-    id_to_cursor::IdToCursor,
+use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
+
+use super::{
+    fugue_span::{FugueSpan, Status},
+    RichtextChunk,
 };
 
 mod crdt_rope;
-mod fugue_span;
 mod id_to_cursor;
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ impl Tracker {
         this.insert(
             ID::new(PeerID::MAX, 0),
             0,
-            Content::new_unknown(u32::MAX / 2),
+            RichtextChunk::new_unknown(u32::MAX / 2),
         );
         this
     }
@@ -47,7 +47,7 @@ impl Tracker {
         }
     }
 
-    fn insert(&mut self, op_id: ID, pos: usize, content: Content) {
+    fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -167,18 +167,18 @@ impl Tracker {
 
 #[cfg(test)]
 mod test {
-    use crate::vv;
+    use crate::{container::richtext::RichtextChunk, vv};
 
     use super::*;
 
     #[test]
     fn test_len() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, Content::new_text(0..2));
+        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..2));
         assert_eq!(t.rope.len(), 2);
         t.checkout(&Default::default());
         assert_eq!(t.rope.len(), 0);
-        t.insert(ID::new(2, 0), 0, Content::new_text(2..4));
+        t.insert(ID::new(2, 0), 0, RichtextChunk::new_text(2..4));
         let v = vv!(1 => 2, 2 => 2);
         t.checkout(&v);
         assert_eq!(&t.applied_vv, &v);
@@ -189,7 +189,7 @@ mod test {
     #[test]
     fn test_retreat_and_forward_delete() {
         let mut t = Tracker::new();
-        t.insert(ID::new(1, 0), 0, Content::new_text(0..10));
+        t.insert(ID::new(1, 0), 0, RichtextChunk::new_text(0..10));
         t.delete(ID::new(2, 0), 0, 10);
         t.checkout(&vv!(1 => 10, 2=>5));
         assert_eq!(t.rope.len(), 5);

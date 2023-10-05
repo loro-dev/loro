@@ -10,16 +10,20 @@
 //!
 //! The users of this type can only operate on unicode index or utf16 index, but calculated entity index will be provided.
 
+mod fugue_span;
 mod query_by_len;
-mod richtext_state;
+pub(crate) mod richtext_state;
 mod style_range_map;
 mod tinyvec;
 mod tracker;
 
+use crate::{change::Lamport, InternalString};
+use fugue_span::*;
 use loro_common::{Counter, LoroValue, PeerID};
 use std::{borrow::Cow, fmt::Debug};
 
-use crate::{change::Lamport, InternalString};
+pub(crate) use fugue_span::{RichtextChunk, RichtextChunkKind, RichtextChunkValue};
+pub(crate) use richtext_state::RichtextState;
 
 /// This is the data structure that represents a span of rich text.
 /// It's used to communicate with the frontend.
@@ -41,15 +45,15 @@ pub struct Style {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StyleInner {
+pub(crate) struct StyleOp {
     pub(crate) lamport: Lamport,
     pub(crate) peer: PeerID,
     pub(crate) cnt: Counter,
     pub(crate) key: InternalString,
-    pub(crate) info: TextStyleInfo,
+    pub(crate) info: TextStyleInfoFlag,
 }
 
-impl StyleInner {
+impl StyleOp {
     pub fn to_style(&self) -> Option<Style> {
         if self.info.is_delete() {
             return None;
@@ -73,7 +77,7 @@ impl StyleInner {
     }
 
     #[cfg(test)]
-    pub fn new_for_test(n: isize, key: &str, info: TextStyleInfo) -> Self {
+    pub fn new_for_test(n: isize, key: &str, info: TextStyleInfoFlag) -> Self {
         Self {
             lamport: n as Lamport,
             peer: n as PeerID,
@@ -84,13 +88,13 @@ impl StyleInner {
     }
 }
 
-impl PartialOrd for StyleInner {
+impl PartialOrd for StyleOp {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for StyleInner {
+impl Ord for StyleOp {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.lamport
             .cmp(&other.lamport)
@@ -112,11 +116,11 @@ impl Ord for StyleInner {
 /// - 0              (7th bit)
 /// - isAlive        (8th bit): always 1 unless the style is garbage collected. If this is 0, all other bits should be 0 as well.
 #[derive(Default, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct TextStyleInfo {
+pub struct TextStyleInfoFlag {
     data: u8,
 }
 
-impl Debug for TextStyleInfo {
+impl Debug for TextStyleInfoFlag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TextStyleInfo")
             // write data in binary format
@@ -165,7 +169,7 @@ impl ExpandType {
     }
 }
 
-impl TextStyleInfo {
+impl TextStyleInfoFlag {
     /// Whether two styles with the same key can be merged into one.
     /// If false, the styles will coexist in the same range.
     #[inline(always)]
@@ -253,7 +257,7 @@ impl TextStyleInfo {
             data |= CONTAINER_MASK;
         }
 
-        TextStyleInfo { data }
+        TextStyleInfoFlag { data }
     }
 
     pub const fn is_dead(self) -> bool {
@@ -291,12 +295,12 @@ impl TextStyleInfo {
         }
     }
 
-    pub const BOLD: TextStyleInfo =
-        TextStyleInfo::new(true, ExpandType::After, AnchorType::Start, false, false);
-    pub const LINK: TextStyleInfo =
-        TextStyleInfo::new(true, ExpandType::None, AnchorType::Start, false, false);
-    pub const COMMENT: TextStyleInfo =
-        TextStyleInfo::new(false, ExpandType::None, AnchorType::Start, false, true);
+    pub const BOLD: TextStyleInfoFlag =
+        TextStyleInfoFlag::new(true, ExpandType::After, AnchorType::Start, false, false);
+    pub const LINK: TextStyleInfoFlag =
+        TextStyleInfoFlag::new(true, ExpandType::None, AnchorType::Start, false, false);
+    pub const COMMENT: TextStyleInfoFlag =
+        TextStyleInfoFlag::new(false, ExpandType::None, AnchorType::Start, false, true);
 }
 
 #[cfg(test)]

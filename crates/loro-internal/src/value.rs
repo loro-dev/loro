@@ -46,6 +46,7 @@ enum TypeHint {
     Map,
     Text,
     List,
+    Richtext,
 }
 
 pub trait ApplyDiff {
@@ -156,6 +157,7 @@ impl ApplyDiff for LoroValue {
             Diff::NewMap(_) => TypeHint::Map,
             Diff::SeqRaw(_) => TypeHint::Text,
             Diff::SeqRawUtf16(_) => TypeHint::Text,
+            Diff::RichtextRaw(_) => TypeHint::Richtext,
         };
         {
             let mut hints = Vec::with_capacity(path.len());
@@ -177,6 +179,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
+                            TypeHint::Richtext => LoroValue::List(Default::default()),
                         })
                     }
                     Index::Seq(index) => {
@@ -352,6 +355,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
+                Diff::RichtextRaw(_) => todo!(),
             };
 
             // convert object to js value
