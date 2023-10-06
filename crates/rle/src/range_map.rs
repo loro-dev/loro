@@ -222,7 +222,10 @@ impl<
                     cur_ptr = next.into();
                     cur_data = Default::default();
                     cur_leaf = next;
-                    iter_children = cur_leaf.children.iter_mut().skip(0);
+                    #[allow(clippy::iter_skip_zero)]
+                    {
+                        iter_children = cur_leaf.children.iter_mut().skip(0);
+                    }
                 } else {
                     visited_nodes.insert(cur_ptr, cur_data);
                     // is the last element of the tree

@@ -143,7 +143,7 @@ impl Eq for Fragment {}
 
 impl PartialOrd for Fragment {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.counter.partial_cmp(&other.counter)
+        Some(self.cmp(other))
     }
 }
 

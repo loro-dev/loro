@@ -68,7 +68,7 @@ impl Eq for MapValue {}
 
 impl PartialOrd for MapValue {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.lamport.partial_cmp(&other.lamport)
+        Some(self.cmp(other))
     }
 }
 

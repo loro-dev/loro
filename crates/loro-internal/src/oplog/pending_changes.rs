@@ -130,7 +130,9 @@ impl OpLog {
         latest_vv: &mut VersionVector,
     ) {
         while let Some(id) = id_stack.pop() {
-            let Some(pending_changes) = self.pending_changes.changes.remove(&id) else{continue;};
+            let Some(pending_changes) = self.pending_changes.changes.remove(&id) else {
+                continue;
+            };
             for pending_change in pending_changes {
                 match remote_change_apply_state(latest_vv, &pending_change) {
                     ChangeApplyState::CanApplyDirectly => {
