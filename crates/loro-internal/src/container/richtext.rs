@@ -109,10 +109,9 @@ impl Ord for StyleOp {
 /// - Mergeable      (1st bit): whether two styles with the same key can be merged into one.
 /// - Expand Before  (2nd bit): when inserting new text before this style, whether the new text should inherit this style.
 /// - Expand After   (3rd bit): when inserting new text after  this style, whether the new text should inherit this style.
-/// - isEnd          (4th bit): whether this is a begin style anchor or an end style anchor.
-///                             This is only used to describe styles anchors. When it's used to describe a style, this bit is always 0.
-/// - Delete         (5th bit): whether this is used to remove a style from a range.
-/// - isContainer    (6th bit): whether the style also store other data in a associated map container with the same OpID.
+/// - Delete         (4th bit): whether this is used to remove a style from a range.
+/// - isContainer    (5th bit): whether the style also store other data in a associated map container with the same OpID.
+/// - 0              (6th bit)
 /// - 0              (7th bit)
 /// - isAlive        (8th bit): always 1 unless the style is garbage collected. If this is 0, all other bits should be 0 as well.
 #[derive(Default, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
@@ -128,7 +127,6 @@ impl Debug for TextStyleInfoFlag {
             .field("mergeable", &self.mergeable())
             .field("expand_before", &self.expand_before())
             .field("expand_after", &self.expand_after())
-            .field("is_end", &self.is_end())
             .field("is_delete", &self.is_delete())
             .field("is_container", &self.is_container())
             .finish()
@@ -138,9 +136,8 @@ impl Debug for TextStyleInfoFlag {
 const MERGEABLE_MASK: u8 = 0b0000_0001;
 const EXPAND_BEFORE_MASK: u8 = 0b0000_0010;
 const EXPAND_AFTER_MASK: u8 = 0b0000_0100;
-const IS_END_MASK: u8 = 0b0000_1000;
-const DELETE_MASK: u8 = 0b0001_0000;
-const CONTAINER_MASK: u8 = 0b0010_0000;
+const DELETE_MASK: u8 = 0b0000_1000;
+const CONTAINER_MASK: u8 = 0b0001_0000;
 const ALIVE_MASK: u8 = 0b1000_0000;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
@@ -189,34 +186,18 @@ impl TextStyleInfoFlag {
         self.data & EXPAND_AFTER_MASK != 0
     }
 
-    #[inline(always)]
-    pub fn anchor_type(self) -> AnchorType {
-        if self.data & IS_END_MASK != 0 {
-            AnchorType::End
-        } else {
-            AnchorType::Start
-        }
-    }
-
-    #[inline(always)]
-    pub fn is_end(self) -> bool {
-        self.data & IS_END_MASK != 0
-    }
-
-    #[inline(always)]
-    pub fn is_start(self) -> bool {
-        self.data & IS_END_MASK == 0
-    }
-
     /// This method tells that when we can insert text before/after this style anchor, whether we insert the new text before the anchor.
     #[inline]
-    pub fn prefer_insert_before(self) -> bool {
-        if self.is_end() {
-            // If we need to expand the style, the new text should be inserted **before** the end anchor
-            self.expand_after()
-        } else {
-            // If we need to expand the style, the new text should be inserted **after** the start anchor
-            !self.expand_before()
+    pub fn prefer_insert_before(self, anchor_type: AnchorType) -> bool {
+        match anchor_type {
+            AnchorType::Start => {
+                // If we need to expand the style, the new text should be inserted **after** the start anchor
+                !self.expand_before()
+            }
+            AnchorType::End => {
+                // If we need to expand the style, the new text should be inserted **before** the end anchor
+                self.expand_after()
+            }
         }
     }
 
@@ -233,7 +214,6 @@ impl TextStyleInfoFlag {
     pub const fn new(
         mergeable: bool,
         expand_type: ExpandType,
-        anchor_type: AnchorType,
         is_delete: bool,
         is_container: bool,
     ) -> Self {
@@ -246,9 +226,6 @@ impl TextStyleInfoFlag {
         }
         if expand_type.expand_after() {
             data |= EXPAND_AFTER_MASK;
-        }
-        if matches!(anchor_type, AnchorType::End) {
-            data |= IS_END_MASK;
         }
         if is_delete {
             data |= DELETE_MASK;
@@ -279,28 +256,12 @@ impl TextStyleInfoFlag {
         Self { data }
     }
 
-    #[inline(always)]
-    pub const fn to_end(self) -> Self {
-        Self {
-            // set is_end
-            data: self.data | IS_END_MASK,
-        }
-    }
-
-    #[inline(always)]
-    pub const fn to_start(self) -> Self {
-        Self {
-            // set is_end
-            data: self.data & (!IS_END_MASK),
-        }
-    }
-
     pub const BOLD: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(true, ExpandType::After, AnchorType::Start, false, false);
+        TextStyleInfoFlag::new(true, ExpandType::After, false, false);
     pub const LINK: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(true, ExpandType::None, AnchorType::Start, false, false);
+        TextStyleInfoFlag::new(true, ExpandType::None, false, false);
     pub const COMMENT: TextStyleInfoFlag =
-        TextStyleInfoFlag::new(false, ExpandType::None, AnchorType::Start, false, true);
+        TextStyleInfoFlag::new(false, ExpandType::None, false, true);
 }
 
 #[cfg(test)]

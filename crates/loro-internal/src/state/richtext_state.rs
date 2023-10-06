@@ -128,7 +128,7 @@ impl RichtextState {
                 UndoItem::Delete { index, content } => {
                     match content {
                         Elem::Text { .. } => {}
-                        Elem::Style(_) => unimplemented!("should handle style annotation"),
+                        Elem::Style { .. } => unimplemented!("should handle style annotation"),
                     }
 
                     self.state

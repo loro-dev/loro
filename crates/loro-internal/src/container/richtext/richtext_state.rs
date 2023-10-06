@@ -33,8 +33,14 @@ pub(crate) struct RichtextState {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Elem {
-    Text { unicode_len: i32, text: BytesSlice },
-    Style(Arc<StyleOp>),
+    Text {
+        unicode_len: i32,
+        text: BytesSlice,
+    },
+    Style {
+        style: Arc<StyleOp>,
+        anchor_type: AnchorType,
+    },
 }
 
 impl Elem {
@@ -45,8 +51,8 @@ impl Elem {
         })
     }
 
-    pub fn from_style(style: Arc<StyleOp>) -> Self {
-        Self::Style(style)
+    pub fn from_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
+        Self::Style { style, anchor_type }
     }
 }
 
@@ -54,7 +60,7 @@ impl HasLength for Elem {
     fn rle_len(&self) -> usize {
         match self {
             Elem::Text { unicode_len, text } => *unicode_len as usize,
-            Elem::Style(data) => 1,
+            Elem::Style { .. } => 1,
         }
     }
 }
@@ -113,10 +119,13 @@ impl Sliceable for Elem {
                 unicode_len: _,
                 text,
             } => text,
-            Elem::Style(style) => {
+            Elem::Style { style, anchor_type } => {
                 assert_eq!(start_index, 0);
                 assert_eq!(end_index, 1);
-                return Elem::Style(style.clone());
+                return Elem::Style {
+                    style: style.clone(),
+                    anchor_type: *anchor_type,
+                };
             }
         };
 
@@ -144,7 +153,7 @@ impl Sliceable for Elem {
                 *unicode_len = pos as i32;
                 ans
             }
-            Elem::Style(styles) => {
+            Elem::Style { .. } => {
                 unreachable!()
             }
         }
@@ -261,7 +270,7 @@ impl BTreeTrait for RichtextTreeTrait {
                 utf16_len: count_utf16_chars(&text) as i32,
                 entity_len: *unicode_len,
             },
-            Elem::Style(_) => Cache {
+            Elem::Style { .. } => Cache {
                 unicode_len: 0,
                 utf16_len: 0,
                 entity_len: 1,
@@ -292,7 +301,7 @@ mod query {
                     unicode_len,
                     text: _,
                 } => *unicode_len as usize,
-                Elem::Style(_) => 0,
+                Elem::Style { .. } => 0,
             }
         }
 
@@ -311,7 +320,7 @@ mod query {
 
                     (left, false)
                 }
-                Elem::Style(s) => (1, false),
+                Elem::Style { .. } => (1, false),
             }
         }
     }
@@ -330,7 +339,7 @@ mod query {
                     unicode_len: _,
                     text,
                 } => count_utf16_chars(text),
-                Elem::Style(_) => 0,
+                Elem::Style { .. } => 0,
             }
         }
 
@@ -351,7 +360,7 @@ mod query {
                     let offset = utf16_to_unicode_index(s, left).unwrap();
                     (offset, true)
                 }
-                Elem::Style(s) => (1, false),
+                Elem::Style { .. } => (1, false),
             }
         }
     }
@@ -370,7 +379,7 @@ mod query {
                     unicode_len,
                     text: _,
                 } => *unicode_len as usize,
-                Elem::Style(data) => 1,
+                Elem::Style { .. } => 1,
             }
         }
 
@@ -389,12 +398,12 @@ mod query {
 
                     (left, false)
                 }
-                Elem::Style(data) => {
-                    if 1 >= left {
-                        return (left, true);
+                Elem::Style { .. } => {
+                    if left == 0 {
+                        return (0, true);
                     }
 
-                    (left, true)
+                    (left, false)
                 }
             }
         }
@@ -481,18 +490,18 @@ impl RichtextState {
             let Some(elem) = self.tree.get_elem(iter.leaf) else {
                 break;
             };
-            let style = match elem {
+            let (style, anchor_type) = match elem {
                 Elem::Text { .. } => unreachable!(),
-                Elem::Style(style) => style,
+                Elem::Style { style, anchor_type } => (style, *anchor_type),
             };
 
-            visited.push((style, iter));
-            if style.info.anchor_type() == AnchorType::Start {
+            visited.push((style, anchor_type, iter));
+            if anchor_type == AnchorType::Start {
                 // case 1. should be before this anchor
                 break;
             }
 
-            if style.info.prefer_insert_before() {
+            if style.info.prefer_insert_before(anchor_type) {
                 // case 2.
                 break;
             }
@@ -503,8 +512,8 @@ impl RichtextState {
             };
         }
 
-        while let Some((style, top_elem)) = visited.pop() {
-            if !style.info.prefer_insert_before() {
+        while let Some((style, anchor_type, top_elem)) = visited.pop() {
+            if !style.info.prefer_insert_before(anchor_type) {
                 // case 3.
                 break;
             }
@@ -548,9 +557,9 @@ impl RichtextState {
 
         for span in self.tree.drain_by_query::<UnicodeQuery>(pos..pos + len) {
             match span {
-                Elem::Style(style) => {
+                Elem::Style { .. } => {
                     entity_index += 1;
-                    style_anchors.push(Elem::Style(style));
+                    style_anchors.push(span.clone());
                 }
                 Elem::Text {
                     unicode_len,
@@ -607,24 +616,17 @@ impl RichtextState {
             .find_best_insert_pos_from_unicode_index(range.end)
             .unwrap();
         let end_entity_index = self.get_entity_index_from_path(end_pos);
-        let (start_style, end_style) = if style.info.is_start() {
-            let mut end = style.clone();
-            Arc::make_mut(&mut end).info = end.info.to_end();
-            (style.clone(), end)
-        } else {
-            let mut start = style.clone();
-            Arc::make_mut(&mut start).info = start.info.to_start();
-            (start, style.clone())
-        };
         self.tree
-            .insert_by_path(end_pos, Elem::from_style(end_style));
+            .insert_by_path(end_pos, Elem::from_style(style.clone(), AnchorType::End));
 
         let start_pos = self
             .find_best_insert_pos_from_unicode_index(range.start)
             .unwrap();
         let start_entity_index = self.get_entity_index_from_path(start_pos);
-        self.tree
-            .insert_by_path(start_pos, Elem::from_style(start_style));
+        self.tree.insert_by_path(
+            start_pos,
+            Elem::from_style(style.clone(), AnchorType::Start),
+        );
 
         self.style_ranges.insert(end_entity_index, 1);
         self.style_ranges.insert(start_entity_index, 1);
@@ -678,7 +680,7 @@ impl RichtextState {
                     styles,
                 })
             }
-            Elem::Style(s) => {
+            Elem::Style { .. } => {
                 entity_index += 1;
                 None
             }
@@ -1095,7 +1097,7 @@ mod test {
         wrapper.state.mark(0..5, bold(0));
         let mut count = 0;
         for span in wrapper.state.drain_by_entity_index(0, 7) {
-            if matches!(span, Elem::Style(_)) {
+            if matches!(span, Elem::Style { .. }) {
                 count += 1;
             }
         }

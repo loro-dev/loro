@@ -139,7 +139,7 @@ fn unicode_to_byte_index(index: &[Index], unicode_index: u32, bytes: &AppendOnly
 
     // SAFETY: we know that the index must be valid, because we record and calculate the valid index
     let s = unsafe { std::str::from_utf8_unchecked(&bytes.deref()[index.bytes as usize..]) };
-    unicode_to_utf8_index(s, unicode_index as usize - index.unicode as usize).unwrap()
+    unicode_to_utf8_index(s, (unicode_index - index.unicode) as usize).unwrap()
         + index.bytes as usize
 }
 
