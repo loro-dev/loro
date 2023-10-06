@@ -674,7 +674,8 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                             op.container.to_index(),
                         ));
                     }
-                    InnerListOp::Style { start, end, style } => unimplemented!("style encode"),
+                    InnerListOp::StyleStart { pos, style } => unimplemented!("style encode"),
+                    InnerListOp::StyleEnd { pos, style } => unimplemented!("style encode"),
                 },
                 InnerContent::Map(map) => {
                     let key = record_key(&map.key);

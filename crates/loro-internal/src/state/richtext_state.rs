@@ -1,9 +1,11 @@
+use std::{ops::Deref, sync::Arc};
+
 use generic_btree::rle::HasLength;
 use loro_common::LoroValue;
 
 use crate::{
     arena::SharedArena,
-    container::richtext::RichtextState as InnerState,
+    container::richtext::{RichtextState as InnerState, StyleOp},
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::DeltaItem,
     event::Diff,
@@ -17,6 +19,7 @@ pub struct RichtextState {
     state: InnerState,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
+    style_start_op: Option<(usize, Arc<StyleOp>)>,
 }
 
 impl Clone for RichtextState {
@@ -25,6 +28,7 @@ impl Clone for RichtextState {
             state: self.state.clone(),
             in_txn: false,
             undo_stack: Vec::new(),
+            style_start_op: None,
         }
     }
 }
@@ -99,9 +103,14 @@ impl ContainerState for RichtextState {
                 list_op::InnerListOp::Delete(del) => {
                     self.state.delete(del.pos as usize, del.len as usize);
                 }
-                list_op::InnerListOp::Style { start, end, style } => {
-                    self.state
-                        .mark(*start as usize..*end as usize, style.clone());
+                list_op::InnerListOp::StyleStart { pos, style } => {
+                    self.style_start_op = Some((*pos as usize, style.clone()));
+                }
+                list_op::InnerListOp::StyleEnd { pos, style } => {
+                    let (start_pos, start_style) =
+                        std::mem::take(&mut self.style_start_op).unwrap();
+                    assert_eq!(start_style.deref(), style.deref());
+                    self.state.mark(start_pos..*pos as usize, start_style);
                 }
             },
             _ => unreachable!(),

@@ -4,7 +4,10 @@ use jumprope::JumpRope;
 
 use crate::{
     arena::SharedArena,
-    container::text::text_content::{ListSlice, SliceRanges},
+    container::{
+        list::list_op,
+        text::text_content::{ListSlice, SliceRanges},
+    },
     delta::{Delta, DeltaItem},
     event::Diff,
     op::{Op, RawOp, RawOpContent},
@@ -78,7 +81,7 @@ impl ContainerState for TextState {
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
         match &op.content {
             RawOpContent::List(list) => match list {
-                crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
+                list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr {
                         str,
                         unicode_len: _,
@@ -87,10 +90,11 @@ impl ContainerState for TextState {
                     }
                     _ => unreachable!(),
                 },
-                crate::container::list::list_op::ListOp::Delete(del) => {
+                list_op::ListOp::Delete(del) => {
                     self.delete_unicode(del.pos as usize..del.pos as usize + del.len as usize);
                 }
-                crate::container::list::list_op::ListOp::Style { .. } => unreachable!(),
+                list_op::ListOp::StyleStart { .. } => unreachable!(),
+                list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
             _ => unreachable!(),
         }
