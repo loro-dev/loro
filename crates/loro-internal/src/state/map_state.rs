@@ -8,7 +8,7 @@ use crate::{
     container::{idx::ContainerIdx, map::MapSet},
     delta::MapValue,
     event::{Diff, Index},
-    op::{RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     InternalString, LoroValue,
 };
 
@@ -37,12 +37,12 @@ impl ContainerState for MapState {
         }
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
-        match op.content {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+        match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
                 if value.is_none() {
                     self.insert(
-                        key,
+                        key.clone(),
                         MapValue {
                             lamport: (op.lamport, op.id.peer),
                             counter: op.id.counter,
@@ -51,14 +51,14 @@ impl ContainerState for MapState {
                     );
                     return;
                 }
-                let value = value.unwrap();
+                let value = value.clone().unwrap();
                 if value.is_container() {
                     let idx = arena.register_container(value.as_container().unwrap());
                     arena.set_parent(idx, Some(self.idx));
                 }
 
                 self.insert(
-                    key,
+                    key.clone(),
                     MapValue {
                         lamport: (op.lamport, op.id.peer),
                         counter: op.id.counter,

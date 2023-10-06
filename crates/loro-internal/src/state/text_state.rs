@@ -7,7 +7,7 @@ use crate::{
     container::text::text_content::{ListSlice, SliceRanges},
     delta::{Delta, DeltaItem},
     event::Diff,
-    op::{RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     LoroValue,
 };
 
@@ -75,15 +75,15 @@ impl ContainerState for TextState {
         }
     }
 
-    fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) {
-        match op.content {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+        match &op.content {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawStr {
                         str,
                         unicode_len: _,
                     } => {
-                        self.insert_unicode(pos, &str);
+                        self.insert_unicode(*pos, &str);
                     }
                     _ => unreachable!(),
                 },

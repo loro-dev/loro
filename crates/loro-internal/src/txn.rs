@@ -210,7 +210,7 @@ impl Transaction {
         }
 
         let len = content.content_len();
-        let op = RawOp {
+        let raw_op = RawOp {
             id: ID {
                 peer: self.peer,
                 counter: self.next_counter,
@@ -221,12 +221,13 @@ impl Transaction {
         };
 
         let mut state = self.state.lock().unwrap();
-        state.apply_local_op(op.clone())?;
+        let op = self.arena.convert_raw_op(&raw_op);
+        state.apply_local_op(&raw_op, &op)?;
         drop(state);
         if let Some(hint) = hint {
-            self.event_hints.insert(op.id.counter, hint);
+            self.event_hints.insert(raw_op.id.counter, hint);
         }
-        self.push_local_op_to_log(&op);
+        self.local_ops.push(op);
         self.next_counter += len as Counter;
         self.next_lamport += len as Lamport;
         Ok(())

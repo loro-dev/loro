@@ -1,8 +1,11 @@
 use loro_common::LoroValue;
 
 use crate::{
-    arena::SharedArena, container::richtext::richtext_state::Elem,
-    container::richtext::RichtextState as InnerState, event::Diff, op::RawOp,
+    arena::SharedArena,
+    container::richtext::richtext_state::Elem,
+    container::richtext::RichtextState as InnerState,
+    event::Diff,
+    op::{Op, RawOp},
 };
 
 use super::ContainerState;
@@ -45,9 +48,12 @@ impl ContainerState for RichtextState {
                 crate::delta::DeltaItem::Insert { value, meta } => {
                     match value.value() {
                         crate::container::richtext::RichtextChunkValue::Text(r) => {
-                            self.state.insert(
+                            self.state.insert_elem_at_entity_index(
                                 index,
-                                arena.slice_by_unicode(r.start as usize..r.end as usize),
+                                Elem::Text {
+                                    unicode_len: (r.end - r.start) as i32,
+                                    text: arena.slice_by_unicode(r.start as usize..r.end as usize),
+                                },
                             );
                         }
                         crate::container::richtext::RichtextChunkValue::Symbol(s) => {
@@ -76,7 +82,7 @@ impl ContainerState for RichtextState {
         }
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
         match &op.content {
             crate::op::RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => {}

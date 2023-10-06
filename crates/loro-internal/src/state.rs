@@ -13,7 +13,7 @@ use crate::{
     event::{Diff, Index},
     fx_map,
     id::PeerID,
-    op::RawOp,
+    op::{Op, RawOp},
     version::Frontiers,
     ContainerType, InternalString, LoroValue,
 };
@@ -52,7 +52,7 @@ pub struct DocState {
 #[enum_dispatch]
 pub trait ContainerState: Clone {
     fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena);
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena);
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena);
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&self) -> Diff;
 
@@ -250,7 +250,7 @@ impl DocState {
         }
     }
 
-    pub fn apply_local_op(&mut self, op: RawOp) -> LoroResult<()> {
+    pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         let state = self
             .states
             .entry(op.container)
@@ -262,7 +262,7 @@ impl DocState {
         }
 
         // TODO: make apply_op return a result
-        state.apply_op(op, &self.arena);
+        state.apply_op(&raw_op, &op, &self.arena);
         Ok(())
     }
 

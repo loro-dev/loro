@@ -9,7 +9,7 @@ use crate::{
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
     event::{Diff, Index},
-    op::{RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent},
     LoroValue,
 };
 use debug_log::debug_dbg;
@@ -17,7 +17,7 @@ use fxhash::FxHashMap;
 use generic_btree::{
     iter,
     rle::{HasLength, Mergeable, Sliceable},
-    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, QueryResult, SplittedLeaves,
+    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, SplittedLeaves,
     UseLengthFinder,
 };
 
@@ -412,8 +412,8 @@ impl ContainerState for ListState {
         };
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
-        match op.content {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+        match &op.content {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
@@ -426,7 +426,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(pos, list.to_vec());
+                            self.insert_batch(*pos, list.to_vec());
                         }
                         std::borrow::Cow::Owned(list) => {
                             for value in list.iter() {
@@ -436,7 +436,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(pos, list);
+                            self.insert_batch(*pos, list.clone());
                         }
                     },
                     _ => unreachable!(),

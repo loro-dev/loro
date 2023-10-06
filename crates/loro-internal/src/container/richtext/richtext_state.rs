@@ -267,7 +267,7 @@ impl BTreeTrait for RichtextTreeTrait {
         match elem {
             Elem::Text { unicode_len, text } => Cache {
                 unicode_len: *unicode_len,
-                utf16_len: count_utf16_chars(&text) as i32,
+                utf16_len: count_utf16_chars(text) as i32,
                 entity_len: *unicode_len,
             },
             Elem::Style { .. } => Cache {
