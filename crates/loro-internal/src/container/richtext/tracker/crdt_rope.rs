@@ -7,7 +7,7 @@ use generic_btree::{
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, ID};
 use smallvec::SmallVec;
 
-use crate::container::richtext::{FugueSpan, Status};
+use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChunk, Status};
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct CrdtRope {
@@ -51,7 +51,7 @@ impl CrdtRope {
             };
         }
 
-        let pos = pos as isize;
+        let pos = pos as i32;
         let start = self.tree.query::<ActiveLenQuery>(&pos).unwrap();
 
         let (parent_right, parent_right_leaf, in_between) = {
@@ -206,17 +206,18 @@ impl CrdtRope {
         len: usize,
         mut notify_deleted_span: impl FnMut(FugueSpan),
     ) -> SplittedLeaves {
-        let start = self.tree.query::<ActiveLenQuery>(&(pos as isize)).unwrap();
+        let start = self.tree.query::<ActiveLenQuery>(&(pos as i32)).unwrap();
         let end = self
             .tree
-            .query::<ActiveLenQuery>(&((pos + len) as isize))
+            .query::<ActiveLenQuery>(&((pos + len) as i32))
             .unwrap();
         self.tree.update(start.cursor()..end.cursor(), &mut |elem| {
             if elem.is_activated() {
                 notify_deleted_span(*elem);
                 elem.status.delete_times += 1;
                 Some(Cache {
-                    len: -(elem.rle_len() as isize),
+                    len: -(elem.rle_len() as i32),
+                    changed_num: 0,
                 })
             } else {
                 None
@@ -227,29 +228,47 @@ impl CrdtRope {
     /// Update the leaf with given `id_span`
     ///
     /// Return the new leaf indexes that are created by splitting the old leaf nodes
-    pub(super) fn update(&mut self, updates: &[LeafUpdate]) -> Vec<LeafIndex> {
+    pub(super) fn update(
+        &mut self,
+        updates: &[LeafUpdate],
+        on_diff_status: bool,
+    ) -> Vec<LeafIndex> {
         let mut ans = Vec::new();
         // TODO: this method can be optimized by batching the updates
         for update in updates {
             let (_, splitted) = self.tree.update_leaf(update.leaf, |elem| {
                 let start = update.id_span.ctr_start() - elem.id.counter;
                 let end = update.id_span.ctr_end() - elem.id.counter;
-                let mut diff = 0;
+                let mut diff = Cache {
+                    len: 0,
+                    changed_num: 0,
+                };
                 let (a, b) = elem.update_with_split(start as usize..end as usize, |elem| {
-                    let was_active = elem.is_activated();
-                    update.apply_to(&mut elem.status);
-                    match (was_active, elem.is_activated()) {
-                        (true, false) => {
-                            diff -= elem.rle_len() as isize;
+                    if on_diff_status {
+                        assert!(elem.diff_status.is_none());
+                        elem.diff_status = Some(elem.status);
+                        update.apply_to(elem.diff_status.as_mut().unwrap());
+                        diff.changed_num += 1;
+                    } else {
+                        let was_active = elem.is_activated();
+                        update.apply_to(&mut elem.status);
+                        match (was_active, elem.is_activated()) {
+                            (true, false) => {
+                                diff.len -= elem.rle_len() as i32;
+                            }
+                            (false, true) => {
+                                diff.len += elem.rle_len() as i32;
+                            }
+                            _ => {}
                         }
-                        (false, true) => {
-                            diff += elem.rle_len() as isize;
-                        }
-                        _ => {}
                     }
                 });
 
-                (true, Some(Cache { len: diff }), a, b)
+                if diff.len == 0 && diff.changed_num == 0 {
+                    (false, None, a, b)
+                } else {
+                    (true, Some(diff), a, b)
+                }
             });
 
             for s in splitted.arr {
@@ -258,6 +277,68 @@ impl CrdtRope {
         }
 
         ans
+    }
+
+    pub(super) fn clear_diff_status(&mut self) {
+        self.tree.update_cache_and_elem_with_filter(
+            |cache| {
+                let drill = cache.changed_num > 0;
+                cache.changed_num = 0;
+                drill
+            },
+            |elem| {
+                elem.diff_status = None;
+            },
+        );
+    }
+
+    pub(super) fn get_diff(&self) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
+        let mut last_pos = 0;
+        let mut iter = self
+            .tree
+            .iter_with_filter(|cache| (cache.changed_num > 0, cache.len));
+        let mut next = None;
+        std::iter::from_fn(move || {
+            if let Some(next) = next.take() {
+                return Some(next);
+            }
+
+            #[allow(clippy::while_let_on_iterator)]
+            while let Some((index, elem)) = iter.next() {
+                // The elements will not be changed by this method.
+                // This index is current index of the elem (calculated by `status` field rather than `diff_status` field)
+                match elem.diff() {
+                    DiffStatus::NotChanged => {}
+                    DiffStatus::Created => {
+                        let rt = Some(CrdtRopeDelta::Insert(elem.content));
+                        if index > last_pos {
+                            next = rt;
+                            let len = index - last_pos;
+                            // last pos = index, because the creation has not been applied to the elem
+                            last_pos = index;
+                            return Some(CrdtRopeDelta::Retain(len as usize));
+                        } else {
+                            return rt;
+                        }
+                    }
+                    DiffStatus::Deleted => {
+                        let rt = Some(CrdtRopeDelta::Delete(elem.rle_len()));
+                        if index > last_pos {
+                            next = rt;
+                            let len = index - last_pos;
+                            // last pos = index + len, because the deletion has not been applied to the elem
+                            last_pos = index + elem.rle_len() as i32;
+                            return Some(CrdtRopeDelta::Retain(len as usize));
+                        } else {
+                            last_pos = index + elem.rle_len() as i32;
+                            return rt;
+                        }
+                    }
+                }
+            }
+
+            None
+        })
     }
 
     fn cmp_pos(
@@ -276,13 +357,20 @@ impl CrdtRope {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub(crate) enum CrdtRopeDelta {
+    Retain(usize),
+    Insert(RichtextChunk),
+    Delete(usize),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct CrdtRopeTrait;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Copy)]
 pub(super) struct Cache {
-    pub(super) len: isize,
-    // TODO: consider adding a 'changed_num' field
+    pub(super) len: i32,
+    pub(super) changed_num: i32,
 }
 
 impl BTreeTrait for CrdtRopeTrait {
@@ -297,26 +385,35 @@ impl BTreeTrait for CrdtRopeTrait {
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
     ) -> Self::CacheDiff {
-        let ans = caches.iter().map(|x| x.cache.len).sum();
-        let diff = ans - cache.len;
-        cache.len = ans;
-        Cache { len: diff }
+        let new_len = caches.iter().map(|x| x.cache.len).sum();
+        let new_changed_num = caches.iter().map(|x| x.cache.changed_num).sum();
+        let len_diff = new_len - cache.len;
+        let changed_num_diff = new_changed_num - cache.changed_num;
+        cache.len = new_len;
+        cache.changed_num = new_changed_num;
+        Cache {
+            len: len_diff,
+            changed_num: changed_num_diff,
+        }
     }
 
     #[inline(always)]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         cache.len += diff.len;
+        cache.changed_num += diff.changed_num;
     }
 
     #[inline(always)]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         diff1.len += diff2.len;
+        diff1.changed_num += diff2.changed_num;
     }
 
     #[inline(always)]
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         Cache {
-            len: elem.activated_len() as isize,
+            len: elem.activated_len() as i32,
+            changed_num: if elem.diff_status.is_some() { 1 } else { 0 },
         }
     }
 
@@ -332,11 +429,11 @@ impl BTreeTrait for CrdtRopeTrait {
 /// active index, the query will return the position of the first non-zero length
 /// content.
 struct ActiveLenQuery {
-    left: isize,
+    left: i32,
 }
 
 impl Query<CrdtRopeTrait> for ActiveLenQuery {
-    type QueryArg = isize;
+    type QueryArg = i32;
 
     fn init(target: &Self::QueryArg) -> Self {
         debug_assert!(*target >= 0);
@@ -557,29 +654,100 @@ mod test {
     fn update() {
         let mut rope = CrdtRope::new();
         let result = rope.insert(0, span(0, 0..10), |_| panic!());
-        let split = rope.update(&[LeafUpdate {
-            leaf: result.leaf,
-            id_span: IdSpan::new(0, 2, 8),
-            set_future: None,
-            delete_times_diff: 1,
-        }]);
+        let split = rope.update(
+            &[LeafUpdate {
+                leaf: result.leaf,
+                id_span: IdSpan::new(0, 2, 8),
+                set_future: None,
+                delete_times_diff: 1,
+            }],
+            false,
+        );
 
         assert_eq!(rope.len(), 4);
         assert_eq!(split.len(), 2);
-        let split = rope.update(&[LeafUpdate {
-            leaf: split[0],
-            id_span: IdSpan::new(0, 2, 8),
-            set_future: None,
-            delete_times_diff: -1,
-        }]);
+        let split = rope.update(
+            &[LeafUpdate {
+                leaf: split[0],
+                id_span: IdSpan::new(0, 2, 8),
+                set_future: None,
+                delete_times_diff: -1,
+            }],
+            false,
+        );
 
         assert_eq!(rope.len(), 10);
         assert_eq!(split.len(), 0);
     }
 
     #[test]
-    #[ignore]
     fn checkout() {
-        todo!()
+        let mut rope = CrdtRope::new();
+        let result1 = rope.insert(0, span(0, 0..10), |_| panic!());
+        let result2 = rope.insert(10, dead_span(1, 10..20), |_| panic!());
+        rope.update(
+            &[
+                LeafUpdate {
+                    leaf: result1.leaf,
+                    id_span: IdSpan::new(0, 2, 8),
+                    set_future: None,
+                    delete_times_diff: 1,
+                },
+                LeafUpdate {
+                    leaf: result2.leaf,
+                    id_span: IdSpan::new(1, 0, 3),
+                    set_future: None,
+                    delete_times_diff: -1,
+                },
+            ],
+            true,
+        );
+        let vec: Vec<_> = rope.get_diff().collect();
+        assert_eq!(
+            vec![
+                CrdtRopeDelta::Retain(2),
+                CrdtRopeDelta::Delete(6),
+                CrdtRopeDelta::Retain(2),
+                CrdtRopeDelta::Insert(RichtextChunk::new_text(10..13))
+            ],
+            vec,
+        );
+    }
+
+    #[test]
+    fn checkout_future() {
+        let mut rope = CrdtRope::new();
+        let result = rope.insert(0, future_span(0, 0..10), |_| panic!());
+        rope.update(
+            &[LeafUpdate {
+                leaf: result.leaf,
+                id_span: IdSpan::new(0, 2, 10),
+                set_future: Some(false),
+                delete_times_diff: 0,
+            }],
+            true,
+        );
+        let vec: Vec<_> = rope.get_diff().collect();
+        assert_eq!(
+            vec![CrdtRopeDelta::Insert(RichtextChunk::new_text(2..10))],
+            vec,
+        );
+    }
+
+    #[test]
+    fn checkout_future_with_delete() {
+        let mut rope = CrdtRope::new();
+        let result = rope.insert(0, future_span(0, 0..10), |_| panic!());
+        rope.update(
+            &[LeafUpdate {
+                leaf: result.leaf,
+                id_span: IdSpan::new(0, 2, 10),
+                set_future: Some(false),
+                delete_times_diff: 1,
+            }],
+            true,
+        );
+        let vec: Vec<_> = rope.get_diff().collect();
+        assert!(vec.is_empty());
     }
 }

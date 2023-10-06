@@ -1,7 +1,7 @@
 mod str_arena;
 
 use std::{
-    ops::Range,
+    ops::{Range, RangeBounds},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -299,7 +299,7 @@ impl SharedArena {
     }
 
     #[inline]
-    pub fn slice_by_unicode(&self, range: Range<usize>) -> BytesSlice {
+    pub fn slice_by_unicode(&self, range: impl RangeBounds<usize>) -> BytesSlice {
         self.inner.str.lock().unwrap().slice_by_unicode(range)
     }
 

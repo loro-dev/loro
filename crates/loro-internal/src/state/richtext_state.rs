@@ -110,7 +110,9 @@ impl ContainerState for RichtextState {
                     let (start_pos, start_style) =
                         std::mem::take(&mut self.style_start_op).unwrap();
                     assert_eq!(start_style.deref(), style.deref());
-                    self.state.mark(start_pos..*pos as usize, start_style);
+                    // We need to - 1 because the end pos has taken account the effect of the
+                    // insertion of the start style anchor.
+                    self.state.mark(start_pos..*pos as usize - 1, start_style);
                 }
             },
             _ => unreachable!(),

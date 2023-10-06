@@ -1,11 +1,19 @@
+use std::sync::Arc;
+
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
 
 use crate::{
     change::Lamport,
-    container::idx::ContainerIdx,
-    delta::{MapDelta, MapValue},
+    container::{
+        idx::ContainerIdx,
+        richtext::{
+            richtext_state::RichtextStateChunk, AnchorType, CrdtRopeDelta, RichtextChunk,
+            RichtextChunkValue, RichtextTracker, StyleOp,
+        },
+    },
+    delta::{Delta, MapDelta, MapValue},
     event::Diff,
     id::Counter,
     op::RichOp,
@@ -220,6 +228,7 @@ enum ContainerDiffCalculator {
     Text(TextDiffCalculator),
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
+    Richtext(RichtextDiffCalculator),
 }
 
 #[derive(Default)]
@@ -296,7 +305,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         for (key, value) in changed {
             let value = value
                 .map(|v| {
-                    let value = v.value.map(|v| oplog.arena.get_value(v as usize)).flatten();
+                    let value = v.value.and_then(|v| oplog.arena.get_value(v as usize));
                     MapValue {
                         counter: v.counter,
                         value,
@@ -447,5 +456,100 @@ impl DiffCalculatorTrait for TextDiffCalculator {
         to: &crate::VersionVector,
     ) -> Diff {
         Diff::SeqRaw(self.tracker.diff(from, to))
+    }
+}
+
+#[derive(Debug, Default)]
+struct RichtextDiffCalculator {
+    start_vv: VersionVector,
+    tracker: RichtextTracker,
+    styles: Vec<Arc<StyleOp>>,
+}
+
+impl DiffCalculatorTrait for RichtextDiffCalculator {
+    fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
+        if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
+            self.tracker = RichtextTracker::new_with_unknown();
+        }
+
+        self.tracker.checkout(vv);
+    }
+
+    fn apply_change(
+        &mut self,
+        _oplog: &super::oplog::OpLog,
+        op: crate::op::RichOp,
+        vv: Option<&crate::VersionVector>,
+    ) {
+        if let Some(vv) = vv {
+            self.tracker.checkout(vv);
+        }
+
+        match &op.op().content {
+            crate::op::InnerContent::List(l) => match l {
+                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => todo!(),
+                crate::container::list::list_op::InnerListOp::Delete(_) => todo!(),
+                crate::container::list::list_op::InnerListOp::StyleStart { pos, style } => {
+                    let style_id = self.styles.len();
+                    self.styles.push(style.clone());
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos as usize,
+                        RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
+                    );
+                }
+                crate::container::list::list_op::InnerListOp::StyleEnd { pos, style } => {
+                    assert_eq!(style, self.styles.last().unwrap());
+                    let style_id = self.styles.len() - 1;
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos as usize,
+                        RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
+                    );
+                }
+            },
+            crate::op::InnerContent::Map(_) => unreachable!(),
+        }
+    }
+
+    fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
+
+    fn calculate_diff(
+        &mut self,
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff {
+        let mut delta = Delta::new();
+        for item in self.tracker.diff(from, to) {
+            match item {
+                CrdtRopeDelta::Retain(len) => {
+                    delta = delta.retain(len);
+                }
+                CrdtRopeDelta::Insert(value) => match value.value() {
+                    RichtextChunkValue::Text(text) => {
+                        delta = delta.insert(RichtextStateChunk::Text {
+                            unicode_len: text.len() as i32,
+                            // PERF: can be speedup by acquiring lock on arena
+                            text: oplog
+                                .arena
+                                .slice_by_unicode(text.start as usize..text.end as usize),
+                        });
+                    }
+                    RichtextChunkValue::StyleAnchor { id, anchor_type } => {
+                        delta = delta.insert(RichtextStateChunk::Style {
+                            style: self.styles[id as usize].clone(),
+                            anchor_type,
+                        });
+                    }
+                    RichtextChunkValue::Unknown(_) => unreachable!(),
+                },
+                CrdtRopeDelta::Delete(len) => {
+                    delta = delta.delete(len);
+                }
+            }
+        }
+
+        Diff::RichtextRaw(delta)
     }
 }

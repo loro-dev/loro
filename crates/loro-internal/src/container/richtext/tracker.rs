@@ -12,6 +12,7 @@ use super::{
 
 mod crdt_rope;
 mod id_to_cursor;
+pub(crate) use crdt_rope::CrdtRopeDelta;
 
 #[derive(Debug)]
 pub(crate) struct Tracker {
@@ -19,6 +20,12 @@ pub(crate) struct Tracker {
     current_vv: VersionVector,
     rope: CrdtRope,
     id_to_cursor: IdToCursor,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self::new_with_unknown()
+    }
 }
 
 impl Tracker {
@@ -47,14 +54,24 @@ impl Tracker {
         }
     }
 
-    fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
+    #[inline]
+    pub fn all_vv(&self) -> &VersionVector {
+        &self.applied_vv
+    }
+
+    #[inline]
+    pub fn current_vv(&self) -> &VersionVector {
+        &self.current_vv
+    }
+
+    pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
         let result = self.rope.insert(
             pos,
             FugueSpan {
                 content,
                 id: op_id,
                 status: Status::default(),
-                after_status: None,
+                diff_status: None,
                 origin_left: None,
                 origin_right: None,
             },
@@ -80,7 +97,7 @@ impl Tracker {
         }
     }
 
-    fn delete(&mut self, op_id: ID, pos: usize, len: usize) {
+    pub(crate) fn delete(&mut self, op_id: ID, pos: usize, len: usize) {
         let mut cur_id = op_id;
         let splitted = self.rope.delete(pos, len, |span| {
             self.id_to_cursor
@@ -95,7 +112,16 @@ impl Tracker {
         self.applied_vv.extend_to_include_end_id(end_id);
     }
 
-    fn checkout(&mut self, vv: &VersionVector) {
+    #[inline]
+    pub(crate) fn checkout(&mut self, vv: &VersionVector) {
+        self._checkout(vv, false);
+    }
+
+    fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
+        if on_diff_status {
+            self.rope.clear_diff_status();
+        }
+
         let (retreat, forward) = self.current_vv.diff_iter(vv);
         let mut updates = Vec::new();
 
@@ -160,8 +186,18 @@ impl Tracker {
         }
 
         self.current_vv = vv.clone();
-        let leaf_indexes = self.rope.update(&updates);
+        let leaf_indexes = self.rope.update(&updates, on_diff_status);
         self.update_insert_by_split(&leaf_indexes);
+    }
+
+    pub(crate) fn diff(
+        &mut self,
+        from: &VersionVector,
+        to: &VersionVector,
+    ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
+        self._checkout(from, false);
+        self._checkout(to, true);
+        self.rope.get_diff()
     }
 }
 

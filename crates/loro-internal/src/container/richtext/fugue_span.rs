@@ -4,6 +4,8 @@ use generic_btree::rle::{HasLength, Mergeable, Sliceable};
 use loro_common::{Counter, HasId, IdSpan, ID};
 use serde::{Deserialize, Serialize};
 
+use super::AnchorType;
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
 pub(crate) struct RichtextChunk {
     start: u32,
@@ -13,20 +15,21 @@ pub(crate) struct RichtextChunk {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(crate) enum RichtextChunkKind {
     Text,
-    Symbol,
+    StyleAnchor,
     Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RichtextChunkValue {
     Text(Range<u32>),
-    Symbol(u32),
+    StyleAnchor { id: u32, anchor_type: AnchorType },
     Unknown(u32),
 }
 
 impl RichtextChunk {
-    pub(crate) const UNKNOWN_START: u32 = u32::MAX;
-    pub(crate) const SYMBOL_START: u32 = u32::MAX - 1;
+    pub(crate) const UNKNOWN: u32 = u32::MAX;
+    pub(crate) const START_STYLE_ANCHOR: u32 = u32::MAX - 1;
+    pub(crate) const END_STYLE_ANCHOR: u32 = u32::MAX - 2;
 
     #[inline]
     pub fn new_text(range: Range<u32>) -> Self {
@@ -37,17 +40,23 @@ impl RichtextChunk {
     }
 
     #[inline]
-    pub fn new_symbol(idx: u32) -> Self {
-        Self {
-            start: Self::SYMBOL_START,
-            end: idx,
+    pub fn new_style_anchor(idx: u32, anchor_type: AnchorType) -> Self {
+        match anchor_type {
+            AnchorType::Start => Self {
+                start: Self::START_STYLE_ANCHOR,
+                end: idx,
+            },
+            AnchorType::End => Self {
+                start: Self::END_STYLE_ANCHOR,
+                end: idx,
+            },
         }
     }
 
     #[inline]
     pub fn new_unknown(len: u32) -> Self {
         Self {
-            start: Self::UNKNOWN_START,
+            start: Self::UNKNOWN,
             end: len,
         }
     }
@@ -55,8 +64,9 @@ impl RichtextChunk {
     #[inline]
     pub(crate) fn kind(&self) -> RichtextChunkKind {
         match self.start {
-            Self::SYMBOL_START => RichtextChunkKind::Symbol,
-            Self::UNKNOWN_START => RichtextChunkKind::Unknown,
+            Self::START_STYLE_ANCHOR => RichtextChunkKind::StyleAnchor,
+            Self::END_STYLE_ANCHOR => RichtextChunkKind::StyleAnchor,
+            Self::UNKNOWN => RichtextChunkKind::Unknown,
             _ => RichtextChunkKind::Text,
         }
     }
@@ -64,8 +74,8 @@ impl RichtextChunk {
     #[inline(always)]
     pub fn len(&self) -> usize {
         match self.start {
-            Self::UNKNOWN_START => self.end as usize,
-            Self::SYMBOL_START => 1,
+            Self::UNKNOWN => self.end as usize,
+            Self::START_STYLE_ANCHOR | Self::END_STYLE_ANCHOR => 1,
             _ => (self.end - self.start) as usize,
         }
     }
@@ -73,8 +83,15 @@ impl RichtextChunk {
     #[inline]
     pub(crate) fn value(&self) -> RichtextChunkValue {
         match self.start {
-            Self::UNKNOWN_START => RichtextChunkValue::Unknown(self.end),
-            Self::SYMBOL_START => RichtextChunkValue::Symbol(self.end),
+            Self::UNKNOWN => RichtextChunkValue::Unknown(self.end),
+            Self::START_STYLE_ANCHOR => RichtextChunkValue::StyleAnchor {
+                id: self.end,
+                anchor_type: AnchorType::Start,
+            },
+            Self::END_STYLE_ANCHOR => RichtextChunkValue::StyleAnchor {
+                id: self.end,
+                anchor_type: AnchorType::End,
+            },
             _ => RichtextChunkValue::Text(self.start..self.end),
         }
     }
@@ -123,14 +140,14 @@ impl Sliceable for RichtextChunk {
                     end: self.start + range.end as u32,
                 }
             }
-            RichtextChunkKind::Symbol => {
+            RichtextChunkKind::StyleAnchor => {
                 assert_eq!(range.len(), 1);
                 *self
             }
             RichtextChunkKind::Unknown => {
                 assert!(range.len() <= self.len());
                 Self {
-                    start: Self::UNKNOWN_START,
+                    start: Self::UNKNOWN,
                     end: range.len() as u32,
                 }
             }
@@ -143,12 +160,18 @@ pub(super) struct FugueSpan {
     pub id: ID,
     /// The status at the current version
     pub status: Status,
-    /// The status at the `after` version
-    /// It's used when calculating diff
-    pub after_status: Option<Status>,
+    /// The status at the `new` version.
+    /// It's used when calculating diff.
+    pub diff_status: Option<Status>,
     pub origin_left: Option<ID>,
     pub origin_right: Option<ID>,
     pub content: RichtextChunk,
+}
+
+pub(super) enum DiffStatus {
+    NotChanged,
+    Created,
+    Deleted,
 }
 
 impl FugueSpan {
@@ -160,6 +183,22 @@ impl FugueSpan {
             self.id.counter + self.content.len() as Counter,
         )
     }
+
+    #[inline]
+    pub fn diff(&self) -> DiffStatus {
+        if self.diff_status.is_none() {
+            return DiffStatus::NotChanged;
+        }
+
+        match (
+            self.status.is_activated(),
+            self.diff_status.unwrap().is_activated(),
+        ) {
+            (true, false) => DiffStatus::Deleted,
+            (false, true) => DiffStatus::Created,
+            _ => DiffStatus::NotChanged,
+        }
+    }
 }
 
 impl Sliceable for FugueSpan {
@@ -167,7 +206,7 @@ impl Sliceable for FugueSpan {
         Self {
             id: self.id.inc(range.start as Counter),
             status: self.status,
-            after_status: self.after_status,
+            diff_status: self.diff_status,
             origin_left: if range.start == 0 {
                 self.origin_left
             } else {
@@ -190,7 +229,7 @@ impl Mergeable for FugueSpan {
     fn can_merge(&self, rhs: &Self) -> bool {
         self.id.peer == rhs.id.peer
             && self.status == rhs.status
-            && self.after_status == rhs.after_status
+            && self.diff_status == rhs.diff_status
             && Some(self.id) == rhs.origin_left
             && self.id.counter + self.content.len() as Counter == rhs.id.counter
             && self.origin_right == rhs.origin_right
@@ -212,7 +251,7 @@ impl FugueSpan {
         Self {
             id,
             status: Status::default(),
-            after_status: None,
+            diff_status: None,
             origin_left: None,
             origin_right: None,
             content,
