@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::richtext::RichtextChunk,
+    container::richtext::richtext_state::RichtextStateChunk,
     delta::{Delta, MapDelta, MapDiff},
     text::text_content::SliceRanges,
     InternalString, LoroValue,
@@ -132,7 +132,7 @@ pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     SeqRaw(Delta<SliceRanges>),
     SeqRawUtf16(Delta<SliceRanges>),
-    RichtextRaw(Delta<RichtextChunk>),
+    RichtextRaw(Delta<RichtextStateChunk>),
     Text(Delta<String>),
     /// @deprecated
     Map(MapDiff<LoroValue>),

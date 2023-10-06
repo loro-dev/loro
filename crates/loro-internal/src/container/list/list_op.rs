@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     container::{
-        richtext::TextStyleInfoFlag,
+        richtext::{StyleOp, TextStyleInfoFlag},
         text::text_content::{ListSlice, SliceRange},
     },
     InternalString,
@@ -41,8 +41,7 @@ pub enum InnerListOp {
     Style {
         start: u32,
         end: u32,
-        key: InternalString,
-        info: TextStyleInfoFlag,
+        style: Arc<StyleOp>,
     },
 }
 

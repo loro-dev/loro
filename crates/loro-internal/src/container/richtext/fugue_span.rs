@@ -4,9 +4,8 @@ use generic_btree::rle::{HasLength, Mergeable, Sliceable};
 use loro_common::{Counter, HasId, IdSpan, ID};
 use serde::{Deserialize, Serialize};
 
-// TODO: change visibility back to crate after #116 is done
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
-pub struct RichtextChunk {
+pub(crate) struct RichtextChunk {
     start: u32,
     end: u32,
 }

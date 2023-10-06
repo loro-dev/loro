@@ -164,8 +164,9 @@ impl From<SliceRange> for SliceRanges {
 }
 
 impl DeltaValue for SliceRanges {
-    fn value_extend(&mut self, other: Self) {
+    fn value_extend(&mut self, other: Self) -> Result<(), Self> {
         self.0.extend(other.0);
+        Ok(())
     }
 
     fn take(&mut self, target_len: usize) -> Self {

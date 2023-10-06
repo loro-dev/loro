@@ -44,8 +44,9 @@ pub struct Style {
     pub data: LoroValue,
 }
 
+// TODO: change visibility back to crate after #116 is done
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub(crate) struct StyleOp {
+pub struct StyleOp {
     pub(crate) lamport: Lamport,
     pub(crate) peer: PeerID,
     pub(crate) cnt: Counter,
@@ -148,7 +149,9 @@ pub enum ExpandType {
     None,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum AnchorType {
     Start,
     End,

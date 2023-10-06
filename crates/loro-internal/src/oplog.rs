@@ -394,17 +394,14 @@ impl OpLog {
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
                 }
-                list_op::InnerListOp::Style {
-                    start,
-                    end,
-                    key,
-                    info,
-                } => contents.push(RawOpContent::List(list_op::ListOp::Style {
-                    start: *start,
-                    end: *end,
-                    key: key.clone(),
-                    info: *info,
-                })),
+                list_op::InnerListOp::Style { start, end, style } => {
+                    contents.push(RawOpContent::List(list_op::ListOp::Style {
+                        start: *start,
+                        end: *end,
+                        key: style.key.clone(),
+                        info: style.info,
+                    }))
+                }
             },
             crate::op::InnerContent::Map(map) => {
                 let value = map

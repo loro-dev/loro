@@ -4,6 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait,
 };
+use serde::{ser::SerializeStruct, Serialize};
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Range, Sub},
@@ -13,6 +14,7 @@ use std::{
 
 use crate::{
     container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
+    delta::DeltaValue,
     InternalString,
 };
 
@@ -31,8 +33,9 @@ pub(crate) struct RichtextState {
     style_ranges: StyleRangeMap,
 }
 
+// TODO: change visibility back to crate after #116 is done
 #[derive(Clone, Debug)]
-pub(crate) enum Elem {
+pub enum RichtextStateChunk {
     Text {
         unicode_len: i32,
         text: BytesSlice,
@@ -43,9 +46,49 @@ pub(crate) enum Elem {
     },
 }
 
-impl Elem {
+impl DeltaValue for RichtextStateChunk {
+    fn value_extend(&mut self, other: Self) -> Result<(), Self> {
+        Err(other)
+    }
+
+    fn take(&mut self, length: usize) -> Self {
+        let mut right = self.split(length);
+        std::mem::swap(self, &mut right);
+        right
+    }
+
+    fn length(&self) -> usize {
+        self.rle_len()
+    }
+}
+
+impl Serialize for RichtextStateChunk {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            RichtextStateChunk::Text { unicode_len, .. } => {
+                let mut state = serializer.serialize_struct("RichtextStateChunk", 3)?;
+                state.serialize_field("type", "Text")?;
+                state.serialize_field("unicode_len", unicode_len)?;
+                state.serialize_field("text", self.as_str().unwrap())?;
+                state.end()
+            }
+            RichtextStateChunk::Style { style, anchor_type } => {
+                let mut state = serializer.serialize_struct("RichtextStateChunk", 3)?;
+                state.serialize_field("type", "Style")?;
+                state.serialize_field("style", &style.key)?;
+                state.serialize_field("anchor_type", anchor_type)?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl RichtextStateChunk {
     pub fn try_from_bytes(s: BytesSlice) -> Result<Self, Utf8Error> {
-        Ok(Elem::Text {
+        Ok(RichtextStateChunk::Text {
             unicode_len: std::str::from_utf8(&s)?.chars().count() as i32,
             text: s,
         })
@@ -54,21 +97,34 @@ impl Elem {
     pub fn from_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
         Self::Style { style, anchor_type }
     }
-}
 
-impl HasLength for Elem {
-    fn rle_len(&self) -> usize {
+    pub fn as_str(&self) -> Option<&str> {
         match self {
-            Elem::Text { unicode_len, text } => *unicode_len as usize,
-            Elem::Style { .. } => 1,
+            RichtextStateChunk::Text { text, .. } => {
+                // SAFETY: We know that the text is valid UTF-8
+                Some(unsafe { std::str::from_utf8_unchecked(text) })
+            }
+            _ => None,
         }
     }
 }
 
-impl Mergeable for Elem {
+impl HasLength for RichtextStateChunk {
+    fn rle_len(&self) -> usize {
+        match self {
+            RichtextStateChunk::Text { unicode_len, text } => *unicode_len as usize,
+            RichtextStateChunk::Style { .. } => 1,
+        }
+    }
+}
+
+impl Mergeable for RichtextStateChunk {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
-            (Elem::Text { text: l, .. }, Elem::Text { text: r, .. }) => l.can_merge(r),
+            (
+                RichtextStateChunk::Text { text: l, .. },
+                RichtextStateChunk::Text { text: r, .. },
+            ) => l.can_merge(r),
             _ => false,
         }
     }
@@ -76,8 +132,8 @@ impl Mergeable for Elem {
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
             (
-                Elem::Text { unicode_len, text },
-                Elem::Text {
+                RichtextStateChunk::Text { unicode_len, text },
+                RichtextStateChunk::Text {
                     unicode_len: rhs_len,
                     text: rhs_text,
                 },
@@ -92,8 +148,8 @@ impl Mergeable for Elem {
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
             (
-                Elem::Text { unicode_len, text },
-                Elem::Text {
+                RichtextStateChunk::Text { unicode_len, text },
+                RichtextStateChunk::Text {
                     unicode_len: left_len,
                     text: left_text,
                 },
@@ -109,20 +165,20 @@ impl Mergeable for Elem {
     }
 }
 
-impl Sliceable for Elem {
+impl Sliceable for RichtextStateChunk {
     fn _slice(&self, range: Range<usize>) -> Self {
         let start_index = range.start;
         let end_index = range.end;
 
         let text = match self {
-            Elem::Text {
+            RichtextStateChunk::Text {
                 unicode_len: _,
                 text,
             } => text,
-            Elem::Style { style, anchor_type } => {
+            RichtextStateChunk::Style { style, anchor_type } => {
                 assert_eq!(start_index, 0);
                 assert_eq!(end_index, 1);
-                return Elem::Style {
+                return RichtextStateChunk::Style {
                     style: style.clone(),
                     anchor_type: *anchor_type,
                 };
@@ -133,7 +189,7 @@ impl Sliceable for Elem {
         let from = unicode_to_utf8_index(s, start_index).unwrap();
         let len = unicode_to_utf8_index(&s[from..], end_index - start_index).unwrap();
         let to = from + len;
-        Elem::Text {
+        RichtextStateChunk::Text {
             unicode_len: (end_index - start_index) as i32,
             text: text.slice_clone(from..to),
         }
@@ -141,11 +197,11 @@ impl Sliceable for Elem {
 
     fn split(&mut self, pos: usize) -> Self {
         match self {
-            Elem::Text { unicode_len, text } => {
+            RichtextStateChunk::Text { unicode_len, text } => {
                 let s = std::str::from_utf8(text).unwrap();
                 let byte_pos = unicode_to_utf8_index(s, pos).unwrap();
                 let right = text.slice_clone(byte_pos..);
-                let ans = Elem::Text {
+                let ans = RichtextStateChunk::Text {
                     unicode_len: *unicode_len - pos as i32,
                     text: right,
                 };
@@ -153,7 +209,7 @@ impl Sliceable for Elem {
                 *unicode_len = pos as i32;
                 ans
             }
-            Elem::Style { .. } => {
+            RichtextStateChunk::Style { .. } => {
                 unreachable!()
             }
         }
@@ -235,7 +291,7 @@ impl Sub for Cache {
 struct RichtextTreeTrait;
 
 impl BTreeTrait for RichtextTreeTrait {
-    type Elem = Elem;
+    type Elem = RichtextStateChunk;
 
     type Cache = Cache;
 
@@ -265,12 +321,12 @@ impl BTreeTrait for RichtextTreeTrait {
 
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
-            Elem::Text { unicode_len, text } => Cache {
+            RichtextStateChunk::Text { unicode_len, text } => Cache {
                 unicode_len: *unicode_len,
                 utf16_len: count_utf16_chars(text) as i32,
                 entity_len: *unicode_len,
             },
-            Elem::Style { .. } => Cache {
+            RichtextStateChunk::Style { .. } => Cache {
                 unicode_len: 0,
                 utf16_len: 0,
                 entity_len: 1,
@@ -297,11 +353,11 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len,
                     text: _,
                 } => *unicode_len as usize,
-                Elem::Style { .. } => 0,
+                RichtextStateChunk::Style { .. } => 0,
             }
         }
 
@@ -310,7 +366,7 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len,
                     text: _,
                 } => {
@@ -320,7 +376,7 @@ mod query {
 
                     (left, false)
                 }
-                Elem::Style { .. } => (1, false),
+                RichtextStateChunk::Style { .. } => (1, false),
             }
         }
     }
@@ -335,11 +391,11 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len: _,
                     text,
                 } => count_utf16_chars(text),
-                Elem::Style { .. } => 0,
+                RichtextStateChunk::Style { .. } => 0,
             }
         }
 
@@ -348,7 +404,7 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len: _,
                     text,
                 } => {
@@ -360,7 +416,7 @@ mod query {
                     let offset = utf16_to_unicode_index(s, left).unwrap();
                     (offset, true)
                 }
-                Elem::Style { .. } => (1, false),
+                RichtextStateChunk::Style { .. } => (1, false),
             }
         }
     }
@@ -375,11 +431,11 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len,
                     text: _,
                 } => *unicode_len as usize,
-                Elem::Style { .. } => 1,
+                RichtextStateChunk::Style { .. } => 1,
             }
         }
 
@@ -388,7 +444,7 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len,
                     text: _,
                 } => {
@@ -398,7 +454,7 @@ mod query {
 
                     (left, false)
                 }
-                Elem::Style { .. } => {
+                RichtextStateChunk::Style { .. } => {
                     if left == 0 {
                         return (0, true);
                     }
@@ -414,7 +470,7 @@ impl RichtextState {
     /// Insert text at a unicode index. Return the entity index.
     pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
         if self.tree.is_empty() {
-            let elem = Elem::try_from_bytes(text).unwrap();
+            let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
             self.style_ranges.insert(0, elem.rle_len());
             self.tree.push(elem);
             return 0;
@@ -424,7 +480,7 @@ impl RichtextState {
         let right = self.tree.prefer_left(right).unwrap_or(right);
         let entity_index = self.get_entity_index_from_path(right);
         let insert_pos = right;
-        let elem = Elem::try_from_bytes(text).unwrap();
+        let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
         self.tree.insert_by_path(insert_pos, elem);
         entity_index
@@ -432,13 +488,17 @@ impl RichtextState {
 
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
-        let elem = Elem::try_from_bytes(text).unwrap();
+        let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
         self.tree.insert::<EntityQuery>(&entity_index, elem);
     }
 
     /// This is used to accept changes from DiffCalculator
-    pub(crate) fn insert_elem_at_entity_index(&mut self, entity_index: usize, elem: Elem) {
+    pub(crate) fn insert_elem_at_entity_index(
+        &mut self,
+        entity_index: usize,
+        elem: RichtextStateChunk,
+    ) {
         self.style_ranges.insert(entity_index, elem.rle_len());
         self.tree.insert::<EntityQuery>(&entity_index, elem);
     }
@@ -491,8 +551,8 @@ impl RichtextState {
                 break;
             };
             let (style, anchor_type) = match elem {
-                Elem::Text { .. } => unreachable!(),
-                Elem::Style { style, anchor_type } => (style, *anchor_type),
+                RichtextStateChunk::Text { .. } => unreachable!(),
+                RichtextStateChunk::Style { style, anchor_type } => (style, *anchor_type),
             };
 
             visited.push((style, anchor_type, iter));
@@ -548,7 +608,7 @@ impl RichtextState {
             return Vec::new();
         }
 
-        let mut style_anchors: Vec<Elem> = Vec::new();
+        let mut style_anchors: Vec<RichtextStateChunk> = Vec::new();
         let mut removed_entity_ranges: Vec<Range<usize>> = Vec::new();
         let q = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
         let mut entity_index = self.get_entity_index_from_path(q);
@@ -557,11 +617,11 @@ impl RichtextState {
 
         for span in self.tree.drain_by_query::<UnicodeQuery>(pos..pos + len) {
             match span {
-                Elem::Style { .. } => {
+                RichtextStateChunk::Style { .. } => {
                     entity_index += 1;
                     style_anchors.push(span.clone());
                 }
-                Elem::Text {
+                RichtextStateChunk::Text {
                     unicode_len,
                     text: _,
                 } => {
@@ -598,7 +658,7 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> impl Iterator<Item = Elem> + '_ {
+    ) -> impl Iterator<Item = RichtextStateChunk> + '_ {
         // FIXME: need to check whether style is removed when its anchors are removed
         self.style_ranges.delete(pos..pos + len);
         self.tree.drain_by_query::<EntityQuery>(pos..pos + len)
@@ -616,8 +676,10 @@ impl RichtextState {
             .find_best_insert_pos_from_unicode_index(range.end)
             .unwrap();
         let end_entity_index = self.get_entity_index_from_path(end_pos);
-        self.tree
-            .insert_by_path(end_pos, Elem::from_style(style.clone(), AnchorType::End));
+        self.tree.insert_by_path(
+            end_pos,
+            RichtextStateChunk::from_style(style.clone(), AnchorType::End),
+        );
 
         let start_pos = self
             .find_best_insert_pos_from_unicode_index(range.start)
@@ -625,7 +687,7 @@ impl RichtextState {
         let start_entity_index = self.get_entity_index_from_path(start_pos);
         self.tree.insert_by_path(
             start_pos,
-            Elem::from_style(style.clone(), AnchorType::Start),
+            RichtextStateChunk::from_style(style.clone(), AnchorType::Start),
         );
 
         self.style_ranges.insert(end_entity_index, 1);
@@ -657,7 +719,7 @@ impl RichtextState {
         let mut cur_styles = cur_style_range.as_ref().map(to_styles);
 
         self.tree.iter().filter_map(move |x| match x {
-            Elem::Text { unicode_len, text } => {
+            RichtextStateChunk::Text { unicode_len, text } => {
                 let mut styles = Vec::new();
                 while let Some((inner_cur_range, _)) = cur_style_range.as_ref() {
                     if entity_index < inner_cur_range.start {
@@ -680,11 +742,15 @@ impl RichtextState {
                     styles,
                 })
             }
-            Elem::Style { .. } => {
+            RichtextStateChunk::Style { .. } => {
                 entity_index += 1;
                 None
             }
         })
+    }
+
+    pub fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
+        self.tree.iter()
     }
 
     pub fn to_vec(&self) -> Vec<RichtextSpan<'_>> {
@@ -1097,7 +1163,7 @@ mod test {
         wrapper.state.mark(0..5, bold(0));
         let mut count = 0;
         for span in wrapper.state.drain_by_entity_index(0, 7) {
-            if matches!(span, Elem::Style { .. }) {
+            if matches!(span, RichtextStateChunk::Style { .. }) {
                 count += 1;
             }
         }

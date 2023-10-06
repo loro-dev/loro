@@ -7,12 +7,15 @@ use std::{
 
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
+use loro_common::PeerID;
 
 use crate::{
+    change::Lamport,
     container::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
         map::{InnerMapSet, MapSet},
+        richtext::StyleOp,
         text::text_content::SliceRange,
         ContainerID,
     },
@@ -63,7 +66,9 @@ impl<'a> OpConverter<'a> {
     pub fn convert_single_op(
         &mut self,
         id: &ContainerID,
+        peer: PeerID,
         counter: Counter,
+        lamport: Lamport,
         content: RawOpContent,
     ) -> Op {
         let container = 'out: {
@@ -133,16 +138,21 @@ impl<'a> OpConverter<'a> {
                 ListOp::Style {
                     start,
                     end,
-                    key,
                     info,
+                    key,
                 } => Op {
                     counter,
                     container,
                     content: InnerContent::List(InnerListOp::Style {
                         start,
                         end,
-                        key,
-                        info,
+                        style: Arc::new(crate::container::richtext::StyleOp {
+                            lamport,
+                            peer,
+                            cnt: counter,
+                            key,
+                            info,
+                        }),
                     }),
                 },
             },
@@ -300,11 +310,13 @@ impl SharedArena {
     pub fn convert_single_op(
         &self,
         container: &ContainerID,
+        peer: PeerID,
         counter: Counter,
+        lamport: Lamport,
         content: RawOpContent,
     ) -> Op {
         let container = self.register_container(container);
-        self.inner_convert_op(content, counter, container)
+        self.inner_convert_op(content, peer, counter, lamport, container)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -318,7 +330,9 @@ impl SharedArena {
     fn inner_convert_op(
         &self,
         content: RawOpContent<'_>,
+        peer: PeerID,
         counter: i32,
+        lamport: Lamport,
         container: ContainerIdx,
     ) -> Op {
         match content {
@@ -366,16 +380,21 @@ impl SharedArena {
                 ListOp::Style {
                     start,
                     end,
-                    key,
                     info,
+                    key,
                 } => Op {
                     counter,
                     container,
                     content: InnerContent::List(InnerListOp::Style {
                         start,
                         end,
-                        key,
-                        info,
+                        style: Arc::new(StyleOp {
+                            lamport,
+                            peer,
+                            cnt: counter,
+                            key,
+                            info,
+                        }),
                     }),
                 },
             },
@@ -384,7 +403,13 @@ impl SharedArena {
 
     #[inline]
     pub fn convert_raw_op(&self, op: &RawOp) -> Op {
-        self.inner_convert_op(op.content.clone(), op.id.counter, op.container)
+        self.inner_convert_op(
+            op.content.clone(),
+            op.id.peer,
+            op.id.counter,
+            op.lamport,
+            op.container,
+        )
     }
 
     #[inline]
