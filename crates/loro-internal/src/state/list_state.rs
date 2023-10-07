@@ -114,13 +114,13 @@ impl BTreeTrait for ListImpl {
     }
 
     #[inline(always)]
-    fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
-        *diff1 += diff2
+    fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+        *cache += diff;
     }
 
     #[inline(always)]
-    fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
-        *cache += diff;
+    fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
+        *diff1 += diff2
     }
 
     #[inline(always)]
@@ -131,6 +131,10 @@ impl BTreeTrait for ListImpl {
     #[inline(always)]
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
+    }
+
+    fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
+        cache_lhs - cache_rhs
     }
 }
 

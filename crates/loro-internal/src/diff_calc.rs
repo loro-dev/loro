@@ -497,10 +497,19 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
-                    self.tracker.insert(op.id_start(), *pos as usize, RichtextChunk::new_text(slice.0.clone()));
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos as usize,
+                        RichtextChunk::new_text(slice.0.clone()),
+                    );
                 }
                 crate::container::list::list_op::InnerListOp::Delete(del) => {
-                    self.tracker.delete(op.id_start(), del.start() as usize, del.atom_len(), del.pos < 0);
+                    self.tracker.delete(
+                        op.id_start(),
+                        del.start() as usize,
+                        del.atom_len(),
+                        del.pos < 0,
+                    );
                 }
                 crate::container::list::list_op::InnerListOp::StyleStart { pos, style } => {
                     let style_id = self.styles.len();

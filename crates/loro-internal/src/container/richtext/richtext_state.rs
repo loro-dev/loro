@@ -5,13 +5,13 @@ use generic_btree::{
     BTree, BTreeTrait,
 };
 use serde::{ser::SerializeStruct, Serialize};
+use std::fmt::{Display, Formatter};
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Range, Sub},
     str::Utf8Error,
     sync::Arc,
 };
-use std::fmt::{Display, Formatter};
 
 use crate::{
     container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
@@ -101,7 +101,6 @@ impl Serialize for RichtextStateChunk {
         }
     }
 }
-
 
 impl RichtextStateChunk {
     pub fn try_from_bytes(s: BytesSlice) -> Result<Self, Utf8Error> {
@@ -354,6 +353,14 @@ impl BTreeTrait for RichtextTreeTrait {
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }
+
+    fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
+        Cache {
+            unicode_len: cache_lhs.unicode_len - cache_rhs.unicode_len,
+            utf16_len: cache_lhs.utf16_len - cache_rhs.utf16_len,
+            entity_len: cache_lhs.entity_len - cache_rhs.entity_len,
+        }
+    }
 }
 
 // This query implementation will prefer right element when both left element and right element are valid.
@@ -525,6 +532,7 @@ impl RichtextState {
         entity_index: usize,
         elem: RichtextStateChunk,
     ) {
+        debug_assert!(entity_index <= self.len_entity());
         self.style_ranges.insert(entity_index, elem.rle_len());
         self.tree.insert::<EntityQuery>(&entity_index, elem);
     }

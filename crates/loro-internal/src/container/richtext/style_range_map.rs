@@ -261,6 +261,10 @@ impl BTreeTrait for RangeNumMapTrait {
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }
+
+    fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
+        *cache_lhs - *cache_rhs
+    }
 }
 
 #[cfg(test)]

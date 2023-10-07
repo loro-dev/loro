@@ -855,9 +855,9 @@ impl MapHandler {
 
 #[cfg(test)]
 mod test {
-    use loro_common::ID;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
+    use loro_common::ID;
 
     #[test]
     fn test() {
@@ -937,14 +937,16 @@ mod test {
 
     #[test]
     fn richtext_handler_concurrent() {
-        let mut loro = LoroDoc::new();
+        let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_richtext("richtext");
         handler.insert(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         for i in 0..100 {
-            let mut new_loro = LoroDoc::new();
-            new_loro.import(&loro.export_from(&Default::default())).unwrap();
+            let new_loro = LoroDoc::new();
+            new_loro
+                .import(&loro.export_from(&Default::default()))
+                .unwrap();
             let mut txn = new_loro.txn().unwrap();
             let handler = new_loro.get_richtext("richtext");
             handler.insert(&mut txn, i % 5, &i.to_string()).unwrap();

@@ -38,16 +38,14 @@ impl Tracker {
             current_vv: Default::default(),
         };
 
-        this.rope.tree.push(
-            FugueSpan {
-                content: RichtextChunk::new_unknown(u32::MAX / 4),
-                id: ID::new(UNKNOWN_PEER_ID, 0),
-                status: Status::default(),
-                diff_status: None,
-                origin_left: None,
-                origin_right: None,
-            }
-        );
+        this.rope.tree.push(FugueSpan {
+            content: RichtextChunk::new_unknown(u32::MAX / 4),
+            id: ID::new(UNKNOWN_PEER_ID, 0),
+            status: Status::default(),
+            diff_status: None,
+            origin_left: None,
+            origin_right: None,
+        });
         this
     }
 
@@ -197,7 +195,7 @@ impl Tracker {
         }
 
         self.current_vv = vv.clone();
-        let leaf_indexes = self.rope.update(&updates, on_diff_status);
+        let leaf_indexes = self.rope.update(updates, on_diff_status);
         self.update_insert_by_split(&leaf_indexes);
     }
 
@@ -214,8 +212,8 @@ impl Tracker {
 
 #[cfg(test)]
 mod test {
-    use generic_btree::rle::HasLength;
     use crate::{container::richtext::RichtextChunk, vv};
+    use generic_btree::rle::HasLength;
 
     use super::*;
 
