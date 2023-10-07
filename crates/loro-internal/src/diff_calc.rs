@@ -124,6 +124,11 @@ impl DiffCalculator {
                                 crate::ContainerType::Text => {
                                     ContainerDiffCalculator::Text(TextDiffCalculator::default())
                                 }
+                                crate::ContainerType::Richtext => {
+                                    ContainerDiffCalculator::Richtext(
+                                        RichtextDiffCalculator::default(),
+                                    )
+                                }
                                 crate::ContainerType::Map => {
                                     ContainerDiffCalculator::Map(MapDiffCalculator::new())
                                 }

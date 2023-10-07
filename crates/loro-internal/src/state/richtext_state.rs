@@ -1,4 +1,7 @@
-use std::{ops::Deref, sync::Arc};
+use std::{
+    ops::{Deref, Range},
+    sync::Arc,
+};
 
 use generic_btree::rle::HasLength;
 use loro_common::LoroValue;
@@ -152,6 +155,15 @@ impl ContainerState for RichtextState {
 }
 
 impl RichtextState {
+    pub fn new() -> Self {
+        Self {
+            state: InnerState::default(),
+            in_txn: false,
+            undo_stack: Vec::new(),
+            style_start_op: None,
+        }
+    }
+
     fn undo_all(&mut self) {
         while let Some(item) = self.undo_stack.pop() {
             match item {
@@ -173,5 +185,29 @@ impl RichtextState {
                 }
             }
         }
+    }
+
+    pub fn len_utf16(&self) -> usize {
+        self.state.len_utf16()
+    }
+
+    pub fn len_entity(&self) -> usize {
+        self.state.len_entity()
+    }
+
+    pub fn len_unicode(&self) -> usize {
+        self.state.len_unicode()
+    }
+
+    pub(crate) fn get_entity_index_for_text_insert_pos(&self, pos: usize) -> usize {
+        self.state.get_entity_index_for_text_insert_pos(pos)
+    }
+
+    pub(crate) fn get_text_entity_ranges_in_unicode_range(
+        &self,
+        mut pos: usize,
+        mut len: usize,
+    ) -> Vec<Range<usize>> {
+        self.state.get_text_entity_ranges_in_unicode_range(pos, len)
     }
 }

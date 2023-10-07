@@ -202,6 +202,7 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
+            crate::ContainerType::Richtext => LoroValue::List(Default::default()),
         }
     } else {
         v.clone()

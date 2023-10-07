@@ -390,6 +390,7 @@ impl OpLog {
                         }))
                     }
                     loro_common::ContainerType::Map => unreachable!(),
+                    loro_common::ContainerType::Richtext => unimplemented!(),
                 },
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))

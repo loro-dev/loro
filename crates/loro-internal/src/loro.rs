@@ -11,6 +11,7 @@ use crate::{
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    handler::RichtextHandler,
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -299,6 +300,13 @@ impl LoroDoc {
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_richtext<I: IntoContainerId>(&self, id: I) -> RichtextHandler {
+        let idx = self.get_container_idx(id, ContainerType::Text);
+        RichtextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

@@ -3,7 +3,7 @@ use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, TextHandler},
+    handler::{ListHandler, MapHandler, RichtextHandler, TextHandler},
     id::{Counter, ID},
     obs::SubID,
     txn::Transaction as Txn,
@@ -210,6 +210,10 @@ impl Loro {
             ContainerType::List => {
                 let list = self.0.get_list(container_id);
                 LoroList(list).into()
+            }
+            ContainerType::Richtext => {
+                let richtext = self.0.get_richtext(container_id);
+                LoroRichtext(richtext).into()
             }
         })
     }
@@ -559,6 +563,7 @@ impl LoroMap {
             ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Richtext => LoroList(c.into_list().unwrap()).into(),
         };
         Ok(container)
     }
@@ -646,6 +651,7 @@ impl LoroList {
             ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Richtext => LoroList(c.into_list().unwrap()).into(),
         };
         Ok(container)
     }
@@ -666,6 +672,9 @@ impl LoroList {
         self.0.len()
     }
 }
+
+#[wasm_bindgen]
+pub struct LoroRichtext(RichtextHandler);
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"

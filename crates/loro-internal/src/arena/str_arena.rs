@@ -20,7 +20,7 @@ struct Index {
 }
 
 impl StrArena {
-    #[inline]
+#[inline]
     pub fn new() -> Self {
         Self {
             bytes: AppendOnlyBytes::new(),

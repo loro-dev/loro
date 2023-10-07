@@ -312,6 +312,7 @@ impl DocState {
                 ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+                ContainerType::Richtext => LoroValue::List(Arc::new(Default::default())),
             })
     }
 
@@ -703,6 +704,7 @@ impl DocState {
                 *diff = Diff::List(list);
             }
             ContainerType::Map => unreachable!(),
+            ContainerType::Richtext => unimplemented!(),
         }
     }
 }
@@ -712,6 +714,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Text => State::TextState(TextState::new()),
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
+        ContainerType::Richtext => State::RichtextState(RichtextState::new()),
     }
 }
 

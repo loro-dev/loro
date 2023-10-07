@@ -17,8 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
-    ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, handler::RichtextHandler, loro::LoroDoc, value::ToJson,
+    version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -296,6 +296,9 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Richtext => {
+                // TODO richtext
+            }
         }
     }
 }

@@ -159,6 +159,7 @@ pub fn decode_oplog(
                         _ => unreachable!(),
                     }
                 }
+                loro_common::ContainerType::Richtext => unimplemented!(),
             };
             *counter_mut += op.content_len() as Counter;
             ops.push(op);
@@ -664,6 +665,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                             }
                         }
                         loro_common::ContainerType::Map => unreachable!(),
+                        loro_common::ContainerType::Richtext => unimplemented!(),
                     },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(

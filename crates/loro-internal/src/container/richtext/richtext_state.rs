@@ -486,6 +486,15 @@ impl RichtextState {
         entity_index
     }
 
+    pub(crate) fn get_entity_index_for_text_insert_pos(&self, pos: usize) -> usize {
+        if self.tree.is_empty() {
+            return 0;
+        }
+
+        let right = self.find_best_insert_pos_from_unicode_index(pos).unwrap();
+        self.get_entity_index_from_path(right)
+    }
+
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
         let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
@@ -514,10 +523,7 @@ impl RichtextState {
     ///
     /// The current method will scan forward to find the last position that satisfies 1 and 2.
     /// Then it scans backward to find the first position that satisfies 3.
-    fn find_best_insert_pos_from_unicode_index(
-        &mut self,
-        pos: usize,
-    ) -> Option<generic_btree::Cursor> {
+    fn find_best_insert_pos_from_unicode_index(&self, pos: usize) -> Option<generic_btree::Cursor> {
         if self.tree.is_empty() {
             return None;
         }
@@ -584,7 +590,7 @@ impl RichtextState {
         Some(iter)
     }
 
-    fn get_entity_index_from_path(&mut self, right: generic_btree::Cursor) -> usize {
+    fn get_entity_index_from_path(&self, right: generic_btree::Cursor) -> usize {
         let mut entity_index = 0;
         self.tree.visit_previous_caches(right, |cache| match cache {
             generic_btree::PreviousCache::NodeCache(cache) => {
@@ -651,6 +657,46 @@ impl RichtextState {
             .insert_many_by_cursor(q.map(|x| x.cursor), style_anchors);
 
         removed_entity_ranges
+    }
+
+    pub(crate) fn get_text_entity_ranges_in_unicode_range(
+        &self,
+        mut pos: usize,
+        mut len: usize,
+    ) -> Vec<Range<usize>> {
+        if self.tree.is_empty() {
+            return Vec::new();
+        }
+
+        pos = pos.min(self.len_unicode());
+        len = len.min(self.len_unicode() - pos);
+        if len == 0 {
+            return Vec::new();
+        }
+
+        let mut ans = Vec::new();
+        let start = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
+        let end = self
+            .tree
+            .query::<UnicodeQuery>(&(pos + len))
+            .unwrap()
+            .cursor;
+        let mut entity_index = self.get_entity_index_from_path(start);
+        for span in self.tree.iter_range(start..end) {
+            let offset = span.start.unwrap_or(0);
+            match span.elem {
+                RichtextStateChunk::Text { unicode_len, text } => {
+                    ans.push(entity_index + offset..entity_index + *unicode_len as usize);
+                    entity_index += *unicode_len as usize;
+                }
+                RichtextStateChunk::Style { style, anchor_type } => {
+                    ans.push(entity_index..entity_index + 1);
+                    entity_index += 1;
+                }
+            }
+        }
+
+        ans
     }
 
     /// This is used to accept changes from DiffCalculator
@@ -762,6 +808,21 @@ impl RichtextState {
     pub(crate) fn debug(&self) {
         dbg!(&self.tree);
         dbg!(&self.style_ranges);
+    }
+
+    #[inline]
+    pub fn len_unicode(&self) -> usize {
+        self.tree.root_cache().unicode_len as usize
+    }
+
+    #[inline]
+    pub fn len_utf16(&self) -> usize {
+        self.tree.root_cache().utf16_len as usize
+    }
+
+    #[inline]
+    pub fn len_entity(&self) -> usize {
+        self.tree.root_cache().entity_len as usize
     }
 }
 

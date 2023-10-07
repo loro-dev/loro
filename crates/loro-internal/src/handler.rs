@@ -3,10 +3,12 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
+        richtext::TextStyleInfoFlag,
         text::text_content::ListSlice,
     },
     delta::MapValue,
     txn::EventHint,
+    InternalString,
 };
 use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -24,6 +26,18 @@ pub struct TextHandler {
 impl std::fmt::Debug for TextHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("TextHandler")
+    }
+}
+
+#[derive(Clone)]
+pub struct RichtextHandler {
+    container_idx: ContainerIdx,
+    state: Weak<Mutex<DocState>>,
+}
+
+impl std::fmt::Debug for RichtextHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RichtextHandler")
     }
 }
 
@@ -56,6 +70,7 @@ pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    Richtext(RichtextHandler),
 }
 
 impl Handler {
@@ -64,6 +79,7 @@ impl Handler {
             Self::Text(x) => x.container_idx,
             Self::Map(x) => x.container_idx,
             Self::List(x) => x.container_idx,
+            Self::Richtext(x) => x.container_idx,
         }
     }
 
@@ -72,6 +88,7 @@ impl Handler {
             Self::Text(_) => ContainerType::Text,
             Self::Map(_) => ContainerType::Map,
             Self::List(_) => ContainerType::List,
+            Self::Richtext(_) => ContainerType::Richtext,
         }
     }
 }
@@ -82,6 +99,7 @@ impl Handler {
             ContainerType::Text => Self::Text(TextHandler::new(value, state)),
             ContainerType::Map => Self::Map(MapHandler::new(value, state)),
             ContainerType::List => Self::List(ListHandler::new(value, state)),
+            ContainerType::Richtext => Self::Richtext(RichtextHandler::new(value, state)),
         }
     }
 }
@@ -329,6 +347,171 @@ impl TextHandler {
             Some(EventHint::Utf16 { pos, len: del }),
             &self.state,
         )
+    }
+}
+
+impl RichtextHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::Richtext);
+        Self {
+            container_idx: idx,
+            state,
+        }
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len_unicode() == 0
+    }
+
+    pub fn len_utf16(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_richtext_state().unwrap().len_utf16()
+            })
+    }
+
+    pub fn len_unicode(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_richtext_state().unwrap().len_unicode()
+            })
+    }
+
+    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+        let entity_index =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    state
+                        .as_richtext_state()
+                        .unwrap()
+                        .get_entity_index_for_text_insert_pos(pos)
+                });
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr {
+                    str: Cow::Borrowed(s),
+                    unicode_len: s.chars().count(),
+                },
+                pos: entity_index,
+            }),
+            None,
+            &self.state,
+        )
+    }
+
+    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        let ranges =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    state
+                        .as_richtext_state()
+                        .unwrap()
+                        .get_text_entity_ranges_in_unicode_range(pos, len)
+                });
+        for range in ranges.iter().rev() {
+            txn.apply_local_op(
+                self.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                    pos: range.start as isize,
+                    len: (range.end - range.start) as isize,
+                })),
+                None,
+                &self.state,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn mark(
+        &self,
+        txn: &mut Transaction,
+        start: usize,
+        end: usize,
+        key: InternalString,
+        flag: TextStyleInfoFlag,
+    ) -> LoroResult<()> {
+        let (entity_start, entity_end) =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    (
+                        state
+                            .as_richtext_state()
+                            .unwrap()
+                            .get_entity_index_for_text_insert_pos(start),
+                        state
+                            .as_richtext_state()
+                            .unwrap()
+                            .get_entity_index_for_text_insert_pos(end),
+                    )
+                });
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::StyleStart {
+                pos: entity_start as u32,
+                key: key.clone(),
+                info: flag,
+            }),
+            None,
+            &self.state,
+        )?;
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(ListOp::StyleStart {
+                // +1 because we insert the start marker before the end marker, which shift the end marker position by 1
+                pos: entity_end as u32 + 1,
+                key,
+                info: flag,
+            }),
+            None,
+            &self.state,
+        )?;
+
+        Ok(())
     }
 }
 

@@ -294,6 +294,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                         };
                         RawOpContent::List(list_op)
                     }
+                    ContainerType::Richtext => unimplemented!(),
                 };
                 let remote_op = RemoteOp {
                     container: container_id,
