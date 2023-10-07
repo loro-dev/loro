@@ -19,6 +19,7 @@ use crate::{
     },
     delta::{Delta, MapValue},
     event::Diff,
+    handler::RichtextHandler,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -233,16 +234,18 @@ impl Transaction {
         Ok(())
     }
 
-    fn push_local_op_to_log(&mut self, op: &RawOp) {
-        let op = self.arena.convert_raw_op(op);
-        self.local_ops.push(op);
-    }
-
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_richtext<I: IntoContainerId>(&self, id: I) -> RichtextHandler {
+        let idx = self.get_container_idx(id, ContainerType::Richtext);
+        RichtextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.

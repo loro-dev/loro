@@ -344,6 +344,8 @@ impl HasId for CompactMapValue {
 }
 
 use compact_register::CompactRegister;
+use rle::HasLength;
+
 mod compact_register {
     use std::collections::BTreeSet;
 
@@ -475,6 +477,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             self.tracker = RichtextTracker::new_with_unknown();
+            self.styles.clear();
+            self.start_vv = vv.clone();
         }
 
         self.tracker.checkout(vv);
@@ -492,8 +496,12 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => todo!(),
-                crate::container::list::list_op::InnerListOp::Delete(_) => todo!(),
+                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                    self.tracker.insert(op.id_start(), *pos as usize, RichtextChunk::new_text(slice.0.clone()));
+                }
+                crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    self.tracker.delete(op.id_start(), del.start() as usize, del.atom_len(), del.pos < 0);
+                }
                 crate::container::list::list_op::InnerListOp::StyleStart { pos, style } => {
                     let style_id = self.styles.len();
                     self.styles.push(style.clone());

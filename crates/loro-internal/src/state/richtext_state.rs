@@ -150,7 +150,7 @@ impl ContainerState for RichtextState {
 
     // value is a list
     fn get_value(&self) -> LoroValue {
-        todo!()
+        LoroValue::String(Arc::new(self.state.to_string()))
     }
 }
 

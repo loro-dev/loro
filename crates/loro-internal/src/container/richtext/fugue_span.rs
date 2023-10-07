@@ -134,7 +134,7 @@ impl Sliceable for RichtextChunk {
     fn _slice(&self, range: Range<usize>) -> Self {
         match self.kind() {
             RichtextChunkKind::Text => {
-                assert!(range.len() <= self.len());
+                assert!(range.len() <= self.len(), "range: {:?}, self: {:?}", range, self);
                 Self {
                     start: self.start + range.start as u32,
                     end: self.start + range.end as u32,

@@ -11,6 +11,7 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
+use std::fmt::{Display, Formatter};
 
 use crate::{
     container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
@@ -31,6 +32,21 @@ use super::{
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
     style_ranges: StyleRangeMap,
+}
+
+impl Display for RichtextState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for span in self.tree.iter() {
+            match span {
+                RichtextStateChunk::Style { .. } => {}
+                RichtextStateChunk::Text { text, .. } => {
+                    f.write_str(std::str::from_utf8(text).unwrap())?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // TODO: change visibility back to crate after #116 is done
@@ -85,6 +101,7 @@ impl Serialize for RichtextStateChunk {
         }
     }
 }
+
 
 impl RichtextStateChunk {
     pub fn try_from_bytes(s: BytesSlice) -> Result<Self, Utf8Error> {

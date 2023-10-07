@@ -7,6 +7,7 @@ use loro_common::{Counter, IdSpan, PeerID, ID};
 use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
 use smallvec::smallvec;
 use smallvec::SmallVec;
+use crate::container::richtext::tracker::UNKNOWN_PEER_ID;
 
 const MAX_FRAGMENT_LEN: usize = 256;
 
@@ -19,6 +20,7 @@ pub(super) struct IdToCursor {
     map: FxHashMap<PeerID, Vec<Fragment>>,
 }
 
+static EMPTY_VEC: Vec<Fragment> = vec![];
 impl IdToCursor {
     pub fn push(&mut self, id: ID, cursor: Cursor) {
         let list = self.map.entry(id.peer).or_default();
@@ -40,6 +42,10 @@ impl IdToCursor {
     ///
     /// id_span should be within the same `Cursor` and should be a `Insert`
     pub fn update_insert(&mut self, id_span: IdSpan, new_leaf: LeafIndex) {
+        if id_span.client_id == UNKNOWN_PEER_ID {
+            return;
+        }
+
         let list = self.map.get_mut(&id_span.client_id).unwrap();
         let index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
             Ok(index) => index,
@@ -55,18 +61,25 @@ impl IdToCursor {
         )
     }
 
-    pub fn iter(&self, mut id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
-        id_span.normalize_();
-        let list = self.map.get(&id_span.client_id).unwrap();
-        let mut index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
-            Ok(index) => index,
-            Err(index) => index - 1,
-        };
-
+    pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
+        iter_id_span.normalize_();
+        let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
+        let mut index = 0;
         let mut offset = 0;
-        let mut counter = list[index].counter;
+        let mut counter = 0;
+
+        if !list.is_empty() {
+            index = match list.binary_search_by_key(&iter_id_span.counter.start, |x| x.counter) {
+                Ok(index) => index,
+                Err(index) => index - 1,
+            };
+
+            offset = 0;
+            counter = list[index].counter;
+        }
+
         std::iter::from_fn(move || loop {
-            if index >= list.len() || counter >= id_span.counter.end {
+            if index >= list.len() || counter >= iter_id_span.counter.end {
                 return None;
             }
 
@@ -84,28 +97,28 @@ impl IdToCursor {
                     let elem = set[offset - 1];
                     counter += elem.len as Counter;
                     let end_counter = counter;
-                    if end_counter <= id_span.counter.start {
+                    if end_counter <= iter_id_span.counter.start {
                         continue;
                     }
 
                     return Some(IterCursor::Insert {
                         leaf: elem.leaf,
                         id_span: IdSpan::new(
-                            id_span.client_id,
-                            start_counter.max(id_span.counter.start),
-                            end_counter.min(id_span.counter.end),
+                            iter_id_span.client_id,
+                            start_counter.max(iter_id_span.counter.start),
+                            end_counter.min(iter_id_span.counter.end),
                         ),
                     });
                 }
                 Cursor::Delete(span) => {
                     let start_counter = counter;
                     counter += span.atom_len() as Counter;
-                    if counter <= id_span.counter.start {
+                    if counter <= iter_id_span.counter.start {
                         continue;
                     }
 
-                    let from = (id_span.counter.start - start_counter).max(0);
-                    let to = (id_span.counter.end - start_counter)
+                    let from = (iter_id_span.counter.start - start_counter).max(0);
+                    let to = (iter_id_span.counter.end - start_counter)
                         .max(0)
                         .min(span.atom_len() as Counter);
                     return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
@@ -156,7 +169,7 @@ impl Ord for Fragment {
 #[derive(Debug, Clone, Copy)]
 pub(super) enum IterCursor {
     Insert { leaf: LeafIndex, id_span: IdSpan },
-    // deleted id_span
+    // deleted id_span, the start may be greater than the end
     Delete(IdSpan),
 }
 

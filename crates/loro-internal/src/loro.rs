@@ -305,7 +305,7 @@ impl LoroDoc {
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_richtext<I: IntoContainerId>(&self, id: I) -> RichtextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Text);
+        let idx = self.get_container_idx(id, ContainerType::Richtext);
         RichtextHandler::new(idx, Arc::downgrade(&self.state))
     }
 

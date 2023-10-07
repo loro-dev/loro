@@ -11,7 +11,7 @@ use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChun
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct CrdtRope {
-    tree: BTree<CrdtRopeTrait>,
+    pub(super) tree: BTree<CrdtRopeTrait>,
 }
 
 pub(super) struct InsertResult {
@@ -462,7 +462,7 @@ impl Query<CrdtRopeTrait> for ActiveLenQuery {
             self.left = left;
             FindResult::new_missing(child_caches.len() - 1, left as usize)
         } else {
-            // TODO: this should be imppssible
+            // TODO: this should be impossible
             unreachable!()
         }
     }

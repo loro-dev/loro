@@ -855,8 +855,9 @@ impl MapHandler {
 
 #[cfg(test)]
 mod test {
-
+    use loro_common::ID;
     use crate::loro::LoroDoc;
+    use crate::version::Frontiers;
 
     #[test]
     fn test() {
@@ -899,5 +900,57 @@ mod test {
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn richtext_handler() {
+        let mut loro = LoroDoc::new();
+        loro.set_peer_id(1);
+        let loro2 = LoroDoc::new();
+        loro2.set_peer_id(2);
+
+        let mut txn = loro.txn().unwrap();
+        let text = txn.get_richtext("hello");
+        text.insert(&mut txn, 0, "hello").unwrap();
+        txn.commit().unwrap();
+        let exported = loro.export_from(&Default::default());
+
+        loro2.import(&exported).unwrap();
+        let mut txn = loro2.txn().unwrap();
+        let text = txn.get_richtext("hello");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
+        text.insert(&mut txn, 5, " world").unwrap();
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        txn.commit().unwrap();
+
+        loro.import(&loro2.export_from(&Default::default()))
+            .unwrap();
+        let txn = loro.txn().unwrap();
+        let text = txn.get_richtext("hello");
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+        txn.commit().unwrap();
+
+        // test checkout
+        loro.checkout(&Frontiers::from_id(ID::new(2, 1))).unwrap();
+        assert_eq!(&**text.get_value().as_string().unwrap(), "hello w");
+    }
+
+    #[test]
+    fn richtext_handler_concurrent() {
+        let mut loro = LoroDoc::new();
+        let mut txn = loro.txn().unwrap();
+        let handler = loro.get_richtext("richtext");
+        handler.insert(&mut txn, 0, "hello").unwrap();
+        txn.commit().unwrap();
+        for i in 0..100 {
+            let mut new_loro = LoroDoc::new();
+            new_loro.import(&loro.export_from(&Default::default())).unwrap();
+            let mut txn = new_loro.txn().unwrap();
+            let handler = new_loro.get_richtext("richtext");
+            handler.insert(&mut txn, i % 5, &i.to_string()).unwrap();
+            txn.commit().unwrap();
+            loro.import(&new_loro.export_from(&loro.oplog_vv()))
+                .unwrap();
+        }
     }
 }
