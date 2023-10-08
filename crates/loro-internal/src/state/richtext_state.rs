@@ -3,12 +3,13 @@ use std::{
     sync::Arc,
 };
 
+use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::LoroValue;
 
 use crate::{
     arena::SharedArena,
-    container::richtext::{RichtextState as InnerState, StyleOp},
+    container::richtext::{AnchorType, RichtextState as InnerState, StyleOp},
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::DeltaItem,
     event::Diff,
@@ -22,7 +23,6 @@ pub struct RichtextState {
     state: InnerState,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
-    style_start_op: Option<(usize, Arc<StyleOp>)>,
 }
 
 impl Clone for RichtextState {
@@ -31,7 +31,6 @@ impl Clone for RichtextState {
             state: self.state.clone(),
             in_txn: false,
             undo_stack: Vec::new(),
-            style_start_op: None,
         }
     }
 }
@@ -55,6 +54,7 @@ impl ContainerState for RichtextState {
         };
 
         let mut index = 0;
+        let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         for span in richtext.vec.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { len, meta } => {
@@ -64,7 +64,7 @@ impl ContainerState for RichtextState {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
                             self.state.insert_elem_at_entity_index(
-                                index as usize,
+                                index,
                                 RichtextStateChunk::Text {
                                     unicode_len: *unicode_len,
                                     text: text.clone(),
@@ -72,7 +72,23 @@ impl ContainerState for RichtextState {
                             );
                         }
                         RichtextStateChunk::Style { style, anchor_type } => {
-                            todo!("should handle style annotation")
+                            self.state.insert_elem_at_entity_index(
+                                index,
+                                RichtextStateChunk::Style {
+                                    style: style.clone(),
+                                    anchor_type: *anchor_type,
+                                },
+                            );
+
+                            if *anchor_type == AnchorType::Start {
+                                style_starts.insert(style.clone(), index);
+                            } else {
+                                let start_pos =
+                                    style_starts.get(style).expect("Style start not found");
+                                // we need to + 1 because we also need to annotate the end anchor
+                                self.state
+                                    .annotate_style_range(*start_pos..index + 1, style.clone());
+                            }
                         }
                     }
                     self.undo_stack.push(UndoItem::Insert {
@@ -98,25 +114,20 @@ impl ContainerState for RichtextState {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice, pos } => {
-                    self.state.insert(
+                    self.state.insert_at_entity_index(
                         *pos,
                         arena.slice_by_unicode(slice.0.start as usize..slice.0.end as usize),
                     );
                 }
                 list_op::InnerListOp::Delete(del) => {
-                    self.state.delete(del.pos as usize, del.len as usize);
+                    self.state
+                        .delete_with_entity_index(del.pos as usize, del.len as usize);
                 }
-                list_op::InnerListOp::StyleStart { pos, style } => {
-                    self.style_start_op = Some((*pos as usize, style.clone()));
+                list_op::InnerListOp::StyleStart { start, end, style } => {
+                    self.state
+                        .mark_with_entity_index(*start as usize..*end as usize, style.clone());
                 }
-                list_op::InnerListOp::StyleEnd { pos, style } => {
-                    let (start_pos, start_style) =
-                        std::mem::take(&mut self.style_start_op).unwrap();
-                    assert_eq!(start_style.deref(), style.deref());
-                    // We need to - 1 because the end pos has taken account the effect of the
-                    // insertion of the start style anchor.
-                    self.state.mark(start_pos..*pos as usize - 1, start_style);
-                }
+                list_op::InnerListOp::StyleEnd => {}
             },
             _ => unreachable!(),
         }
@@ -160,7 +171,6 @@ impl RichtextState {
             state: InnerState::default(),
             in_txn: false,
             undo_stack: Vec::new(),
-            style_start_op: None,
         }
     }
 
@@ -209,5 +219,9 @@ impl RichtextState {
         mut len: usize,
     ) -> Vec<Range<usize>> {
         self.state.get_text_entity_ranges_in_unicode_range(pos, len)
+    }
+
+    pub fn get_richtext_value(&self) -> LoroValue {
+        self.state.get_richtext_value()
     }
 }

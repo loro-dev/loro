@@ -135,11 +135,17 @@ impl<'a> OpConverter<'a> {
                     container,
                     content: InnerContent::List(InnerListOp::Delete(span)),
                 },
-                ListOp::StyleStart { pos, info, key } => Op {
+                ListOp::StyleStart {
+                    start,
+                    end,
+                    info,
+                    key,
+                } => Op {
                     counter,
                     container,
                     content: InnerContent::List(InnerListOp::StyleStart {
-                        pos,
+                        start,
+                        end,
                         style: Arc::new(crate::container::richtext::StyleOp {
                             lamport,
                             peer,
@@ -149,20 +155,10 @@ impl<'a> OpConverter<'a> {
                         }),
                     }),
                 },
-                ListOp::StyleEnd { pos, key, info } => Op {
+                ListOp::StyleEnd => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::StyleEnd {
-                        pos,
-                        // PERF we may reuse the style object created by StyleStart
-                        style: Arc::new(crate::container::richtext::StyleOp {
-                            lamport,
-                            peer,
-                            cnt: counter,
-                            key,
-                            info,
-                        }),
-                    }),
+                    content: InnerContent::List(InnerListOp::StyleEnd),
                 },
             },
         }
@@ -386,11 +382,17 @@ impl SharedArena {
                     container,
                     content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
                 },
-                ListOp::StyleStart { pos, info, key } => Op {
+                ListOp::StyleStart {
+                    start,
+                    end,
+                    info,
+                    key,
+                } => Op {
                     counter,
                     container,
                     content: InnerContent::List(InnerListOp::StyleStart {
-                        pos,
+                        start,
+                        end,
                         style: Arc::new(StyleOp {
                             lamport,
                             peer,
@@ -400,19 +402,10 @@ impl SharedArena {
                         }),
                     }),
                 },
-                ListOp::StyleEnd { pos, key, info } => Op {
+                ListOp::StyleEnd => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::StyleEnd {
-                        pos,
-                        style: Arc::new(StyleOp {
-                            lamport,
-                            peer,
-                            cnt: counter,
-                            key,
-                            info,
-                        }),
-                    }),
+                    content: InnerContent::List(InnerListOp::StyleEnd),
                 },
             },
         }

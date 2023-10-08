@@ -21,17 +21,14 @@ pub enum ListOp<'a> {
         pos: usize,
     },
     Delete(DeleteSpan),
-    /// StyleStart and StyleEnd must be paired.
+    /// StyleStart and StyleEnd must be paired because the end of a style must take an OpID position.
     StyleStart {
-        pos: u32,
+        start: u32,
+        end: u32,
         key: InternalString,
         info: TextStyleInfoFlag,
     },
-    StyleEnd {
-        pos: u32,
-        key: InternalString,
-        info: TextStyleInfoFlag,
-    },
+    StyleEnd,
 }
 
 #[derive(EnumAsInner, Debug, Clone)]
@@ -45,13 +42,11 @@ pub enum InnerListOp {
     Delete(DeleteSpan),
     /// StyleStart and StyleEnd must be paired.
     StyleStart {
-        pos: u32,
+        start: u32,
+        end: u32,
         style: Arc<StyleOp>,
     },
-    StyleEnd {
-        pos: u32,
-        style: Arc<StyleOp>,
-    },
+    StyleEnd,
 }
 
 /// `len` can be negative so that we can merge text deletions efficiently.

@@ -262,7 +262,7 @@ impl DocState {
         }
 
         // TODO: make apply_op return a result
-        state.apply_op(&raw_op, &op, &self.arena);
+        state.apply_op(raw_op, op, &self.arena);
         Ok(())
     }
 

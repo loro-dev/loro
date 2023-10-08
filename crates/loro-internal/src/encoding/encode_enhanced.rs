@@ -219,8 +219,13 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             // span.len maybe negative
                             (span.pos as usize, true, span.len)
                         }
-                        ListOp::StyleStart { pos, key, info } => unimplemented!("style encode"),
-                        ListOp::StyleEnd { pos, key, info } => unimplemented!("style encode"),
+                        ListOp::StyleStart {
+                            start,
+                            end,
+                            key,
+                            info,
+                        } => unimplemented!("style encode"),
+                        ListOp::StyleEnd => unimplemented!("style encode"),
                     },
                 };
                 op_len += 1;

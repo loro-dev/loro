@@ -511,24 +511,23 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         del.pos < 0,
                     );
                 }
-                crate::container::list::list_op::InnerListOp::StyleStart { pos, style } => {
+                crate::container::list::list_op::InnerListOp::StyleStart { start, end, style } => {
+                    debug_assert!(start < end, "start: {}, end: {}", start, end);
                     let style_id = self.styles.len();
                     self.styles.push(style.clone());
                     self.tracker.insert(
                         op.id_start(),
-                        *pos as usize,
+                        *start as usize,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
                     );
-                }
-                crate::container::list::list_op::InnerListOp::StyleEnd { pos, style } => {
-                    assert_eq!(style, self.styles.last().unwrap());
-                    let style_id = self.styles.len() - 1;
                     self.tracker.insert(
-                        op.id_start(),
-                        *pos as usize,
+                        op.id_start().inc(1),
+                        // need to shift 1 because we insert the start style anchor before this pos
+                        *end as usize + 1,
                         RichtextChunk::new_style_anchor(style_id as u32, AnchorType::End),
                     );
                 }
+                crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
         }

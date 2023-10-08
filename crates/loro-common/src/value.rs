@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -7,7 +7,8 @@ use serde::{de::VariantAccess, ser::SerializeStruct, Deserialize, Serialize};
 use crate::ContainerID;
 
 /// [LoroValue] is used to represents the state of CRDT at a given version.
-/// This struct is cheap to clone, the time complexity is O(1)
+///
+/// This struct is cheap to clone, the time complexity is O(1).
 #[derive(Debug, PartialEq, Clone, EnumAsInner, Default)]
 pub enum LoroValue {
     #[default]
@@ -19,8 +20,135 @@ pub enum LoroValue {
     Binary(Arc<Vec<u8>>),
     String(Arc<String>),
     List(Arc<Vec<LoroValue>>),
+    // PERF We can use InternalString as key
     Map(Arc<FxHashMap<String, LoroValue>>),
     Container(ContainerID),
+}
+
+impl LoroValue {
+    pub fn get_by_key(&self, key: &str) -> Option<&LoroValue> {
+        match self {
+            LoroValue::Map(map) => map.get(key),
+            _ => None,
+        }
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<&LoroValue> {
+        match self {
+            LoroValue::List(list) => list.get(index),
+            _ => None,
+        }
+    }
+}
+
+impl Index<&str> for LoroValue {
+    type Output = LoroValue;
+
+    fn index(&self, index: &str) -> &Self::Output {
+        match self {
+            LoroValue::Map(map) => map.get(index).unwrap_or(&LoroValue::Null),
+            _ => &LoroValue::Null,
+        }
+    }
+}
+
+impl Index<usize> for LoroValue {
+    type Output = LoroValue;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            LoroValue::List(list) => list.get(index).unwrap_or(&LoroValue::Null),
+            _ => &LoroValue::Null,
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for bool {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::Bool(v) => Ok(v),
+            _ => Err("not a bool"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for f64 {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::Double(v) => Ok(v),
+            _ => Err("not a double"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for i32 {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::I32(v) => Ok(v),
+            _ => Err("not a i32"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for Arc<Vec<u8>> {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::Binary(v) => Ok(v),
+            _ => Err("not a binary"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for Arc<String> {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::String(v) => Ok(v),
+            _ => Err("not a string"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for Arc<Vec<LoroValue>> {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::List(v) => Ok(v),
+            _ => Err("not a list"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for Arc<FxHashMap<String, LoroValue>> {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::Map(v) => Ok(v),
+            _ => Err("not a map"),
+        }
+    }
+}
+
+impl TryFrom<LoroValue> for ContainerID {
+    type Error = &'static str;
+
+    fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
+        match value {
+            LoroValue::Container(v) => Ok(v),
+            _ => Err("not a container"),
+        }
+    }
 }
 
 impl Hash for LoroValue {
@@ -73,9 +201,9 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
     }
 }
 
-impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
-    fn from(vec: Vec<T>) -> Self {
-        LoroValue::List(Arc::new(vec.into_iter().map(|v| v.into()).collect()))
+impl From<Vec<LoroValue>> for LoroValue {
+    fn from(vec: Vec<LoroValue>) -> Self {
+        LoroValue::List(Arc::new(vec))
     }
 }
 
@@ -124,6 +252,12 @@ impl From<&str> for LoroValue {
 impl From<String> for LoroValue {
     fn from(v: String) -> Self {
         LoroValue::String(v.into())
+    }
+}
+
+impl<'a> From<&'a [LoroValue]> for LoroValue {
+    fn from(v: &'a [LoroValue]) -> Self {
+        LoroValue::List(Arc::new(v.to_vec()))
     }
 }
 

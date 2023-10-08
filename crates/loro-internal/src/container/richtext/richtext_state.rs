@@ -4,6 +4,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait,
 };
+use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
 use std::{
@@ -537,6 +538,12 @@ impl RichtextState {
         self.tree.insert::<EntityQuery>(&entity_index, elem);
     }
 
+    /// This method only updates `style_ranges`.
+    /// When this method is called, the style start anchor and the style end anchor should already have been inserted.
+    pub(crate) fn annotate_style_range(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+        self.style_ranges.annotate(range, style)
+    }
+
     /// Find the best insert position based on algorithm similar to Peritext.
     /// Returns the right neighbor of the insert pos.
     ///
@@ -629,6 +636,18 @@ impl RichtextState {
             }
         });
         entity_index
+    }
+
+    /// Delete a range of text at the given entity range.
+    ///
+    /// Delete a range of text. (The style anchors included in the range are not deleted.)
+    pub(crate) fn delete_with_entity_index(&mut self, pos: usize, len: usize) {
+        if self.tree.is_empty() {
+            return;
+        }
+
+        self.tree.drain_by_query::<EntityQuery>(pos..pos + len);
+        self.style_ranges.delete(pos..pos + len);
     }
 
     /// Delete a range of text at the given unicode position.
@@ -735,6 +754,28 @@ impl RichtextState {
         self.tree.drain_by_query::<EntityQuery>(pos..pos + len)
     }
 
+    pub(crate) fn mark_with_entity_index(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+        if self.tree.is_empty() {
+            panic!("Cannot mark an empty tree");
+        }
+
+        self.insert_elem_at_entity_index(
+            range.end,
+            RichtextStateChunk::from_style(style.clone(), AnchorType::End),
+        );
+        self.insert_elem_at_entity_index(
+            range.start,
+            RichtextStateChunk::from_style(style.clone(), AnchorType::End),
+        );
+        self.style_ranges.insert(range.end, 1);
+        self.style_ranges.insert(range.start, 1);
+        // end_entity_index + 2, because
+        // 1. We inserted a start anchor before end_entity_index, so we need to +1
+        // 2. We need to include the end anchor in the range, so we need to +1
+        self.style_ranges
+            .annotate(range.start..range.end + 2, style);
+    }
+
     /// Mark a range of text with a style.
     ///
     /// Return the corresponding entity index ranges.
@@ -822,6 +863,23 @@ impl RichtextState {
 
     pub fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
         self.tree.iter()
+    }
+
+    pub fn get_richtext_value(&self) -> LoroValue {
+        let mut ans = Vec::new();
+        for span in self.iter() {
+            let mut value = FxHashMap::default();
+            value.insert("text".into(), LoroValue::String(Arc::new(span.text.into())));
+            let mut styles = FxHashMap::default();
+            for style in span.styles.iter() {
+                styles.insert(style.key.to_string(), style.data.clone());
+            }
+
+            value.insert("meta".into(), LoroValue::Map(Arc::new(styles)));
+            ans.push(LoroValue::Map(Arc::new(value)));
+        }
+
+        LoroValue::List(Arc::new(ans))
     }
 
     pub fn to_vec(&self) -> Vec<RichtextSpan<'_>> {

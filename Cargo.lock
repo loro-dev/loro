@@ -756,6 +756,7 @@ version = "0.7.0"
 dependencies = [
  "fxhash",
  "heapless",
+ "itertools 0.11.0",
  "proc-macro2 1.0.67",
  "smallvec",
  "thunderdome",

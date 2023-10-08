@@ -132,6 +132,7 @@ pub enum Diff {
     List(Delta<Vec<LoroValue>>),
     SeqRaw(Delta<SliceRanges>),
     SeqRawUtf16(Delta<SliceRanges>),
+    /// This always uses entity indexes.
     RichtextRaw(Delta<RichtextStateChunk>),
     Text(Delta<String>),
     /// @deprecated

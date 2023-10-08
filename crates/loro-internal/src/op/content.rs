@@ -52,16 +52,18 @@ impl<'a> RawOpContent<'a> {
                     pos: *pos,
                 }),
                 ListOp::Delete(x) => RawOpContent::List(ListOp::Delete(*x)),
-                ListOp::StyleStart { pos, key, info } => RawOpContent::List(ListOp::StyleStart {
-                    pos: *pos,
+                ListOp::StyleStart {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => RawOpContent::List(ListOp::StyleStart {
+                    start: *start,
+                    end: *end,
                     key: key.clone(),
                     info: *info,
                 }),
-                ListOp::StyleEnd { pos, key, info } => RawOpContent::List(ListOp::StyleEnd {
-                    pos: *pos,
-                    key: key.clone(),
-                    info: *info,
-                }),
+                ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
             },
         }
     }

@@ -368,6 +368,17 @@ impl RichtextHandler {
             .get_value_by_idx(self.container_idx)
     }
 
+    pub fn get_richtext_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_richtext_state().unwrap().get_richtext_value()
+            })
+    }
+
     pub fn id(&self) -> ContainerID {
         self.state
             .upgrade()
@@ -469,6 +480,12 @@ impl RichtextHandler {
         key: InternalString,
         flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
+        if start >= end {
+            return Err(loro_common::LoroError::ArgErr(
+                "Start must be less than end".to_string().into_boxed_str(),
+            ));
+        }
+
         let (entity_start, entity_end) =
             self.state
                 .upgrade()
@@ -491,7 +508,8 @@ impl RichtextHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleStart {
-                pos: entity_start as u32,
+                start: entity_start as u32,
+                end: entity_end as u32,
                 key: key.clone(),
                 info: flag,
             }),
@@ -501,12 +519,7 @@ impl RichtextHandler {
 
         txn.apply_local_op(
             self.container_idx,
-            crate::op::RawOpContent::List(ListOp::StyleStart {
-                // +1 because we insert the start marker before the end marker, which shift the end marker position by 1
-                pos: entity_end as u32 + 1,
-                key,
-                info: flag,
-            }),
+            crate::op::RawOpContent::List(ListOp::StyleEnd),
             None,
             &self.state,
         )?;
@@ -855,6 +868,9 @@ impl MapHandler {
 
 #[cfg(test)]
 mod test {
+    use std::ops::Deref;
+
+    use crate::container::richtext::TextStyleInfoFlag;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
     use loro_common::ID;
@@ -953,6 +969,55 @@ mod test {
             txn.commit().unwrap();
             loro.import(&new_loro.export_from(&loro.oplog_vv()))
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn richtext_handler_mark() {
+        let loro = LoroDoc::new();
+        let mut txn = loro.txn().unwrap();
+        let handler = loro.get_richtext("richtext");
+        handler.insert(&mut txn, 0, "hello world").unwrap();
+        handler
+            .mark(&mut txn, 0, 5, "bold".into(), TextStyleInfoFlag::BOLD)
+            .unwrap();
+        txn.commit().unwrap();
+
+        // assert has bold
+        let value = handler.get_richtext_value();
+        assert_eq!(value[0]["text"], "hello".into());
+        let meta = value[0]["meta"].as_map().unwrap();
+        assert_eq!(meta.len(), 1);
+        meta.get("bold").unwrap();
+
+        let loro2 = LoroDoc::new();
+        loro2
+            .import(&loro.export_from(&Default::default()))
+            .unwrap();
+        let handler2 = loro2.get_richtext("richtext");
+        assert_eq!(
+            handler2.get_value().as_string().unwrap().deref(),
+            "hello world"
+        );
+
+        // assert has bold
+        let value = handler2.get_richtext_value();
+        assert_eq!(value[0]["text"], "hello".into());
+        let meta = value[0]["meta"].as_map().unwrap();
+        assert_eq!(meta.len(), 1);
+        meta.get("bold").unwrap();
+
+        // insert after bold should be bold
+        {
+            loro2
+                .with_txn(|txn| handler2.insert(txn, 5, " new"))
+                .unwrap();
+
+            let value = handler2.get_richtext_value();
+            assert_eq!(value[1]["text"], " new".into());
+            let meta = value[1]["meta"].as_map().unwrap();
+            assert_eq!(meta.len(), 1);
+            meta.get("bold").unwrap();
         }
     }
 }
