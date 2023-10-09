@@ -41,7 +41,7 @@ pub struct Style {
     /// The value of the style.
     ///
     /// - If the style is a container, this is the Container
-    /// - Otherwise, this is null
+    /// - Otherwise, this is true
     pub data: LoroValue,
 }
 
@@ -73,7 +73,7 @@ impl StyleOp {
         } else {
             Some(Style {
                 key: self.key.clone(),
-                data: LoroValue::Null,
+                data: LoroValue::Bool(true),
             })
         }
     }

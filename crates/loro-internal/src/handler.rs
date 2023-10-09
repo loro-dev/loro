@@ -457,6 +457,8 @@ impl RichtextHandler {
                         .unwrap()
                         .get_text_entity_ranges_in_unicode_range(pos, len)
                 });
+
+        debug_log::debug_dbg!(&ranges, pos, len);
         for range in ranges.iter().rev() {
             txn.apply_local_op(
                 self.container_idx,
@@ -477,7 +479,7 @@ impl RichtextHandler {
         txn: &mut Transaction,
         start: usize,
         end: usize,
-        key: InternalString,
+        key: &str,
         flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
         if start >= end {
@@ -510,7 +512,7 @@ impl RichtextHandler {
             crate::op::RawOpContent::List(ListOp::StyleStart {
                 start: entity_start as u32,
                 end: entity_end as u32,
-                key: key.clone(),
+                key: key.into(),
                 info: flag,
             }),
             None,
@@ -873,6 +875,7 @@ mod test {
     use crate::container::richtext::TextStyleInfoFlag;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
+    use crate::ToJson;
     use loro_common::ID;
 
     #[test]
@@ -985,8 +988,8 @@ mod test {
 
         // assert has bold
         let value = handler.get_richtext_value();
-        assert_eq!(value[0]["text"], "hello".into());
-        let meta = value[0]["meta"].as_map().unwrap();
+        assert_eq!(value[0]["insert"], "hello".into());
+        let meta = value[0]["attributes"].as_map().unwrap();
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 
@@ -1002,8 +1005,9 @@ mod test {
 
         // assert has bold
         let value = handler2.get_richtext_value();
-        assert_eq!(value[0]["text"], "hello".into());
-        let meta = value[0]["meta"].as_map().unwrap();
+        dbg!(&value);
+        assert_eq!(value[0]["insert"], "hello".into());
+        let meta = value[0]["attributes"].as_map().unwrap();
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 
@@ -1014,10 +1018,13 @@ mod test {
                 .unwrap();
 
             let value = handler2.get_richtext_value();
-            assert_eq!(value[1]["text"], " new".into());
-            let meta = value[1]["meta"].as_map().unwrap();
-            assert_eq!(meta.len(), 1);
-            meta.get("bold").unwrap();
+            assert_eq!(
+                value.to_json_value(),
+                serde_json::json!([
+                    {"insert": "hello new", "attributes": {"bold": true}},
+                    {"insert": " world"}
+                ])
+            );
         }
     }
 }

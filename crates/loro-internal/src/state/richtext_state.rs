@@ -215,8 +215,8 @@ impl RichtextState {
 
     pub(crate) fn get_text_entity_ranges_in_unicode_range(
         &self,
-        mut pos: usize,
-        mut len: usize,
+        pos: usize,
+        len: usize,
     ) -> Vec<Range<usize>> {
         self.state.get_text_entity_ranges_in_unicode_range(pos, len)
     }

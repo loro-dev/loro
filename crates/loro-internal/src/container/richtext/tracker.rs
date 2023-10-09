@@ -1,3 +1,4 @@
+use debug_log::debug_dbg;
 use generic_btree::LeafIndex;
 use loro_common::{Counter, PeerID, ID};
 
@@ -38,7 +39,7 @@ impl Tracker {
             current_vv: Default::default(),
         };
 
-        this.rope.tree.push(FugueSpan {
+        let result = this.rope.tree.push(FugueSpan {
             content: RichtextChunk::new_unknown(u32::MAX / 4),
             id: ID::new(UNKNOWN_PEER_ID, 0),
             status: Status::default(),
@@ -46,6 +47,10 @@ impl Tracker {
             origin_left: None,
             origin_right: None,
         });
+        this.id_to_cursor.push(
+            ID::new(UNKNOWN_PEER_ID, 0),
+            id_to_cursor::Cursor::new_insert(result, u32::MAX as usize / 4),
+        );
         this
     }
 
@@ -127,6 +132,7 @@ impl Tracker {
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
+        // debug_log::debug_log!("Checkout to {:?} from {:?}", vv, self.current_vv);
         if on_diff_status {
             self.rope.clear_diff_status();
         }
@@ -195,8 +201,10 @@ impl Tracker {
         }
 
         self.current_vv = vv.clone();
+        debug_log::debug_dbg!(&updates);
         let leaf_indexes = self.rope.update(updates, on_diff_status);
         self.update_insert_by_split(&leaf_indexes);
+        debug_log::debug_dbg!(&self);
     }
 
     pub(crate) fn diff(

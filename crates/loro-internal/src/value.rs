@@ -9,26 +9,23 @@ use debug_log::debug_dbg;
 pub use loro_common::LoroValue;
 
 pub trait ToJson {
+    fn to_json_value(&self) -> serde_json::Value;
     fn to_json(&self) -> String;
     fn to_json_pretty(&self) -> String;
     fn from_json(s: &str) -> Self;
 }
 
 impl ToJson for LoroValue {
+    fn to_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
+
     fn to_json(&self) -> String {
-        #[cfg(feature = "json")]
-        let ans = serde_json::to_string(self).unwrap();
-        #[cfg(not(feature = "json"))]
-        let ans = String::new();
-        ans
+        serde_json::to_string(self).unwrap()
     }
 
     fn to_json_pretty(&self) -> String {
-        #[cfg(feature = "json")]
-        let ans = serde_json::to_string_pretty(self).unwrap();
-        #[cfg(not(feature = "json"))]
-        let ans = String::new();
-        ans
+        serde_json::to_string_pretty(self).unwrap()
     }
 
     #[allow(unused)]
@@ -112,8 +109,7 @@ impl ApplyDiff for LoroValue {
                                 map.insert(v.0.to_string(), unresolved_to_collection(v.1));
                             }
                             for (k, _) in diff.deleted.iter() {
-                                // map.remove(v.as_ref());
-                                map.insert(k.to_string(), LoroValue::Null);
+                                map.remove(k.as_ref());
                             }
                             for (key, value) in diff.updated.iter() {
                                 map.insert(key.to_string(), unresolved_to_collection(&value.new));

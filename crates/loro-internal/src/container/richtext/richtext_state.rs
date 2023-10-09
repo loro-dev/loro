@@ -6,12 +6,15 @@ use generic_btree::{
 };
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
-use std::fmt::{Display, Formatter};
 use std::{
     borrow::Cow,
     ops::{Add, AddAssign, Range, Sub},
     str::Utf8Error,
     sync::Arc,
+};
+use std::{
+    fmt::{Display, Formatter},
+    mem::take,
 };
 
 use crate::{
@@ -727,13 +730,15 @@ impl RichtextState {
             .cursor;
         let mut entity_index = self.get_entity_index_from_path(start);
         for span in self.tree.iter_range(start..end) {
-            let offset = span.start.unwrap_or(0);
+            let start = span.start.unwrap_or(0);
+            let end = span.end.unwrap_or(span.elem.rle_len());
+            let len = end - start;
             match span.elem {
-                RichtextStateChunk::Text { unicode_len, text } => {
-                    ans.push(entity_index + offset..entity_index + *unicode_len as usize);
+                RichtextStateChunk::Text { unicode_len, .. } => {
+                    ans.push(entity_index..entity_index + len);
                     entity_index += *unicode_len as usize;
                 }
-                RichtextStateChunk::Style { style, anchor_type } => {
+                RichtextStateChunk::Style { .. } => {
                     ans.push(entity_index..entity_index + 1);
                     entity_index += 1;
                 }
@@ -767,8 +772,6 @@ impl RichtextState {
             range.start,
             RichtextStateChunk::from_style(style.clone(), AnchorType::End),
         );
-        self.style_ranges.insert(range.end, 1);
-        self.style_ranges.insert(range.start, 1);
         // end_entity_index + 2, because
         // 1. We inserted a start anchor before end_entity_index, so we need to +1
         // 2. We need to include the end anchor in the range, so we need to +1
@@ -866,17 +869,40 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
-        let mut ans = Vec::new();
-        for span in self.iter() {
-            let mut value = FxHashMap::default();
-            value.insert("text".into(), LoroValue::String(Arc::new(span.text.into())));
-            let mut styles = FxHashMap::default();
-            for style in span.styles.iter() {
-                styles.insert(style.key.to_string(), style.data.clone());
+        debug_log::debug_dbg!(&self);
+        let mut ans: Vec<LoroValue> = Vec::new();
+        let mut last_styles: Option<Vec<_>> = None;
+        for mut span in self.iter() {
+            if let Some(last) = last_styles.as_ref() {
+                if last == &span.styles {
+                    let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
+                    let s = Arc::make_mut(hash_map)
+                        .get_mut("insert")
+                        .unwrap()
+                        .as_string_mut()
+                        .unwrap();
+                    Arc::make_mut(s).push_str(&span.text);
+                    continue;
+                }
             }
 
-            value.insert("meta".into(), LoroValue::Map(Arc::new(styles)));
+            let mut value = FxHashMap::default();
+            value.insert(
+                "insert".into(),
+                LoroValue::String(Arc::new(span.text.into())),
+            );
+
+            if !span.styles.is_empty() {
+                let mut styles = FxHashMap::default();
+                for style in span.styles.iter() {
+                    styles.insert(style.key.to_string(), style.data.clone());
+                }
+
+                value.insert("attributes".into(), LoroValue::Map(Arc::new(styles)));
+            }
+
             ans.push(LoroValue::Map(Arc::new(value)));
+            last_styles = Some(take(&mut span.styles));
         }
 
         LoroValue::List(Arc::new(ans))
@@ -968,7 +994,7 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -986,7 +1012,7 @@ mod test {
                     text: Cow::Borrowed("He"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -994,11 +1020,11 @@ mod test {
                     styles: vec![
                         Style {
                             key: "bold".into(),
-                            data: LoroValue::Null,
+                            data: LoroValue::Bool(true)
                         },
                         Style {
                             key: "link".into(),
-                            data: LoroValue::Null,
+                            data: LoroValue::Bool(true)
                         }
                     ]
                 },
@@ -1006,7 +1032,7 @@ mod test {
                     text: Cow::Borrowed(" W"),
                     styles: vec![Style {
                         key: "link".into(),
-                        data: LoroValue::Null,
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1030,14 +1056,14 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
                     text: Cow::Borrowed(" Test"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1061,7 +1087,7 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "link".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1102,7 +1128,7 @@ mod test {
                 text: Cow::Borrowed("Hello World!"),
                 styles: vec![Style {
                     key: "bold".into(),
-                    data: LoroValue::Null
+                    data: LoroValue::Bool(true)
                 }]
             },]
         );
@@ -1121,7 +1147,7 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "link".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     },]
                 },
                 RichtextSpan {
@@ -1145,7 +1171,7 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1162,14 +1188,14 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
                     text: Cow::Borrowed("A"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1191,14 +1217,14 @@ mod test {
                     text: Cow::Borrowed("Hello"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
                     text: Cow::Borrowed("A"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
                 RichtextSpan {
@@ -1225,11 +1251,11 @@ mod test {
                     styles: vec![
                         Style {
                             key: "bold".into(),
-                            data: LoroValue::Null
+                            data: LoroValue::Bool(true)
                         },
                         Style {
                             key: "link".into(),
-                            data: LoroValue::Null
+                            data: LoroValue::Bool(true)
                         }
                     ]
                 },
@@ -1237,7 +1263,7 @@ mod test {
                     text: Cow::Borrowed("A"),
                     styles: vec![Style {
                         key: "bold".into(),
-                        data: LoroValue::Null
+                        data: LoroValue::Bool(true)
                     }]
                 },
             ]

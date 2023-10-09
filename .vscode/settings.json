@@ -45,5 +45,8 @@
   },
   "excalidraw.theme": "dark",
   "deno.enable": true,
-  "cortex-debug.variableUseNaturalFormat": true
+  "cortex-debug.variableUseNaturalFormat": true,
+  "[markdown]": {
+    "editor.defaultFormatter": "darkriszty.markdown-table-prettify"
+  }
 }

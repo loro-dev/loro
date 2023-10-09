@@ -499,7 +499,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
                         op.id_start(),
-                        *pos as usize,
+                        *pos,
                         RichtextChunk::new_text(slice.0.clone()),
                     );
                 }
@@ -571,6 +571,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
         }
 
+        debug_log::debug_dbg!(&delta, from, to);
+        debug_log::debug_dbg!(&self.tracker);
         Diff::RichtextRaw(delta)
     }
 }

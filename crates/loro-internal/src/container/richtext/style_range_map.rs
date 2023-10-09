@@ -69,14 +69,17 @@ impl StyleRangeMap {
     }
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+        debug_log::debug_log!("Annotate {:?}", &range);
+        dbg!(&self);
         let range = self.0.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
         }
 
         let range = range.unwrap();
+        debug_log::debug_log!("Range={:?}", &range);
         self.0
-            .update(range.start.cursor..range.end.cursor, &mut |mut x| {
+            .update(range.start.cursor..range.end.cursor, &mut |x| {
                 // only leave one value with the greatest lamport if the style is mergeable
                 if let Some(set) = x.styles.get_mut(&style.key) {
                     set.set.insert(style.clone());
@@ -94,6 +97,7 @@ impl StyleRangeMap {
 
                 None
             });
+        dbg!(&self);
     }
 
     /// Insert entities at `pos` with length of `len`
@@ -131,7 +135,7 @@ impl StyleRangeMap {
         let left = self.0.query::<LengthFinder>(&(pos - 1)).unwrap().cursor;
         if left.leaf == right.leaf {
             // left and right are in the same element, we can increase the length of the element directly
-            self.0.update_leaf(left.leaf, |mut x| {
+            self.0.update_leaf(left.leaf, |x| {
                 x.len += len;
                 (true, Some(len as isize), None, None)
             });

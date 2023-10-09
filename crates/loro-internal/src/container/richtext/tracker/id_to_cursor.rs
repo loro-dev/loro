@@ -7,7 +7,6 @@ use loro_common::{Counter, IdSpan, PeerID, ID};
 use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
 use smallvec::smallvec;
 use smallvec::SmallVec;
-use crate::container::richtext::tracker::UNKNOWN_PEER_ID;
 
 const MAX_FRAGMENT_LEN: usize = 256;
 
@@ -42,10 +41,6 @@ impl IdToCursor {
     ///
     /// id_span should be within the same `Cursor` and should be a `Insert`
     pub fn update_insert(&mut self, id_span: IdSpan, new_leaf: LeafIndex) {
-        if id_span.client_id == UNKNOWN_PEER_ID {
-            return;
-        }
-
         let list = self.map.get_mut(&id_span.client_id).unwrap();
         let index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
             Ok(index) => index,
@@ -65,7 +60,7 @@ impl IdToCursor {
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
         let mut index = 0;
-        let mut offset = 0;
+        let mut offset_in_insert_set = 0;
         let mut counter = 0;
 
         if !list.is_empty() {
@@ -74,7 +69,7 @@ impl IdToCursor {
                 Err(index) => index - 1,
             };
 
-            offset = 0;
+            offset_in_insert_set = 0;
             counter = list[index].counter;
         }
 
@@ -86,15 +81,15 @@ impl IdToCursor {
             let f = &list[index];
             match &f.cursor {
                 Cursor::Insert { set, len: _ } => {
-                    if offset == set.len() {
+                    if offset_in_insert_set == set.len() {
                         index += 1;
-                        offset = 0;
+                        offset_in_insert_set = 0;
                         continue;
                     }
 
-                    offset += 1;
+                    offset_in_insert_set += 1;
                     let start_counter = counter;
-                    let elem = set[offset - 1];
+                    let elem = set[offset_in_insert_set - 1];
                     counter += elem.len as Counter;
                     let end_counter = counter;
                     if end_counter <= iter_id_span.counter.start {
@@ -111,6 +106,8 @@ impl IdToCursor {
                     });
                 }
                 Cursor::Delete(span) => {
+                    offset_in_insert_set = 0;
+                    index += 1;
                     let start_counter = counter;
                     counter += span.atom_len() as Counter;
                     if counter <= iter_id_span.counter.start {
