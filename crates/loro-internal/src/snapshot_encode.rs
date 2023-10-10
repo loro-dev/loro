@@ -67,7 +67,7 @@ pub fn decode_oplog(
     let (arena, state_arena, common) = arena.unwrap_or_else(|| {
         let arena = SharedArena::default();
         let state_arena = TempArena::decode_state_arena(data).unwrap();
-        arena.alloc_str_fast(&state_arena.richtext);
+        arena.alloc_str_fast(&state_arena.text);
         (arena, state_arena, CommonArena::decode(data).unwrap())
     });
     oplog.arena = arena.clone();
@@ -222,9 +222,8 @@ pub fn decode_state<'b>(
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(data)?;
     let state_arena = TempArena::decode_state_arena(data)?;
-    arena.alloc_str_fast(&state_arena.richtext);
+    arena.alloc_str_fast(&state_arena.text);
     let encoded_app_state = EncodedAppState::decode(data)?;
-    let mut text_index = 0;
     let mut container_states =
         FxHashMap::with_capacity_and_hasher(common.container_ids.len(), Default::default());
     // this part should be moved to encode.rs in preload
@@ -520,7 +519,6 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     assert!(!app_state.is_in_txn());
     let mut peers = Vec::new();
     let mut peer_lookup = FxHashMap::default();
-    let mut bytes = Vec::new();
     let mut keywords = Vec::new();
     let mut values = Vec::new();
     let mut key_lookup = FxHashMap::default();
@@ -610,10 +608,10 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     let arena = TempArena {
         values,
         keywords,
-        richtext: app_state.arena.slice_by_unicode(..).deref().to_vec().into(),
-        text: bytes.into(),
+        text: app_state.arena.slice_by_unicode(..).deref().to_vec().into(),
     };
 
+    debug_log::debug_dbg!(&encoded);
     PreEncodedState {
         common,
         arena,
@@ -638,7 +636,6 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         common.container_ids = oplog.arena.export_containers();
     }
     // need to rebuild bytes from ops, because arena.text may contain garbage
-    let mut bytes = Vec::with_capacity(arena.text.len());
     let mut extra_keys = Vec::new();
     let mut extra_values = Vec::new();
 
@@ -824,9 +821,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         state_arena: Cow::Owned(arena.encode()),
         oplog_extra_arena: Cow::Owned(
             TempArena {
-                // FIXME: encode arena str when state_arena richtext is empty
-                richtext: Cow::Owned(Vec::new()),
-                text: Cow::Borrowed(&bytes),
+                text: Cow::Borrowed(&[]),
                 keywords: extra_keys,
                 values: extra_values,
             }

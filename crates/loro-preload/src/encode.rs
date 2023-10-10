@@ -183,9 +183,6 @@ pub struct CompactStyleOp {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TempArena<'a> {
     #[serde(borrow)]
-    pub richtext: Cow<'a, [u8]>,
-    // FIXME: remove this field
-    #[serde(borrow)]
     pub text: Cow<'a, [u8]>,
     // PERF: can we use a Cow here?
     pub keywords: Vec<InternalString>,

@@ -678,18 +678,6 @@ impl RichtextState {
         entity_index
     }
 
-    /// Delete a range of text at the given entity range.
-    ///
-    /// Delete a range of text. (The style anchors included in the range are not deleted.)
-    pub(crate) fn delete_with_entity_index(&mut self, pos: usize, len: usize) {
-        if self.tree.is_empty() {
-            return;
-        }
-
-        self.tree.drain_by_query::<EntityQuery>(pos..pos + len);
-        self.style_ranges.delete(pos..pos + len);
-    }
-
     /// Delete a range of text at the given unicode position.
     ///
     /// Delete a range of text. (The style anchors included in the range are not deleted.)
@@ -1018,6 +1006,11 @@ impl RichtextState {
     #[inline(always)]
     pub fn len_entity(&self) -> usize {
         self.tree.root_cache().entity_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn push(&mut self, elem: RichtextStateChunk) {
+        self.tree.push(elem);
     }
 }
 

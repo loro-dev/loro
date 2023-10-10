@@ -309,7 +309,7 @@ impl DocState {
             .unwrap_or_else(|| match container_idx.get_type() {
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Text => LoroValue::List(Arc::new(Default::default())),
+                ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
             })
     }
 

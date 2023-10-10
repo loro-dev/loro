@@ -249,8 +249,9 @@ impl CrdtRope {
         self.tree
             .update_leaves_with_arg_in_ranges(tree_update_info, |elem, arg| {
                 let status = if on_diff_status {
-                    assert!(elem.diff_status.is_none());
-                    elem.diff_status = Some(elem.status);
+                    if elem.diff_status.is_none() {
+                        elem.diff_status = Some(elem.status);
+                    }
                     elem.diff_status.as_mut().unwrap()
                 } else {
                     &mut elem.status

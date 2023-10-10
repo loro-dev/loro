@@ -1,4 +1,3 @@
-use debug_log::debug_dbg;
 use generic_btree::LeafIndex;
 use loro_common::{Counter, PeerID, ID};
 
@@ -74,6 +73,13 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
+        if self.applied_vv.includes_id(op_id) {
+            assert!(self
+                .applied_vv
+                .includes_id(op_id.inc(content.len() as Counter - 1)));
+            return;
+        }
+
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -108,6 +114,11 @@ impl Tracker {
 
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, op_id: ID, pos: usize, len: usize, reverse: bool) {
+        if self.applied_vv.includes_id(op_id) {
+            assert!(self.applied_vv.includes_id(op_id.inc(len as Counter - 1)));
+            return;
+        }
+
         let mut cur_id = op_id;
         let split = self.rope.delete(pos, len, |span| {
             let mut id_span = span.id_span();
@@ -200,11 +211,11 @@ impl Tracker {
             }
         }
 
-        self.current_vv = vv.clone();
-        debug_log::debug_dbg!(&updates);
+        if !on_diff_status {
+            self.current_vv = vv.clone();
+        }
         let leaf_indexes = self.rope.update(updates, on_diff_status);
         self.update_insert_by_split(&leaf_indexes);
-        debug_log::debug_dbg!(&self);
     }
 
     pub(crate) fn diff(
@@ -214,6 +225,7 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
+        debug_log::debug_dbg!(&from, &to, &self,);
         self.rope.get_diff()
     }
 }

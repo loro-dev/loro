@@ -145,10 +145,26 @@ impl ContainerState for RichtextState {
                         *pos,
                         arena.slice_by_unicode(slice.0.start as usize..slice.0.end as usize),
                     );
+
+                    if self.in_txn {
+                        self.undo_stack.push(UndoItem::Insert {
+                            index: *pos as u32,
+                            len: slice.0.end - slice.0.start,
+                        })
+                    }
                 }
                 list_op::InnerListOp::Delete(del) => {
-                    self.state
-                        .delete_with_entity_index(del.pos as usize, del.len as usize);
+                    for span in self
+                        .state
+                        .drain_by_entity_index(del.start() as usize, rle::HasLength::atom_len(&del))
+                    {
+                        if self.in_txn {
+                            self.undo_stack.push(UndoItem::Delete {
+                                index: del.start() as u32,
+                                content: span,
+                            })
+                        }
+                    }
                 }
                 list_op::InnerListOp::StyleStart {
                     start,
@@ -383,6 +399,7 @@ impl RichtextState {
                         *len.last_mut().unwrap() += 1;
                     }
 
+                    is_last_style = true;
                     is_style_start.push(*anchor_type == AnchorType::Start);
                     styles.push(loro_preload::CompactStyleOp {
                         peer_idx: record_peer(style.peer),
@@ -411,5 +428,14 @@ pub(crate) struct RichtextStateLoader<'a> {
 }
 
 impl<'a> RichtextStateLoader<'a> {
-    pub fn push(&mut self, elem: RichtextStateChunk) {}
+    pub fn push(&mut self, elem: RichtextStateChunk) {
+        match &elem {
+            RichtextStateChunk::Style { style, anchor_type } => {
+                // FIXME: detect style bound
+            }
+            RichtextStateChunk::Text { .. } => {}
+        }
+
+        self.state.state.push(elem);
+    }
 }

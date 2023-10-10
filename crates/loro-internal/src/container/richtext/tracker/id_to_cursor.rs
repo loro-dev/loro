@@ -24,8 +24,12 @@ impl IdToCursor {
     pub fn push(&mut self, id: ID, cursor: Cursor) {
         let list = self.map.entry(id.peer).or_default();
         if let Some(last) = list.last_mut() {
-            assert_eq!(last.counter + last.cursor.rle_len() as Counter, id.counter);
-            if last.cursor.can_merge(&cursor) && last.cursor.rle_len() < MAX_FRAGMENT_LEN {
+            let last_end = last.counter + last.cursor.rle_len() as Counter;
+            assert!(last_end <= id.counter);
+            if last_end == id.counter
+                && last.cursor.can_merge(&cursor)
+                && last.cursor.rle_len() < MAX_FRAGMENT_LEN
+            {
                 last.cursor.merge_right(&cursor);
                 return;
             }
@@ -44,7 +48,7 @@ impl IdToCursor {
         let list = self.map.get_mut(&id_span.client_id).unwrap();
         let index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
             Ok(index) => index,
-            Err(index) => index - 1,
+            Err(index) => index.saturating_sub(1),
         };
 
         let fragment = &mut list[index];
@@ -63,10 +67,11 @@ impl IdToCursor {
         let mut offset_in_insert_set = 0;
         let mut counter = 0;
 
+        debug_log::debug_dbg!(iter_id_span);
         if !list.is_empty() {
             index = match list.binary_search_by_key(&iter_id_span.counter.start, |x| x.counter) {
                 Ok(index) => index,
-                Err(index) => index - 1,
+                Err(index) => index.saturating_sub(1),
             };
 
             offset_in_insert_set = 0;
@@ -84,6 +89,7 @@ impl IdToCursor {
                     if offset_in_insert_set == set.len() {
                         index += 1;
                         offset_in_insert_set = 0;
+                        counter = list.get(index).map(|x| x.counter).unwrap_or(Counter::MAX);
                         continue;
                     }
 
@@ -109,7 +115,7 @@ impl IdToCursor {
                     offset_in_insert_set = 0;
                     index += 1;
                     let start_counter = counter;
-                    counter += span.atom_len() as Counter;
+                    counter = list.get(index).map(|x| x.counter).unwrap_or(Counter::MAX);
                     if counter <= iter_id_span.counter.start {
                         continue;
                     }

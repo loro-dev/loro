@@ -39,6 +39,7 @@ impl StrArena {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn len_bytes(&self) -> usize {
         self.len.bytes as usize
     }
@@ -51,12 +52,6 @@ impl StrArena {
     #[inline]
     pub fn len_unicode(&self) -> usize {
         self.len.unicode as usize
-    }
-
-    pub fn alloc_and_slice(&mut self, s: &str) -> BytesSlice {
-        let bytes_len = self.bytes.len();
-        self.alloc(s);
-        self.bytes.slice(bytes_len..)
     }
 
     pub fn alloc(&mut self, input: &str) {
@@ -122,19 +117,23 @@ impl StrArena {
         }
 
         let start = match range.start_bound() {
-            Bound::Included(&i) => i as u32,
+            Bound::Included(&i) => {
+                unicode_to_byte_index(&self.unicode_indexes, i as u32, &self.bytes)
+            }
             Bound::Excluded(&i) => unreachable!(),
             Bound::Unbounded => 0,
         };
 
         let end = match range.end_bound() {
-            Bound::Included(&i) => i as u32 + 1,
-            Bound::Excluded(&i) => i as u32,
-            Bound::Unbounded => self.len.unicode,
+            Bound::Included(&i) => {
+                unicode_to_byte_index(&self.unicode_indexes, i as u32 + 1, &self.bytes)
+            }
+            Bound::Excluded(&i) => {
+                unicode_to_byte_index(&self.unicode_indexes, i as u32, &self.bytes)
+            }
+            Bound::Unbounded => self.len.bytes as usize,
         };
 
-        let start = unicode_to_byte_index(&self.unicode_indexes, start, &self.bytes);
-        let end = unicode_to_byte_index(&self.unicode_indexes, end, &self.bytes);
         (start, end)
     }
 
