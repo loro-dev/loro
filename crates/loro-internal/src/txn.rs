@@ -325,7 +325,12 @@ fn change_to_diff(
                             InnerListOp::Delete(..) => {
                                 Diff::SeqRawUtf16(Delta::new().retain(*pos).delete(*len))
                             }
-                            InnerListOp::StyleStart { start, end, style } => unimplemented!(),
+                            InnerListOp::StyleStart {
+                                start,
+                                end,
+                                key,
+                                info,
+                            } => unimplemented!(),
                             InnerListOp::StyleEnd => unimplemented!(),
                         },
                     }
@@ -346,7 +351,12 @@ fn change_to_diff(
                                 .retain(del.pos as usize)
                                 .delete(del.len as usize),
                         ),
-                        InnerListOp::StyleStart { start, end, style } => unimplemented!(),
+                        InnerListOp::StyleStart {
+                            start,
+                            end,
+                            key,
+                            info,
+                        } => unimplemented!(),
                         InnerListOp::StyleEnd => unimplemented!(),
                     },
                     crate::op::InnerContent::Map(map) => {

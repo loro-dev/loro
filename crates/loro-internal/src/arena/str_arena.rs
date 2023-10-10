@@ -20,7 +20,7 @@ struct Index {
 }
 
 impl StrArena {
-#[inline]
+    #[inline]
     pub fn new() -> Self {
         Self {
             bytes: AppendOnlyBytes::new(),
@@ -59,22 +59,36 @@ impl StrArena {
         self.bytes.slice(bytes_len..)
     }
 
-    // TODO: PERF handle super long s, it shuold be split into multiple chunks
-    pub fn alloc(&mut self, s: &str) {
-        let inner = self;
+    pub fn alloc(&mut self, input: &str) {
         let mut utf16 = 0;
         let mut unicode_len = 0;
-        for c in s.chars() {
+        let mut last_save_index = 0;
+        for (byte_index, c) in input.char_indices() {
+            let byte_index = byte_index + c.len_utf8();
             utf16 += c.len_utf16() as u32;
             unicode_len += 1;
+            if byte_index - last_save_index > INDEX_INTERVAL as usize {
+                self._alloc(&input[last_save_index..byte_index], utf16, unicode_len);
+                last_save_index = byte_index;
+                utf16 = 0;
+                unicode_len = 0;
+            }
         }
-        inner.len.bytes += s.len() as u32;
-        inner.len.utf16 += utf16;
-        inner.len.unicode += unicode_len as u32;
-        inner.bytes.push_str(s);
-        let cur_len = inner.len;
 
-        let index = &mut inner.unicode_indexes;
+        if last_save_index != input.len() {
+            self._alloc(&input[last_save_index..], utf16, unicode_len);
+        }
+    }
+
+    fn _alloc(&mut self, input: &str, utf16: u32, unicode_len: i32) {
+        let s = input;
+        self.len.bytes += s.len() as u32;
+        self.len.utf16 += utf16;
+        self.len.unicode += unicode_len as u32;
+        self.bytes.push_str(s);
+        let cur_len = self.len;
+
+        let index = &mut self.unicode_indexes;
         if index.is_empty() {
             index.push(Index {
                 bytes: 0,
@@ -85,7 +99,7 @@ impl StrArena {
 
         let last = index.last().unwrap();
         if cur_len.bytes - last.bytes > INDEX_INTERVAL {
-            inner.unicode_indexes.push(cur_len);
+            self.unicode_indexes.push(cur_len);
         }
     }
 
@@ -103,6 +117,10 @@ impl StrArena {
     }
 
     fn unicode_range_to_utf8_range(&mut self, range: impl RangeBounds<usize>) -> (usize, usize) {
+        if self.is_empty() {
+            return (0, 0);
+        }
+
         let start = match range.start_bound() {
             Bound::Included(&i) => i as u32,
             Bound::Excluded(&i) => unreachable!(),

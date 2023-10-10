@@ -470,7 +470,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 struct RichtextDiffCalculator {
     start_vv: VersionVector,
     tracker: RichtextTracker,
-    styles: Vec<Arc<StyleOp>>,
+    styles: Vec<StyleOp>,
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
@@ -511,10 +511,21 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         del.pos < 0,
                     );
                 }
-                crate::container::list::list_op::InnerListOp::StyleStart { start, end, style } => {
+                crate::container::list::list_op::InnerListOp::StyleStart {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => {
                     debug_assert!(start < end, "start: {}, end: {}", start, end);
                     let style_id = self.styles.len();
-                    self.styles.push(style.clone());
+                    self.styles.push(StyleOp {
+                        lamport: op.lamport(),
+                        peer: op.peer,
+                        cnt: op.id_start().counter,
+                        key: key.clone(),
+                        info: *info,
+                    });
                     self.tracker.insert(
                         op.id_start(),
                         *start as usize,
@@ -559,7 +570,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     }
                     RichtextChunkValue::StyleAnchor { id, anchor_type } => {
                         delta = delta.insert(RichtextStateChunk::Style {
-                            style: self.styles[id as usize].clone(),
+                            style: Arc::new(self.styles[id as usize].clone()),
                             anchor_type,
                         });
                     }

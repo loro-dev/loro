@@ -39,12 +39,12 @@ pub struct RawOp<'a> {
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
-    op: &'a Op,
-    client_id: PeerID,
-    lamport: Lamport,
-    timestamp: Timestamp,
-    start: usize,
-    end: usize,
+    pub op: &'a Op,
+    pub peer: PeerID,
+    pub lamport: Lamport,
+    pub timestamp: Timestamp,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
@@ -167,7 +167,7 @@ impl<'a> HasCounter for RemoteOp<'a> {
 impl<'a> HasId for RichOp<'a> {
     fn id_start(&self) -> ID {
         ID {
-            peer: self.client_id,
+            peer: self.peer,
             counter: self.op.counter + self.start as Counter,
         }
     }
@@ -189,7 +189,7 @@ impl<'a> RichOp<'a> {
     pub fn new(op: &'a Op, client_id: PeerID, lamport: Lamport, timestamp: Timestamp) -> Self {
         RichOp {
             op,
-            client_id,
+            peer: client_id,
             lamport,
             timestamp,
             start: 0,
@@ -201,7 +201,7 @@ impl<'a> RichOp<'a> {
         let diff = op.counter - change.id.counter;
         RichOp {
             op,
-            client_id: change.id.peer,
+            peer: change.id.peer,
             lamport: change.lamport + diff as Lamport,
             timestamp: change.timestamp,
             start: 0,
@@ -219,7 +219,7 @@ impl<'a> RichOp<'a> {
         let op_slice_end = (end - op_index_in_change).clamp(0, op.atom_len() as i32);
         RichOp {
             op,
-            client_id: change.id.peer,
+            peer: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
             start: op_slice_start as usize,
@@ -234,7 +234,7 @@ impl<'a> RichOp<'a> {
     pub fn as_owned(&self) -> OwnedRichOp {
         OwnedRichOp {
             op: self.get_sliced(),
-            client_id: self.client_id,
+            client_id: self.peer,
             lamport: self.lamport,
             timestamp: self.timestamp,
         }
@@ -245,7 +245,7 @@ impl<'a> RichOp<'a> {
     }
 
     pub fn client_id(&self) -> u64 {
-        self.client_id
+        self.peer
     }
 
     pub fn timestamp(&self) -> i64 {
@@ -265,7 +265,7 @@ impl OwnedRichOp {
     pub fn rich_op(&self) -> RichOp {
         RichOp {
             op: &self.op,
-            client_id: self.client_id,
+            peer: self.client_id,
             lamport: self.lamport,
             timestamp: self.timestamp,
             start: 0,

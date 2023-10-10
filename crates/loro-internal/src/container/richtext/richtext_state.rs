@@ -66,6 +66,19 @@ pub enum RichtextStateChunk {
     },
 }
 
+impl RichtextStateChunk {
+    pub fn new_text(s: BytesSlice) -> Self {
+        Self::Text {
+            unicode_len: std::str::from_utf8(&s).unwrap().chars().count() as i32,
+            text: s,
+        }
+    }
+
+    pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
+        Self::Style { style, anchor_type }
+    }
+}
+
 impl DeltaValue for RichtextStateChunk {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
         Err(other)

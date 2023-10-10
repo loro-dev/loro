@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::Deref};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -7,15 +7,20 @@ use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
+use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, to_vec};
 use smallvec::smallvec;
 
 use crate::{
     change::{Change, Timestamp},
-    container::{idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet},
+    container::{
+        idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet,
+        richtext::TextStyleInfoFlag,
+    },
     delta::MapValue,
     id::{Counter, PeerID},
     op::{InnerContent, Op},
+    state::RichtextState,
     version::Frontiers,
     InternalString, LoroError, LoroValue,
 };
@@ -60,11 +65,10 @@ pub fn decode_oplog(
     arena: Option<(SharedArena, TempArena, CommonArena)>,
 ) -> Result<(), LoroError> {
     let (arena, state_arena, common) = arena.unwrap_or_else(|| {
-        (
-            Default::default(),
-            TempArena::decode_state_arena(data).unwrap(),
-            CommonArena::decode(data).unwrap(),
-        )
+        let arena = SharedArena::default();
+        let state_arena = TempArena::decode_state_arena(data).unwrap();
+        arena.alloc_str_fast(&state_arena.richtext);
+        (arena, state_arena, CommonArena::decode(data).unwrap())
     });
     oplog.arena = arena.clone();
     let mut extra_arena = TempArena::decode_additional_arena(data)?;
@@ -75,7 +79,7 @@ pub fn decode_oplog(
     keys.append(&mut extra_arena.keywords);
 
     let oplog_data = OplogEncoded::decode_iter(data)?;
-
+    let mut style_iter = oplog_data.styles.iter();
     let mut changes = Vec::new();
     let mut dep_iter = oplog_data.deps;
     let mut op_iter = oplog_data.ops;
@@ -98,12 +102,16 @@ pub fn decode_oplog(
             let container = common.container_ids[encoded_op.container as usize].clone();
             let container_idx = arena.register_container(&container);
             let op = match container.container_type() {
-                loro_common::ContainerType::Text | loro_common::ContainerType::List => {
-                    let op = if container.container_type() == ContainerType::List {
-                        encoded_op.get_list()
-                    } else {
-                        encoded_op.get_text()
+                loro_common::ContainerType::Text
+                | loro_common::ContainerType::List
+                | loro_common::ContainerType::Richtext => {
+                    let op = match container.container_type() {
+                        ContainerType::List => encoded_op.get_list(),
+                        ContainerType::Text => encoded_op.get_text(),
+                        ContainerType::Richtext => encoded_op.get_richtext(),
+                        _ => unreachable!(),
                     };
+
                     match op {
                         SnapshotOp::ListInsert {
                             value_idx: start,
@@ -133,6 +141,32 @@ pub fn decode_oplog(
                             text_idx += len as u32;
                             op
                         }
+                        SnapshotOp::RichtextStyleStart { start, end } => {
+                            let style = style_iter.next().unwrap();
+                            let key = keys[style.key_idx as usize].clone();
+                            let info = style.info;
+                            Op::new(
+                                id,
+                                InnerContent::List(InnerListOp::StyleStart {
+                                    start: start as u32,
+                                    end: end as u32,
+                                    key,
+                                    info: TextStyleInfoFlag::from_u8(info),
+                                }),
+                                container_idx,
+                            )
+                        }
+                        SnapshotOp::RichtextStyleEnd => {
+                            Op::new(id, InnerContent::List(InnerListOp::StyleEnd), container_idx)
+                        }
+                        SnapshotOp::RichtextInsert { pos, start, len } => Op::new(
+                            id,
+                            InnerContent::List(InnerListOp::new_insert(
+                                start as u32..start as u32 + (len as u32),
+                                pos,
+                            )),
+                            container_idx,
+                        ),
                     }
                 }
                 loro_common::ContainerType::Map => {
@@ -159,7 +193,6 @@ pub fn decode_oplog(
                         _ => unreachable!(),
                     }
                 }
-                loro_common::ContainerType::Richtext => unimplemented!(),
             };
             *counter_mut += op.content_len() as Counter;
             ops.push(op);
@@ -204,6 +237,7 @@ pub fn decode_state<'b>(
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(data)?;
     let state_arena = TempArena::decode_state_arena(data)?;
+    arena.alloc_str_fast(&state_arena.richtext);
     let encoded_app_state = EncodedAppState::decode(data)?;
     let mut text_index = 0;
     let mut container_states =
@@ -213,7 +247,7 @@ pub fn decode_state<'b>(
         .container_ids
         .iter()
         .zip(encoded_app_state.parents.iter())
-        .zip(encoded_app_state.states.iter())
+        .zip(encoded_app_state.states.into_iter())
     {
         let idx = arena.register_container(id);
         let parent_idx =
@@ -259,6 +293,11 @@ pub fn decode_state<'b>(
                 );
                 container_states.insert(idx, State::ListState(list));
             }
+            loro_preload::EncodedContainerState::Richtext(richtext_data) => {
+                let mut richtext = RichtextState::new();
+                richtext.decode_snapshot(richtext_data, &state_arena, &common, &arena);
+                container_states.insert(idx, State::RichtextState(richtext));
+            }
         }
     }
 
@@ -278,6 +317,14 @@ struct OplogEncoded {
     ops: Vec<EncodedSnapshotOp>,
     #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
+
+    styles: Vec<StyleInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StyleInfo {
+    key_idx: u32,
+    info: u8,
 }
 
 impl OplogEncoded {
@@ -319,31 +366,81 @@ struct EncodedSnapshotOp {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    // Text: insert len | del len (can be neg)
-    // List: 0 | del len (can be neg)
-    // Map: always 0
+    /// Richtext: insert range start
+    /// Text: 0
+    /// List: 0
+    /// Map: 0
+    #[columnar(strategy = "DeltaRle")]
+    prop2: usize,
+    /// Richtext: insert len | del len | end position (for style)
+    /// Text: insert len | del len (can be neg)
+    /// List: 0 | del len (can be neg)
+    /// Map: always 0
     #[columnar(strategy = "DeltaRle")]
     len: i64,
-    // List: insert 0 | deletion -1
-    // Text: insert 0 | deletion -1
-    // Map: always 0
     #[columnar(strategy = "BoolRle")]
     is_del: bool,
-    // Text: 0
-    // List: 0 | value index
-    // Map: 0 (deleted) | value index + 1
+    /// Richtext: 0 (text) | 1 (style_start) | 2 (style_end)
+    /// Text: 0
+    /// List: 0 | value index
+    /// Map: 0 (deleted) | value index + 1
     #[columnar(strategy = "DeltaRle")]
     value: isize,
 }
 
 enum SnapshotOp {
-    TextInsert { pos: usize, len: usize },
-    ListInsert { pos: usize, value_idx: u32 },
-    TextOrListDelete { pos: usize, len: isize },
-    Map { key: usize, value_idx_plus_one: u32 },
+    RichtextStyleStart {
+        start: usize,
+        end: usize,
+    },
+    RichtextStyleEnd,
+    RichtextInsert {
+        pos: usize,
+        start: usize,
+        len: usize,
+    },
+    TextInsert {
+        pos: usize,
+        len: usize,
+    },
+    ListInsert {
+        pos: usize,
+        value_idx: u32,
+    },
+    TextOrListDelete {
+        pos: usize,
+        len: isize,
+    },
+    Map {
+        key: usize,
+        value_idx_plus_one: u32,
+    },
 }
 
 impl EncodedSnapshotOp {
+    pub fn get_richtext(&self) -> SnapshotOp {
+        if self.is_del {
+            SnapshotOp::TextOrListDelete {
+                pos: self.prop,
+                len: self.len as isize,
+            }
+        } else {
+            match self.value {
+                0 => SnapshotOp::RichtextInsert {
+                    pos: self.prop,
+                    start: self.prop2,
+                    len: self.len as usize,
+                },
+                1 => SnapshotOp::RichtextStyleStart {
+                    start: self.prop,
+                    end: self.len as usize,
+                },
+                2 => SnapshotOp::RichtextStyleEnd,
+                _ => unreachable!(),
+            }
+        }
+    }
+
     pub fn get_text(&self) -> SnapshotOp {
         if self.is_del {
             SnapshotOp::TextOrListDelete {
@@ -388,6 +485,7 @@ impl EncodedSnapshotOp {
             } => Self {
                 container,
                 prop: pos,
+                prop2: 0,
                 len: 0,
                 is_del: false,
                 value: start as isize,
@@ -395,6 +493,7 @@ impl EncodedSnapshotOp {
             SnapshotOp::TextOrListDelete { pos, len } => Self {
                 container,
                 prop: pos,
+                prop2: 0,
                 len: len as i64,
                 is_del: true,
                 value: 0,
@@ -407,6 +506,7 @@ impl EncodedSnapshotOp {
                 Self {
                     container,
                     prop: key,
+                    prop2: 0,
                     len: 0,
                     is_del: false,
                     value,
@@ -415,6 +515,31 @@ impl EncodedSnapshotOp {
             SnapshotOp::TextInsert { pos, len } => Self {
                 container,
                 prop: pos,
+                prop2: 0,
+                len: len as i64,
+                is_del: false,
+                value: 0,
+            },
+            SnapshotOp::RichtextStyleStart { start, end } => Self {
+                container,
+                prop: start,
+                prop2: 0,
+                len: end as i64,
+                is_del: false,
+                value: 1,
+            },
+            SnapshotOp::RichtextStyleEnd => Self {
+                container,
+                prop: 0,
+                prop2: 0,
+                len: 0,
+                is_del: false,
+                value: 2,
+            },
+            SnapshotOp::RichtextInsert { pos, start, len } => Self {
+                container,
+                prop: pos,
+                prop2: start,
                 len: len as i64,
                 is_del: false,
                 value: 0,
@@ -498,7 +623,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     for (_, state) in app_state.states.iter() {
         match state {
             State::ListState(list) => {
-                let v = list.iter().map(|value| record_value(value)).collect();
+                let v = list.iter().map(&mut record_value).collect();
                 encoded.states.push(EncodedContainerState::List(v))
             }
             State::MapState(map) => {
@@ -529,7 +654,10 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                     .states
                     .push(EncodedContainerState::Text { len: text.len() })
             }
-            State::RichtextState(_) => todo!(),
+            State::RichtextState(text) => {
+                let result = text.encode_snapshot(&mut record_peer, &mut record_key);
+                encoded.states.push(EncodedContainerState::Richtext(result));
+            }
         }
     }
 
@@ -539,9 +667,10 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     };
 
     let arena = TempArena {
-        text: bytes.into(),
-        keywords,
         values,
+        keywords,
+        richtext: app_state.arena.slice_by_unicode(..).deref().to_vec().into(),
+        text: bytes.into(),
     };
 
     PreEncodedState {
@@ -613,6 +742,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         EncodedSnapshotOp::from(ans, container_idx)
     };
 
+    let mut styles = Vec::new();
     // Add all changes
     let mut changes: Vec<&Change> = Vec::with_capacity(oplog.len_changes());
     for (_, peer_changes) in oplog.changes.iter() {
@@ -664,8 +794,17 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                                 pos += 1;
                             }
                         }
+                        loro_common::ContainerType::Richtext => {
+                            encoded_ops.push(EncodedSnapshotOp::from(
+                                SnapshotOp::RichtextInsert {
+                                    pos: *pos,
+                                    start: slice.0.start as usize,
+                                    len: slice.0.len(),
+                                },
+                                op.container.to_index(),
+                            ))
+                        }
                         loro_common::ContainerType::Map => unreachable!(),
-                        loro_common::ContainerType::Richtext => unimplemented!(),
                     },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(
@@ -676,8 +815,30 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                             op.container.to_index(),
                         ));
                     }
-                    InnerListOp::StyleStart { start, end, style } => unimplemented!("style encode"),
-                    InnerListOp::StyleEnd => unimplemented!("style encode"),
+                    InnerListOp::StyleStart {
+                        start,
+                        end,
+                        key,
+                        info,
+                    } => {
+                        encoded_ops.push(EncodedSnapshotOp::from(
+                            SnapshotOp::RichtextStyleStart {
+                                start: *start as usize,
+                                end: *end as usize,
+                            },
+                            op.container.to_index(),
+                        ));
+                        styles.push(StyleInfo {
+                            key_idx: record_key(key) as u32,
+                            info: info.to_u8(),
+                        })
+                    }
+                    InnerListOp::StyleEnd => {
+                        encoded_ops.push(EncodedSnapshotOp::from(
+                            SnapshotOp::RichtextStyleEnd,
+                            op.container.to_index(),
+                        ));
+                    }
                 },
                 InnerContent::Map(map) => {
                     let key = record_key(&map.key);
@@ -727,7 +888,9 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         changes: encoded_changes,
         ops: encoded_ops,
         deps,
+        styles,
     };
+
     // println!("OplogEncoded:");
     // println!("changes {}", oplog_encoded.changes.len());
     // println!("ops {}", oplog_encoded.ops.len());
@@ -739,6 +902,8 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         state_arena: Cow::Owned(arena.encode()),
         oplog_extra_arena: Cow::Owned(
             TempArena {
+                // FIXME: encode arena str when state_arena richtext is empty
+                richtext: Cow::Owned(Vec::new()),
                 text: Cow::Borrowed(&bytes),
                 keywords: extra_keys,
                 values: extra_values,

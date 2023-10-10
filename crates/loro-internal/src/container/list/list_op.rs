@@ -44,7 +44,8 @@ pub enum InnerListOp {
     StyleStart {
         start: u32,
         end: u32,
-        style: Arc<StyleOp>,
+        key: InternalString,
+        info: TextStyleInfoFlag,
     },
     StyleEnd,
 }

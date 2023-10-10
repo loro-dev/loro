@@ -394,14 +394,17 @@ impl OpLog {
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
                 }
-                list_op::InnerListOp::StyleStart { start, end, style } => {
-                    contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
-                        start: *start,
-                        end: *end,
-                        key: style.key.clone(),
-                        info: style.info,
-                    }))
-                }
+                list_op::InnerListOp::StyleStart {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
+                    start: *start,
+                    end: *end,
+                    key: key.clone(),
+                    info: *info,
+                })),
                 list_op::InnerListOp::StyleEnd => {
                     contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
                 }

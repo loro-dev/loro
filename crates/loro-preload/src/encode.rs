@@ -5,6 +5,12 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+/// The final phase of the encoding process. It's also the first phase of the decoding process.
+///
+/// This data structure allows users to only load the state or the oplog.
+///
+/// - When only the state is needed, the `oplog` and `oplog_extra_arena` can be ignored.
+/// - When only the oplog is needed, the `app_state` can be ignored. (state_arena is still needed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalPhase<'a> {
     #[serde(borrow)]
@@ -14,7 +20,7 @@ pub struct FinalPhase<'a> {
     #[serde(borrow)]
     pub state_arena: Cow<'a, [u8]>, // -> TempArena<'a>
     #[serde(borrow)]
-    pub oplog_extra_arena: Cow<'a, [u8]>, // -> TempArena<'a>，抛弃这部分则不能回溯历史
+    pub oplog_extra_arena: Cow<'a, [u8]>, // -> TempArena<'a>. Cannot have full history if this is dropped
     #[serde(borrow)]
     pub oplog: Cow<'a, [u8]>, // -> OpLog. Can be ignored if we only need state
 }
@@ -127,13 +133,31 @@ pub enum EncodedContainerState {
     Text { len: usize },
     Map(Vec<MapEntry>),
     List(Vec<usize>),
+    Richtext(EncodedRichtextState),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncodedRichtextState {
+    /// It's composed of interleaved:
+    ///
+    /// - len of text ranges
+    /// - len of styles anchors
+    pub len: Vec<u32>,
+    /// Text ranges in the [`TempArena`] `richtext` field
+    pub text: Vec<(u32, u32)>,
+    /// Style anchor index in the style arena
+    pub styles: Vec<CompactStyleOp>,
+    /// It is a start or end anchor. It's indexed by bit position.
+    pub is_style_start: Vec<u8>,
+}
+
 impl EncodedContainerState {
     pub fn container_type(&self) -> loro_common::ContainerType {
         match self {
             EncodedContainerState::Text { .. } => loro_common::ContainerType::Text,
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
             EncodedContainerState::List(_) => loro_common::ContainerType::List,
+            EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Richtext,
         }
     }
 }
@@ -148,9 +172,24 @@ pub struct MapEntry {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CompactStyleOp {
+    /// index to the peer idx
+    pub peer_idx: u32,
+    /// index to the keywords idx
+    pub key_idx: u32,
+    pub counter: u32,
+    pub lamport: u32,
+    pub style_info: u8,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TempArena<'a> {
     #[serde(borrow)]
+    pub richtext: Cow<'a, [u8]>,
+    // FIXME: remove this field
+    #[serde(borrow)]
     pub text: Cow<'a, [u8]>,
+    // PERF: can we use a Cow here?
     pub keywords: Vec<InternalString>,
     pub values: Vec<LoroValue>,
 }

@@ -266,6 +266,14 @@ impl TextStyleInfoFlag {
         TextStyleInfoFlag::new(true, ExpandType::None, false, false);
     pub const COMMENT: TextStyleInfoFlag =
         TextStyleInfoFlag::new(false, ExpandType::None, false, true);
+
+    pub fn to_u8(&self) -> u8 {
+        self.data
+    }
+
+    pub fn from_u8(data: u8) -> Self {
+        Self { data }
+    }
 }
 
 #[cfg(test)]

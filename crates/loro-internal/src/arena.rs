@@ -146,13 +146,8 @@ impl<'a> OpConverter<'a> {
                     content: InnerContent::List(InnerListOp::StyleStart {
                         start,
                         end,
-                        style: Arc::new(crate::container::richtext::StyleOp {
-                            lamport,
-                            peer,
-                            cnt: counter,
-                            key,
-                            info,
-                        }),
+                        info,
+                        key,
                     }),
                 },
                 ListOp::StyleEnd => Op {
@@ -210,6 +205,7 @@ impl SharedArena {
         _alloc_str(&mut text_lock, str)
     }
 
+    /// alloc str without extra info
     pub fn alloc_str_fast(&self, bytes: &[u8]) {
         let mut text_lock = self.inner.str.lock().unwrap();
         text_lock.alloc(std::str::from_utf8(bytes).unwrap());
@@ -393,13 +389,8 @@ impl SharedArena {
                     content: InnerContent::List(InnerListOp::StyleStart {
                         start,
                         end,
-                        style: Arc::new(StyleOp {
-                            lamport,
-                            peer,
-                            cnt: counter,
-                            key,
-                            info,
-                        }),
+                        key,
+                        info,
                     }),
                 },
                 ListOp::StyleEnd => Op {
