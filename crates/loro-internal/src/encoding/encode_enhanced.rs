@@ -475,7 +475,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                             }
                         }
                     }
-                    ContainerType::Richtext => unimplemented!(),
+                    ContainerType::Text => unimplemented!(),
                 };
                 let remote_op = RemoteOp {
                     container: container_id,

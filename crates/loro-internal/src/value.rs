@@ -152,7 +152,6 @@ impl ApplyDiff for LoroValue {
             Diff::Map(_) => TypeHint::Map,
             Diff::NewMap(_) => TypeHint::Map,
             Diff::SeqRaw(_) => TypeHint::Text,
-            Diff::SeqRawUtf16(_) => TypeHint::Text,
             Diff::RichtextRaw(_) => TypeHint::Richtext,
         };
         {
@@ -195,10 +194,9 @@ impl ApplyDiff for LoroValue {
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
     if let Some(container) = v.as_container() {
         match container.container_type() {
-            crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Richtext => LoroValue::List(Default::default()),
+            crate::ContainerType::Text => LoroValue::String(Default::default()),
         }
     } else {
         v.clone()
@@ -326,22 +324,6 @@ pub mod wasm {
                         &obj,
                         &JsValue::from_str("type"),
                         &JsValue::from_str("seq_raw"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&text).unwrap(),
-                    )
-                    .unwrap();
-                }
-                Diff::SeqRawUtf16(text) => {
-                    // set type as "text"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("seq_raw_utf16"),
                     )
                     .unwrap();
                     // set diff as array

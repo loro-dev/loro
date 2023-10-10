@@ -2,7 +2,7 @@ use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait,
+    BTree, BTreeTrait, Query,
 };
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
@@ -24,7 +24,7 @@ use crate::{
 };
 
 // FIXME: Check splice and other things are using unicode index
-use self::query::{EntityQuery, EntityQueryT, UnicodeQuery};
+use self::query::{EntityQuery, EntityQueryT, UnicodeQuery, Utf16Query};
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
@@ -285,6 +285,7 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usiz
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
 struct Cache {
     unicode_len: i32,
+    bytes: i32,
     utf16_len: i32,
     entity_len: i32,
 }
@@ -292,6 +293,7 @@ struct Cache {
 impl AddAssign for Cache {
     fn add_assign(&mut self, rhs: Self) {
         self.unicode_len += rhs.unicode_len;
+        self.bytes += rhs.bytes;
         self.utf16_len += rhs.utf16_len;
         self.entity_len += rhs.entity_len;
     }
@@ -302,6 +304,7 @@ impl Add for Cache {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self {
+            bytes: self.bytes + rhs.bytes,
             unicode_len: self.unicode_len + rhs.unicode_len,
             utf16_len: self.utf16_len + rhs.utf16_len,
             entity_len: self.entity_len + rhs.entity_len,
@@ -314,6 +317,7 @@ impl Sub for Cache {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self {
+            bytes: self.bytes - rhs.bytes,
             unicode_len: self.unicode_len - rhs.unicode_len,
             utf16_len: self.utf16_len - rhs.utf16_len,
             entity_len: self.entity_len - rhs.entity_len,
@@ -355,11 +359,13 @@ impl BTreeTrait for RichtextTreeTrait {
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
             RichtextStateChunk::Text { unicode_len, text } => Cache {
+                bytes: text.len() as i32,
                 unicode_len: *unicode_len,
                 utf16_len: count_utf16_chars(text) as i32,
                 entity_len: *unicode_len,
             },
             RichtextStateChunk::Style { .. } => Cache {
+                bytes: 0,
                 unicode_len: 0,
                 utf16_len: 0,
                 entity_len: 1,
@@ -373,6 +379,7 @@ impl BTreeTrait for RichtextTreeTrait {
 
     fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
         Cache {
+            bytes: cache_lhs.bytes - cache_rhs.bytes,
             unicode_len: cache_lhs.unicode_len - cache_rhs.unicode_len,
             utf16_len: cache_lhs.utf16_len - cache_rhs.utf16_len,
             entity_len: cache_lhs.entity_len - cache_rhs.entity_len,
@@ -517,7 +524,9 @@ impl RichtextState {
             return 0;
         }
 
-        let right = self.find_best_insert_pos_from_unicode_index(pos).unwrap();
+        let right = self
+            .find_best_insert_pos_from_unicode_index::<UnicodeQuery>(pos)
+            .unwrap();
         let right = self.tree.prefer_left(right).unwrap_or(right);
         let entity_index = self.get_entity_index_from_path(right);
         let insert_pos = right;
@@ -532,7 +541,20 @@ impl RichtextState {
             return 0;
         }
 
-        let right = self.find_best_insert_pos_from_unicode_index(pos).unwrap();
+        let right = self
+            .find_best_insert_pos_from_unicode_index::<UnicodeQuery>(pos)
+            .unwrap();
+        self.get_entity_index_from_path(right)
+    }
+
+    pub(crate) fn get_entity_index_for_utf16_insert_pos(&self, pos: usize) -> usize {
+        if self.tree.is_empty() {
+            return 0;
+        }
+
+        let right = self
+            .find_best_insert_pos_from_unicode_index::<Utf16Query>(pos)
+            .unwrap();
         self.get_entity_index_from_path(right)
     }
 
@@ -571,7 +593,10 @@ impl RichtextState {
     ///
     /// The current method will scan forward to find the last position that satisfies 1 and 2.
     /// Then it scans backward to find the first position that satisfies 3.
-    fn find_best_insert_pos_from_unicode_index(&self, pos: usize) -> Option<generic_btree::Cursor> {
+    fn find_best_insert_pos_from_unicode_index<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
+        &self,
+        pos: usize,
+    ) -> Option<generic_btree::Cursor> {
         if self.tree.is_empty() {
             return None;
         }
@@ -583,7 +608,7 @@ impl RichtextState {
         let mut iter = if pos == 0 {
             self.tree.start_cursor()
         } else {
-            let q = self.tree.query::<UnicodeQuery>(&(pos - 1)).unwrap();
+            let q = self.tree.query::<Q>(&(pos - 1)).unwrap();
             match self.tree.shift_path_by_one_offset(q.cursor) {
                 Some(x) => x,
                 // If next is None, we know the range is empty, return directly
@@ -592,7 +617,7 @@ impl RichtextState {
         };
 
         // Find the end of the range
-        let right = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
+        let right = self.tree.query::<Q>(&pos).unwrap().cursor;
         if iter == right {
             // no style anchor between unicode index (pos-1) and (pos)
             return Some(iter);
@@ -719,6 +744,7 @@ impl RichtextState {
         removed_entity_ranges
     }
 
+    // TODO: refactor extract common code
     pub(crate) fn get_text_entity_ranges_in_unicode_range(
         &self,
         mut pos: usize,
@@ -741,6 +767,44 @@ impl RichtextState {
             .query::<UnicodeQuery>(&(pos + len))
             .unwrap()
             .cursor;
+        let mut entity_index = self.get_entity_index_from_path(start);
+        for span in self.tree.iter_range(start..end) {
+            let start = span.start.unwrap_or(0);
+            let end = span.end.unwrap_or(span.elem.rle_len());
+            let len = end - start;
+            match span.elem {
+                RichtextStateChunk::Text { unicode_len, .. } => {
+                    ans.push(entity_index..entity_index + len);
+                    entity_index += *unicode_len as usize;
+                }
+                RichtextStateChunk::Style { .. } => {
+                    ans.push(entity_index..entity_index + 1);
+                    entity_index += 1;
+                }
+            }
+        }
+
+        ans
+    }
+
+    pub(crate) fn get_text_entity_ranges_in_utf16_range(
+        &self,
+        mut pos: usize,
+        mut len: usize,
+    ) -> Vec<Range<usize>> {
+        if self.tree.is_empty() {
+            return Vec::new();
+        }
+
+        pos = pos.min(self.len_utf16());
+        len = len.min(self.len_utf16() - pos);
+        if len == 0 {
+            return Vec::new();
+        }
+
+        let mut ans = Vec::new();
+        let start = self.tree.query::<Utf16Query>(&pos).unwrap().cursor;
+        let end = self.tree.query::<Utf16Query>(&(pos + len)).unwrap().cursor;
         let mut entity_index = self.get_entity_index_from_path(start);
         for span in self.tree.iter_range(start..end) {
             let start = span.start.unwrap_or(0);
@@ -801,7 +865,7 @@ impl RichtextState {
         }
 
         let end_pos = self
-            .find_best_insert_pos_from_unicode_index(range.end)
+            .find_best_insert_pos_from_unicode_index::<UnicodeQuery>(range.end)
             .unwrap();
         let end_entity_index = self.get_entity_index_from_path(end_pos);
         self.tree.insert_by_path(
@@ -810,7 +874,7 @@ impl RichtextState {
         );
 
         let start_pos = self
-            .find_best_insert_pos_from_unicode_index(range.start)
+            .find_best_insert_pos_from_unicode_index::<UnicodeQuery>(range.start)
             .unwrap();
         let start_entity_index = self.get_entity_index_from_path(start_pos);
         self.tree.insert_by_path(
@@ -932,17 +996,27 @@ impl RichtextState {
         dbg!(&self.style_ranges);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn len_unicode(&self) -> usize {
         self.tree.root_cache().unicode_len as usize
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn len_utf16(&self) -> usize {
         self.tree.root_cache().utf16_len as usize
     }
 
-    #[inline]
+    #[inline(always)]
+    pub fn len_utf8(&self) -> usize {
+        self.tree.root_cache().bytes as usize
+    }
+
+    #[inline(always)]
+    pub fn is_emtpy(&self) -> bool {
+        self.tree.root_cache().bytes == 0
+    }
+
+    #[inline(always)]
     pub fn len_entity(&self) -> usize {
         self.tree.root_cache().entity_len as usize
     }

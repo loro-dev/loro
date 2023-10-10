@@ -366,7 +366,7 @@ impl OpLog {
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
-                    loro_common::ContainerType::Text | loro_common::ContainerType::Richtext => {
+                    loro_common::ContainerType::Text => {
                         let str = self
                             .arena
                             .slice_str(slice.0.start as usize..slice.0.end as usize);

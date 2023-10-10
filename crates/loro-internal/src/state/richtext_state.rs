@@ -7,7 +7,10 @@ use loro_preload::{CommonArena, EncodedRichtextState, TempArena};
 
 use crate::{
     arena::SharedArena,
-    container::richtext::{AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag},
+    container::{
+        idx::ContainerIdx,
+        richtext::{AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag},
+    },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
     delta::DeltaItem,
     event::Diff,
@@ -20,14 +23,38 @@ use super::ContainerState;
 
 #[derive(Debug)]
 pub struct RichtextState {
+    idx: ContainerIdx,
     state: InnerState,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
 }
 
+impl RichtextState {
+    #[inline]
+    pub fn new(idx: ContainerIdx) -> Self {
+        Self {
+            idx,
+            state: Default::default(),
+            in_txn: false,
+            undo_stack: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn to_string(&self) -> String {
+        self.state.to_string()
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.state.is_emtpy()
+    }
+}
+
 impl Clone for RichtextState {
     fn clone(&self) -> Self {
         Self {
+            idx: self.idx,
             state: self.state.clone(),
             in_txn: false,
             undo_stack: Vec::new(),
@@ -179,14 +206,6 @@ impl ContainerState for RichtextState {
 }
 
 impl RichtextState {
-    pub fn new() -> Self {
-        Self {
-            state: InnerState::default(),
-            in_txn: false,
-            undo_stack: Vec::new(),
-        }
-    }
-
     fn undo_all(&mut self) {
         while let Some(item) = self.undo_stack.pop() {
             match item {
@@ -210,22 +229,37 @@ impl RichtextState {
         }
     }
 
+    #[inline(always)]
+    pub fn len_utf8(&self) -> usize {
+        self.state.len_utf8()
+    }
+
+    #[inline(always)]
     pub fn len_utf16(&self) -> usize {
         self.state.len_utf16()
     }
 
+    #[inline(always)]
     pub fn len_entity(&self) -> usize {
         self.state.len_entity()
     }
 
+    #[inline(always)]
     pub fn len_unicode(&self) -> usize {
         self.state.len_unicode()
     }
 
+    #[inline(always)]
     pub(crate) fn get_entity_index_for_text_insert_pos(&self, pos: usize) -> usize {
         self.state.get_entity_index_for_text_insert_pos(pos)
     }
 
+    #[inline(always)]
+    pub(crate) fn get_entity_index_for_utf16_insert_pos(&self, pos: usize) -> usize {
+        self.state.get_entity_index_for_utf16_insert_pos(pos)
+    }
+
+    #[inline(always)]
     pub(crate) fn get_text_entity_ranges_in_unicode_range(
         &self,
         pos: usize,
@@ -234,10 +268,21 @@ impl RichtextState {
         self.state.get_text_entity_ranges_in_unicode_range(pos, len)
     }
 
+    #[inline(always)]
+    pub(crate) fn get_text_entity_ranges_in_utf16_range(
+        &self,
+        pos: usize,
+        len: usize,
+    ) -> Vec<Range<usize>> {
+        self.state.get_text_entity_ranges_in_utf16_range(pos, len)
+    }
+
+    #[inline(always)]
     pub fn get_richtext_value(&self) -> LoroValue {
         self.state.get_richtext_value()
     }
 
+    #[inline(always)]
     pub(crate) fn get_loader(&mut self) -> RichtextStateLoader {
         RichtextStateLoader {
             state: self,
@@ -245,6 +290,7 @@ impl RichtextState {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
         self.state.iter_chunk()
     }

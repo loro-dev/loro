@@ -284,38 +284,7 @@ impl TextState {
         delta: &mut Delta<SliceRanges>,
         arena: &SharedArena,
     ) -> Option<Diff> {
-        let mut new_delta = Delta::new();
-        let mut index = 0;
-        let mut utf16_index = 0;
-        for span in delta.iter() {
-            match span {
-                DeltaItem::Retain { len, meta: _ } => {
-                    index += len;
-                    let next_utf16_index = self.unicode_to_utf16(index);
-                    new_delta = new_delta.retain(next_utf16_index - utf16_index);
-                    utf16_index = next_utf16_index;
-                }
-                DeltaItem::Insert { value, .. } => {
-                    new_delta = new_delta.insert(value.clone());
-                    let start_utf16_len = self.len_wchars();
-                    for value in value.0.iter() {
-                        let range = value.0.start as usize..value.0.end as usize;
-                        arena.with_text_slice(range, |s| {
-                            self.insert_unicode(index, s);
-                            index += s.len();
-                        });
-                    }
-                    utf16_index += self.len_wchars() - start_utf16_len;
-                }
-                DeltaItem::Delete { len, .. } => {
-                    let start_utf16_len = self.len_wchars();
-                    self.delete_unicode(index..index + len);
-                    new_delta = new_delta.delete(start_utf16_len - self.len_wchars());
-                }
-            }
-        }
-
-        Some(Diff::SeqRawUtf16(new_delta))
+        todo!()
     }
 
     fn unicode_to_utf16(&self, index: usize) -> usize {

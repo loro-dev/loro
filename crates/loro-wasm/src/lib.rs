@@ -3,7 +3,7 @@ use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, RichtextHandler, TextHandler},
+    handler::{ListHandler, MapHandler, TextHandler},
     id::{Counter, ID},
     obs::SubID,
     txn::Transaction as Txn,
@@ -199,10 +199,6 @@ impl Loro {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
         let ty = container_id.container_type();
         Ok(match ty {
-            ContainerType::Text => {
-                let text = self.0.get_text(container_id);
-                LoroText(text).into()
-            }
             ContainerType::Map => {
                 let map = self.0.get_map(container_id);
                 LoroMap(map).into()
@@ -211,8 +207,8 @@ impl Loro {
                 let list = self.0.get_list(container_id);
                 LoroList(list).into()
             }
-            ContainerType::Richtext => {
-                let richtext = self.0.get_richtext(container_id);
+            ContainerType::Text => {
+                let richtext = self.0.get_text(container_id);
                 LoroRichtext(richtext).into()
             }
         })
@@ -560,10 +556,9 @@ impl LoroMap {
         let c = self.0.insert_container(t, key, type_)?;
 
         let container = match type_ {
-            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
-            ContainerType::Richtext => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Text => LoroList(c.into_list().unwrap()).into(),
         };
         Ok(container)
     }
@@ -648,10 +643,9 @@ impl LoroList {
         let t = txn.as_mut()?;
         let c = self.0.insert_container(t, pos, _type)?;
         let container = match _type {
-            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
-            ContainerType::Richtext => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
         };
         Ok(container)
     }
@@ -674,7 +668,7 @@ impl LoroList {
 }
 
 #[wasm_bindgen]
-pub struct LoroRichtext(RichtextHandler);
+pub struct LoroRichtext(TextHandler);
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"

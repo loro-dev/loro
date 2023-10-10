@@ -7,7 +7,7 @@ use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
 fn init(s: &str) -> LoroDoc {
     let doc = LoroDoc::default();
     doc.set_peer_id(1);
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.insert(txn, 0, s)).unwrap();
     doc
 }
@@ -45,23 +45,23 @@ impl Kind {
 }
 
 fn insert(doc: &LoroDoc, pos: usize, s: &str) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.insert(txn, pos, s)).unwrap();
 }
 
 fn delete(doc: &LoroDoc, pos: usize, len: usize) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.delete(txn, pos, len)).unwrap();
 }
 
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.mark(txn, range.start, range.end, kind.key(), kind.flag()))
         .unwrap();
 }
 
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     doc.with_txn(|txn| {
         richtext.mark(
             txn,
@@ -80,13 +80,13 @@ fn merge(a: &LoroDoc, b: &LoroDoc) {
 }
 
 fn expect_result(doc: &LoroDoc, json: &str) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     let s = richtext.get_richtext_value().to_json();
     assert_eq!(&s, json);
 }
 
 fn expect_result_value(doc: &LoroDoc, json: serde_json::Value) {
-    let richtext = doc.get_richtext("r");
+    let richtext = doc.get_text("r");
     let s = richtext.get_richtext_value().to_json_value();
     assert_eq!(s, json);
 }

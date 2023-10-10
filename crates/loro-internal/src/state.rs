@@ -85,7 +85,6 @@ pub trait ContainerState: Clone {
 pub enum State {
     ListState,
     MapState,
-    TextState,
     RichtextState,
 }
 
@@ -100,8 +99,9 @@ impl State {
         Self::MapState(MapState::new(idx))
     }
 
-    pub fn new_text() -> Self {
-        Self::TextState(TextState::default())
+    #[allow(unused)]
+    pub fn new_richtext(idx: ContainerIdx) -> Self {
+        Self::RichtextState(RichtextState::new(idx))
     }
 }
 
@@ -309,10 +309,9 @@ impl DocState {
             .get(&container_idx)
             .map(|x| x.get_value())
             .unwrap_or_else(|| match container_idx.get_type() {
-                ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Richtext => LoroValue::List(Arc::new(Default::default())),
+                ContainerType::Text => LoroValue::List(Arc::new(Default::default())),
             })
     }
 
@@ -358,7 +357,10 @@ impl DocState {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&text_state::TextState> {
+    pub fn get_text<I: Into<ContainerIdRaw>>(
+        &mut self,
+        id: I,
+    ) -> Option<&richtext_state::RichtextState> {
         let id: ContainerIdRaw = id.into();
         let idx = match id {
             ContainerIdRaw::Root { name } => Some(self.arena.register_container(
@@ -375,8 +377,8 @@ impl DocState {
         let idx = idx.unwrap();
         self.states
             .entry(idx)
-            .or_insert_with(State::new_text)
-            .as_text_state()
+            .or_insert_with(|| State::new_richtext(idx))
+            .as_richtext_state()
     }
 
     #[inline(always)]
@@ -637,48 +639,10 @@ impl DocState {
     pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
         let seq = match diff {
             Diff::SeqRaw(seq) => seq,
-            Diff::SeqRawUtf16(seq) => seq,
             _ => return,
         };
 
         match idx.get_type() {
-            ContainerType::Text => {
-                let mut ans: Delta<String> = Delta::new();
-                let mut index = 0;
-                for span in seq.iter() {
-                    match span {
-                        crate::delta::DeltaItem::Retain { len, .. } => {
-                            ans.push(DeltaItem::Retain {
-                                len: *len,
-                                meta: (),
-                            });
-                            index += len;
-                        }
-                        crate::delta::DeltaItem::Insert { value, .. } => {
-                            let len = value.0.iter().fold(0, |acc, cur| acc + cur.0.len());
-                            let mut s = String::with_capacity(len);
-                            for slice in value.0.iter() {
-                                self.arena.with_text_slice(
-                                    slice.0.start as usize..slice.0.end as usize,
-                                    |slice| {
-                                        s.push_str(slice);
-                                    },
-                                )
-                            }
-                            ans.push(DeltaItem::Insert { value: s, meta: () });
-                            index += len;
-                        }
-                        crate::delta::DeltaItem::Delete { len, .. } => {
-                            ans.push(DeltaItem::Delete {
-                                len: *len,
-                                meta: (),
-                            });
-                        }
-                    }
-                }
-
-                *diff = Diff::Text(ans);
-            }
             ContainerType::List => {
                 let mut list: Delta<Vec<LoroValue>> = Delta::new();
 
@@ -704,17 +668,16 @@ impl DocState {
                 *diff = Diff::List(list);
             }
             ContainerType::Map => unreachable!(),
-            ContainerType::Richtext => unimplemented!(),
+            ContainerType::Text => unimplemented!(),
         }
     }
 }
 
 pub fn create_state(idx: ContainerIdx) -> State {
     match idx.get_type() {
-        ContainerType::Text => State::TextState(TextState::new()),
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
-        ContainerType::Richtext => State::RichtextState(RichtextState::new()),
+        ContainerType::Text => State::RichtextState(RichtextState::new(idx)),
     }
 }
 

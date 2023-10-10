@@ -7,8 +7,6 @@ use crate::{
         text::text_content::ListSlice,
     },
     delta::MapValue,
-    txn::EventHint,
-    InternalString,
 };
 use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -24,18 +22,6 @@ pub struct TextHandler {
 }
 
 impl std::fmt::Debug for TextHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TextHandler")
-    }
-}
-
-#[derive(Clone)]
-pub struct RichtextHandler {
-    container_idx: ContainerIdx,
-    state: Weak<Mutex<DocState>>,
-}
-
-impl std::fmt::Debug for RichtextHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RichtextHandler")
     }
@@ -70,25 +56,22 @@ pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
-    Richtext(RichtextHandler),
 }
 
 impl Handler {
     pub fn container_idx(&self) -> ContainerIdx {
         match self {
-            Self::Text(x) => x.container_idx,
             Self::Map(x) => x.container_idx,
             Self::List(x) => x.container_idx,
-            Self::Richtext(x) => x.container_idx,
+            Self::Text(x) => x.container_idx,
         }
     }
 
     pub fn c_type(&self) -> ContainerType {
         match self {
-            Self::Text(_) => ContainerType::Text,
             Self::Map(_) => ContainerType::Map,
             Self::List(_) => ContainerType::List,
-            Self::Richtext(_) => ContainerType::Richtext,
+            Self::Text(_) => ContainerType::Text,
         }
     }
 }
@@ -96,10 +79,9 @@ impl Handler {
 impl Handler {
     fn new(value: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         match value.get_type() {
-            ContainerType::Text => Self::Text(TextHandler::new(value, state)),
             ContainerType::Map => Self::Map(MapHandler::new(value, state)),
             ContainerType::List => Self::List(ListHandler::new(value, state)),
-            ContainerType::Richtext => Self::Richtext(RichtextHandler::new(value, state)),
+            ContainerType::Text => Self::Text(TextHandler::new(value, state)),
         }
     }
 }
@@ -107,252 +89,6 @@ impl Handler {
 impl TextHandler {
     pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Text);
-        Self {
-            container_idx: idx,
-            state,
-        }
-    }
-
-    pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .get_value_by_idx(self.container_idx)
-    }
-
-    pub fn id(&self) -> ContainerID {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .arena
-            .idx_to_id(self.container_idx)
-            .unwrap()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len_unicode() == 0
-    }
-
-    pub fn len_utf16(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_text_state().as_ref().unwrap().len_wchars()
-            })
-    }
-
-    pub fn len_unicode(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_text_state().as_ref().unwrap().len_chars()
-            })
-    }
-
-    pub fn len_utf8(&self) -> usize {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_text_state().as_ref().unwrap().len()
-            })
-    }
-}
-
-#[cfg(not(feature = "wasm"))]
-impl TextHandler {
-    #[inline(always)]
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_unicode(txn, pos, s)
-    }
-
-    #[inline(always)]
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
-        self.delete_unicode(txn, pos, len)
-    }
-
-    pub fn insert_unicode(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        if s.is_empty() {
-            return Ok(());
-        }
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr {
-                    str: Cow::Borrowed(s),
-                    unicode_len: s.chars().count(),
-                },
-                pos,
-            }),
-            None,
-            &self.state,
-        )
-    }
-
-    pub fn delete_unicode(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
-        if len == 0 {
-            return Ok(());
-        }
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                pos: pos as isize,
-                len: len as isize,
-            })),
-            None,
-            &self.state,
-        )
-    }
-
-    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        if s.is_empty() {
-            return Ok(());
-        }
-
-        let start =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let text_state = &state.as_text_state();
-                    let text = text_state.as_ref().unwrap();
-                    text.utf16_to_unicode(pos)
-                });
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr {
-                    str: Cow::Borrowed(s),
-                    unicode_len: s.chars().count(),
-                },
-                pos: start,
-            }),
-            None,
-            &self.state,
-        )?;
-
-        Ok(())
-    }
-
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
-        if del == 0 {
-            return Ok(());
-        }
-
-        let (start, end) =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let text_state = &state.as_text_state();
-                    let text = text_state.as_ref().unwrap();
-                    (text.utf16_to_unicode(pos), text.utf16_to_unicode(pos + del))
-                });
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                pos: start as isize,
-                len: (end - start) as isize,
-            })),
-            None,
-            &self.state,
-        )
-    }
-}
-
-#[cfg(feature = "wasm")]
-impl TextHandler {
-    #[inline(always)]
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
-        self.delete_utf16(txn, pos, del)
-    }
-
-    #[inline(always)]
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_utf16(txn, pos, s)
-    }
-
-    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        if s.is_empty() {
-            return Ok(());
-        }
-
-        let start =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let text_state = &state.as_text_state();
-                    let text = text_state.as_ref().unwrap();
-                    text.utf16_to_unicode(pos)
-                });
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr {
-                    str: Cow::Borrowed(s),
-                    unicode_len: s.chars().count(),
-                },
-                pos: start,
-            }),
-            Some(EventHint::Utf16 { pos, len: 0 }),
-            &self.state,
-        )
-    }
-
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, del: usize) -> LoroResult<()> {
-        if del == 0 {
-            return Ok(());
-        }
-
-        let (start, end) =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    let text_state = &state.as_text_state();
-                    let text = text_state.as_ref().unwrap();
-                    (text.utf16_to_unicode(pos), text.utf16_to_unicode(pos + del))
-                });
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                pos: start as isize,
-                len: (end - start) as isize,
-            })),
-            Some(EventHint::Utf16 { pos, len: del }),
-            &self.state,
-        )
-    }
-}
-
-impl RichtextHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::Richtext);
         Self {
             container_idx: idx,
             state,
@@ -394,6 +130,17 @@ impl RichtextHandler {
         self.len_unicode() == 0
     }
 
+    pub fn len_utf8(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                state.as_richtext_state().unwrap().len_utf8()
+            })
+    }
+
     pub fn len_utf16(&self) -> usize {
         self.state
             .upgrade()
@@ -414,6 +161,34 @@ impl RichtextHandler {
             .with_state(self.container_idx, |state| {
                 state.as_richtext_state().unwrap().len_unicode()
             })
+    }
+
+    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+        let entity_index =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    state
+                        .as_richtext_state()
+                        .unwrap()
+                        .get_entity_index_for_text_insert_pos(pos)
+                });
+
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
+                slice: ListSlice::RawStr {
+                    str: Cow::Borrowed(s),
+                    unicode_len: s.chars().count(),
+                },
+                pos: entity_index,
+            }),
+            None,
+            &self.state,
+        )
     }
 
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
@@ -456,6 +231,36 @@ impl RichtextHandler {
                         .as_richtext_state()
                         .unwrap()
                         .get_text_entity_ranges_in_unicode_range(pos, len)
+                });
+
+        debug_log::debug_dbg!(&ranges, pos, len);
+        for range in ranges.iter().rev() {
+            txn.apply_local_op(
+                self.container_idx,
+                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
+                    pos: range.start as isize,
+                    len: (range.end - range.start) as isize,
+                })),
+                None,
+                &self.state,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        let ranges =
+            self.state
+                .upgrade()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .with_state(self.container_idx, |state| {
+                    state
+                        .as_richtext_state()
+                        .unwrap()
+                        .get_text_entity_ranges_in_utf16_range(pos, len)
                 });
 
         debug_log::debug_dbg!(&ranges, pos, len);
@@ -929,14 +734,14 @@ mod test {
         loro2.set_peer_id(2);
 
         let mut txn = loro.txn().unwrap();
-        let text = txn.get_richtext("hello");
+        let text = txn.get_text("hello");
         text.insert(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let exported = loro.export_from(&Default::default());
 
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
-        let text = txn.get_richtext("hello");
+        let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
         text.insert(&mut txn, 5, " world").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
@@ -945,7 +750,7 @@ mod test {
         loro.import(&loro2.export_from(&Default::default()))
             .unwrap();
         let txn = loro.txn().unwrap();
-        let text = txn.get_richtext("hello");
+        let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
 
@@ -958,7 +763,7 @@ mod test {
     fn richtext_handler_concurrent() {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
-        let handler = loro.get_richtext("richtext");
+        let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         for i in 0..100 {
@@ -967,7 +772,7 @@ mod test {
                 .import(&loro.export_from(&Default::default()))
                 .unwrap();
             let mut txn = new_loro.txn().unwrap();
-            let handler = new_loro.get_richtext("richtext");
+            let handler = new_loro.get_text("richtext");
             handler.insert(&mut txn, i % 5, &i.to_string()).unwrap();
             txn.commit().unwrap();
             loro.import(&new_loro.export_from(&loro.oplog_vv()))
@@ -979,7 +784,7 @@ mod test {
     fn richtext_handler_mark() {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
-        let handler = loro.get_richtext("richtext");
+        let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello world").unwrap();
         handler
             .mark(&mut txn, 0, 5, "bold".into(), TextStyleInfoFlag::BOLD)
@@ -997,7 +802,7 @@ mod test {
         loro2
             .import(&loro.export_from(&Default::default()))
             .unwrap();
-        let handler2 = loro2.get_richtext("richtext");
+        let handler2 = loro2.get_text("richtext");
         assert_eq!(
             handler2.get_value().as_string().unwrap().deref(),
             "hello world"

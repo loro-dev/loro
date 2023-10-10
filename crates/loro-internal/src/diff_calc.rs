@@ -121,14 +121,9 @@ impl DiffCalculator {
                     let calculator =
                         self.calculators.entry(op.container).or_insert_with(|| {
                             match op.container.get_type() {
-                                crate::ContainerType::Text => {
-                                    ContainerDiffCalculator::Text(TextDiffCalculator::default())
-                                }
-                                crate::ContainerType::Richtext => {
-                                    ContainerDiffCalculator::Richtext(
-                                        RichtextDiffCalculator::default(),
-                                    )
-                                }
+                                crate::ContainerType::Text => ContainerDiffCalculator::Richtext(
+                                    RichtextDiffCalculator::default(),
+                                ),
                                 crate::ContainerType::Map => {
                                     ContainerDiffCalculator::Map(MapDiffCalculator::new())
                                 }
@@ -230,23 +225,9 @@ pub trait DiffCalculatorTrait {
 #[enum_dispatch(DiffCalculatorTrait)]
 #[derive(Debug)]
 enum ContainerDiffCalculator {
-    Text(TextDiffCalculator),
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
-}
-
-#[derive(Default)]
-struct TextDiffCalculator {
-    tracker: Tracker,
-}
-
-impl std::fmt::Debug for TextDiffCalculator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TextDiffCalculator")
-            // .field("tracker", &self.tracker)
-            .finish()
-    }
 }
 
 #[derive(Debug, Default)]
@@ -421,40 +402,6 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     }
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
-
-    fn calculate_diff(
-        &mut self,
-        _oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
-    ) -> Diff {
-        Diff::SeqRaw(self.tracker.diff(from, to))
-    }
-}
-
-impl DiffCalculatorTrait for TextDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
-        if !vv.includes_vv(self.tracker.start_vv()) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = Tracker::new(vv.clone(), Counter::MAX / 2);
-        }
-
-        self.tracker.checkout(vv);
-    }
-
-    fn apply_change(
-        &mut self,
-        _oplog: &super::oplog::OpLog,
-        op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
-    ) {
-        if let Some(vv) = vv {
-            self.tracker.checkout(vv);
-        }
-
-        self.tracker.track_apply(&op);
-    }
-
-    fn stop_tracking(&mut self, _oplog: &super::oplog::OpLog, _vv: &crate::VersionVector) {}
 
     fn calculate_diff(
         &mut self,

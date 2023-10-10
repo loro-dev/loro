@@ -130,7 +130,6 @@ impl EncodedAppState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EncodedContainerState {
-    Text { len: usize },
     Map(Vec<MapEntry>),
     List(Vec<usize>),
     Richtext(EncodedRichtextState),
@@ -154,10 +153,9 @@ pub struct EncodedRichtextState {
 impl EncodedContainerState {
     pub fn container_type(&self) -> loro_common::ContainerType {
         match self {
-            EncodedContainerState::Text { .. } => loro_common::ContainerType::Text,
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
             EncodedContainerState::List(_) => loro_common::ContainerType::List,
-            EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Richtext,
+            EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Text,
         }
     }
 }

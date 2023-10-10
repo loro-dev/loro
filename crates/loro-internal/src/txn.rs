@@ -19,7 +19,7 @@ use crate::{
     },
     delta::{Delta, MapValue},
     event::Diff,
-    handler::RichtextHandler,
+    handler::TextHandler,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -30,7 +30,7 @@ use crate::{
 use super::{
     arena::SharedArena,
     event::{InternalContainerDiff, InternalDocDiff},
-    handler::{ListHandler, MapHandler, TextHandler},
+    handler::{ListHandler, MapHandler},
     oplog::OpLog,
     state::{DocState, State},
 };
@@ -243,13 +243,6 @@ impl Transaction {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_richtext<I: IntoContainerId>(&self, id: I) -> RichtextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Richtext);
-        RichtextHandler::new(idx, Arc::downgrade(&self.state))
-    }
-
-    /// id can be a str, ContainerID, or ContainerIdRaw.
-    /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
         ListHandler::new(idx, Arc::downgrade(&self.state))
@@ -314,26 +307,7 @@ fn change_to_diff(
                 EventHint::Utf16 { pos, len } => {
                     // only use utf16 pos & len in wasm context
                     assert!(cfg!(feature = "wasm"));
-                    InternalContainerDiff {
-                        idx: op.container,
-                        diff: match op.content.as_list().unwrap() {
-                            InnerListOp::Insert { slice, .. } => Diff::SeqRawUtf16(
-                                Delta::new()
-                                    .retain(*pos)
-                                    .insert(SliceRanges(smallvec![slice.clone()])),
-                            ),
-                            InnerListOp::Delete(..) => {
-                                Diff::SeqRawUtf16(Delta::new().retain(*pos).delete(*len))
-                            }
-                            InnerListOp::StyleStart {
-                                start,
-                                end,
-                                key,
-                                info,
-                            } => unimplemented!(),
-                            InnerListOp::StyleEnd => unimplemented!(),
-                        },
-                    }
+                    todo!()
                 }
             }
         } else {

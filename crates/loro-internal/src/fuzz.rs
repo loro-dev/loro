@@ -177,9 +177,6 @@ impl Actionable for Vec<LoroDoc> {
         match action {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
-                let app_state = &mut self[*site as usize].app_state().lock().unwrap();
-                let text = app_state.get_text("text").unwrap();
-                change_pos_to_char_boundary(pos, text.len());
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
@@ -188,10 +185,7 @@ impl Actionable for Vec<LoroDoc> {
                 if text.is_empty() {
                     *len = 0;
                     *pos = 0;
-                    return;
                 }
-
-                change_delete_to_char_boundary(pos, len, text.len());
             }
             Action::Sync { from, to } => {
                 *from %= self.len() as u8;

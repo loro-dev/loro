@@ -58,7 +58,6 @@ pub enum ContainerType {
     Text,
     Map,
     List,
-    Richtext,
     // TODO: Users can define their own container types.
     // Custom(u16),
 }
@@ -68,19 +67,17 @@ impl AsULE for ContainerType {
 
     fn to_unaligned(self) -> Self::ULE {
         match self {
-            ContainerType::Text => 0,
             ContainerType::Map => 1,
             ContainerType::List => 2,
-            ContainerType::Richtext => 3,
+            ContainerType::Text => 3,
         }
     }
 
     fn from_unaligned(unaligned: Self::ULE) -> Self {
         match unaligned {
-            0 => ContainerType::Text,
             1 => ContainerType::Map,
             2 => ContainerType::List,
-            3 => ContainerType::Richtext,
+            3 => ContainerType::Text,
             _ => unreachable!(),
         }
     }
@@ -89,28 +86,25 @@ impl AsULE for ContainerType {
 impl ContainerType {
     pub fn default_value(&self) -> LoroValue {
         match self {
-            ContainerType::Text => LoroValue::String(Arc::new(String::new())),
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-            ContainerType::Richtext => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::Text => LoroValue::List(Arc::new(Default::default())),
         }
     }
 
     pub fn to_u8(self) -> u8 {
         match self {
-            ContainerType::Text => 0,
             ContainerType::Map => 1,
             ContainerType::List => 2,
-            ContainerType::Richtext => 3,
+            ContainerType::Text => 3,
         }
     }
 
     pub fn from_u8(v: u8) -> Self {
         match v {
-            0 => ContainerType::Text,
             1 => ContainerType::Map,
             2 => ContainerType::List,
-            3 => ContainerType::Richtext,
+            3 => ContainerType::Text,
             _ => unreachable!(),
         }
     }
@@ -136,10 +130,9 @@ mod container {
     impl Display for ContainerType {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(match self {
-                ContainerType::Text => "Text",
                 ContainerType::Map => "Map",
                 ContainerType::List => "List",
-                ContainerType::Richtext => "Richtext",
+                ContainerType::Text => "Text",
             })
         }
     }
@@ -231,9 +224,9 @@ mod container {
 
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             match value {
-                "Text" => Ok(ContainerType::Text),
                 "Map" => Ok(ContainerType::Map),
                 "List" => Ok(ContainerType::List),
+                "Text" => Ok(ContainerType::Text),
                 _ => Err(LoroError::DecodeError(
                     ("Unknown container type".to_string() + value).into(),
                 )),

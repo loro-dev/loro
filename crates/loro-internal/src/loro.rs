@@ -11,7 +11,7 @@ use crate::{
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
-    handler::RichtextHandler,
+    handler::TextHandler,
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -25,7 +25,7 @@ use super::{
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
     state::DocState,
     txn::Transaction,
-    ListHandler, MapHandler, TextHandler,
+    ListHandler, MapHandler,
 };
 
 /// `LoroApp` serves as the library's primary entry point.
@@ -300,13 +300,6 @@ impl LoroDoc {
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(idx, Arc::downgrade(&self.state))
-    }
-
-    /// id can be a str, ContainerID, or ContainerIdRaw.
-    /// if it's str it will use Root container, which will not be None
-    pub fn get_richtext<I: IntoContainerId>(&self, id: I) -> RichtextHandler {
-        let idx = self.get_container_idx(id, ContainerType::Richtext);
-        RichtextHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
