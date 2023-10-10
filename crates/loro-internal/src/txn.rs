@@ -13,15 +13,12 @@ use smallvec::smallvec;
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{
-        idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
-        IntoContainerId,
-    },
+    container::{idx::ContainerIdx, list::list_op::InnerListOp, IntoContainerId},
     delta::{Delta, MapValue},
     event::Diff,
     handler::TextHandler,
     id::{Counter, PeerID, ID},
-    op::{Op, RawOp, RawOpContent},
+    op::{Op, RawOp, RawOpContent, SliceRanges},
     span::HasIdSpan,
     version::Frontiers,
     InternalString, LoroError, LoroValue,

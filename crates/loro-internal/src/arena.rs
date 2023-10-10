@@ -16,11 +16,10 @@ use crate::{
         list::list_op::{InnerListOp, ListOp},
         map::{InnerMapSet, MapSet},
         richtext::StyleOp,
-        text::text_content::SliceRange,
         ContainerID,
     },
     id::Counter,
-    op::{InnerContent, Op, RawOp, RawOpContent},
+    op::{InnerContent, ListSlice, Op, RawOp, RawOpContent, SliceRange},
     LoroValue,
 };
 
@@ -104,7 +103,7 @@ impl<'a> OpConverter<'a> {
             }
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
-                    crate::text::text_content::ListSlice::RawData(values) => {
+                    ListSlice::RawData(values) => {
                         let range = _alloc_values(&mut self.values, values.iter().cloned());
                         Op {
                             counter,
@@ -115,7 +114,7 @@ impl<'a> OpConverter<'a> {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::RawStr {
+                    ListSlice::RawStr {
                         str,
                         unicode_len: _,
                     } => {
@@ -347,7 +346,7 @@ impl SharedArena {
             }
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
-                    crate::text::text_content::ListSlice::RawData(values) => {
+                    ListSlice::RawData(values) => {
                         let range = self.alloc_values(values.iter().cloned());
                         Op {
                             counter,
@@ -358,7 +357,7 @@ impl SharedArena {
                             }),
                         }
                     }
-                    crate::text::text_content::ListSlice::RawStr {
+                    ListSlice::RawStr {
                         str,
                         unicode_len: _,
                     } => {

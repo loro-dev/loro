@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
     delta::{Delta, MapDelta, MapDiff},
-    text::text_content::SliceRanges,
+    op::SliceRanges,
     InternalString, LoroValue,
 };
 

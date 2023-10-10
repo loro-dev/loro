@@ -7,7 +7,6 @@ use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::text::text_content::ListSlice,
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
@@ -15,7 +14,7 @@ use crate::{
     },
     encoding::RemoteClientChanges,
     id::{Counter, PeerID, ID},
-    op::{RawOpContent, RemoteOp},
+    op::{ListSlice, RawOpContent, RemoteOp},
     oplog::OpLog,
     span::HasId,
     version::Frontiers,

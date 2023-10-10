@@ -5,10 +5,8 @@ use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    container::{
-        richtext::{StyleOp, TextStyleInfoFlag},
-        text::text_content::{ListSlice, SliceRange},
-    },
+    container::richtext::{StyleOp, TextStyleInfoFlag},
+    op::{ListSlice, SliceRange},
     InternalString,
 };
 
@@ -362,7 +360,7 @@ impl Sliceable for InnerListOp {
 mod test {
     use rle::{Mergable, Sliceable};
 
-    use crate::text::text_content::ListSlice;
+    use crate::op::ListSlice;
 
     use super::{DeleteSpan, ListOp};
 

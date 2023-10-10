@@ -180,11 +180,9 @@ mod test {
     use crdt_list::crdt::OpSet;
 
     use crate::{
-        container::text::{
-            text_content::ListSlice,
-            tracker::y_span::{Status, YSpan},
-        },
+        container::text::tracker::y_span::{Status, YSpan},
         id::ID,
+        op::ListSlice,
     };
 
     use super::OpSpanSet;
@@ -254,14 +252,12 @@ pub mod fuzz {
     use Action::*;
 
     use crate::{
-        container::text::{
-            text_content::ListSlice,
-            tracker::{
-                y_span::{StatusChange, YSpan},
-                Tracker,
-            },
+        container::text::tracker::{
+            y_span::{StatusChange, YSpan},
+            Tracker,
         },
         id::{Counter, PeerID, ID},
+        op::ListSlice,
         span::IdSpan,
     };
 

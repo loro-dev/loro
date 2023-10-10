@@ -4,9 +4,9 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
         richtext::TextStyleInfoFlag,
-        text::text_content::ListSlice,
     },
     delta::MapValue,
+    op::ListSlice,
 };
 use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};

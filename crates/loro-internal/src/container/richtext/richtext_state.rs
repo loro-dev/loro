@@ -18,9 +18,8 @@ use std::{
 };
 
 use crate::{
-    container::{richtext::style_range_map::StyleValue, text::utf16::count_utf16_chars},
-    delta::DeltaValue,
-    InternalString,
+    container::richtext::style_range_map::StyleValue, delta::DeltaValue,
+    utils::utf16::count_utf16_chars, InternalString,
 };
 
 // FIXME: Check splice and other things are using unicode index

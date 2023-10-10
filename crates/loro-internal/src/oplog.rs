@@ -16,7 +16,7 @@ use crate::dag::DagUtils;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{RawOpContent, RemoteOp};
+use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -371,7 +371,7 @@ impl OpLog {
                             .arena
                             .slice_str(slice.0.start as usize..slice.0.end as usize);
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: crate::container::text::text_content::ListSlice::RawStr {
+                            slice: ListSlice::RawStr {
                                 unicode_len: str.chars().count(),
                                 str: Cow::Owned(str),
                             },
@@ -380,12 +380,10 @@ impl OpLog {
                     }
                     loro_common::ContainerType::List => {
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                            slice: crate::container::text::text_content::ListSlice::RawData(
-                                Cow::Owned(
-                                    self.arena
-                                        .get_values(slice.0.start as usize..slice.0.end as usize),
-                                ),
-                            ),
+                            slice: ListSlice::RawData(Cow::Owned(
+                                self.arena
+                                    .get_values(slice.0.start as usize..slice.0.end as usize),
+                            )),
                             pos: *pos,
                         }))
                     }

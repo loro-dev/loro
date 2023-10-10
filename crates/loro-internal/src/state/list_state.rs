@@ -9,7 +9,7 @@ use crate::{
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
     event::{Diff, Index},
-    op::{Op, RawOp, RawOpContent},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
 use debug_log::debug_dbg;
@@ -421,7 +421,7 @@ impl ContainerState for ListState {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    crate::container::text::text_content::ListSlice::RawData(list) => match list {
+                    ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
                             for value in list.iter() {
                                 if value.is_container() {

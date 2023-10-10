@@ -9,7 +9,6 @@ use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::text::text_content::ListSlice,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
@@ -17,7 +16,7 @@ use crate::{
         ContainerID, ContainerType,
     },
     id::{Counter, PeerID, ID},
-    op::{RawOpContent, RemoteOp},
+    op::{ListSlice, RawOpContent, RemoteOp},
     oplog::{AppDagNode, OpLog},
     span::HasId,
     version::Frontiers,

@@ -21,12 +21,10 @@ use crate::{
 mod list_state;
 mod map_state;
 mod richtext_state;
-mod text_state;
 
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use text_state::TextState;
 
 use super::{
     arena::SharedArena,
