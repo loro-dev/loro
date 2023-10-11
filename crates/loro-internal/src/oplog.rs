@@ -255,7 +255,7 @@ impl OpLog {
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
             if let crate::op::InnerContent::Tree(tree) = op.content {
-                let _ = tree_cache.add_node(&CompactTreeNode {
+                tree_cache.add_node_uncheck(&CompactTreeNode {
                     lamport: change.lamport,
                     peer: change.id.peer,
                     counter: op.counter,

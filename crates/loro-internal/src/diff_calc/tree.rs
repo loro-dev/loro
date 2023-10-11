@@ -1,13 +1,13 @@
 use std::{
-    collections::{ BTreeSet},
+    collections::BTreeSet,
     ops::{Deref, DerefMut},
 };
 
-use fxhash::{FxHashMap};
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{CounterSpan, IdSpan, TreeID, DELETED_TREE_ROOT, ID};
 
-use crate::{change::Lamport, delta::TreeDelta,  VersionVector};
+use crate::{change::Lamport, delta::TreeDelta, VersionVector};
 
 use super::CompactTreeNode;
 
@@ -94,6 +94,18 @@ impl TreeDiffCache {
         if !self.all_version.includes_id(node.id()) {
             self.apply(node.move_lamport_id());
             // assert len == 1
+            self.all_version.set_last(node.id());
+        }
+    }
+
+    pub(crate) fn add_node_uncheck(&mut self, node: &CompactTreeNode) {
+        if !self.all_version.includes_id(node.id()) {
+            self.cache
+                .entry(node.target)
+                .or_insert_with(Default::default)
+                .insert(node.move_lamport_id());
+            // assert len == 1
+            self.current_version.set_last(node.id());
             self.all_version.set_last(node.id());
         }
     }
