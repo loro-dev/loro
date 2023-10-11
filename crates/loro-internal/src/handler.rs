@@ -958,8 +958,11 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#,
+            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}]}"#,
             tree.get_deep_value().to_json()
-        )
+        );
+        let bytes = loro.export_snapshot();
+        let loro2 = LoroDoc::new();
+        loro2.import(&bytes).unwrap();
     }
 }

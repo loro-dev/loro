@@ -296,7 +296,7 @@ pub fn decode_state<'b>(
             loro_preload::EncodedContainerState::Tree(tree_data) => {
                 let mut tree = TreeState::new();
                 for (target, parent) in tree_data {
-                    let (peer, counter) = state_arena.tree_ids[*target];
+                    let (peer, counter) = state_arena.tree_ids[*target - 1];
                     let target_peer = common.peer_ids[peer as usize];
                     let target = TreeID {
                         peer: target_peer,
@@ -307,7 +307,7 @@ pub fn decode_state<'b>(
                         TreeID::delete_root()
                     } else {
                         parent.map(|p| {
-                            let (peer, counter) = state_arena.tree_ids[p];
+                            let (peer, counter) = state_arena.tree_ids[p - 1];
                             let peer = common.peer_ids[peer as usize];
                             TreeID { peer, counter }
                         })
@@ -783,7 +783,6 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                             *tree_id_lookup.get(&p).unwrap()
                         })
                     };
-
                     encoded_ops.push(EncodedSnapshotOp::from(
                         SnapshotOp::Tree {
                             target: target_idx,
@@ -906,7 +905,6 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         ),
         oplog: Cow::Owned(oplog_encoded.encode()),
     };
-
     ans
 }
 

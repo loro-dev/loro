@@ -2,7 +2,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
-    DELETED_TREE_ROOT,
+    DELETED_TREE_ROOT, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Iter;
@@ -163,13 +163,6 @@ impl TreeState {
             .filter(|&k| !self.is_deleted(*k))
             .copied()
             .collect::<Vec<_>>()
-    }
-
-    #[cfg(feature = "json")]
-    #[cfg(feature = "test_utils")]
-    fn to_json(&self) -> LoroValue {
-        let forest = Forest::from_tree_state(&self.trees);
-        forest.to_json().into()
     }
 
     #[cfg(feature = "test_utils")]
@@ -377,8 +370,6 @@ impl Forest {
         Self::from_tree_state(&state)
     }
 
-    // TODO: remove json feature
-    #[cfg(feature = "json")]
     pub(crate) fn to_value(&self, with_deleted: bool) -> LoroValue {
         let mut ans = FxHashMap::default();
         ans.insert(
@@ -398,8 +389,6 @@ impl Forest {
         ans.into()
     }
 
-    #[allow(unused)]
-    #[cfg(feature = "json")]
     pub(crate) fn from_value(value: LoroValue) -> LoroResult<Self> {
         let mut map = Arc::try_unwrap(value.into_map().unwrap()).unwrap();
         // TODO: perf
@@ -426,37 +415,19 @@ impl Forest {
         };
         Ok(Self { roots, deleted })
     }
-
-    pub(crate) fn from_json(json: &str) -> LoroResult<Self> {
-        if json.is_empty() {
-            return Ok(Default::default());
-        }
-        serde_json::from_str(json).map_err(|_| LoroError::DeserializeJsonStringError)
-    }
-
-    #[cfg(feature = "json")]
-    pub(crate) fn to_json(&self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
-
-    #[cfg(feature = "json")]
-    #[cfg(feature = "test_utils")]
-    pub(crate) fn to_json_without_deleted(&self) -> String {
-        serde_json::to_string(&self.to_value(false)).unwrap()
-    }
 }
 
 impl TreeNode {
-    #[allow(unused)]
-    #[cfg(feature = "json")]
     fn from_value(value: LoroValue) -> Self {
-        let mut map = value.into_map().unwrap();
+        let map = value.into_map().unwrap();
         let id = map.get("id").unwrap().clone().into_string().unwrap();
-        let id = serde_json::from_str(&id).unwrap();
+        let id = TreeID::from_id(ID::try_from(id.as_str()).unwrap());
         let parent = {
             match map.get("parent").unwrap() {
                 LoroValue::Null => None,
-                LoroValue::String(str) => Some(serde_json::from_str(str).unwrap()),
+                LoroValue::String(str) => {
+                    Some(TreeID::from_id(ID::try_from(str.as_str()).unwrap()))
+                }
                 _ => unreachable!(),
             }
         };
@@ -478,18 +449,12 @@ impl TreeNode {
             children,
         }
     }
-    #[cfg(feature = "json")]
+
     fn to_value(&self) -> LoroValue {
         let mut ans = FxHashMap::default();
-        ans.insert(
-            "id".to_string(),
-            serde_json::to_string(&self.id).unwrap().into(),
-        );
+        ans.insert("id".to_string(), self.id.id().to_string().into());
         if let Some(p) = &self.parent {
-            ans.insert(
-                "parent".to_string(),
-                serde_json::to_string(p).unwrap().into(),
-            );
+            ans.insert("parent".to_string(), p.id().to_string().into());
         } else {
             ans.insert("parent".to_string(), LoroValue::Null);
         }

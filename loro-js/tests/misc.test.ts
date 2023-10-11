@@ -362,6 +362,8 @@ describe("tree", () => {
     const childID = loro.transact((txn)=>{
       return tree.createChild(txn, id);
     })
+    console.log(typeof id);
+    
     assertEquals(tree.parent(childID), id);
   })
 })

@@ -23,7 +23,7 @@ import {
   Transaction,
 } from "loro-wasm";
 
-export type { ContainerID, ContainerType } from "loro-wasm";
+export type { ContainerID, ContainerType, TreeID } from "loro-wasm";
 
 Loro.prototype.transact = function (cb, origin) {
   return this.__raw__transactionWithOrigin(origin || "", (txn: Transaction) => {
@@ -103,7 +103,7 @@ LoroTree.prototype.insertMeta = function(txn, target, key, value){
 }
 
 LoroTree.prototype.getMeta = function(txn, target, key){
-  this.__txn_get_meta(txn, target, key)
+  return this.__txn_get_meta(txn, target, key)
 }
 
 export type Value =
@@ -111,6 +111,7 @@ export type Value =
   | string
   | number
   | null
+  | boolean
   | { [key: string]: Value }
   | Uint8Array
   | Value[];
@@ -286,6 +287,13 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
+  interface TreeNode{
+    id: string,
+    parent: string | undefined,
+    children: TreeNode[]
+    meta: {[key: string]: any}
+  }
+
   interface LoroTree{
     create(txn: Transaction): TreeID;
     createChild(txn: Transaction, parent: TreeID): TreeID;
@@ -294,5 +302,6 @@ declare module "loro-wasm" {
     insertMeta(txn: Transaction, target: TreeID, key: string, value: Value | Prelim):void;
     getMeta(txn: Transaction, target: TreeID, key: string):Value;
     subscribe(txn: Loro, listener: Listener): number;
+    getDeepValue(): {roots: TreeNode[]};
   }
 }

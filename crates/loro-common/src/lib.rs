@@ -118,6 +118,7 @@ impl ContainerType {
             0 => ContainerType::Text,
             1 => ContainerType::Map,
             2 => ContainerType::List,
+            3 => ContainerType::Tree,
             _ => unreachable!(),
         }
     }
@@ -284,41 +285,30 @@ impl TreeID {
     }
 }
 
+impl Display for TreeID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.id().fmt(f)
+    }
+}
+
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use crate::{Counter, TreeID};
-    use js_sys::Object;
-    use wasm_bindgen::__rt::IntoJsResult;
-    use wasm_bindgen::{JsCast, JsValue};
+    use crate::TreeID;
+    use wasm_bindgen::JsValue;
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {
-            let TreeID { peer, counter } = value;
-            let obj = Object::new();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("peer"), &JsValue::from(peer)).unwrap();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("counter"), &JsValue::from(counter))
-                .unwrap();
-            obj.into_js_result().unwrap()
+            JsValue::from_str(&format!("{}", value.id()))
         }
     }
 
-    impl From<JsValue> for TreeID {
-        fn from(value: JsValue) -> Self {
-            let obj = value
-                .dyn_into::<js_sys::Object>()
-                .expect("Expected JsValue to be an object");
-
-            let peer = js_sys::Reflect::get(&obj, &JsValue::from_str("peer"))
-                .expect("Expected object to have a 'peer' property")
-                .try_into()
-                .expect("Expected 'peer' property to be a number");
-
-            let counter = js_sys::Reflect::get(&obj, &JsValue::from_str("counter"))
-                .expect("Expected object to have a 'counter' property")
-                .as_f64()
-                .expect("Expected 'counter' property to be a number")
-                as Counter;
-
-            TreeID { peer, counter }
+    impl TryFrom<JsValue> for TreeID {
+        type Error = ();
+        fn try_from(value: JsValue) -> Result<Self, Self::Error> {
+            let id = value.as_string().unwrap();
+            let mut parts = id.split('@');
+            let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+            let peer = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+            Ok(TreeID { peer, counter })
         }
     }
 }
