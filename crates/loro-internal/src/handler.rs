@@ -10,7 +10,7 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, TreeID};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, TreeID, ID};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -698,7 +698,6 @@ impl TreeHandler {
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = txn.next_id().into();
-        // TODO: new MapContainer as data container
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -725,7 +724,6 @@ impl TreeHandler {
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
         let tree_id = txn.next_id().into();
-        // TODO: new MapContainer as data container
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -760,6 +758,37 @@ impl TreeHandler {
             None,
             &self.state,
         )
+    }
+
+    pub fn insert_metadata(
+        &self,
+        txn: &mut Transaction,
+        target: TreeID,
+        key: &str,
+        value: LoroValue,
+    ) -> LoroResult<()> {
+        let map_container_id = ContainerID::Normal {
+            peer: target.peer,
+            counter: target.counter,
+            container_type: ContainerType::Map,
+        };
+        let map = txn.get_map(map_container_id);
+        map.insert(txn, key, value)
+    }
+
+    pub fn get_metadata(
+        &self,
+        txn: &mut Transaction,
+        target: TreeID,
+        key: &str,
+    ) -> Option<LoroValue> {
+        let map_container_id = ContainerID::Normal {
+            peer: target.peer,
+            counter: target.counter,
+            container_type: ContainerType::Map,
+        };
+        let map = txn.get_map(map_container_id);
+        map.get(key)
     }
 
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {

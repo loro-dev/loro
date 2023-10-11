@@ -92,7 +92,7 @@ impl CompactTreeNode {
 impl TreeDiffCache {
     pub(crate) fn add_node(&mut self, node: &CompactTreeNode) {
         if !self.all_version.includes_id(node.id()) {
-            self.apply(node.move_lamport_id());
+            self.pending.insert(node.move_lamport_id());
             // assert len == 1
             self.all_version.set_last(node.id());
         }
@@ -181,7 +181,6 @@ impl TreeDiffCache {
         if vv == &self.current_version {
             return;
         }
-
         self.retreat(vv, min_lamport);
         let apply_ops = self.forward(vv, max_lamport);
         for op in apply_ops {
@@ -193,7 +192,6 @@ impl TreeDiffCache {
     // return true if it can be effected
     fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
         let mut ans = true;
-
         if node.parent.is_some() && self.is_ancestor_of(node.target, node.parent.unwrap()) {
             ans = false;
         }
