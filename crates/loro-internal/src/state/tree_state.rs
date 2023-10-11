@@ -5,9 +5,10 @@ use loro_common::{
     DELETED_TREE_ROOT, ID,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Iter;
+use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
 
+use crate::delta::{TreeDelta, TreeDiff};
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
@@ -212,7 +213,24 @@ impl ContainerState for TreeState {
     }
 
     fn to_diff(&self) -> Diff {
-        todo!()
+        let mut diffs = vec![];
+        // TODO: perf
+        let forest = Forest::from_tree_state(&self.trees);
+        let mut q = VecDeque::from(forest.roots);
+        while let Some(node) = q.pop_front() {
+            let action = if let Some(parent) = node.parent {
+                TreeDiffItem::Move(parent)
+            } else {
+                TreeDiffItem::CreateOrRestore
+            };
+            let diff = TreeDiff {
+                target: node.id,
+                action,
+            };
+            diffs.push(diff);
+            q.extend(node.children);
+        }
+        Diff::Tree(TreeDelta { diff: diffs })
     }
 
     fn start_txn(&mut self) {

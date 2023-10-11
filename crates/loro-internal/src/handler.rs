@@ -907,6 +907,8 @@ impl TreeHandler {
 #[cfg(test)]
 mod test {
 
+    use std::sync::atomic::AtomicU8;
+
     use crate::{loro::LoroDoc, ToJson};
 
     #[test]
@@ -997,10 +999,19 @@ mod test {
     fn tree_meta_event() {
         use std::sync::Arc;
         let loro = LoroDoc::new();
-        loro.subscribe_deep(Arc::new(|e| println!("{e:?}")));
         let tree = loro.get_tree("root");
-        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
-        loro.with_txn(|txn| tree.insert_meta(txn, id, "a", 1.into()))
-            .unwrap();
+        // loro.subscribe_deep(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
+        loro.with_txn(|txn| {
+            let id = tree.create(txn)?;
+            tree.insert_meta(txn, id, "a", 1.into())?;
+            tree.insert_meta(txn, id, "b", 2.into())?;
+            Ok(id)
+        })
+        .unwrap();
+
+        let loro2 = LoroDoc::new();
+        loro2.subscribe_deep(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
+        loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
+        assert_eq!(loro.get_deep_value(), loro2.get_deep_value());
     }
 }

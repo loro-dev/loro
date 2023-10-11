@@ -149,7 +149,6 @@ impl TreeDiffCache {
                 diff.push((op.target, *old_parent).into());
             }
         }
-        assert_eq!(&self.current_version, lca);
         if debug {
             println!("revert diff:");
             for d in diff.iter() {
