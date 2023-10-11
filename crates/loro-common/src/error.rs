@@ -32,10 +32,8 @@ pub enum LoroError {
     OutOfBound { pos: usize, len: usize },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
-    #[error("`Cycle move` occurs when moving tree nodes.")]
-    CyclicMoveError,
-    #[error("The parent of tree node is not found {0:?}")]
-    TreeNodeParentNotFound(TreeID),
+    #[error("Movable Tree Error")]
+    TreeError(#[from] LoroTreeError),
     #[error("Deserialize json string error")]
     DeserializeJsonStringError,
     // #[error("the data for key `{0}` is not available")]
@@ -44,6 +42,16 @@ pub enum LoroError {
     // InvalidHeader { expected: String, found: String },
     // #[error("unknown data store error")]
     // Unknown,
+}
+
+#[derive(Error, Debug)]
+pub enum LoroTreeError {
+    #[error("`Cycle move` occurs when moving tree nodes.")]
+    CyclicMoveError,
+    #[error("The parent of tree node is not found {0:?}")]
+    TreeNodeParentNotFound(TreeID),
+    #[error("TreeID {0:?} doesn't exist")]
+    TreeNodeNotExist(TreeID),
 }
 
 #[cfg(feature = "wasm")]

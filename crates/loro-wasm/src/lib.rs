@@ -721,6 +721,30 @@ impl LoroTree {
         Ok(())
     }
 
+    pub fn __txn_insert_metadata(
+        &mut self,
+        txn: &mut Transaction,
+        target: JsTreeID,
+        key: &str,
+        value: JsValue,
+    ) -> JsResult<()> {
+        let target: JsValue = target.into();
+        self.0
+            .insert_metadata(txn.as_mut()?, target.into(), key, value.into())?;
+        Ok(())
+    }
+
+    pub fn __txn_get_metadata(
+        &mut self,
+        txn: &mut Transaction,
+        target: JsTreeID,
+        key: &str,
+    ) -> JsResult<JsValue> {
+        let target: JsValue = target.into();
+        let ans = self.0.get_metadata(txn.as_mut()?, target.into(), key)?;
+        Ok(ans.into())
+    }
+
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();

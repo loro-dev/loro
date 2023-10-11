@@ -1,9 +1,12 @@
-use std::collections::hash_map::Iter;
-
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
+use loro_common::{
+    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
+    DELETED_TREE_ROOT,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Iter;
+use std::sync::Arc;
 
 use crate::{
     arena::SharedArena, container::tree::tree_op::TreeOp, delta::TreeDiffItem, event::Diff,
@@ -64,11 +67,11 @@ impl TreeState {
             return Ok(());
         };
         if !self.contains(parent) {
-            return Err(LoroError::TreeNodeParentNotFound(parent));
+            return Err(LoroTreeError::TreeNodeParentNotFound(parent).into());
         }
         if contained {
             if self.is_ancestor_of(&target, &parent) {
-                return Err(LoroError::CyclicMoveError);
+                return Err(LoroTreeError::CyclicMoveError.into());
             }
             if *self.trees.get(&target).unwrap() == Some(parent) {
                 return Ok(());
@@ -122,18 +125,26 @@ impl TreeState {
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        self.trees.contains_key(&target)
+        if TreeID::is_deleted(Some(target)) {
+            return true;
+        }
+        !self.is_deleted(target)
     }
 
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
-        self.trees.get(&target).copied()
+        if self.is_deleted(target) {
+            None
+        } else {
+            self.trees.get(&target).copied()
+        }
     }
 
     // TODO: cache deleted
     fn is_deleted(&self, mut target: TreeID) -> bool {
-        if TreeID::is_deleted(Some(target)) {
+        if !self.trees.contains_key(&target) || TreeID::is_deleted(Some(target)) {
             return true;
         }
+
         let mut deleted = FxHashSet::default();
         deleted.insert(DELETED_TREE_ROOT.unwrap());
         while let Some(parent) = self.trees.get(&target) {
@@ -152,6 +163,13 @@ impl TreeState {
             .filter(|&k| !self.is_deleted(*k))
             .copied()
             .collect::<Vec<_>>()
+    }
+
+    #[cfg(feature = "json")]
+    #[cfg(feature = "test_utils")]
+    fn to_json(&self) -> LoroValue {
+        let forest = Forest::from_tree_state(&self.trees);
+        forest.to_json().into()
     }
 
     #[cfg(feature = "test_utils")]
@@ -220,7 +238,7 @@ impl ContainerState for TreeState {
 
     fn get_value(&self) -> LoroValue {
         let forest = Forest::from_tree_state(&self.trees);
-        forest.to_json().into()
+        forest.to_value(false)
     }
 }
 
@@ -233,6 +251,7 @@ pub struct Forest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TreeNode {
     id: TreeID,
+    meta: LoroValue,
     parent: Option<TreeID>,
     children: Vec<TreeNode>,
 }
@@ -266,6 +285,10 @@ impl Forest {
                 TreeNode {
                     id: root,
                     parent: None,
+                    meta: LoroValue::Container(ContainerID::new_normal(
+                        root.id(),
+                        ContainerType::Map,
+                    )),
                     children: vec![],
                 },
             )];
@@ -282,6 +305,10 @@ impl Forest {
                                 TreeNode {
                                     id: *child,
                                     parent: Some(id),
+                                    meta: LoroValue::Container(ContainerID::new_normal(
+                                        child.id(),
+                                        ContainerType::Map,
+                                    )),
                                     children: vec![],
                                 },
                             ));
@@ -350,7 +377,56 @@ impl Forest {
         Self::from_tree_state(&state)
     }
 
+    // TODO: remove json feature
     #[cfg(feature = "json")]
+    pub(crate) fn to_value(&self, with_deleted: bool) -> LoroValue {
+        let mut ans = FxHashMap::default();
+        ans.insert(
+            "roots".to_string(),
+            self.roots.iter().map(|r| r.to_value()).collect_vec().into(),
+        );
+        if with_deleted {
+            ans.insert(
+                "deleted".to_string(),
+                self.deleted
+                    .iter()
+                    .map(|r| r.to_value())
+                    .collect_vec()
+                    .into(),
+            );
+        }
+        ans.into()
+    }
+
+    #[allow(unused)]
+    #[cfg(feature = "json")]
+    pub(crate) fn from_value(value: LoroValue) -> LoroResult<Self> {
+        let mut map = Arc::try_unwrap(value.into_map().unwrap()).unwrap();
+        // TODO: perf
+        let roots = map
+            .remove("roots")
+            .unwrap()
+            .into_list()
+            .unwrap()
+            .as_ref()
+            .iter()
+            .cloned()
+            .map(TreeNode::from_value)
+            .collect_vec();
+        let deleted = if let Some(deleted) = map.remove("deleted") {
+            deleted
+                .into_list()
+                .unwrap()
+                .iter()
+                .cloned()
+                .map(TreeNode::from_value)
+                .collect_vec()
+        } else {
+            vec![]
+        };
+        Ok(Self { roots, deleted })
+    }
+
     pub(crate) fn from_json(json: &str) -> LoroResult<Self> {
         if json.is_empty() {
             return Ok(Default::default());
@@ -360,14 +436,73 @@ impl Forest {
 
     #[cfg(feature = "json")]
     pub(crate) fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
+        serde_json::to_string(&self).unwrap()
     }
 
     #[cfg(feature = "json")]
     #[cfg(feature = "test_utils")]
     pub(crate) fn to_json_without_deleted(&self) -> String {
-        let v = self.roots.iter().collect::<Vec<_>>();
-        serde_json::to_string(&v).unwrap()
+        serde_json::to_string(&self.to_value(false)).unwrap()
+    }
+}
+
+impl TreeNode {
+    #[allow(unused)]
+    #[cfg(feature = "json")]
+    fn from_value(value: LoroValue) -> Self {
+        let mut map = value.into_map().unwrap();
+        let id = map.get("id").unwrap().clone().into_string().unwrap();
+        let id = serde_json::from_str(&id).unwrap();
+        let parent = {
+            match map.get("parent").unwrap() {
+                LoroValue::Null => None,
+                LoroValue::String(str) => Some(serde_json::from_str(str).unwrap()),
+                _ => unreachable!(),
+            }
+        };
+        let meta = map.get("meta").unwrap().clone();
+        let children = map
+            .get("children")
+            .unwrap()
+            .clone()
+            .into_list()
+            .unwrap()
+            .iter()
+            .cloned()
+            .map(TreeNode::from_value)
+            .collect_vec();
+        Self {
+            id,
+            meta,
+            parent,
+            children,
+        }
+    }
+    #[cfg(feature = "json")]
+    fn to_value(&self) -> LoroValue {
+        let mut ans = FxHashMap::default();
+        ans.insert(
+            "id".to_string(),
+            serde_json::to_string(&self.id).unwrap().into(),
+        );
+        if let Some(p) = &self.parent {
+            ans.insert(
+                "parent".to_string(),
+                serde_json::to_string(p).unwrap().into(),
+            );
+        } else {
+            ans.insert("parent".to_string(), LoroValue::Null);
+        }
+        ans.insert("meta".to_string(), self.meta.clone());
+        ans.insert(
+            "children".to_string(),
+            self.children
+                .iter()
+                .map(|c| c.to_value())
+                .collect_vec()
+                .into(),
+        );
+        LoroValue::Map(Arc::new(ans))
     }
 }
 
@@ -407,7 +542,7 @@ mod tests {
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
             json,
-            r#"{"roots":[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":1},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[]}"#
+            r#"{"roots":[{"id":{"peer":0,"counter":0},"meta":{"Container":{"Normal":{"peer":0,"counter":0,"container_type":"Map"}}},"parent":null,"children":[{"id":{"peer":0,"counter":1},"meta":{"Container":{"Normal":{"peer":0,"counter":1,"container_type":"Map"}}},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[]}"#
         )
     }
 
@@ -423,7 +558,7 @@ mod tests {
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
             json,
-            r#"{"roots":[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":3},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[{"id":{"peer":0,"counter":1},"parent":{"peer":18446744073709551615,"counter":2147483647},"children":[{"id":{"peer":0,"counter":2},"parent":{"peer":0,"counter":1},"children":[]}]}]}"#
+            r#"{"roots":[{"id":{"peer":0,"counter":0},"meta":{"Container":{"Normal":{"peer":0,"counter":0,"container_type":"Map"}}},"parent":null,"children":[{"id":{"peer":0,"counter":3},"meta":{"Container":{"Normal":{"peer":0,"counter":3,"container_type":"Map"}}},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[{"id":{"peer":0,"counter":1},"meta":{"Container":{"Normal":{"peer":0,"counter":1,"container_type":"Map"}}},"parent":{"peer":18446744073709551615,"counter":2147483647},"children":[{"id":{"peer":0,"counter":2},"meta":{"Container":{"Normal":{"peer":0,"counter":2,"container_type":"Map"}}},"parent":{"peer":0,"counter":1},"children":[]}]}]}"#
         )
     }
 }

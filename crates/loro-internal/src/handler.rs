@@ -10,7 +10,7 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, TreeID, ID};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -697,7 +697,7 @@ impl TreeHandler {
     }
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
-        let tree_id = txn.next_id().into();
+        let tree_id = TreeID::from_id(txn.next_id());
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -723,7 +723,7 @@ impl TreeHandler {
     }
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
-        let tree_id = txn.next_id().into();
+        let tree_id = TreeID::from_id(txn.next_id());
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -767,6 +767,9 @@ impl TreeHandler {
         key: &str,
         value: LoroValue,
     ) -> LoroResult<()> {
+        if !self.contains(target) {
+            return Err(LoroTreeError::TreeNodeNotExist(target).into());
+        }
         let map_container_id = ContainerID::Normal {
             peer: target.peer,
             counter: target.counter,
@@ -781,14 +784,13 @@ impl TreeHandler {
         txn: &mut Transaction,
         target: TreeID,
         key: &str,
-    ) -> Option<LoroValue> {
-        let map_container_id = ContainerID::Normal {
-            peer: target.peer,
-            counter: target.counter,
-            container_type: ContainerType::Map,
-        };
+    ) -> LoroResult<Option<LoroValue>> {
+        if !self.contains(target) {
+            return Err(LoroTreeError::TreeNodeNotExist(target).into());
+        }
+        let map_container_id = self.meta_container_id(target);
         let map = txn.get_map(map_container_id);
-        map.get(key)
+        Ok(map.get(key))
     }
 
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
@@ -845,6 +847,10 @@ impl TreeHandler {
                 let a = state.as_tree_state().unwrap();
                 a.nodes()
             })
+    }
+
+    fn meta_container_id(&self, target: TreeID) -> ContainerID {
+        ContainerID::new_normal(target.id(), ContainerType::Map)
     }
 
     #[cfg(feature = "test_utils")]

@@ -306,14 +306,7 @@ impl DocState {
         self.states
             .get(&container_idx)
             .map(|x| x.get_value())
-            .unwrap_or_else(|| match container_idx.get_type() {
-                ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
-                ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
-                ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Tree => {
-                    LoroValue::String(Arc::new(String::from(r#"{"roots":[],"deleted":[]}"#)))
-                }
-            })
+            .unwrap_or_else(|| container_idx.get_type().default_value())
     }
 
     /// Set the state of the container with the given container idx.

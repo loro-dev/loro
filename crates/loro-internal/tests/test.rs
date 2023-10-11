@@ -280,21 +280,21 @@ fn tree_checkout() {
     let v3 = doc_a.oplog_frontiers();
     assert_eq!(
         tree.get_value().to_json(),
-        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[]}]""#
+        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#
     );
     doc_a.checkout(&v1).unwrap();
     assert_eq!(
         tree.get_value().to_json(),
-        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[{\"id\":{\"peer\":1,\"counter\":1},\"parent\":{\"peer\":1,\"counter\":0},\"children\":[]}]}]""#
+        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[{"parent":"{\"peer\":1,\"counter\":0}","meta":{"Container":{"Normal":{"peer":1,"counter":1,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":1}","children":[]}]}]}"#
     );
     doc_a.checkout(&v2).unwrap();
     assert_eq!(
         tree.get_value().to_json(),
-        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[{\"id\":{\"peer\":1,\"counter\":1},\"parent\":{\"peer\":1,\"counter\":0},\"children\":[{\"id\":{\"peer\":1,\"counter\":2},\"parent\":{\"peer\":1,\"counter\":1},\"children\":[]}]}]}]""#
+        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[{"parent":"{\"peer\":1,\"counter\":0}","meta":{"Container":{"Normal":{"peer":1,"counter":1,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":1}","children":[{"parent":"{\"peer\":1,\"counter\":1}","meta":{"Container":{"Normal":{"peer":1,"counter":2,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":2}","children":[]}]}]}]}"#
     );
     doc_a.checkout(&v3).unwrap();
     assert_eq!(
         tree.get_value().to_json(),
-        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[]}]""#
+        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#
     );
 }

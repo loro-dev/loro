@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::{LoroError, TreeID, DELETED_TREE_ROOT, ID};
+use loro_common::{LoroError, LoroTreeError, TreeID, DELETED_TREE_ROOT, ID};
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -828,7 +828,10 @@ impl Actionable for Vec<Actor> {
                             Ok(_) => {}
                             Err(err) => {
                                 // TODO: cycle move
-                                if !matches!(err, LoroError::CyclicMoveError) {
+                                if !matches!(
+                                    err,
+                                    LoroError::TreeError(LoroTreeError::CyclicMoveError)
+                                ) {
                                     panic!("{}", err)
                                 }
                             }
@@ -862,11 +865,14 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
         (LoroValue::Map(a), LoroValue::Map(b)) => {
             for (k, v) in a.iter() {
                 let is_empty = match v {
-                    LoroValue::String(s) => {
-                        s.is_empty() || s.as_str() == r#"{"roots":[],"deleted":[]}"#
-                    }
+                    LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
+                    LoroValue::Map(m) => {
+                        m.is_empty() || {
+                            m.get("roots")
+                                .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                        }
+                    }
                     _ => false,
                 };
                 if is_empty {
@@ -877,11 +883,14 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
             for (k, v) in b.iter() {
                 let is_empty = match v {
-                    LoroValue::String(s) => {
-                        s.is_empty() || s.as_str() == r#"{"roots":[],"deleted":[]}"#
-                    }
+                    LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => m.is_empty(),
+                    LoroValue::Map(m) => {
+                        m.is_empty() || {
+                            m.get("roots")
+                                .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                        }
+                    }
                     _ => false,
                 };
                 if is_empty {
@@ -926,7 +935,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a = a_doc.get_tree("tree");
     let value_a = a.get_value();
     let forest = Forest::from_tree_state(&a_actor.tree_tracker.lock().unwrap());
-    assert_eq!(&**value_a.as_string().unwrap(), &forest.to_json(),);
+    assert_eq!(&value_a, &forest.to_value(false),);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -972,44 +981,7 @@ fn check_history(actor: &mut Actor) {
         // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
-
-        match (v, &actual) {
-            (LoroValue::Map(v), LoroValue::Map(a)) => {
-                let keys = v.keys();
-                for key in keys {
-                    let vv = v.get(key);
-                    let av = a.get(key);
-                    if key == "tree" {
-                        match (vv, av) {
-                            (Some(LoroValue::String(vvs)), Some(LoroValue::String(avs))) => {
-                                match (Forest::from_json(vvs), Forest::from_json(avs)) {
-                                    (Ok(v), Ok(a)) => {
-                                        assert_eq!(
-                                            v.to_json_without_deleted(),
-                                            a.to_json_without_deleted(),
-                                            "Version mismatched at {:?}, cnt={}",
-                                            f,
-                                            c
-                                        );
-                                    }
-                                    _ => {
-                                        assert_eq!(
-                                            v, a,
-                                            "Version mismatched at {:?}, cnt={}",
-                                            f, c
-                                        );
-                                    }
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        assert_eq!(vv, av, "Version mismatched at {:?}, cnt={}", f, c);
-                    }
-                }
-            }
-            _ => unreachable!(),
-        };
+        assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
     }
 }
 

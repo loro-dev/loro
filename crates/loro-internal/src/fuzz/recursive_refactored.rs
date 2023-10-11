@@ -17,8 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
-    ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, value::ToJson,
+    version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -59,6 +59,7 @@ struct Actor {
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
+    tree_containers: Vec<TreeHandler>,
     history: FxHashMap<Vec<ID>, LoroValue>,
 }
 
@@ -76,6 +77,7 @@ impl Actor {
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
+            tree_containers: Default::default(),
             history: Default::default(),
         };
 
@@ -296,7 +298,9 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Tree => unreachable!(),
+            ContainerType::Tree => self
+                .tree_containers
+                .push(TreeHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
         }
     }
 }
@@ -788,7 +792,7 @@ mod failed_tests {
             test_multi_sites(site_num, &mut xs.clone());
         }) {
             dbg!(xs);
-            println!("{:?}", e);
+            println!("error {:?}", e);
             panic!()
         } else {
             Ok(())

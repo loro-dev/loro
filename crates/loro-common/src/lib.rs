@@ -3,13 +3,14 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
+use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
 mod span;
 mod value;
 
-pub use error::{LoroError, LoroResult};
+pub use error::{LoroError, LoroResult, LoroTreeError};
 pub use span::*;
 pub use value::LoroValue;
 
@@ -95,7 +96,10 @@ impl ContainerType {
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
             ContainerType::Tree => {
-                LoroValue::String(Arc::new(String::from(r#"{"roots":[],"deleted":[]}"#)))
+                let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
+                map.insert("roots".to_string(), LoroValue::List(vec![].into()));
+                // map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
+                map.into()
             }
         }
     }
@@ -264,13 +268,18 @@ impl TreeID {
     pub fn is_deleted(target: Option<TreeID>) -> bool {
         target == DELETED_TREE_ROOT
     }
-}
 
-impl From<ID> for TreeID {
-    fn from(value: ID) -> Self {
+    pub fn from_id(id: ID) -> Self {
         Self {
-            peer: value.peer,
-            counter: value.counter,
+            peer: id.peer,
+            counter: id.counter,
+        }
+    }
+
+    pub fn id(&self) -> ID {
+        ID {
+            peer: self.peer,
+            counter: self.counter,
         }
     }
 }

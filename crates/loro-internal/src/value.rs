@@ -7,6 +7,7 @@ use crate::{
 };
 
 use debug_log::debug_dbg;
+use fxhash::FxHashMap;
 pub use loro_common::LoroValue;
 
 pub trait ToJson {
@@ -59,33 +60,26 @@ impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
-                let is_text = matches!(diff.first(), Some(Diff::Text(_)));
-                if is_text {
-                    let mut s = value.to_string();
-                    for item in diff.iter() {
-                        let delta = item.as_text().unwrap();
-                        let mut index = 0;
-                        for delta_item in delta.iter() {
-                            match delta_item {
-                                DeltaItem::Retain { len, .. } => {
-                                    index += len;
-                                }
-                                DeltaItem::Insert { value, .. } => {
-                                    s.insert_str(index, value);
-                                    index += value.len();
-                                }
-                                DeltaItem::Delete { len, .. } => {
-                                    s.drain(index..index + len);
-                                }
+                let mut s = value.to_string();
+                for item in diff.iter() {
+                    let delta = item.as_text().unwrap();
+                    let mut index = 0;
+                    for delta_item in delta.iter() {
+                        match delta_item {
+                            DeltaItem::Retain { len, .. } => {
+                                index += len;
+                            }
+                            DeltaItem::Insert { value, .. } => {
+                                s.insert_str(index, value);
+                                index += value.len();
+                            }
+                            DeltaItem::Delete { len, .. } => {
+                                s.drain(index..index + len);
                             }
                         }
                     }
-                    *value = Arc::new(s);
-                } else {
-                    let forest = Forest::from_json(value).unwrap();
-                    let diff_forest = forest.apply_diffs(diff);
-                    *value = Arc::new(diff_forest.to_json())
                 }
+                *value = Arc::new(s);
             }
             LoroValue::List(seq) => {
                 let seq = Arc::make_mut(seq);
@@ -112,39 +106,50 @@ impl ApplyDiff for LoroValue {
                 }
             }
             LoroValue::Map(map) => {
-                for item in diff.iter() {
-                    match item {
-                        Diff::Map(diff) => {
-                            let map = Arc::make_mut(map);
-                            for v in diff.added.iter() {
-                                map.insert(v.0.to_string(), unresolved_to_collection(v.1));
+                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                if !is_tree {
+                    for item in diff.iter() {
+                        match item {
+                            Diff::Map(diff) => {
+                                let map = Arc::make_mut(map);
+                                for v in diff.added.iter() {
+                                    map.insert(v.0.to_string(), unresolved_to_collection(v.1));
+                                }
+                                for (k, _) in diff.deleted.iter() {
+                                    // map.remove(v.as_ref());
+                                    map.insert(k.to_string(), LoroValue::Null);
+                                }
+                                for (key, value) in diff.updated.iter() {
+                                    map.insert(
+                                        key.to_string(),
+                                        unresolved_to_collection(&value.new),
+                                    );
+                                }
                             }
-                            for (k, _) in diff.deleted.iter() {
-                                // map.remove(v.as_ref());
-                                map.insert(k.to_string(), LoroValue::Null);
-                            }
-                            for (key, value) in diff.updated.iter() {
-                                map.insert(key.to_string(), unresolved_to_collection(&value.new));
-                            }
-                        }
-                        Diff::NewMap(diff) => {
-                            let map = Arc::make_mut(map);
-                            for (key, value) in diff.updated.iter() {
-                                match &value.value {
-                                    Some(value) => {
-                                        map.insert(
-                                            key.to_string(),
-                                            unresolved_to_collection(value),
-                                        );
-                                    }
-                                    None => {
-                                        map.remove(&key.to_string());
+                            Diff::NewMap(diff) => {
+                                let map = Arc::make_mut(map);
+                                for (key, value) in diff.updated.iter() {
+                                    match &value.value {
+                                        Some(value) => {
+                                            map.insert(
+                                                key.to_string(),
+                                                unresolved_to_collection(value),
+                                            );
+                                        }
+                                        None => {
+                                            map.remove(&key.to_string());
+                                        }
                                     }
                                 }
                             }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
                     }
+                } else {
+                    // TODO: perf
+                    let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
+                    let diff_forest = forest.apply_diffs(diff);
+                    *map = diff_forest.to_value(false).into_map().unwrap()
                 }
             }
             _ => unreachable!(),
@@ -187,9 +192,12 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => LoroValue::String(Arc::new(String::from(
-                                r#"{"roots":[],"deleted":[]}"#,
-                            ))),
+                            TypeHint::Tree => {
+                                let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
+                                map.insert("roots".to_string(), LoroValue::List(vec![].into()));
+                                // map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
+                                map.into()
+                            }
                         })
                     }
                     Index::Seq(index) => {
@@ -207,14 +215,7 @@ impl ApplyDiff for LoroValue {
 
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
     if let Some(container) = v.as_container() {
-        match container.container_type() {
-            crate::ContainerType::Text => LoroValue::String(Default::default()),
-            crate::ContainerType::Map => LoroValue::Map(Default::default()),
-            crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Tree => {
-                LoroValue::String(Arc::new(String::from(r#"{"roots":[],"deleted":[]}"#)))
-            }
-        }
+        container.container_type().default_value()
     } else {
         v.clone()
     }
