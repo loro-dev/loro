@@ -265,3 +265,17 @@ fn map_concurrent_checkout() {
     doc_a.checkout(&v_merged).unwrap();
     assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":2}"#);
 }
+
+#[test]
+fn tree_checkout() {
+    let mut doc_a = LoroDoc::new();
+    let tree = doc_a.get_tree("root");
+    let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
+    let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
+    let v1 = doc_a.oplog_frontiers();
+    let id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
+    let v2 = doc_a.oplog_frontiers();
+    println!("tree {:?}", tree.get_value());
+    doc_a.checkout(&v1).unwrap();
+    println!("tree {:?}", tree.get_value());
+}

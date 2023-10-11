@@ -4,8 +4,10 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
         text::text_content::ListSlice,
+        tree::tree_op::TreeOp,
     },
     delta::MapValue,
+    state::TreeID,
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
@@ -688,11 +690,86 @@ impl MapHandler {
 
 impl TreeHandler {
     pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
-        assert_eq!(idx.get_type(), ContainerType::Text);
+        assert_eq!(idx.get_type(), ContainerType::Tree);
         Self {
             container_idx: idx,
             state,
         }
+    }
+
+    pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
+        let tree_id = txn.next_id().into();
+        // TODO: new MapContainer as data container
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent: None,
+            }),
+            None,
+            &self.state,
+        )?;
+        Ok(tree_id)
+    }
+
+    pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: TreeID::delete_root(),
+            }),
+            None,
+            &self.state,
+        )
+    }
+
+    pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
+        let tree_id = txn.next_id().into();
+        // TODO: new MapContainer as data container
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent: Some(parent),
+            }),
+            None,
+            &self.state,
+        )?;
+        Ok(tree_id)
+    }
+
+    pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: None,
+            }),
+            None,
+            &self.state,
+        )
+    }
+
+    pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: Some(parent),
+            }),
+            None,
+            &self.state,
+        )
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
     }
 }
 

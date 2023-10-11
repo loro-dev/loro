@@ -42,6 +42,7 @@ pub mod idx {
                 0 => ContainerType::Map,
                 1 => ContainerType::List,
                 2 => ContainerType::Text,
+                3 => ContainerType::Tree,
                 _ => unreachable!(),
             }
         }

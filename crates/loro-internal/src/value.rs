@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     delta::DeltaItem,
     event::{Diff, Index, Path},
+    state::Forest,
 };
 
 use debug_log::debug_dbg;
@@ -58,28 +59,34 @@ impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
-                // TODO: tree
-
-                let mut s = value.to_string();
-                for item in diff.iter() {
-                    let delta = item.as_text().unwrap();
-                    let mut index = 0;
-                    for delta_item in delta.iter() {
-                        match delta_item {
-                            DeltaItem::Retain { len, .. } => {
-                                index += len;
-                            }
-                            DeltaItem::Insert { value, .. } => {
-                                s.insert_str(index, value);
-                                index += value.len();
-                            }
-                            DeltaItem::Delete { len, .. } => {
-                                s.drain(index..index + len);
+                let is_text = matches!(diff.first(), Some(Diff::Text(_)));
+                if is_text {
+                    let mut s = value.to_string();
+                    for item in diff.iter() {
+                        let delta = item.as_text().unwrap();
+                        let mut index = 0;
+                        for delta_item in delta.iter() {
+                            match delta_item {
+                                DeltaItem::Retain { len, .. } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { value, .. } => {
+                                    s.insert_str(index, value);
+                                    index += value.len();
+                                }
+                                DeltaItem::Delete { len, .. } => {
+                                    s.drain(index..index + len);
+                                }
                             }
                         }
                     }
+                    *value = Arc::new(s);
+                } else {
+                    // TODO: tree
+                    let forest = Forest::from_json(value).unwrap();
+                    let diff_forest = forest.apply_diffs(diff);
+                    *value = Arc::new(diff_forest.to_json())
                 }
-                *value = Arc::new(s);
             }
             LoroValue::List(seq) => {
                 let seq = Arc::make_mut(seq);

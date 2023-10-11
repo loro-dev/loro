@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
-use fxhash::FxHashMap;
-use loro_common::{Counter, LoroError, LoroResult, LoroValue, PeerID};
+use fxhash::{FxHashMap, FxHashSet};
+use loro_common::{Counter, LoroError, LoroResult, LoroValue, PeerID, ID};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -22,6 +22,21 @@ pub(crate) const DELETED_TREE_ROOT: Option<TreeID> = Some(TreeID {
 pub struct TreeID {
     pub(crate) peer: PeerID,
     pub(crate) counter: Counter,
+}
+
+impl TreeID {
+    pub(crate) fn delete_root() -> Option<Self> {
+        DELETED_TREE_ROOT
+    }
+}
+
+impl From<ID> for TreeID {
+    fn from(value: ID) -> Self {
+        Self {
+            peer: value.peer,
+            counter: value.counter,
+        }
+    }
 }
 
 // TODO: use arena save TreeID
@@ -84,7 +99,7 @@ impl TreeState {
 
         if contained {
             if self.is_ancestor_of(&target, &parent) {
-                return Err(LoroError::CyclicMoveErr);
+                return Err(LoroError::CyclicMoveError);
             }
             if *self.trees.get(&target).unwrap() == Some(parent) {
                 return Ok(());
@@ -185,7 +200,8 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&self) -> LoroValue {
-        todo!()
+        let forest = Forest::from_tree_state(&self.trees);
+        forest.to_json().into()
     }
 }
 
@@ -200,7 +216,7 @@ pub struct TreeNode {
 }
 
 impl Forest {
-    fn from_tree_state(state: &FxHashMap<TreeID, Option<TreeID>>) -> Self {
+    pub(crate) fn from_tree_state(state: &FxHashMap<TreeID, Option<TreeID>>) -> Self {
         let mut forest = Self::default();
         let mut node_to_children = FxHashMap::default();
 
@@ -272,6 +288,27 @@ impl Forest {
             }
         }
         ans
+    }
+
+    // for test
+    pub(crate) fn apply_diffs(&self, diff: &[Diff]) -> Self {
+        let mut state = self.to_state();
+        for item in diff {
+            for (&id, &parent) in item.as_tree().unwrap().diff.iter() {
+                state.insert(id, parent);
+            }
+        }
+        Self::from_tree_state(&state)
+    }
+
+    #[cfg(feature = "json")]
+    pub(crate) fn from_json(json: &str) -> LoroResult<Self> {
+        serde_json::from_str(json).map_err(|_| LoroError::DeserializeJsonStringError)
+    }
+
+    #[cfg(feature = "json")]
+    pub(crate) fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
     }
 }
 

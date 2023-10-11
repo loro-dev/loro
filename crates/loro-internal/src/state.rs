@@ -239,7 +239,8 @@ impl DocState {
                 self.changed_idx_in_txn.insert(diff.idx);
             }
 
-            state.apply_diff(&mut diff.diff, &self.arena);
+            // TODO: return Result
+            state.apply_diff(&mut diff.diff, &self.arena).unwrap();
         }
 
         self.frontiers = (*diff.new_version).to_owned();
@@ -260,9 +261,7 @@ impl DocState {
             self.changed_idx_in_txn.insert(op.container);
         }
 
-        // TODO: make apply_op return a result
-        state.apply_op(op, &self.arena);
-        Ok(())
+        state.apply_op(op, &self.arena)
     }
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, local: bool) {
@@ -497,6 +496,7 @@ impl DocState {
                     "value".into() => LoroValue::Map(map)
                 )))
             }
+            // TODO: tree
             _ => LoroValue::Map(Arc::new(fx_map!(
                 "cid".into() => cid_str,
                 "value".into() => value

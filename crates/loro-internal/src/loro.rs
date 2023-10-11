@@ -11,6 +11,7 @@ use crate::{
     change::Timestamp,
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
+    handler::TreeHandler,
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -313,6 +314,13 @@ impl LoroDoc {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
+        let idx = self.get_container_idx(id, ContainerType::Tree);
+        TreeHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// This is for debugging purpose. It will travel the whole oplog

@@ -11,6 +11,7 @@ use crate::{
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
+        tree::tree_op::TreeOp,
         ContainerID, ContainerType,
     },
     encoding::RemoteClientChanges,
@@ -18,6 +19,7 @@ use crate::{
     op::{RawOpContent, RemoteOp},
     oplog::OpLog,
     span::HasId,
+    state::TreeID,
     version::Frontiers,
     InternalString, LoroError, LoroValue, VersionVector,
 };
@@ -63,6 +65,33 @@ pub(super) struct DepsEncoding {
     pub(super) counter: Counter,
 }
 
+#[columnar(vec, ser, de)]
+#[derive(Debug, Copy, Clone)]
+pub(super) struct TreeIDEncoding {
+    #[columnar(strategy = "Rle")]
+    peer: PeerID,
+    #[columnar(strategy = "DeltaRle")]
+    counter: Counter,
+}
+
+impl From<TreeID> for TreeIDEncoding {
+    fn from(value: TreeID) -> Self {
+        Self {
+            peer: value.peer,
+            counter: value.counter,
+        }
+    }
+}
+
+impl From<TreeIDEncoding> for TreeID {
+    fn from(value: TreeIDEncoding) -> Self {
+        Self {
+            peer: value.peer,
+            counter: value.counter,
+        }
+    }
+}
+
 impl DepsEncoding {
     pub(super) fn new(client_idx: ClientIdx, counter: Counter) -> Self {
         Self {
@@ -84,6 +113,8 @@ struct DocEncoding {
     clients: Clients,
     containers: Containers,
     keys: Vec<InternalString>,
+    #[columnar(class = "vec")]
+    tree_ids: Vec<TreeIDEncoding>,
     start_counter: Vec<Counter>,
 }
 
@@ -128,6 +159,9 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
     let mut ops = Vec::with_capacity(change_num);
     let mut keys = Vec::new();
     let mut key_to_idx = FxHashMap::default();
+    let mut tree_ids = Vec::new();
+    let mut tree_to_idx = FxHashMap::default();
+
     let mut deps = Vec::with_capacity(change_num);
 
     for change in diff_changes {
@@ -158,9 +192,21 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
                 let (prop, value) = match content {
-                    crate::op::RawOpContent::Tree(_) => {
-                        // TODO: Tree
-                        todo!()
+                    crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
+                        let prop = *tree_to_idx.entry(target).or_insert_with(|| {
+                            tree_ids.push(target.into());
+                            tree_ids.len() - 1
+                        });
+
+                        let value = if let Some(p) = parent {
+                            LoroValue::I32(*tree_to_idx.entry(p).or_insert_with(|| {
+                                tree_ids.push(p.into());
+                                tree_ids.len() - 1
+                            }) as i32)
+                        } else {
+                            LoroValue::Null
+                        };
+                        (prop, value)
                     }
                     crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
@@ -211,6 +257,7 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
         clients,
         containers: container_ids,
         keys,
+        tree_ids,
         start_counter,
     };
 
@@ -237,12 +284,13 @@ pub(super) fn decode_changes_to_inner_format_oplog(
         clients,
         containers,
         keys,
+        tree_ids,
         start_counter,
     } = encoded;
 
     let mut op_iter = ops;
-    let mut changes = FxHashMap::default();
     let mut deps_iter = deps;
+    let mut changes = FxHashMap::default();
 
     for (client_idx, this_change_encodings) in &change_encodings.group_by(|c| c.client_idx) {
         let mut counter = start_counter[client_idx as usize];
@@ -269,8 +317,13 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                 let container_type = container_id.container_type();
                 let content = match container_type {
                     ContainerType::Tree => {
-                        // TODO: tree
-                        todo!()
+                        let target = tree_ids[prop].into();
+                        let parent = match value {
+                            LoroValue::Null => None,
+                            LoroValue::I32(i) => Some(tree_ids[i as usize].into()),
+                            _ => unreachable!(),
+                        };
+                        RawOpContent::Tree(TreeOp { target, parent })
                     }
                     ContainerType::Map => {
                         let key = keys[prop].clone();
