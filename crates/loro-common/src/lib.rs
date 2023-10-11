@@ -58,6 +58,7 @@ pub enum ContainerType {
     Text,
     Map,
     List,
+    Tree,
     // TODO: Users can define their own container types.
     // Custom(u16),
 }
@@ -70,6 +71,7 @@ impl AsULE for ContainerType {
             ContainerType::Text => 0,
             ContainerType::Map => 1,
             ContainerType::List => 2,
+            ContainerType::Tree => 3,
         }
     }
 
@@ -78,6 +80,7 @@ impl AsULE for ContainerType {
             0 => ContainerType::Text,
             1 => ContainerType::Map,
             2 => ContainerType::List,
+            3 => ContainerType::Tree,
             _ => unreachable!(),
         }
     }
@@ -89,6 +92,8 @@ impl ContainerType {
             ContainerType::Text => LoroValue::String(Arc::new(String::new())),
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+            // TODO: tree
+            ContainerType::Tree => todo!(),
         }
     }
 
@@ -97,6 +102,7 @@ impl ContainerType {
             ContainerType::Text => 0,
             ContainerType::Map => 1,
             ContainerType::List => 2,
+            ContainerType::Tree => 3,
         }
     }
 
@@ -133,6 +139,7 @@ mod container {
                 ContainerType::Text => "Text",
                 ContainerType::Map => "Map",
                 ContainerType::List => "List",
+                ContainerType::Tree => "Tree",
             })
         }
     }

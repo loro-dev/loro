@@ -354,6 +354,8 @@ fn change_to_diff(
                         );
                         Diff::NewMap(crate::delta::MapDelta { updated })
                     }
+                    // TODO: tree
+                    crate::op::InnerContent::Tree(map) => todo!(),
                 },
             }
         };

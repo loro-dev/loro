@@ -159,6 +159,10 @@ pub fn decode_oplog(
                         _ => unreachable!(),
                     }
                 }
+                loro_common::ContainerType::Tree => {
+                    // TODO: tree
+                    todo!()
+                }
             };
             *counter_mut += op.content_len() as Counter;
             ops.push(op);
@@ -496,6 +500,10 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
 
     for (_, state) in app_state.states.iter() {
         match state {
+            State::TreeState(_) => {
+                // TODO: tree
+                todo!()
+            }
             State::ListState(list) => {
                 let v = list.iter().map(|value| record_value(value)).collect();
                 encoded.states.push(EncodedContainerState::List(v))
@@ -630,6 +638,10 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         let op_index_start = encoded_ops.len();
         for op in change.ops.iter() {
             match &op.content {
+                InnerContent::Tree(_) => {
+                    // TODO: tree
+                    todo!()
+                }
                 InnerContent::List(list) => match list {
                     InnerListOp::Insert { slice, pos } => match op.container.get_type() {
                         loro_common::ContainerType::Text => {
@@ -663,6 +675,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                             }
                         }
                         loro_common::ContainerType::Map => unreachable!(),
+                        loro_common::ContainerType::Tree => unreachable!(),
                     },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(

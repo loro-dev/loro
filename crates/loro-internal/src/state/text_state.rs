@@ -1,6 +1,7 @@
 use std::{ops::Range, sync::Arc};
 
 use jumprope::JumpRope;
+use loro_common::LoroResult;
 
 use crate::{
     arena::SharedArena,
@@ -46,7 +47,7 @@ enum UndoItem {
 }
 
 impl ContainerState for TextState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) -> LoroResult<()> {
         match diff {
             Diff::SeqRaw(delta) => {
                 if let Some(new_diff) = self.apply_seq_raw(delta, arena) {
@@ -72,9 +73,10 @@ impl ContainerState for TextState {
             }
             _ => unreachable!(),
         }
+        Ok(())
     }
 
-    fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) {
+    fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) -> LoroResult<()> {
         match op.content {
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
@@ -90,8 +92,10 @@ impl ContainerState for TextState {
                     self.delete_unicode(del.pos as usize..del.pos as usize + del.len as usize);
                 }
             },
-            _ => unreachable!(),
+            RawOpContent::Map(_) => unreachable!(),
+            RawOpContent::Tree(_) => unreachable!(),
         }
+        Ok(())
     }
 
     #[doc = " Start a transaction"]

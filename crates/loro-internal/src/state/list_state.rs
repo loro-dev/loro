@@ -16,6 +16,7 @@ use fxhash::FxHashMap;
 use generic_btree::{
     ArenaIndex, BTree, BTreeTrait, FindResult, LengthFinder, QueryResult, UseLengthFinder,
 };
+use loro_common::LoroResult;
 
 use super::ContainerState;
 
@@ -259,7 +260,7 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) -> LoroResult<()> {
         match diff {
             Diff::List(delta) => {
                 let mut index = 0;
@@ -319,11 +320,13 @@ impl ContainerState for ListState {
             }
             _ => unreachable!(),
         };
+        Ok(())
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) -> LoroResult<()> {
         match op.content {
             RawOpContent::Map(_) => unreachable!(),
+            RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     crate::container::text::text_content::ListSlice::RawData(list) => match list {
@@ -355,6 +358,7 @@ impl ContainerState for ListState {
                 }
             },
         }
+        Ok(())
     }
 
     #[doc = " Start a transaction"]

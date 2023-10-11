@@ -12,6 +12,7 @@ use rle::{HasLength, RleVec};
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
+use crate::container::tree::tree_op::TreeOp;
 use crate::dag::DagUtils;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
@@ -390,6 +391,7 @@ impl OpLog {
                         }))
                     }
                     loro_common::ContainerType::Map => unreachable!(),
+                    loro_common::ContainerType::Tree => unreachable!(),
                 },
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
@@ -405,6 +407,8 @@ impl OpLog {
                     value,
                 }))
             }
+            // TODO: tree RawOp
+            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
         };
 
         RemoteOp {

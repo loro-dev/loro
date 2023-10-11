@@ -1,15 +1,18 @@
+use std::collections::BTreeSet;
+
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
 
 use crate::{
     change::Lamport,
-    container::idx::ContainerIdx,
-    delta::{MapDelta, MapValue},
+    container::{idx::ContainerIdx, tree::tree_op::TreeOp},
+    delta::{MapDelta, MapValue, TreeDelta},
     event::Diff,
     id::Counter,
     op::RichOp,
     span::{HasId, HasLamport},
+    state::TreeID,
     text::tracker::Tracker,
     version::Frontiers,
     InternalString, VersionVector,
@@ -122,6 +125,9 @@ impl DiffCalculator {
                                 crate::ContainerType::List => {
                                     ContainerDiffCalculator::List(ListDiffCalculator::default())
                                 }
+                                crate::ContainerType::Tree => {
+                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::default())
+                                }
                             }
                         });
 
@@ -220,6 +226,7 @@ enum ContainerDiffCalculator {
     Text(TextDiffCalculator),
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
+    Tree(TreeDiffCalculator),
 }
 
 #[derive(Default)]
@@ -447,5 +454,91 @@ impl DiffCalculatorTrait for TextDiffCalculator {
         to: &crate::VersionVector,
     ) -> Diff {
         Diff::SeqRaw(self.tracker.diff(from, to))
+    }
+}
+
+#[derive(Debug, Default)]
+struct TreeDiffCalculator {
+    trees: FxHashMap<TreeID, BTreeSet<CompactTreeNode>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct CompactTreeNode {
+    lamport: Lamport,
+    peer: PeerID,
+    counter: Counter,
+    parent: Option<TreeID>,
+}
+
+// TODO: tree
+impl DiffCalculatorTrait for TreeDiffCalculator {
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+
+    fn apply_change(
+        &mut self,
+        _oplog: &OpLog,
+        op: crate::op::RichOp,
+        _vv: Option<&crate::VersionVector>,
+    ) {
+        let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
+        let c_node = CompactTreeNode {
+            lamport: op.lamport(),
+            peer: op.client_id(),
+            counter: op.id_start().counter,
+            parent: *parent,
+        };
+        self.trees
+            .entry(*target)
+            .or_insert_with(BTreeSet::new)
+            .insert(c_node);
+    }
+
+    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+
+    // TODO: tree
+    fn calculate_diff(
+        &mut self,
+        _oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> Diff {
+        let mut changed = Vec::new();
+        for (k, g) in self.trees.iter_mut() {
+            let (peek_from, peek_to) = {
+                let mut f = None;
+                let mut t = None;
+                for v in g.iter().rev() {
+                    if t.is_none() && to.get(&v.peer).copied().unwrap_or(0) > v.counter {
+                        t = Some(*v);
+                    }
+                    if f.is_none() && from.get(&v.peer).copied().unwrap_or(0) > v.counter {
+                        f = Some(*v);
+                    }
+                    if t.is_some() && f.is_some() {
+                        break;
+                    }
+                }
+                (f, t)
+            };
+
+            match (peek_from, peek_to) {
+                (None, None) => {}
+                (None, Some(_)) => changed.push((*k, peek_to)),
+                (Some(_), None) => changed.push((*k, peek_to)),
+                (Some(a), Some(b)) => {
+                    if a != b {
+                        changed.push((*k, peek_to))
+                    }
+                }
+            }
+        }
+        let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
+        for (key, value) in changed {
+            // TODO: if None?
+            let value = value.map(|v| v.parent).flatten();
+            updated.insert(key, value);
+        }
+
+        Diff::Tree(TreeDelta { diff: updated })
     }
 }

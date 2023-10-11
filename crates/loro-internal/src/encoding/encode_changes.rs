@@ -158,6 +158,10 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
                 let (prop, value) = match content {
+                    crate::op::RawOpContent::Tree(_) => {
+                        // TODO: Tree
+                        todo!()
+                    }
                     crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
                             keys.push(key);
@@ -264,6 +268,10 @@ pub(super) fn decode_changes_to_inner_format_oplog(
 
                 let container_type = container_id.container_type();
                 let content = match container_type {
+                    ContainerType::Tree => {
+                        // TODO: tree
+                        todo!()
+                    }
                     ContainerType::Map => {
                         let key = keys[prop].clone();
                         RawOpContent::Map(MapSet { key, value })

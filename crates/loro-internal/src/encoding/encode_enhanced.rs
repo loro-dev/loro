@@ -184,6 +184,10 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
                 let (prop, is_del, insert_del_len) = match content {
+                    crate::op::RawOpContent::Tree(_) => {
+                        // TODO: tree
+                        todo!()
+                    }
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
                         values.push(value.clone());
                         (
@@ -425,6 +429,10 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 };
                 let container_type = container_id.container_type();
                 let content = match container_type {
+                    ContainerType::Tree => {
+                        // TODO: tree
+                        todo!()
+                    }
                     ContainerType::Map => {
                         let key = keys[prop].clone();
                         RawOpContent::Map(MapSet {
@@ -441,6 +449,10 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                             }))
                         } else {
                             match container_type {
+                                ContainerType::Tree => {
+                                    // TODO: tree
+                                    todo!()
+                                }
                                 ContainerType::Text => {
                                     let insert_len = insert_del_len as usize;
                                     let s = &str[str_index..str_index + insert_len];

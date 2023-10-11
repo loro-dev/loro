@@ -296,6 +296,10 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Tree => {
+                // TODO: tree
+                todo!()
+            }
         }
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    delta::{Delta, MapDelta, MapDiff},
+    delta::{Delta, MapDelta, MapDiff, TreeDelta},
     text::text_content::SliceRanges,
     InternalString, LoroValue,
 };
@@ -135,6 +135,7 @@ pub enum Diff {
     /// @deprecated
     Map(MapDiff<LoroValue>),
     NewMap(MapDelta),
+    Tree(TreeDelta),
 }
 
 impl Diff {
@@ -146,6 +147,7 @@ impl Diff {
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
             (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
+            (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }

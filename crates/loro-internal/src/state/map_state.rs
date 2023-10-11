@@ -1,7 +1,7 @@
 use std::{mem, sync::Arc};
 
 use fxhash::FxHashMap;
-use loro_common::ContainerID;
+use loro_common::{ContainerID, LoroResult};
 
 use crate::{
     arena::SharedArena,
@@ -23,7 +23,7 @@ pub struct MapState {
 }
 
 impl ContainerState for MapState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) -> LoroResult<()> {
         if let Diff::NewMap(delta) = diff {
             for (key, value) in delta.updated.iter() {
                 if let Some(LoroValue::Container(c)) = &value.value {
@@ -35,9 +35,10 @@ impl ContainerState for MapState {
                 self.store_txn_snapshot(key.clone(), old);
             }
         }
+        Ok(())
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) -> LoroResult<()> {
         match op.content {
             RawOpContent::Map(MapSet { key, value }) => {
                 if value.is_none() {
@@ -66,8 +67,9 @@ impl ContainerState for MapState {
                     },
                 )
             }
-            RawOpContent::List(_) => unreachable!(),
+            _ => unreachable!(),
         }
+        Ok(())
     }
 
     fn start_txn(&mut self) {

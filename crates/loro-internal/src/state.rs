@@ -21,10 +21,12 @@ use crate::{
 mod list_state;
 mod map_state;
 mod text_state;
+mod tree_state;
 
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use text_state::TextState;
+pub(crate) use tree_state::{TreeID, TreeState};
 
 use super::{
     arena::SharedArena,
@@ -49,8 +51,8 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena);
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena);
+    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) -> LoroResult<()>;
+    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) -> LoroResult<()>;
     /// Convert a state to a diff that when apply this diff on a empty state,
     /// the state will be the same as this state.
     fn to_diff(&self) -> Diff;
@@ -85,6 +87,7 @@ pub enum State {
     ListState,
     MapState,
     TextState,
+    TreeState,
 }
 
 impl State {
@@ -308,6 +311,8 @@ impl DocState {
                 ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
+                // TODO: Tree
+                ContainerType::Tree => LoroValue::String(Arc::new(Default::default())),
             })
     }
 
@@ -696,6 +701,7 @@ impl DocState {
                 *diff = Diff::List(list);
             }
             ContainerType::Map => unreachable!(),
+            ContainerType::Tree => unreachable!(),
         }
     }
 }
@@ -705,6 +711,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Text => State::TextState(TextState::new()),
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
+        ContainerType::Tree => State::TreeState(TreeState::new(idx)),
     }
 }
 

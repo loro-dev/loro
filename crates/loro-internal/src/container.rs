@@ -56,6 +56,7 @@ pub mod idx {
                 ContainerType::Map => 0,
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
+                ContainerType::Tree => 3,
             } << 28;
 
             Self(prefix | index)
@@ -66,6 +67,7 @@ pub mod idx {
 pub mod list;
 pub mod map;
 pub mod text;
+pub mod tree;
 
 use idx::ContainerIdx;
 

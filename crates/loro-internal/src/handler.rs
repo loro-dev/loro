@@ -51,11 +51,24 @@ impl std::fmt::Debug for ListHandler {
     }
 }
 
+#[derive(Clone)]
+pub struct TreeHandler {
+    container_idx: ContainerIdx,
+    state: Weak<Mutex<DocState>>,
+}
+
+impl std::fmt::Debug for TreeHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TreeHandler")
+    }
+}
+
 #[derive(Clone, EnumAsInner, Debug)]
 pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    Tree(TreeHandler),
 }
 
 impl Handler {
@@ -64,6 +77,7 @@ impl Handler {
             Self::Text(x) => x.container_idx,
             Self::Map(x) => x.container_idx,
             Self::List(x) => x.container_idx,
+            Self::Tree(x) => x.container_idx,
         }
     }
 
@@ -72,6 +86,7 @@ impl Handler {
             Self::Text(_) => ContainerType::Text,
             Self::Map(_) => ContainerType::Map,
             Self::List(_) => ContainerType::List,
+            Self::Tree(_) => ContainerType::Tree,
         }
     }
 }
@@ -82,6 +97,7 @@ impl Handler {
             ContainerType::Text => Self::Text(TextHandler::new(value, state)),
             ContainerType::Map => Self::Map(MapHandler::new(value, state)),
             ContainerType::List => Self::List(ListHandler::new(value, state)),
+            ContainerType::Tree => Self::Tree(TreeHandler::new(value, state)),
         }
     }
 }
@@ -667,6 +683,16 @@ impl MapHandler {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+impl TreeHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::Text);
+        Self {
+            container_idx: idx,
+            state,
+        }
     }
 }
 

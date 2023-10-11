@@ -46,6 +46,7 @@ enum TypeHint {
     Map,
     Text,
     List,
+    Tree,
 }
 
 pub trait ApplyDiff {
@@ -156,6 +157,7 @@ impl ApplyDiff for LoroValue {
             Diff::NewMap(_) => TypeHint::Map,
             Diff::SeqRaw(_) => TypeHint::Text,
             Diff::SeqRawUtf16(_) => TypeHint::Text,
+            Diff::Tree(_) => TypeHint::Tree,
         };
         {
             let mut hints = Vec::with_capacity(path.len());
@@ -177,6 +179,10 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
+                            TypeHint::Tree => {
+                                // TODO: tree
+                                todo!()
+                            }
                         })
                     }
                     Index::Seq(index) => {
@@ -199,6 +205,10 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
+            crate::ContainerType::Tree => {
+                // TODO: tree
+                todo!()
+            }
         }
     } else {
         v.clone()
@@ -269,6 +279,10 @@ pub mod wasm {
             // create a obj
             let obj = Object::new();
             match value {
+                Diff::Tree(_) => {
+                    // TODO: tree
+                    todo!()
+                }
                 Diff::List(list) => {
                     // set type as "list"
                     js_sys::Reflect::set(
