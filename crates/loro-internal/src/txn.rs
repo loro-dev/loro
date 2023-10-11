@@ -17,7 +17,7 @@ use crate::{
         idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
     },
-    delta::{Delta, MapValue, TreeDelta, TreeDiff},
+    delta::{Delta, MapValue, TreeDelta},
     event::Diff,
     handler::TreeHandler,
     id::{Counter, PeerID, ID},
@@ -362,12 +362,9 @@ fn change_to_diff(
                         );
                         Diff::NewMap(crate::delta::MapDelta { updated })
                     }
-                    crate::op::InnerContent::Tree(tree) => {
-                        let tree_diff = TreeDiff::Move(tree.parent);
-                        Diff::Tree(TreeDelta {
-                            diff: vec![(tree.target, tree_diff)],
-                        })
-                    }
+                    crate::op::InnerContent::Tree(tree) => Diff::Tree(TreeDelta {
+                        diff: vec![(tree.target, tree.parent)],
+                    }),
                 },
             }
         };

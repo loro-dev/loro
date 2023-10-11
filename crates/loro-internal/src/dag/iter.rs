@@ -211,7 +211,6 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 q.push(id);
             }
         }
-
         // traverse all nodes, calculate the out_degrees
         // if out_degree is 0, then it can be iterate directly
         while let Some(id) = q.pop() {
@@ -240,8 +239,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> DagCausalIter<'a, D> {
                 q.push(ID::new(client, last_counter + 1))
             }
         }
-
-        out_degrees.retain(|k, v| {
+        out_degrees.retain(|k: &ID, v| {
             if v.is_zero() {
                 stack.push(*k);
                 return false;

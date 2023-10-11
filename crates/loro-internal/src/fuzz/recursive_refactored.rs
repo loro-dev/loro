@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::{TreeID, ID};
+use loro_common::{LoroError, TreeID, ID};
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -17,9 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, delta::TreeDiff, handler::TreeHandler, loro::LoroDoc,
-    state::Forest, value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler,
-    TextHandler,
+    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, state::Forest,
+    value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -46,16 +45,32 @@ pub enum Action {
     Tree {
         site: u8,
         container_idx: u8,
-        target: (u8, u8),
-        parent: (u8, u8),
-        is_new: bool,
-        is_del: bool,
+        action: TreeAction,
+        target: (u64, i32),
+        parent: (u64, i32),
     },
     Sync {
         from: u8,
         to: u8,
     },
     SyncAll,
+}
+
+#[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq)]
+pub enum TreeAction {
+    Create,
+    Move,
+    Delete,
+}
+
+impl Debug for TreeAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TreeAction::Create => f.write_str("TreeAction::Create"),
+            TreeAction::Move => f.write_str("TreeAction::Move"),
+            TreeAction::Delete => f.write_str("TreeAction::Delete"),
+        }
+    }
 }
 
 struct Actor {
@@ -143,14 +158,7 @@ impl Actor {
                 let mut tree = tree.lock().unwrap();
                 if let Diff::Tree(tree_delta) = &event.container.diff {
                     for (key, value) in tree_delta.diff.iter() {
-                        match value {
-                            TreeDiff::Delete => {
-                                tree.remove(key);
-                            }
-                            TreeDiff::Move(p) => {
-                                tree.insert(*key, *p);
-                            }
-                        }
+                        tree.insert(*key, *value);
                     }
                 } else {
                     debug_dbg!(&event.container);
@@ -310,24 +318,23 @@ impl Tabled for Action {
             Action::Tree {
                 site,
                 container_idx,
+                action,
                 target,
                 parent,
-                is_new,
-                is_del,
-            } => vec![
-                "tree".into(),
-                format!("{}", site).into(),
-                format!("{}", container_idx).into(),
-                format!("{:?}", target).into(),
-                (if *is_new {
-                    "Create".to_string()
-                } else if *is_del {
-                    "Delete".to_string()
-                } else {
-                    format!("MoveTo {parent:?}")
-                })
-                .into(),
-            ],
+            } => {
+                let action_str = match action {
+                    TreeAction::Create => "Create".to_string(),
+                    TreeAction::Move => format!("Move to {parent:?}"),
+                    TreeAction::Delete => "Delete".to_string(),
+                };
+                vec![
+                    "tree".into(),
+                    format!("{}", site).into(),
+                    format!("{}", container_idx).into(),
+                    action_str.into(),
+                    format!("{:?}", target).into(),
+                ]
+            }
         }
     }
 
@@ -383,11 +390,8 @@ impl Actionable for Vec<Actor> {
                 container_idx,
                 target: (target_peer, target_counter),
                 parent: (parent_peer, parent_counter),
-                is_new,
-                is_del,
+                action,
             } => {
-                let parent = *site;
-                // TODO: better data
                 *site %= max_users;
                 *container_idx %= self[*site as usize].tree_containers.len().max(1) as u8;
                 if let Some(tree) = self[*site as usize]
@@ -404,66 +408,43 @@ impl Actionable for Vec<Actor> {
                             max_counter_mapping.insert(peer, counter);
                         }
                     }
-                    // let this_tree_num = max_counter_mapping.get(&(*site as u64)).unwrap_or(&-1) + 1;
-                    if tree_num > 255 {
-                        *is_new = false;
-                    } else if !max_counter_mapping.contains_key(&(*target_peer as u64)) {
-                        *is_new = true;
+                    if tree_num == 0 || tree_num < 2 && matches!(action, TreeAction::Move) {
+                        *action = TreeAction::Create;
+                    } else if tree_num >= 255 && matches!(action, TreeAction::Create) {
+                        *action = TreeAction::Move;
                     }
 
-                    let tree_num = tree_num as u8;
-
-                    if tree.contains(TreeID {
-                        peer: *target_peer as u64,
-                        counter: *target_counter as i32,
-                    }) {
-                        // target exists
-                        *is_new = false;
-                        if tree_num == 1 && !*is_del {
-                            *is_del = true;
+                    match action {
+                        TreeAction::Create => {
+                            let actor = &mut self[*site as usize];
+                            let txn = actor.loro.txn().unwrap();
+                            let id = txn.next_id();
+                            *target_peer = id.peer;
+                            *target_counter = id.counter;
                         }
-                    } else {
-                        // target not exists
-                        if *is_new {
-                            *target_counter = (max_counter_mapping
-                                .get(&(*target_peer as u64))
-                                .copied()
-                                .unwrap_or(-1)
-                                + 1) as u8;
+                        TreeAction::Move => {
+                            let target_idx = *target_peer as usize % tree_num;
+                            let mut parent_idx = *parent_peer as usize % tree_num;
+                            while target_idx == parent_idx {
+                                parent_idx = (parent_idx + 1) % tree_num;
+                            }
+                            *target_peer = nodes[target_idx].peer;
+                            *target_counter = nodes[target_idx].counter;
+                            *parent_peer = nodes[parent_idx].peer;
+                            *parent_counter = nodes[parent_idx].counter;
                         }
-                    }
-                    let target = TreeID {
-                        peer: *target_peer as u64,
-                        counter: *target_counter as i32,
-                    };
-
-                    // fix move
-                    if !*is_new && !*is_del {
-                        let mut p_idx = (parent % tree_num) as usize;
-                        let mut p = nodes[p_idx];
-                        let mut i = 0;
-                        while p == target {
-                            p_idx = (parent as usize + i) % tree_num as usize;
-                            p = nodes[p_idx];
-                            i += 1;
+                        TreeAction::Delete => {
+                            let target_idx = *target_peer as usize % tree_num;
+                            *target_peer = nodes[target_idx].peer;
+                            *target_counter = nodes[target_idx].counter;
                         }
-                        *parent_peer = p.peer as u8;
-                        *parent_counter = p.counter as u8;
-                    }
-                    // avoid moving self
-                    if !*is_del
-                        && (target.peer as u8, target.counter as u8)
-                            == (*parent_peer, *parent_counter)
-                    {
-                        *is_del = true;
                     }
                 } else {
-                    *target_peer = *site;
+                    *target_peer = *site as u64;
                     *target_counter = 0;
                     *parent_peer = 0;
                     *parent_counter = 0;
-                    *is_del = false;
-                    *is_new = true;
+                    *action = TreeAction::Create;
                 }
             }
             Action::Map {
@@ -795,10 +776,9 @@ impl Actionable for Vec<Actor> {
             Action::Tree {
                 site,
                 container_idx,
+                action,
                 target: (target_peer, target_counter),
                 parent: (parent_peer, parent_counter),
-                is_new,
-                is_del,
             } => {
                 let actor = &mut self[*site as usize];
                 let container = actor.tree_containers.get_mut(*container_idx as usize);
@@ -810,26 +790,45 @@ impl Actionable for Vec<Actor> {
                     &mut actor.tree_containers[0]
                 };
                 let mut txn = actor.loro.txn().unwrap();
-                let target = TreeID {
-                    peer: *target_peer as u64,
-                    counter: *target_counter as i32,
-                };
-                if *is_new {
-                    container.create_with_id(&mut txn, target).unwrap();
-                } else if *is_del {
-                    container.delete(&mut txn, target).unwrap();
-                } else {
-                    container
-                        .mov(
+
+                match action {
+                    TreeAction::Create => {
+                        container.create(&mut txn).unwrap();
+                    }
+                    TreeAction::Move => {
+                        match container.mov(
                             &mut txn,
-                            target,
                             TreeID {
-                                peer: *parent_peer as u64,
-                                counter: *parent_counter as i32,
+                                peer: *target_peer,
+                                counter: *target_counter,
                             },
-                        )
-                        .unwrap();
+                            TreeID {
+                                peer: *parent_peer,
+                                counter: *parent_counter,
+                            },
+                        ) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                // TODO: cycle move
+                                if !matches!(err, LoroError::CyclicMoveError) {
+                                    panic!("{}", err)
+                                }
+                            }
+                        }
+                    }
+                    TreeAction::Delete => {
+                        container
+                            .delete(
+                                &mut txn,
+                                TreeID {
+                                    peer: *target_peer,
+                                    counter: *target_counter,
+                                },
+                            )
+                            .unwrap();
+                    }
                 }
+
                 drop(txn);
                 if actor.peer == 1 {
                     actor.record_history();
@@ -1970,62 +1969,55 @@ mod failed_tests {
             ],
         )
     }
-
+    use super::TreeAction;
     #[test]
     fn tree() {
         test_multi_sites(
             5,
             &mut [
-                Text {
-                    site: 251,
-                    container_idx: 1,
-                    pos: 0,
-                    value: 24576,
-                    is_del: false,
+                Tree {
+                    site: 127,
+                    container_idx: 96,
+                    action: TreeAction::Create,
+                    target: (10561664609096343656, -1835887982),
+                    parent: (11558548064546493074, -1845428736),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (8376697034077409938, 1593442176),
+                    parent: (10561665234359194258, 301989887),
+                },
+                Tree {
+                    site: 138,
+                    container_idx: 138,
+                    action: TreeAction::Move,
+                    target: (9256093509146179978, -2070769135),
+                    parent: (9982943851654580874, 24409337),
                 },
                 SyncAll,
                 Tree {
-                    site: 141,
-                    container_idx: 141,
-                    target: (141, 141),
-                    parent: (141, 141),
-                    is_new: true,
-                    is_del: true,
-                },
-                Map {
-                    site: 96,
-                    container_idx: 124,
-                    key: 4,
-                    value: FuzzValue::Container(C::Tree),
-                },
-                Text {
-                    site: 124,
-                    container_idx: 141,
-                    pos: 141,
-                    value: 36237,
-                    is_del: true,
+                    site: 149,
+                    container_idx: 107,
+                    action: TreeAction::Move,
+                    target: (12659530244705763585, -1347440721),
+                    parent: (9982943851556351919, 1250593418),
                 },
                 Tree {
-                    site: 143,
-                    container_idx: 143,
-                    target: (143, 143),
-                    parent: (143, 143),
-                    is_new: true,
-                    is_del: true,
+                    site: 255,
+                    container_idx: 249,
+                    action: TreeAction::Move,
+                    target: (18297602016176747, -762146245),
+                    parent: (12652179886389236370, -1347440721),
                 },
+                Sync { from: 175, to: 175 },
                 Tree {
-                    site: 141,
-                    container_idx: 141,
-                    target: (141, 141),
-                    parent: (141, 141),
-                    is_new: false,
-                    is_del: false,
-                },
-                Map {
-                    site: 1,
-                    container_idx: 241,
-                    key: 241,
-                    value: FuzzValue::Container(C::Tree),
+                    site: 138,
+                    container_idx: 138,
+                    action: TreeAction::Move,
+                    target: (9256093509146179978, -1778386433),
+                    parent: (113280941038474645, -885325759),
                 },
             ],
         )

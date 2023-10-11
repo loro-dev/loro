@@ -712,7 +712,6 @@ impl TreeHandler {
     }
 
     pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
-        let old_parent = self.parent(target).flatten();
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -740,7 +739,6 @@ impl TreeHandler {
     }
 
     pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
-        let old_parent = self.parent(target).flatten();
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -753,7 +751,6 @@ impl TreeHandler {
     }
 
     pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
-        let old_parent = self.parent(target).flatten();
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {

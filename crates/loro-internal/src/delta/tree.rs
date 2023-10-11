@@ -1,19 +1,16 @@
-use fxhash::FxHashMap;
-use itertools::Itertools;
 use loro_common::TreeID;
 use serde::Serialize;
 
-use crate::change::Lamport;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeDelta {
-    pub(crate) diff: Vec<(TreeID, TreeDiff)>,
+    pub(crate) diff: Vec<(TreeID, Option<TreeID>)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+// TODO: tree
 pub enum TreeDiff {
-    Delete,
+    Create,
     Move(Option<TreeID>),
+    Delete,
 }
 
 impl TreeDelta {
@@ -41,25 +38,3 @@ impl TreeDelta {
         // TreeDelta { diff }
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     #[test]
-//     fn tree_diff_ord() {
-//         let mut v = vec![
-//             TreeDiff::Delete,
-//             TreeDiff::Move((0, None)),
-//             TreeDiff::Move((1, None)),
-//         ];
-//         v.sort();
-//         assert_eq!(
-//             v,
-//             vec![
-//                 TreeDiff::Delete,
-//                 TreeDiff::Move((0, None)),
-//                 TreeDiff::Move((1, None))
-//             ]
-//         )
-//     }
-// }

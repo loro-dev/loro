@@ -8,7 +8,7 @@ use crate::{
     change::Lamport,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
     dag::DagUtils,
-    delta::{MapDelta, MapValue, TreeDelta, TreeDiff},
+    delta::{MapDelta, MapValue, TreeDelta},
     event::Diff,
     id::Counter,
     op::RichOp,
@@ -506,8 +506,11 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         // from.insert(1, 3);
         // to.insert(1, 1);
         // self.current_vv.insert(1, 3);
+        let debug = false;
 
-        // println!("from {:?} to {:?}", from, to);
+        if debug {
+            println!("from {:?} to {:?}", from, to);
+        }
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers_inner;
@@ -522,7 +525,9 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         };
         let common_ancestors = oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-        // println!("lca vv {:?}", lca_vv);
+        if debug {
+            println!("lca vv {:?}", lca_vv);
+        }
         let mut latest_vv = lca_vv.clone();
         let mut need_revert_ops = Vec::new();
         let mut apply_ops = Vec::new();
@@ -543,7 +548,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
         let mut diff = Vec::new();
         let mut cache = FxHashMap::default();
-        for (change, _vv) in oplog.iter_causally(VersionVector::default(), latest_vv) {
+        for (change, _vv) in oplog.iter_causally(VersionVector::default(), oplog.vv().clone()) {
             for op in change.ops().iter() {
                 match op.content {
                     crate::op::InnerContent::Tree(tree) => {
@@ -557,7 +562,9 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             }
         }
 
-        // println!("cache {:?}", cache);
+        if debug {
+            println!("cache {:?}", cache);
+        }
         while let Some(node) = need_revert_ops.pop() {
             let target = node.target;
             // TODO: old parent
@@ -571,18 +578,24 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                     }
                 }
             }
-            // println!(
-            //     "{:?} old parent {:?}   lamport {}",
-            //     target, old_parent, node.lamport
-            // );
-            diff.push((target, TreeDiff::Move(old_parent)))
+            if debug {
+                println!(
+                    "{:?} old parent {:?}   lamport {}",
+                    target, old_parent, node.lamport
+                );
+            }
+            diff.push((target, old_parent));
         }
-        // println!("\nrevert op {:?}", diff);
+        if debug {
+            println!("\nrevert op {:?}", diff);
+        }
 
         for node in apply_ops {
-            diff.push((node.target, TreeDiff::Move(node.parent)))
+            diff.push((node.target, node.parent));
         }
-        // println!("\ndiff {:?}", diff);
+        if debug {
+            println!("\ndiff {:?}", diff);
+        }
 
         Diff::Tree(TreeDelta { diff })
     }

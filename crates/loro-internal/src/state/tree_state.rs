@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    delta::TreeDiff,
     event::Diff,
     op::RawOp,
 };
@@ -163,14 +162,14 @@ impl TreeState {
 impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
-            for (target, parent) in &tree.diff {
-                match parent {
-                    TreeDiff::Delete => {
-                        // TODO: ???
-                        self.trees.remove(target);
-                    }
-                    TreeDiff::Move(p) => self.mov(*target, *p)?,
-                };
+            let mut removed_diff = FxHashSet::default();
+            for (idx, (target, parent)) in tree.diff.iter().enumerate() {
+                if let Err(LoroError::CyclicMoveError) = self.mov(*target, *parent) {
+                    removed_diff.insert(idx);
+                }
+            }
+            for idx in removed_diff {
+                tree.diff.remove(idx);
             }
         }
         Ok(())
@@ -310,10 +309,7 @@ impl Forest {
         let mut state = self.to_state();
         for item in diff {
             for (id, parent) in item.as_tree().unwrap().diff.iter() {
-                match parent {
-                    TreeDiff::Delete => state.remove(id),
-                    TreeDiff::Move(p) => state.insert(*id, *p),
-                };
+                state.insert(*id, *parent);
             }
         }
         Self::from_tree_state(&state)
