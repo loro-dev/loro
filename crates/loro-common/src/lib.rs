@@ -98,7 +98,7 @@ impl ContainerType {
             ContainerType::Tree => {
                 let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
                 map.insert("roots".to_string(), LoroValue::List(vec![].into()));
-                // map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
+                map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
                 map.into()
             }
         }

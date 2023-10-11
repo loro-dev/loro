@@ -17,14 +17,9 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx,
-    delta::{TreeDiff, TreeDiffItem},
-    handler::TreeHandler,
-    loro::LoroDoc,
-    state::Forest,
-    value::ToJson,
-    version::Frontiers,
-    ApplyDiff, ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, delta::TreeDiffItem, handler::TreeHandler, loro::LoroDoc,
+    state::Forest, value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler,
+    TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -67,6 +62,7 @@ pub enum TreeAction {
     Create,
     Move,
     Delete,
+    Meta,
 }
 
 impl Debug for TreeAction {
@@ -75,6 +71,7 @@ impl Debug for TreeAction {
             TreeAction::Create => f.write_str("TreeAction::Create"),
             TreeAction::Move => f.write_str("TreeAction::Move"),
             TreeAction::Delete => f.write_str("TreeAction::Delete"),
+            TreeAction::Meta => f.write_str("TreeAction::Meta"),
         }
     }
 }
@@ -345,6 +342,7 @@ impl Tabled for Action {
                     TreeAction::Create => "Create".to_string(),
                     TreeAction::Move => format!("Move to {parent:?}"),
                     TreeAction::Delete => "Delete".to_string(),
+                    TreeAction::Meta => "Meta".to_string(),
                 };
                 vec![
                     "tree".into(),
@@ -427,7 +425,11 @@ impl Actionable for Vec<Actor> {
                             max_counter_mapping.insert(peer, counter);
                         }
                     }
-                    if tree_num == 0 || tree_num < 2 && matches!(action, TreeAction::Move) {
+                    if tree_num == 0
+                        || tree_num < 2
+                            && (matches!(action, TreeAction::Move)
+                                || matches!(action, TreeAction::Meta))
+                    {
                         *action = TreeAction::Create;
                     } else if tree_num >= 255 && matches!(action, TreeAction::Create) {
                         *action = TreeAction::Move;
@@ -453,6 +455,11 @@ impl Actionable for Vec<Actor> {
                             *parent_counter = nodes[parent_idx].counter;
                         }
                         TreeAction::Delete => {
+                            let target_idx = *target_peer as usize % tree_num;
+                            *target_peer = nodes[target_idx].peer;
+                            *target_counter = nodes[target_idx].counter;
+                        }
+                        TreeAction::Meta => {
                             let target_idx = *target_peer as usize % tree_num;
                             *target_peer = nodes[target_idx].peer;
                             *target_counter = nodes[target_idx].counter;
@@ -848,6 +855,21 @@ impl Actionable for Vec<Actor> {
                             )
                             .unwrap();
                     }
+                    TreeAction::Meta => {
+                        let key = parent_peer.to_string();
+                        let value = *parent_counter;
+                        container
+                            .insert_meta(
+                                &mut txn,
+                                TreeID {
+                                    peer: *target_peer,
+                                    counter: *target_counter,
+                                },
+                                &key,
+                                value.into(),
+                            )
+                            .unwrap();
+                    }
                 }
 
                 drop(txn);
@@ -871,6 +893,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                                && m.get("deleted")
+                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -889,6 +913,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                                && m.get("deleted")
+                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -935,7 +961,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a = a_doc.get_tree("tree");
     let value_a = a.get_value();
     let forest = Forest::from_tree_state(&a_actor.tree_tracker.lock().unwrap());
-    assert_eq!(&value_a, &forest.to_value(false),);
+    assert_eq!(&value_a, &forest.to_value());
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -1035,28 +1061,10 @@ pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
 #[cfg(test)]
 mod failed_tests {
     use crate::fuzz::minify_error;
-    use crate::tests::PROPTEST_FACTOR_10;
 
     use super::normalize;
     use super::test_multi_sites;
-    use super::Action;
     use super::Action::*;
-    use super::FuzzValue;
-    use super::FuzzValue::*;
-    use arbtest::arbitrary::{self, Unstructured};
-
-    fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
-        let xs = u.arbitrary::<Vec<Action>>()?;
-        if let Err(e) = std::panic::catch_unwind(|| {
-            test_multi_sites(site_num, &mut xs.clone());
-        }) {
-            dbg!(xs);
-            println!("{:?}", e);
-            panic!()
-        } else {
-            Ok(())
-        }
-    }
 
     #[test]
     fn empty() {
@@ -1658,108 +1666,6 @@ mod failed_tests {
                     target: (15924828756454277119, -161480704),
                     parent: (949193765217, 16777209),
                 },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 0,
-                //     action: TreeAction::Create,
-                //     target: (280650342989568, 402718846),
-                //     parent: (4467570830351532032, 1044266558),
-                // },
-                // Sync { from: 161, to: 161 },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 0,
-                //     action: TreeAction::Create,
-                //     target: (268999696801, 2030074880),
-                //     parent: (123146887330169, 0),
-                // },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 125,
-                //     action: TreeAction::Move,
-                //     target: (16395917401619837, 1446650880),
-                //     parent: (36030985271247103, 33613056),
-                // },
-                // Sync { from: 0, to: 123 },
-                // Sync { from: 106, to: 0 },
-                // Tree {
-                //     site: 104,
-                //     container_idx: 42,
-                //     action: TreeAction::Move,
-                //     target: (0, 0),
-                //     parent: (24186560929, 0),
-                // },
-                // Sync { from: 62, to: 0 },
-                // Sync { from: 0, to: 121 },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 0,
-                //     action: TreeAction::Create,
-                //     target: (0, -16843010),
-                //     parent: (360005391389490942, 0),
-                // },
-                // Sync { from: 161, to: 161 },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 0,
-                //     action: TreeAction::Move,
-                //     target: (481042528633, 0),
-                //     parent: (9330751978805919744, 2105376130),
-                // },
-                // Sync { from: 125, to: 125 },
-                // Tree {
-                //     site: 58,
-                //     container_idx: 58,
-                //     action: TreeAction::Create,
-                //     target: (4195730024608447034, 976894522),
-                //     parent: (4195730024608447034, 976894522),
-                // },
-                // Tree {
-                //     site: 58,
-                //     container_idx: 58,
-                //     action: TreeAction::Create,
-                //     target: (4195730024608447034, 976894522),
-                //     parent: (4195730024608447034, 976894522),
-                // },
-                // Tree {
-                //     site: 125,
-                //     container_idx: 125,
-                //     action: TreeAction::Create,
-                //     target: (71870926773289018, 33390080),
-                //     parent: (7502154757134352512, 2063624296),
-                // },
-                // Sync { from: 106, to: 0 },
-                // Tree {
-                //     site: 231,
-                //     container_idx: 104,
-                //     action: TreeAction::Create,
-                //     target: (116, 0),
-                //     parent: (6191759597824, 0),
-                // },
-                // Sync { from: 161, to: 62 },
-                // Tree {
-                //     site: 124,
-                //     container_idx: 0,
-                //     action: TreeAction::Move,
-                //     target: (7340126, 0),
-                //     parent: (9042521604759552000, 32125),
-                // },
-                // Tree {
-                //     site: 36,
-                //     container_idx: 58,
-                //     action: TreeAction::Delete,
-                //     target: (26392582291456, 0),
-                //     parent: (11618792525715619328, -1583242847),
-                // },
-                // Sync { from: 125, to: 125 },
-                // Sync { from: 125, to: 0 },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 0,
-                //     action: TreeAction::Create,
-                //     target: (4485022278907592704, -1583268290),
-                //     parent: (5092247970209, 0),
-                // },
             ],
         )
     }
@@ -1852,7 +1758,6 @@ mod failed_tests {
         )
     }
 
-    use super::ContainerType as C;
     #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)

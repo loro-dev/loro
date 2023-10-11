@@ -10,10 +10,10 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroTreeError, LoroValue, TreeID};
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, MutexGuard, Weak},
+    sync::{Mutex, Weak},
 };
 
 #[derive(Clone)]
@@ -840,25 +840,20 @@ impl TreeHandler {
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
-        let mut value = self.get_value();
-        let state = self.state.upgrade().unwrap();
-        let state = state.lock().unwrap();
-        let roots = Arc::make_mut(value.as_map_mut().unwrap())
-            .get_mut("roots")
-            .unwrap();
-        Self::get_meta_value(roots, &state);
-        value
-    }
-
-    fn get_meta_value(nodes: &mut LoroValue, state: &MutexGuard<DocState>) {
-        for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
-            let map = Arc::make_mut(node.as_map_mut().unwrap());
-            let meta = map.get_mut("meta").unwrap();
-            let id = meta.as_container().unwrap();
-            *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap());
-            let children = map.get_mut("children").unwrap();
-            Self::get_meta_value(children, state)
-        }
+        // let mut value = self.get_value();
+        // let state = self.state.upgrade().unwrap();
+        // let state = state.lock().unwrap();
+        // let roots = Arc::make_mut(value.as_map_mut().unwrap())
+        //     .get_mut("roots")
+        //     .unwrap();
+        // get_meta_value(roots, &state);
+        // value
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.container_idx)
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {

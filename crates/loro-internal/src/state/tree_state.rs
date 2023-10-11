@@ -9,6 +9,7 @@ use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
 
 use crate::delta::{TreeDelta, TreeDiff};
+use crate::DocState;
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
@@ -252,7 +253,7 @@ impl ContainerState for TreeState {
 
     fn get_value(&self) -> LoroValue {
         let forest = Forest::from_tree_state(&self.trees);
-        forest.to_value(false)
+        forest.to_value()
     }
 
     /// Get the index of the child container
@@ -287,6 +288,83 @@ pub struct TreeNode {
 }
 
 impl Forest {
+    pub(crate) fn from_tree_state_and_meta(
+        state: FxHashMap<TreeID, (Option<TreeID>, LoroValue)>,
+    ) -> Self {
+        let mut forest = Self::default();
+        let mut node_to_children = FxHashMap::default();
+        let mut node_to_meta = FxHashMap::default();
+        let mut node_to_parent = FxHashMap::default();
+
+        for (id, (parent, meta)) in state
+            .into_iter()
+            // .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
+            .sorted_by_key(|(k, _)| *k)
+        {
+            node_to_meta.insert(id, meta);
+            node_to_parent.insert(id, parent);
+            if let Some(parent) = parent {
+                node_to_children
+                    .entry(parent)
+                    .or_insert_with(Vec::new)
+                    .push(id)
+            }
+        }
+
+        for root in node_to_parent
+            .iter()
+            .filter(|(_, parent)| parent.is_none()) // && id != DELETED_TREE_ROOT.unwrap())
+            .map(|(id, _)| *id)
+            .sorted()
+        {
+            let mut stack = vec![(
+                root,
+                TreeNode {
+                    id: root,
+                    parent: None,
+                    meta: node_to_meta.remove(&root).unwrap().clone(),
+                    children: vec![],
+                },
+            )];
+            let mut id_to_node = FxHashMap::default();
+            while let Some((id, mut node)) = stack.pop() {
+                if let Some(children) = node_to_children.get(&id) {
+                    let mut children_to_stack = Vec::new();
+                    for child in children {
+                        if let Some(child_node) = id_to_node.remove(child) {
+                            node.children.push(child_node);
+                        } else {
+                            children_to_stack.push((
+                                *child,
+                                TreeNode {
+                                    id: *child,
+                                    parent: Some(id),
+                                    meta: node_to_meta.remove(child).unwrap().clone(),
+                                    children: vec![],
+                                },
+                            ));
+                        }
+                    }
+                    if !children_to_stack.is_empty() {
+                        stack.push((id, node));
+                        stack.extend(children_to_stack);
+                    } else {
+                        id_to_node.insert(id, node);
+                    }
+                } else {
+                    id_to_node.insert(id, node);
+                }
+            }
+            let root_node = id_to_node.remove(&root).unwrap();
+            if root_node.id == DELETED_TREE_ROOT.unwrap() {
+                forest.deleted = root_node.children;
+            } else {
+                forest.roots.push(root_node);
+            }
+        }
+        forest
+    }
+
     pub(crate) fn from_tree_state(state: &FxHashMap<TreeID, Option<TreeID>>) -> Self {
         let mut forest = Self::default();
         let mut node_to_children = FxHashMap::default();
@@ -364,24 +442,23 @@ impl Forest {
         forest
     }
 
-    fn to_state(&self) -> FxHashMap<TreeID, Option<TreeID>> {
+    fn to_state(&self) -> FxHashMap<TreeID, (Option<TreeID>, LoroValue)> {
         let mut ans = FxHashMap::default();
         for root in self.roots.iter() {
             let mut stack = vec![root];
             while let Some(node) = stack.pop() {
-                ans.insert(node.id, node.parent);
+                ans.insert(node.id, (node.parent, node.meta.clone()));
                 stack.extend(node.children.iter())
             }
         }
-        ans.insert(DELETED_TREE_ROOT.unwrap(), None);
+        ans.insert(DELETED_TREE_ROOT.unwrap(), (None, LoroValue::Null));
         for root in self.deleted.iter() {
             let mut stack = vec![root];
             while let Some(node) = stack.pop() {
-                ans.insert(node.id, node.parent);
+                ans.insert(node.id, (node.parent, node.meta.clone()));
                 stack.extend(node.children.iter())
             }
         }
-
         ans
     }
 
@@ -391,38 +468,41 @@ impl Forest {
         for item in diff {
             for diff in item.as_tree().unwrap().diff.iter() {
                 let target = diff.target;
+                let meta = if let Some((_, meta)) = state.remove(&target) {
+                    meta
+                } else {
+                    ContainerType::Map.default_value()
+                };
                 match diff.action {
                     TreeDiffItem::CreateOrRestore => {
-                        state.insert(target, None);
+                        state.insert(target, (None, meta));
                     }
                     TreeDiffItem::Move(parent) => {
-                        state.insert(target, Some(parent));
+                        state.insert(target, (Some(parent), meta));
                     }
                     TreeDiffItem::Delete => {
-                        state.insert(target, DELETED_TREE_ROOT);
+                        state.insert(target, (DELETED_TREE_ROOT, meta));
                     }
                 }
             }
         }
-        Self::from_tree_state(&state)
+        Self::from_tree_state_and_meta(state)
     }
 
-    pub(crate) fn to_value(&self, with_deleted: bool) -> LoroValue {
+    pub(crate) fn to_value(&self) -> LoroValue {
         let mut ans = FxHashMap::default();
         ans.insert(
             "roots".to_string(),
             self.roots.iter().map(|r| r.to_value()).collect_vec().into(),
         );
-        if with_deleted {
-            ans.insert(
-                "deleted".to_string(),
-                self.deleted
-                    .iter()
-                    .map(|r| r.to_value())
-                    .collect_vec()
-                    .into(),
-            );
-        }
+        ans.insert(
+            "deleted".to_string(),
+            self.deleted
+                .iter()
+                .map(|r| r.to_value())
+                .collect_vec()
+                .into(),
+        );
         ans.into()
     }
 
@@ -496,6 +576,7 @@ impl TreeNode {
             ans.insert("parent".to_string(), LoroValue::Null);
         }
         ans.insert("meta".to_string(), self.meta.clone());
+
         ans.insert(
             "children".to_string(),
             self.children
@@ -505,6 +586,17 @@ impl TreeNode {
                 .into(),
         );
         LoroValue::Map(Arc::new(ans))
+    }
+}
+
+pub(crate) fn get_meta_value(nodes: &mut LoroValue, state: &DocState) {
+    for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
+        let map = Arc::make_mut(node.as_map_mut().unwrap());
+        let meta = map.get_mut("meta").unwrap();
+        let id = meta.as_container().unwrap();
+        *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap());
+        let children = map.get_mut("children").unwrap();
+        get_meta_value(children, state)
     }
 }
 

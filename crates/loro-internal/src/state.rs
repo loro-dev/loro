@@ -26,7 +26,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use text_state::TextState;
-pub(crate) use tree_state::{Forest, TreeState};
+pub(crate) use tree_state::{get_meta_value, Forest, TreeState};
 
 use super::{
     arena::SharedArena,
@@ -524,21 +524,28 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if map.iter().all(|x| !x.1.is_container()) {
-                    return LoroValue::Map(map);
-                }
-
-                let map_mut = Arc::make_mut(&mut map);
-                for (_key, value) in map_mut.iter_mut() {
-                    if value.is_container() {
-                        let container = value.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let new_value = self.get_container_deep_value(container_idx);
-                        *value = new_value;
+                if container.get_type() == ContainerType::Tree {
+                    // get tree's meta
+                    for nodes in Arc::make_mut(&mut map).values_mut() {
+                        get_meta_value(nodes, self);
                     }
-                }
+                    LoroValue::Map(map)
+                } else {
+                    if map.iter().all(|x| !x.1.is_container()) {
+                        return LoroValue::Map(map);
+                    }
 
-                LoroValue::Map(map)
+                    let map_mut = Arc::make_mut(&mut map);
+                    for (_key, value) in map_mut.iter_mut() {
+                        if value.is_container() {
+                            let container = value.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let new_value = self.get_container_deep_value(container_idx);
+                            *value = new_value;
+                        }
+                    }
+                    LoroValue::Map(map)
+                }
             }
             _ => value,
         }

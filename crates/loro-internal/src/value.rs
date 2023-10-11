@@ -9,6 +9,7 @@ use crate::{
 use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 pub use loro_common::LoroValue;
+use loro_common::{ContainerType, TreeID};
 
 pub trait ToJson {
     fn to_json(&self) -> String;
@@ -149,7 +150,7 @@ impl ApplyDiff for LoroValue {
                     // TODO: perf
                     let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
                     let diff_forest = forest.apply_diffs(diff);
-                    *map = diff_forest.to_value(false).into_map().unwrap()
+                    *map = diff_forest.to_value().into_map().unwrap()
                 }
             }
             _ => unreachable!(),
@@ -181,7 +182,6 @@ impl ApplyDiff for LoroValue {
                     Index::Node(_) => hints.push(TypeHint::Tree),
                 }
             }
-
             hints.push(hint);
             let mut value: &mut LoroValue = self;
             for (item, hint) in path.iter().zip(hints.iter()) {
@@ -196,7 +196,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Tree => {
                                 let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
                                 map.insert("roots".to_string(), LoroValue::List(vec![].into()));
-                                // map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
+                                map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
                                 map.into()
                             }
                         })
@@ -206,39 +206,42 @@ impl ApplyDiff for LoroValue {
                         let list = Arc::make_mut(l);
                         value = list.get_mut(*index).unwrap();
                     }
-                    Index::Node(tree_id) => {
-                        let tree = value.as_map_mut().unwrap();
-                        // find the meta of `tree_id`
-                        let roots = Arc::make_mut(tree)
-                            .get_mut("roots")
-                            .unwrap()
-                            .as_list_mut()
-                            .unwrap();
-                        let roots = Arc::make_mut(roots);
-                        let mut s = vec![];
-                        s.extend(roots);
-                        let mut map_value = None;
-                        while let Some(root) = s.pop() {
-                            let root = Arc::make_mut(root.as_map_mut().unwrap());
-                            let this_node = root.get("id").unwrap().as_string().unwrap().as_ref()
-                                == &tree_id.to_string();
-                            if this_node {
-                                map_value = Some(root.get_mut("meta").unwrap());
-                                break;
-                            } else {
-                                let children =
-                                    root.get_mut("children").unwrap().as_list_mut().unwrap();
-                                s.extend(Arc::make_mut(children));
-                            }
-                        }
-                        value = map_value.unwrap();
-                    }
+                    Index::Node(tree_id) => value = get_meta_from_tree_value(value, *tree_id),
                 }
             }
             value
         }
         .apply_diff(diff);
     }
+}
+
+fn get_meta_from_tree_value(value: &mut LoroValue, target: TreeID) -> &mut LoroValue {
+    // find the meta of `tree_id`
+    let tree = Arc::make_mut(value.as_map_mut().unwrap());
+    let mut map_value = None;
+    'out: for (_, nodes) in tree.iter_mut() {
+        let mut s = vec![];
+        let roots = nodes.as_list_mut().unwrap();
+        let roots = Arc::make_mut(roots);
+        s.extend(roots);
+        while let Some(root) = s.pop() {
+            let root = Arc::make_mut(root.as_map_mut().unwrap());
+            let this_node =
+                root.get("id").unwrap().as_string().unwrap().as_ref() == &target.to_string();
+            if this_node {
+                let meta = root.get_mut("meta").unwrap();
+                if meta.is_container() {
+                    *meta = ContainerType::Map.default_value();
+                }
+                map_value = Some(meta);
+                break 'out;
+            } else {
+                let children = root.get_mut("children").unwrap().as_list_mut().unwrap();
+                s.extend(Arc::make_mut(children));
+            }
+        }
+    }
+    map_value.unwrap()
 }
 
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
