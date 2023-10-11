@@ -9,6 +9,7 @@ import {
   Transaction,
 } from "../src";
 import { expectTypeOf } from "vitest";
+import { assert } from "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/_util/assert.ts";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
@@ -349,6 +350,22 @@ describe("type", () => {
     expectTypeOf(v0).toEqualTypeOf<Uint8Array>();
   });
 });
+
+describe("tree", () => {
+  const loro = new Loro();
+  const tree = loro.getTree("root");
+  
+  
+  it("create", ()=>{
+    const id = loro.transact((txn)=>{
+      return tree.create(txn);
+    })
+    const childID = loro.transact((txn)=>{
+      return tree.createChild(txn, id);
+    })
+    assertEquals(tree.parent(childID), id);
+  })
+})
 
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));

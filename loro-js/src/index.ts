@@ -2,6 +2,7 @@ export {
   LoroList,
   LoroMap,
   LoroText,
+  LoroTree,
   PrelimList,
   PrelimMap,
   PrelimText,
@@ -13,10 +14,12 @@ import { PrelimText } from "loro-wasm";
 import { PrelimList } from "loro-wasm";
 import {
   ContainerID,
+  TreeID,
   Loro,
   LoroList,
   LoroMap,
   LoroText,
+  LoroTree,
   Transaction,
 } from "loro-wasm";
 
@@ -79,6 +82,22 @@ LoroMap.prototype.delete = function (txn, key) {
   this.__txn_delete(txn, key);
 };
 
+LoroTree.prototype.create = function(txn){
+  return this.__txn_create(txn);
+}
+
+LoroTree.prototype.createChild = function(txn, id){
+  return this.__txn_create_children(txn, id)
+}
+
+LoroTree.prototype.move = function(txn, target, parent){
+  this.__txn_move(txn, target, parent)
+}
+
+LoroTree.prototype.delete = function(txn, target){
+  this.__txn_delete(txn, target)
+}
+
 export type Value =
   | ContainerID
   | string
@@ -117,7 +136,12 @@ export type MapDiff = {
   updated: Record<string, Value | undefined>;
 };
 
-export type Diff = ListDiff | TextDiff | MapDiff;
+export type TreeDiff = {
+  type: "tree";
+  diff: {target: TreeID, parent: TreeID | undefined}
+}
+
+export type Diff = ListDiff | TextDiff | MapDiff| TreeDiff;
 
 export interface LoroEvent {
   local: boolean;
@@ -131,7 +155,7 @@ interface Listener {
   (event: LoroEvent): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
 
 export function isContainerId(s: string): s is ContainerID {
   try {
@@ -249,5 +273,12 @@ declare module "loro-wasm" {
     insert(txn: Transaction, pos: number, text: string): void;
     delete(txn: Transaction, pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
+  }
+
+  interface LoroTree{
+    create(txn: Transaction): TreeID;
+    createChild(txn: Transaction, parent: TreeID): TreeID;
+    delete(txn: Transaction, target: TreeID):void;
+    move(txn: Transaction, target: TreeID, parent: TreeID):void;
   }
 }

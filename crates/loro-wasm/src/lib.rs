@@ -3,7 +3,7 @@ use loro_internal::{
     configure::SecureRandomGenerator,
     container::ContainerID,
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, TextHandler},
+    handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     id::{Counter, ID},
     obs::SubID,
     txn::Transaction as Txn,
@@ -61,6 +61,8 @@ extern "C" {
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: bigint, counter: number }")]
     pub type JsID;
+    #[wasm_bindgen(typescript_type = "{ lamport: number, peer: bigint }")]
+    pub type JsTreeID;
 }
 
 struct MathRandom;
@@ -194,6 +196,12 @@ impl Loro {
         Ok(LoroList(list))
     }
 
+    #[wasm_bindgen(js_name = "getTree")]
+    pub fn get_tree(&self, name: &str) -> JsResult<LoroTree> {
+        let tree = self.0.get_tree(name);
+        Ok(LoroTree(tree))
+    }
+
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
@@ -210,6 +218,10 @@ impl Loro {
             ContainerType::List => {
                 let list = self.0.get_list(container_id);
                 LoroList(list).into()
+            }
+            ContainerType::Tree => {
+                let tree = self.0.get_tree(container_id);
+                LoroTree(tree).into()
             }
         })
     }
@@ -559,6 +571,7 @@ impl LoroMap {
             ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Tree => LoroTree(c.into_tree().unwrap()).into(),
         };
         Ok(container)
     }
@@ -646,6 +659,7 @@ impl LoroList {
             ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
+            ContainerType::Tree => LoroTree(c.into_tree().unwrap()).into(),
         };
         Ok(container)
     }
@@ -667,12 +681,103 @@ impl LoroList {
     }
 }
 
+#[wasm_bindgen]
+pub struct LoroTree(TreeHandler);
+
+#[wasm_bindgen]
+impl LoroTree {
+    pub fn __txn_create(&mut self, txn: &mut Transaction) -> JsResult<JsTreeID> {
+        let id = self.0.create(txn.as_mut()?)?;
+        let js_id: JsValue = id.into();
+        Ok(js_id.into())
+    }
+
+    pub fn __txn_create_children(
+        &mut self,
+        txn: &mut Transaction,
+        parent: JsTreeID,
+    ) -> JsResult<JsTreeID> {
+        let parent: JsValue = parent.into();
+        let id = self.0.create_and_mov(txn.as_mut()?, parent.into())?;
+        let js_id: JsValue = id.into();
+        Ok(js_id.into())
+    }
+
+    pub fn __txn_move(
+        &mut self,
+        txn: &mut Transaction,
+        target: JsTreeID,
+        parent: JsTreeID,
+    ) -> JsResult<()> {
+        let target: JsValue = target.into();
+        let parent: JsValue = parent.into();
+        self.0.mov(txn.as_mut()?, target.into(), parent.into())?;
+        Ok(())
+    }
+
+    pub fn __txn_delete(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+        let target: JsValue = target.into();
+        self.0.delete(txn.as_mut()?, target.into())?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = self.0.id().into();
+        value.into()
+    }
+
+    #[wasm_bindgen(js_name = "value", method, getter)]
+    pub fn get_value(&mut self) -> JsValue {
+        self.0.get_value().into()
+    }
+
+    #[wasm_bindgen(js_name = "nodes", method, getter)]
+    pub fn nodes(&mut self) -> Vec<JsTreeID> {
+        self.0
+            .nodes()
+            .into_iter()
+            .map(|n| {
+                let v: JsValue = n.into();
+                v.into()
+            })
+            .collect()
+    }
+
+    #[wasm_bindgen(js_name = "parent")]
+    pub fn parent(&mut self, target: JsTreeID) -> JsResult<Option<JsTreeID>> {
+        let target: JsValue = target.into();
+        let id = target.into();
+        self.0
+            .parent(id)
+            .map(|p| {
+                p.map(|p| {
+                    let v: JsValue = p.into();
+                    v.into()
+                })
+            })
+            .ok_or(format!("node `{:?}` doesn't exist", id).into())
+    }
+
+    pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
+        let observer = observer::Observer::new(f);
+        let ans = loro.0.subscribe(
+            &self.0.id(),
+            Arc::new(move |e| {
+                call_subscriber(observer.clone(), e);
+            }),
+        );
+        Ok(ans.into_u32())
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List";
 export type ContainerID =
   | `/${string}:${ContainerType}`
   | `${number}@${number}:${ContainerType}`;
+export type TreeID = {lamport: number, peer: bigint};
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;

@@ -277,10 +277,10 @@ impl From<ID> for TreeID {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use crate::TreeID;
+    use crate::{Counter, TreeID};
     use js_sys::Object;
-    use wasm_bindgen::JsValue;
     use wasm_bindgen::__rt::IntoJsResult;
+    use wasm_bindgen::{JsCast, JsValue};
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {
             let TreeID { peer, counter } = value;
@@ -289,6 +289,27 @@ pub mod wasm {
             js_sys::Reflect::set(&obj, &JsValue::from_str("counter"), &JsValue::from(counter))
                 .unwrap();
             obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<JsValue> for TreeID {
+        fn from(value: JsValue) -> Self {
+            let obj = value
+                .dyn_into::<js_sys::Object>()
+                .expect("Expected JsValue to be an object");
+
+            let peer = js_sys::Reflect::get(&obj, &JsValue::from_str("peer"))
+                .expect("Expected object to have a 'peer' property")
+                .try_into()
+                .expect("Expected 'peer' property to be a number");
+
+            let counter = js_sys::Reflect::get(&obj, &JsValue::from_str("counter"))
+                .expect("Expected object to have a 'counter' property")
+                .as_f64()
+                .expect("Expected 'counter' property to be a number")
+                as Counter;
+
+            TreeID { peer, counter }
         }
     }
 }
