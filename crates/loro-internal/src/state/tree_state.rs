@@ -17,7 +17,7 @@ use super::ContainerState;
 
 #[derive(Debug, Clone)]
 pub struct TreeState {
-    trees: FxHashMap<TreeID, Option<TreeID>>,
+    pub(crate) trees: FxHashMap<TreeID, Option<TreeID>>,
     in_txn: bool,
     undo_items: Vec<TreeUndoItem>,
 }

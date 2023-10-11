@@ -4,7 +4,7 @@ use loro_internal::{
     container::ContainerID,
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
-    id::{Counter, ID},
+    id::{Counter, TreeID, ID},
     obs::SubID,
     txn::Transaction as Txn,
     version::Frontiers,
@@ -712,12 +712,10 @@ impl LoroTree {
         parent: JsTreeID,
     ) -> JsResult<()> {
         let target: JsValue = target.into();
+        let target = TreeID::try_from(target).unwrap();
         let parent: JsValue = parent.into();
-        self.0.mov(
-            txn.as_mut()?,
-            target.try_into().unwrap(),
-            parent.try_into().unwrap(),
-        )?;
+        let parent = TreeID::try_from(parent).unwrap();
+        self.0.mov(txn.as_mut()?, target, parent)?;
         Ok(())
     }
 

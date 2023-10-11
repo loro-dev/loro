@@ -312,8 +312,7 @@ pub fn decode_state<'b>(
                             TreeID { peer, counter }
                         })
                     };
-                    // TODO: set state
-                    tree.mov(target, parent).unwrap();
+                    tree.trees.insert(target, parent);
                 }
                 container_states.insert(idx, State::TreeState(tree));
             }

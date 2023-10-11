@@ -291,6 +291,16 @@ impl Display for TreeID {
     }
 }
 
+impl TryFrom<&str> for TreeID {
+    type Error = ();
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let mut parts = value.split('@');
+        let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+        let peer = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+        Ok(TreeID { peer, counter })
+    }
+}
+
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use crate::TreeID;

@@ -10,7 +10,7 @@ pub mod arena;
 pub mod diff_calc;
 pub mod handler;
 pub use event::{ContainerDiff, DiffEvent, DocDiff};
-pub use handler::{ListHandler, MapHandler, TextHandler};
+pub use handler::{ListHandler, MapHandler, TextHandler, TreeHandler};
 pub use loro::LoroDoc;
 pub use oplog::OpLog;
 pub use state::DocState;
