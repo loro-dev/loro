@@ -94,6 +94,11 @@ LoroTree.prototype.move = function(txn, target, parent){
   this.__txn_move(txn, target, parent)
 }
 
+LoroTree.prototype.asRoot = function(txn, target){
+  this.__txn_as_root(txn, target)
+}
+
+
 LoroTree.prototype.delete = function(txn, target){
   this.__txn_delete(txn, target)
 }
@@ -193,6 +198,13 @@ export function isContainerId(s: string): s is ContainerID {
   }
 }
 
+export interface TreeNode{
+  id: TreeID,
+  parent: TreeID | null,
+  children: TreeNode[]
+  meta: {[key: string]: any}
+}
+
 export { Loro };
 
 declare module "loro-wasm" {
@@ -287,18 +299,12 @@ declare module "loro-wasm" {
     subscribe(txn: Loro, listener: Listener): number;
   }
 
-  interface TreeNode{
-    id: string,
-    parent: string | undefined,
-    children: TreeNode[]
-    meta: {[key: string]: any}
-  }
-
   interface LoroTree{
     create(txn: Transaction): TreeID;
     createChild(txn: Transaction, parent: TreeID): TreeID;
     delete(txn: Transaction, target: TreeID):void;
     move(txn: Transaction, target: TreeID, parent: TreeID):void;
+    asRoot(txn: Transaction, target:TreeID):void;
     insertMeta(txn: Transaction, target: TreeID, key: string, value: Value | Prelim):void;
     getMeta(txn: Transaction, target: TreeID, key: string):Value;
     subscribe(txn: Loro, listener: Listener): number;

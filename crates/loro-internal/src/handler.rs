@@ -13,7 +13,7 @@ use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
 use std::{
     borrow::Cow,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
 #[derive(Clone)]
@@ -698,6 +698,9 @@ impl TreeHandler {
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
+        // let map_container_id = self.meta_container_id(tree_id);
+        // let child_idx = txn.arena.register_container(&container_id);
+        // txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -770,11 +773,7 @@ impl TreeHandler {
         if !self.contains(target) {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
-        let map_container_id = ContainerID::Normal {
-            peer: target.peer,
-            counter: target.counter,
-            container_type: ContainerType::Map,
-        };
+        let map_container_id = self.meta_container_id(target);
         let map = txn.get_map(map_container_id);
         map.insert(txn, key, value)
     }
@@ -844,14 +843,19 @@ impl TreeHandler {
         let roots = Arc::make_mut(value.as_map_mut().unwrap())
             .get_mut("roots")
             .unwrap();
-        for node in Arc::make_mut(roots.as_list_mut().unwrap()).iter_mut() {
-            let meta = Arc::make_mut(node.as_map_mut().unwrap())
-                .get_mut("meta")
-                .unwrap();
-            let id = meta.as_container().unwrap();
-            *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap())
-        }
+        Self::get_meta_value(roots, &state);
         value
+    }
+
+    fn get_meta_value(nodes: &mut LoroValue, state: &MutexGuard<DocState>) {
+        for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
+            let map = Arc::make_mut(node.as_map_mut().unwrap());
+            let meta = map.get_mut("meta").unwrap();
+            let id = meta.as_container().unwrap();
+            *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap());
+            let children = map.get_mut("children").unwrap();
+            Self::get_meta_value(children, state)
+        }
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {

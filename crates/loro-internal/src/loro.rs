@@ -266,8 +266,8 @@ impl LoroDoc {
     }
 
     fn emit_events(&self) {
-        let mut state = self.state.lock().unwrap();
-        for event in state.take_events() {
+        let events = self.state.lock().unwrap().take_events();
+        for event in events {
             self.observer.emit(event);
         }
     }

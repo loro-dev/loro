@@ -725,6 +725,12 @@ impl LoroTree {
         Ok(())
     }
 
+    pub fn __txn_as_root(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+        let target: JsValue = target.into();
+        self.0.as_root(txn.as_mut()?, target.try_into().unwrap())?;
+        Ok(())
+    }
+
     pub fn __txn_insert_meta(
         &mut self,
         txn: &mut Transaction,
