@@ -461,12 +461,12 @@ struct TreeDiffCalculator {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct CompactTreeNode {
-    lamport: Lamport,
-    peer: PeerID,
-    counter: Counter,
-    target: TreeID,
-    parent: Option<TreeID>,
+pub(super) struct CompactTreeNode {
+    pub(super) lamport: Lamport,
+    pub(super) peer: PeerID,
+    pub(super) counter: Counter,
+    pub(super) target: TreeID,
+    pub(super) parent: Option<TreeID>,
 }
 
 // TODO: tree
@@ -491,7 +491,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         match cache_lock.add_cache(&node) {
             Ok(_) => {}
             Err(_) => {
-                println!("gg {:?}", node);
+                // println!("gg {:?}", node);
             }
         }
         self.nodes.insert(node);
@@ -579,13 +579,13 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct TreeParentCache {
+pub struct TreeParentCache {
     cache: FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>,
     visited: FxHashSet<(Lamport, PeerID, Counter)>,
 }
 
 impl TreeParentCache {
-    fn add_cache(&mut self, node: &CompactTreeNode) -> Result<(), ()> {
+    pub(super) fn add_cache(&mut self, node: &CompactTreeNode) -> Result<(), ()> {
         if self
             .visited
             .contains(&(node.lamport, node.peer, node.counter))
@@ -612,7 +612,8 @@ impl TreeParentCache {
                     .unwrap();
                 if id > (node.lamport, node.peer, node.counter) {
                     // replace
-                    self.cache.get_mut(&n).unwrap().pop_last();
+                    let p = self.cache.get_mut(&n).unwrap().pop_last();
+                    // println!("REMOVE PARENT {:?}", p.unwrap().1)
                 } else {
                     return Err(());
                 }

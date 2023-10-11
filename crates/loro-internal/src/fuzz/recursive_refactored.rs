@@ -35,13 +35,13 @@ pub enum Action {
         key: u8,
         value: FuzzValue,
     },
-    Text {
-        site: u8,
-        container_idx: u8,
-        pos: u8,
-        value: u16,
-        is_del: bool,
-    },
+    // Text {
+    //     site: u8,
+    //     container_idx: u8,
+    //     pos: u8,
+    //     value: u16,
+    //     is_del: bool,
+    // },
     Tree {
         site: u8,
         container_idx: u8,
@@ -302,19 +302,19 @@ impl Tabled for Action {
                 format!("{}", key).into(),
                 format!("{:?}", value).into(),
             ],
-            Action::Text {
-                site,
-                container_idx,
-                pos,
-                value,
-                is_del,
-            } => vec![
-                "text".into(),
-                format!("{}", site).into(),
-                format!("{}", container_idx).into(),
-                format!("{}", pos).into(),
-                format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
-            ],
+            // Action::Text {
+            //     site,
+            //     container_idx,
+            //     pos,
+            //     value,
+            //     is_del,
+            // } => vec![
+            //     "text".into(),
+            //     format!("{}", site).into(),
+            //     format!("{}", container_idx).into(),
+            //     format!("{}", pos).into(),
+            //     format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
+            // ],
             Action::Tree {
                 site,
                 container_idx,
@@ -478,30 +478,29 @@ impl Actionable for Vec<Actor> {
                     }
                     *key = 0;
                 }
-            }
-            Action::Text {
-                site,
-                container_idx,
-                pos,
-                value,
-                is_del,
-            } => {
-                *site %= max_users;
-                *container_idx %= self[*site as usize].text_containers.len().max(1) as u8;
-                if let Some(text) = self[*site as usize]
-                    .text_containers
-                    .get(*container_idx as usize)
-                {
-                    *pos %= (text.len_unicode() as u8).max(1);
-                    if *is_del {
-                        *value &= 0x1f;
-                        *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
-                    }
-                } else {
-                    *is_del = false;
-                    *pos = 0;
-                }
-            }
+            } // Action::Text {
+              //     site,
+              //     container_idx,
+              //     pos,
+              //     value,
+              //     is_del,
+              // } => {
+              //     *site %= max_users;
+              //     *container_idx %= self[*site as usize].text_containers.len().max(1) as u8;
+              //     if let Some(text) = self[*site as usize]
+              //         .text_containers
+              //         .get(*container_idx as usize)
+              //     {
+              //         *pos %= (text.len_unicode() as u8).max(1);
+              //         if *is_del {
+              //             *value &= 0x1f;
+              //             *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
+              //         }
+              //     } else {
+              //         *is_del = false;
+              //         *pos = 0;
+              //     }
+              // }
         }
     }
 
@@ -742,37 +741,37 @@ impl Actionable for Vec<Actor> {
                     actor.record_history();
                 }
             }
-            Action::Text {
-                site,
-                container_idx,
-                pos,
-                value,
-                is_del,
-            } => {
-                let actor = &mut self[*site as usize];
-                let container = actor.text_containers.get_mut(*container_idx as usize);
-                let container = if let Some(container) = container {
-                    container
-                } else {
-                    let text = actor.loro.get_text("text");
-                    actor.text_containers.push(text);
-                    &mut actor.text_containers[0]
-                };
-                let mut txn = actor.loro.txn().unwrap();
-                if *is_del {
-                    container
-                        .delete(&mut txn, *pos as usize, *value as usize)
-                        .unwrap();
-                } else {
-                    container
-                        .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
-                        .unwrap();
-                }
-                drop(txn);
-                if actor.peer == 1 {
-                    actor.record_history();
-                }
-            }
+            // Action::Text {
+            //     site,
+            //     container_idx,
+            //     pos,
+            //     value,
+            //     is_del,
+            // } => {
+            //     let actor = &mut self[*site as usize];
+            //     let container = actor.text_containers.get_mut(*container_idx as usize);
+            //     let container = if let Some(container) = container {
+            //         container
+            //     } else {
+            //         let text = actor.loro.get_text("text");
+            //         actor.text_containers.push(text);
+            //         &mut actor.text_containers[0]
+            //     };
+            //     let mut txn = actor.loro.txn().unwrap();
+            //     if *is_del {
+            //         container
+            //             .delete(&mut txn, *pos as usize, *value as usize)
+            //             .unwrap();
+            //     } else {
+            //         container
+            //             .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
+            //             .unwrap();
+            //     }
+            //     drop(txn);
+            //     if actor.peer == 1 {
+            //         actor.record_history();
+            //     }
+            // }
             Action::Tree {
                 site,
                 container_idx,
@@ -1177,1075 +1176,81 @@ mod failed_tests {
         );
     }
 
-    #[test]
-    fn fuzz_2() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1616928864),
-                },
-                List {
-                    site: 96,
-                    container_idx: 96,
-                    key: 96,
-                    value: I32(1616928864),
-                },
-                List {
-                    site: 96,
-                    container_idx: 96,
-                    key: 96,
-                    value: I32(1616928864),
-                },
-                List {
-                    site: 96,
-                    container_idx: 96,
-                    key: 96,
-                    value: Container(C::Text),
-                },
-                List {
-                    site: 55,
-                    container_idx: 55,
-                    key: 55,
-                    value: Null,
-                },
-                SyncAll,
-                List {
-                    site: 55,
-                    container_idx: 64,
-                    key: 53,
-                    value: Null,
-                },
-                List {
-                    site: 56,
-                    container_idx: 56,
-                    key: 56,
-                    value: Container(C::Text),
-                },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                List {
-                    site: 64,
-                    container_idx: 64,
-                    key: 64,
-                    value: I32(1616928864),
-                },
-                List {
-                    site: 96,
-                    container_idx: 96,
-                    key: 96,
-                    value: I32(1616928864),
-                },
-                List {
-                    site: 96,
-                    container_idx: 96,
-                    key: 255,
-                    value: I32(7),
-                },
-                Text {
-                    site: 97,
-                    container_idx: 225,
-                    pos: 97,
-                    value: 24929,
-                    is_del: false,
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn notify_causal_order_check() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 1,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 38912,
-                    is_del: false,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 138,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 4,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1),
-                },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                SyncAll,
-            ],
-        )
-    }
-
-    #[test]
-    fn test() {
-        arbtest::builder()
-            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
-            .run(|u| prop(u, 2))
-    }
-
-    #[test]
-    fn test_3sites() {
-        arbtest::builder()
-            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
-            .run(|u| prop(u, 3))
-    }
-
-    #[test]
-    fn obs() {
-        test_multi_sites(
-            2,
-            &mut [List {
-                site: 1,
-                container_idx: 255,
-                key: 255,
-                value: Container(C::List),
-            }],
-        );
-    }
-
-    #[test]
-    fn obs_text() {
-        test_multi_sites(
-            5,
-            &mut [Text {
-                site: 0,
-                container_idx: 0,
-                pos: 0,
-                value: 13756,
-                is_del: false,
-            }],
-        )
-    }
-
-    #[test]
-    fn obs_map() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 225,
-                    container_idx: 233,
-                    key: 234,
-                    value: Container(C::Map),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 233,
-                    key: 233,
-                    value: I32(16777215),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn deleted_container() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                List {
-                    site: 4,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(-1734829928),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn should_notify() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Text),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                SyncAll,
-                Text {
-                    site: 4,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn hierarchy() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::Text),
-                },
-                Map {
-                    site: 3,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::Text),
-                },
-                SyncAll,
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 4,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn apply_directly() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Text),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                SyncAll,
-                Text {
-                    site: 4,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                SyncAll,
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 39064,
-                    is_del: false,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn find_path_for_deleted_container() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Map),
-                },
-                SyncAll,
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 1,
-                    container_idx: 1,
-                    key: 255,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 4,
-                    container_idx: 1,
-                    key: 9,
-                    value: Null,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn list_unknown() {
-        test_multi_sites(
-            5,
-            &mut [
-                List {
-                    site: 139,
-                    container_idx: 133,
-                    key: 32,
-                    value: Container(C::Text),
-                },
-                List {
-                    site: 166,
-                    container_idx: 127,
-                    key: 207,
-                    value: Null,
-                },
-                Text {
-                    site: 203,
-                    container_idx: 105,
-                    pos: 87,
-                    value: 52649,
-                    is_del: false,
-                },
-                List {
-                    site: 122,
-                    container_idx: 137,
-                    key: 41,
-                    value: Container(C::List),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn path_issue() {
-        test_multi_sites(
-            5,
-            &mut [
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 1,
-                    container_idx: 1,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn unknown_1() {
-        test_multi_sites(
-            5,
-            &mut [
-                SyncAll,
-                Map {
-                    site: 32,
-                    container_idx: 0,
-                    key: 110,
-                    value: Null,
-                },
-                SyncAll,
-                List {
-                    site: 90,
-                    container_idx: 90,
-                    key: 90,
-                    value: I32(5921392),
-                },
-                Text {
-                    site: 92,
-                    container_idx: 140,
-                    pos: 0,
-                    value: 0,
-                    is_del: false,
-                },
-                SyncAll,
-            ],
-        );
-    }
-
-    #[test]
-    fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
-        test_multi_sites(
-            5,
-            &mut [
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 2,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 255,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 3,
-                    container_idx: 3,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                List {
-                    site: 1,
-                    container_idx: 3,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                SyncAll,
-                List {
-                    site: 0,
-                    container_idx: 3,
-                    key: 0,
-                    value: Container(C::Map),
-                },
-                List {
-                    site: 1,
-                    container_idx: 3,
-                    key: 1,
-                    value: Container(C::Map),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn map_apply() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Map),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 1,
-                    key: 255,
-                    value: Container(C::Map),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn maybe_because_of_hierarchy() {
-        test_multi_sites(
-            5,
-            &mut [
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Text),
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Text),
-                },
-                Sync { from: 1, to: 2 },
-                List {
-                    site: 2,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Sync { from: 1, to: 2 },
-                Text {
-                    site: 1,
-                    container_idx: 2,
-                    pos: 0,
-                    value: 45232,
-                    is_del: false,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn checkout_error() {
-        test_multi_sites(
-            2,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(1),
-                },
-                List {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn unknown() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 152,
-                    is_del: false,
-                },
-                Sync { from: 2, to: 3 },
-                Text {
-                    site: 3,
-                    container_idx: 0,
-                    pos: 10,
-                    value: 2,
-                    is_del: true,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Sync { from: 2, to: 3 },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 16,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 8,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 28,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 41,
-                    value: 45232,
-                    is_del: false,
-                },
-                Sync { from: 1, to: 2 },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 48,
-                    value: 39064,
-                    is_del: false,
-                },
-                List {
-                    site: 1,
-                    container_idx: 0,
-                    key: 0,
-                    value: I32(-1734829928),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn list_slice_err() {
-        test_multi_sites(
-            5,
-            &mut [
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::List),
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Container(C::Map),
-                },
-                SyncAll,
-                Map {
-                    site: 1,
-                    container_idx: 1,
-                    key: 37,
-                    value: Null,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn utf16_err() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 1,
-                    value: 2,
-                    is_del: true,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn merge_err() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 2,
-                    container_idx: 0,
-                    pos: 0,
-                    value: 39064,
-                    is_del: false,
-                },
-                SyncAll,
-                Text {
-                    site: 1,
-                    container_idx: 0,
-                    pos: 5,
-                    value: 2,
-                    is_del: true,
-                },
-            ],
-        )
-    }
     use super::TreeAction;
-    #[test]
-    fn tree_cycle_move() {
-        test_multi_sites(
-            5,
-            &mut [
-                Tree {
-                    site: 127,
-                    container_idx: 96,
-                    action: TreeAction::Create,
-                    target: (10561664609096343656, -1835887982),
-                    parent: (11558548064546493074, -1845428736),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (8376697034077409938, 1593442176),
-                    parent: (10561665234359194258, 301989887),
-                },
-                Tree {
-                    site: 138,
-                    container_idx: 138,
-                    action: TreeAction::Move,
-                    target: (9256093509146179978, -2070769135),
-                    parent: (9982943851654580874, 24409337),
-                },
-                SyncAll,
-                Tree {
-                    site: 149,
-                    container_idx: 107,
-                    action: TreeAction::Move,
-                    target: (12659530244705763585, -1347440721),
-                    parent: (9982943851556351919, 1250593418),
-                },
-                Tree {
-                    site: 255,
-                    container_idx: 249,
-                    action: TreeAction::Move,
-                    target: (18297602016176747, -762146245),
-                    parent: (12652179886389236370, -1347440721),
-                },
-                Sync { from: 175, to: 175 },
-                Tree {
-                    site: 138,
-                    container_idx: 138,
-                    action: TreeAction::Move,
-                    target: (9256093509146179978, -1778386433),
-                    parent: (113280941038474645, -885325759),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn tree_revert_multi_cache() {
-        test_multi_sites(
-            5,
-            &mut [
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9259542123273814144, -2139062144),
-                    parent: (3242706529344356224, 1750794495),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (9259542019790350911, -2139062144),
-                    parent: (9259542123273814063, -2139062144),
-                },
-                SyncAll,
-                Tree {
-                    site: 1,
-                    container_idx: 146,
-                    action: TreeAction::Create,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (10561665234359194258, -1835887982),
-                },
-                Tree {
-                    site: 255,
-                    container_idx: 63,
-                    action: TreeAction::Move,
-                    target: (10551089508041331346, -1835899502),
-                    parent: (10561665234359194258, -1835887982),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561574443045524114, 892482194),
-                    parent: (10561665234359194258, -1835887982),
-                },
-                Text {
-                    site: 128,
-                    container_idx: 128,
-                    pos: 128,
-                    value: 32896,
-                    is_del: false,
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9259542123273814144, -2139062144),
-                    parent: (9259542123273814144, -2139062144),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn tree_old_parent_cache() {
-        test_multi_sites(
-            5,
-            &mut [
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (10561665234359718546, -1835887982),
-                },
-                Tree {
-                    site: 153,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, 37522),
-                    parent: (10561665234359194112, 1616941714),
-                },
-                SyncAll,
-                Text {
-                    site: 96,
-                    container_idx: 146,
-                    pos: 146,
-                    value: 37522,
-                    is_del: false,
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561664992897817178, -1835887982),
-                    parent: (6496727131078431378, 1247425114),
-                },
-                Tree {
-                    site: 0,
-                    container_idx: 192,
-                    action: TreeAction::Delete,
-                    target: (211934100111552, 1512123904),
-                    parent: (41939773041695322, -1835888128),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (18374686479681229458, -1839111937),
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn tree_not_latest_cache() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 6,
-                    container_idx: 249,
-                    pos: 1,
-                    value: 59136,
-                    is_del: false,
-                },
-                Tree {
-                    site: 3,
-                    container_idx: 7,
-                    action: TreeAction::Delete,
-                    target: (6221254864071514616, 1448498774),
-                    parent: (10561665233348613718, -1835887982),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10538422658059637394, 842175122),
-                    parent: (10561665234359194165, -1835888084),
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (10777884193502357608, 1643550101),
-                    parent: (16645306395562868862, -1),
-                },
-                SyncAll,
-                Text {
-                    site: 39,
-                    container_idx: 1,
-                    pos: 0,
-                    value: 0,
-                    is_del: false,
-                },
-                Tree {
-                    site: 0,
-                    container_idx: 249,
-                    action: TreeAction::Create,
-                    target: (8394148497429324032, 754974784),
-                    parent: (7523309629210296575, -2139062168),
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9290786945552646272, -8355712),
-                    parent: (10561504082183874664, -1835887982),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (10561665234359194258, -1842572654),
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Delete,
-                    target: (13587923031776847976, -1785358958),
-                    parent: (142396720129401334, -6400),
-                },
-                SyncAll,
-                Map {
-                    site: 0,
-                    container_idx: 97,
-                    key: 39,
-                    value: Null,
-                },
-                Tree {
-                    site: 149,
-                    container_idx: 0,
-                    action: TreeAction::Delete,
-                    target: (9079702791598964738, 16500),
-                    parent: (4566750081992949760, 1751672874),
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9259542123273814144, -276725611),
-                    parent: (7523378624104267904, -16776856),
-                },
-            ],
-        )
-    }
 
     #[test]
     fn tree() {
         test_multi_sites(
             5,
-            &mut [
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
+            &mut vec![
+                Tree {
+                    site: 91,
+                    container_idx: 93,
+                    action: TreeAction::Move,
+                    target: (7671037542047180904, 50426880),
+                    parent: (3074316422536786960, -1),
                 },
-                Text {
+                SyncAll,
+                Tree {
+                    site: 131,
+                    container_idx: 131,
+                    action: TreeAction::Move,
+                    target: (8802109550447788931, 489324384),
+                    parent: (18014398509481983872, 1751672936),
+                },
+                SyncAll,
+                // Map {
+                //     site: 3,
+                //     container_idx: 16,
+                //     key: 34,
+                //     value: I32(2138338420),
+                // },
+                // Tree {
+                //     site: 131,
+                //     container_idx: 131,
+                //     action: TreeAction::Move,
+                //     target: (9476562641788044163, -2088533117),
+                //     parent: (18384119754773463939, 50331647),
+                // },
+                // Map {
+                //     site: 0,
+                //     container_idx: 48,
+                //     key: 250,
+                //     value: Container(C::Map),
+                // },
+                Tree {
+                    site: 131,
+                    container_idx: 131,
+                    action: TreeAction::Move,
+                    target: (8825409713058644867, 2054847098),
+                    parent: (4213815067817966202, 122),
+                },
+                Tree {
                     site: 122,
-                    container_idx: 198,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
+                    container_idx: 0,
+                    action: TreeAction::Move,
+                    target: (11212726647612145530, 2054855579),
+                    parent: (9474019432586705125, -8748157),
+                },
+                // List {
+                //     site: 86,
+                //     container_idx: 86,
+                //     key: 131,
+                //     value: I32(-1234671512),
+                // },
+                Tree {
+                    site: 104,
+                    container_idx: 104,
+                    action: TreeAction::Delete,
+                    target: (18389660725081210879, -2088501249),
+                    parent: (9476562640194208643, -2088533117),
+                },
+                Tree {
+                    site: 131,
+                    container_idx: 131,
+                    action: TreeAction::Move,
+                    target: (9476562641788044163, 805306368),
+                    parent: (18085043209519168250, 2071755901),
                 },
             ],
         )

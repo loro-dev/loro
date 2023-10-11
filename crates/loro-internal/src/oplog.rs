@@ -15,7 +15,7 @@ use rle::{HasLength, RleVec};
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
-use crate::diff_calc::TreeParentCache;
+use crate::diff_calc::{CompactTreeNode, TreeParentCache};
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
@@ -252,7 +252,22 @@ impl OpLog {
                 }
             }
         }
+        // TODO: update tree cache
+        let mut tree_cache = self.tree_parent_cache.lock().unwrap();
+        for op in change.ops().iter() {
+            if let crate::op::InnerContent::Tree(tree) = op.content {
+                let _ = tree_cache.add_cache(&CompactTreeNode {
+                    lamport: change.lamport,
+                    peer: change.id.peer,
+                    counter: op.counter,
+                    target: tree.target,
+                    parent: tree.parent,
+                });
+            }
+        }
+
         self.changes.entry(change.id.peer).or_default().push(change);
+
         Ok(())
     }
 
