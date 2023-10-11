@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasIdSpan, PeerID, ID};
+use loro_common::{HasIdSpan, PeerID, TreeID, ID};
 
 use crate::{
     change::Lamport,
@@ -12,7 +12,6 @@ use crate::{
     id::Counter,
     op::RichOp,
     span::{HasId, HasLamport},
-    state::TreeID,
     text::tracker::Tracker,
     version::Frontiers,
     InternalString, VersionVector,

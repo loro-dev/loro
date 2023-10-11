@@ -1,7 +1,6 @@
 use fxhash::FxHashMap;
+use loro_common::TreeID;
 use serde::Serialize;
-
-use crate::state::TreeID;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeDelta {

@@ -7,11 +7,10 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     delta::MapValue,
-    state::TreeID,
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, TreeID};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},

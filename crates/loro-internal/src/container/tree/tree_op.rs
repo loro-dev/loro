@@ -1,7 +1,6 @@
+use loro_common::TreeID;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
-
-use crate::state::TreeID;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {

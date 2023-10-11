@@ -127,6 +127,7 @@ pub enum EncodedContainerState {
     Text { len: usize },
     Map(Vec<MapEntry>),
     List(Vec<usize>),
+    Tree(Vec<(usize, Option<usize>)>),
 }
 impl EncodedContainerState {
     pub fn container_type(&self) -> loro_common::ContainerType {
@@ -134,6 +135,7 @@ impl EncodedContainerState {
             EncodedContainerState::Text { .. } => loro_common::ContainerType::Text,
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
             EncodedContainerState::List(_) => loro_common::ContainerType::List,
+            EncodedContainerState::Tree(_) => loro_common::ContainerType::Tree,
         }
     }
 }
@@ -153,6 +155,7 @@ pub struct TempArena<'a> {
     pub text: Cow<'a, [u8]>,
     pub keywords: Vec<InternalString>,
     pub values: Vec<LoroValue>,
+    pub tree_ids: Vec<(u32, i32)>,
 }
 
 impl<'a> TempArena<'a> {

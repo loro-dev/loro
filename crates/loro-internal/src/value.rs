@@ -81,8 +81,9 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                     *value = Arc::new(s);
+                } else if value.is_empty() {
+                    *value = Arc::new(Forest::default().apply_diffs(diff).to_json())
                 } else {
-                    // TODO: tree
                     let forest = Forest::from_json(value).unwrap();
                     let diff_forest = forest.apply_diffs(diff);
                     *value = Arc::new(diff_forest.to_json())
@@ -228,7 +229,6 @@ pub mod wasm {
     use crate::{
         delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta},
         event::{Diff, Index},
-        state::TreeID,
         LoroValue,
     };
 
@@ -379,17 +379,6 @@ pub mod wasm {
             };
 
             // convert object to js value
-            obj.into_js_result().unwrap()
-        }
-    }
-
-    impl From<TreeID> for JsValue {
-        fn from(value: TreeID) -> Self {
-            let TreeID { peer, counter } = value;
-            let obj = Object::new();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("peer"), &JsValue::from(peer)).unwrap();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("counter"), &JsValue::from(counter))
-                .unwrap();
             obj.into_js_result().unwrap()
         }
     }

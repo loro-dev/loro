@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::ID;
+use loro_common::{TreeID, ID};
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -17,13 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx,
-    handler::TreeHandler,
-    loro::LoroDoc,
-    state::{TreeID, TreeNode},
-    value::ToJson,
-    version::Frontiers,
-    ApplyDiff, ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, value::ToJson,
+    version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -320,16 +315,13 @@ impl Tabled for Action {
                 format!("{}", site).into(),
                 format!("{}", container_idx).into(),
                 format!("{}", target).into(),
-                format!(
-                    "{}",
-                    if *is_del {
-                        format!("Delete")
-                    } else if *is_new {
-                        format!("Create")
-                    } else {
-                        format!("MoveTo {parent}")
-                    }
-                )
+                (if *is_del {
+                    "Delete".to_string()
+                } else if *is_new {
+                    "Create".to_string()
+                } else {
+                    format!("MoveTo {parent}")
+                })
                 .into(),
             ],
         }
@@ -776,18 +768,20 @@ impl Actionable for Vec<Actor> {
                     counter: *target as i32,
                 };
                 if *is_new {
-                    container.create_with_id(&mut txn, target);
+                    container.create_with_id(&mut txn, target).unwrap();
                 } else if *is_del {
-                    container.delete(&mut txn, target);
+                    container.delete(&mut txn, target).unwrap();
                 } else {
-                    container.mov(
-                        &mut txn,
-                        target,
-                        TreeID {
-                            peer: 0,
-                            counter: *parent as i32,
-                        },
-                    );
+                    container
+                        .mov(
+                            &mut txn,
+                            target,
+                            TreeID {
+                                peer: 0,
+                                counter: *parent as i32,
+                            },
+                        )
+                        .unwrap();
                 }
                 drop(txn);
                 if actor.peer == 1 {

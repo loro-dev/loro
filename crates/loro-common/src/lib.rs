@@ -2,6 +2,7 @@ use std::{fmt::Display, sync::Arc};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
+
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -11,6 +12,7 @@ mod value;
 pub use error::{LoroError, LoroResult};
 pub use span::*;
 pub use value::LoroValue;
+
 use zerovec::ule::AsULE;
 pub type PeerID = u64;
 pub type Counter = i32;
@@ -237,6 +239,54 @@ mod container {
                     ("Unknown container type".to_string() + value).into(),
                 )),
             }
+        }
+    }
+}
+
+pub const DELETED_TREE_ROOT: Option<TreeID> = Some(TreeID {
+    peer: PeerID::MAX,
+    counter: Counter::MAX,
+});
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TreeID {
+    pub peer: PeerID,
+    pub counter: Counter,
+}
+
+impl TreeID {
+    pub fn delete_root() -> Option<Self> {
+        DELETED_TREE_ROOT
+    }
+
+    pub fn is_deleted(target: Option<TreeID>) -> bool {
+        target == DELETED_TREE_ROOT
+    }
+}
+
+impl From<ID> for TreeID {
+    fn from(value: ID) -> Self {
+        Self {
+            peer: value.peer,
+            counter: value.counter,
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+pub mod wasm {
+    use crate::TreeID;
+    use js_sys::Object;
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen::__rt::IntoJsResult;
+    impl From<TreeID> for JsValue {
+        fn from(value: TreeID) -> Self {
+            let TreeID { peer, counter } = value;
+            let obj = Object::new();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("peer"), &JsValue::from(peer)).unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("counter"), &JsValue::from(counter))
+                .unwrap();
+            obj.into_js_result().unwrap()
         }
     }
 }

@@ -2,6 +2,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
+use loro_common::TreeID;
 use rle::{HasLength, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
@@ -19,7 +20,6 @@ use crate::{
     op::{RawOpContent, RemoteOp},
     oplog::OpLog,
     span::HasId,
-    state::TreeID,
     version::Frontiers,
     InternalString, LoroError, LoroValue, VersionVector,
 };

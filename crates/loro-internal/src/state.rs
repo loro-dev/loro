@@ -26,7 +26,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use text_state::TextState;
-pub(crate) use tree_state::{Forest, TreeID, TreeNode, TreeState};
+pub(crate) use tree_state::{Forest, TreeState};
 
 use super::{
     arena::SharedArena,

@@ -1,7 +1,10 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    collections::hash_map::Iter,
+    ops::{Deref, DerefMut},
+};
 
-use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{Counter, LoroError, LoroResult, LoroValue, PeerID, ID};
+use fxhash::FxHashMap;
+use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -12,32 +15,6 @@ use crate::{
 };
 
 use super::ContainerState;
-
-pub(crate) const DELETED_TREE_ROOT: Option<TreeID> = Some(TreeID {
-    peer: PeerID::MAX,
-    counter: Counter::MAX,
-});
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TreeID {
-    pub(crate) peer: PeerID,
-    pub(crate) counter: Counter,
-}
-
-impl TreeID {
-    pub(crate) fn delete_root() -> Option<Self> {
-        DELETED_TREE_ROOT
-    }
-}
-
-impl From<ID> for TreeID {
-    fn from(value: ID) -> Self {
-        Self {
-            peer: value.peer,
-            counter: value.counter,
-        }
-    }
-}
 
 // TODO: use arena save TreeID
 #[derive(Debug, Clone)]
@@ -150,6 +127,10 @@ impl TreeState {
 
     pub fn is_deleted(&self, target: TreeID) -> Option<bool> {
         self.trees.get(&target).map(|&p| p == DELETED_TREE_ROOT)
+    }
+
+    pub fn iter(&self) -> Iter<'_, TreeID, Option<TreeID>> {
+        self.trees.iter()
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
