@@ -226,7 +226,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta, TreeDiff},
         event::{Diff, Index},
         LoroValue,
     };
@@ -378,6 +378,31 @@ pub mod wasm {
             };
 
             // convert object to js value
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<TreeDiff> for JsValue {
+        fn from(value: TreeDiff) -> Self {
+            let obj = Object::new();
+            match value {
+                TreeDiff::Delete => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("delete"),
+                    )
+                    .unwrap();
+                }
+                TreeDiff::Move((_, parent)) => {
+                    let ty = if parent.is_none() { "create" } else { "move" };
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(ty))
+                        .unwrap();
+                    if let Some(p) = parent {
+                        js_sys::Reflect::set(&obj, &JsValue::from_str("to"), &p.into()).unwrap();
+                    }
+                }
+            }
             obj.into_js_result().unwrap()
         }
     }

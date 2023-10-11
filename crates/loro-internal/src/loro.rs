@@ -235,7 +235,6 @@ impl LoroDoc {
                         oplog.vv(),
                         Some(oplog.dag.get_frontiers()),
                     );
-                    println!("diff {:?}", diff);
                     let mut state = self.state.lock().unwrap();
                     state.apply_diff(InternalDocDiff {
                         origin,

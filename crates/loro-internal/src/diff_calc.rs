@@ -8,7 +8,7 @@ use loro_common::{HasIdSpan, PeerID, TreeID, ID};
 use crate::{
     change::Lamport,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    delta::{MapDelta, MapValue, TreeDelta},
+    delta::{MapDelta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
     id::Counter,
     op::RichOp,
@@ -459,7 +459,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct TreeDiffCalculator {
-    trees: BTreeMap<TreeID, BTreeSet<CompactTreeNode>>,
+    trees: FxHashMap<TreeID, BTreeSet<CompactTreeNode>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -521,23 +521,26 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
                 (f, t)
             };
 
+            let tree_diff = if let Some(t) = peek_to {
+                TreeDiff::Move((t.lamport, t.parent))
+            } else {
+                TreeDiff::Delete
+            };
+
             match (peek_from, peek_to) {
                 (None, None) => {}
-                (None, Some(_)) => changed.push((*k, peek_to)),
-                (Some(_), None) => changed.push((*k, peek_to)),
+                (None, Some(_)) => changed.push((*k, tree_diff)),
+                (Some(_), None) => changed.push((*k, tree_diff)),
                 (Some(a), Some(b)) => {
                     if a != b {
-                        changed.push((*k, peek_to))
+                        changed.push((*k, tree_diff))
                     }
                 }
             }
         }
-        let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
-        for (key, value) in changed {
-            let value = value.map(|v| v.parent);
-            updated.insert(key, value);
-        }
 
-        Diff::Tree(TreeDelta { diff: updated })
+        changed.sort_by_key(|(_, v)| *v);
+
+        Diff::Tree(TreeDelta { diff: changed })
     }
 }

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
+    delta::TreeDiff,
     event::Diff,
     op::RawOp,
 };
@@ -158,11 +159,12 @@ impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
             for (target, parent) in &tree.diff {
-                if let Some(p) = parent {
-                    self.mov(*target, *p)?
-                } else {
-                    self.trees.remove(target);
-                }
+                match parent {
+                    TreeDiff::Delete => {
+                        self.trees.remove(target);
+                    }
+                    TreeDiff::Move((_, p)) => self.mov(*target, *p)?,
+                };
             }
         }
         Ok(())
@@ -299,12 +301,11 @@ impl Forest {
     pub(crate) fn apply_diffs(&self, diff: &[Diff]) -> Self {
         let mut state = self.to_state();
         for item in diff {
-            for (&id, &parent) in item.as_tree().unwrap().diff.iter() {
-                if let Some(p) = parent {
-                    state.insert(id, p);
-                } else {
-                    state.remove(&id);
-                }
+            for (id, parent) in item.as_tree().unwrap().diff.iter() {
+                match parent {
+                    TreeDiff::Delete => state.remove(id),
+                    TreeDiff::Move((_, p)) => state.insert(*id, *p),
+                };
             }
         }
         Self::from_tree_state(&state)
