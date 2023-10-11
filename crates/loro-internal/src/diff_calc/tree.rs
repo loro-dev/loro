@@ -177,6 +177,19 @@ impl TreeDiffCache {
         TreeDelta { diff }
     }
 
+    fn checkout(&mut self, vv: &VersionVector, min_lamport: Lamport, max_lamport: Lamport) {
+        if vv == &self.current_version {
+            return;
+        }
+
+        self.retreat(vv, min_lamport);
+        let apply_ops = self.forward(vv, max_lamport);
+        for op in apply_ops {
+            let _effected = self.apply(op);
+        }
+        self.current_version = vv.clone();
+    }
+
     // return true if it can be effected
     fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
         let mut ans = true;
@@ -191,18 +204,6 @@ impl TreeDiffCache {
             .insert(node);
         self.current_version.set_last(node.id);
         ans
-    }
-
-    fn checkout(&mut self, vv: &VersionVector, min_lamport: Lamport, max_lamport: Lamport) {
-        if vv == &self.current_version {
-            return;
-        }
-        self.retreat(vv, min_lamport);
-        let apply_ops = self.forward(vv, max_lamport);
-        for op in apply_ops {
-            let _effected = self.apply(op);
-        }
-        self.current_version = vv.clone();
     }
 
     fn forward(&mut self, vv: &VersionVector, max_lamport: Lamport) -> Vec<MoveLamportAndID> {
@@ -222,7 +223,7 @@ impl TreeDiffCache {
         apply_ops
     }
 
-    fn retreat(&mut self, vv: &VersionVector, min_lamport: Lamport) {
+    fn retreat(&mut self, _vv: &VersionVector, min_lamport: Lamport) {
         // remove ops from cache, and then insert to pending
         let mut retreat_ops = Vec::new();
         for (_, ops) in self.cache.iter() {
@@ -230,9 +231,8 @@ impl TreeDiffCache {
                 if op.lamport < min_lamport {
                     break;
                 }
-                if !vv.includes_id(op.id) {
-                    retreat_ops.push(*op)
-                }
+                // for checkout
+                retreat_ops.push(*op)
             }
         }
         for op in retreat_ops.iter() {
