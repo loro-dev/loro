@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::{Deref, DerefMut},
+};
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
@@ -67,7 +70,6 @@ impl DiffCalculator {
                 self.last_vv = Default::default();
             }
         }
-
         let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut after = after;
@@ -95,7 +97,9 @@ impl DiffCalculator {
 
             let (lca, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
+
             let mut started_set = FxHashSet::default();
+            println!("\n");
             for (change, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
                     assert!(
@@ -169,7 +173,6 @@ impl DiffCalculator {
                 None
             }
         };
-
         let mut diffs = Vec::with_capacity(self.calculators.len());
         if let Some(set) = affected_set {
             // only visit the affected containers
@@ -188,7 +191,6 @@ impl DiffCalculator {
                 });
             }
         }
-
         diffs
     }
 }
@@ -580,8 +582,40 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
 #[derive(Debug, Default)]
 pub struct TreeParentCache {
-    cache: FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>,
+    cache: Cache,
     visited: FxHashSet<(Lamport, PeerID, Counter)>,
+}
+
+#[derive(Default)]
+struct Cache(FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>);
+
+impl core::fmt::Debug for Cache {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str("{\n")?;
+        for (k, v) in self.0.iter() {
+            f.write_str(&format!("  {:?}:", k))?;
+            f.write_str("{\n")?;
+            for (k, v) in v.iter() {
+                f.write_str(&format!("    {:?}:{:?}\n", k, v))?;
+            }
+            f.write_str("  }\n")?;
+        }
+        f.write_str("}")?;
+        Ok(())
+    }
+}
+
+impl Deref for Cache {
+    type Target = FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Cache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl TreeParentCache {
@@ -595,7 +629,6 @@ impl TreeParentCache {
         self.visited.insert((node.lamport, node.peer, node.counter));
         if let Some(parent) = node.parent {
             let nodes = self.is_ancestor_of(node.target, parent);
-
             if !nodes.is_empty() {
                 let (id, n) = nodes
                     .into_iter()
@@ -620,10 +653,17 @@ impl TreeParentCache {
             }
         }
 
-        self.cache
+        let entry = self
+            .cache
             .entry(node.target)
-            .or_insert_with(BTreeMap::default)
-            .insert((node.lamport, node.peer, node.counter), node.parent);
+            .or_insert_with(BTreeMap::default);
+        if let Some((_, v)) = entry.last_key_value() {
+            if *v != node.parent {
+                entry.insert((node.lamport, node.peer, node.counter), node.parent);
+            }
+        } else {
+            entry.insert((node.lamport, node.peer, node.counter), node.parent);
+        }
 
         Ok(())
     }
