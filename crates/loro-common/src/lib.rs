@@ -94,7 +94,7 @@ impl ContainerType {
             ContainerType::Text => LoroValue::String(Arc::new(String::new())),
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-            ContainerType::Tree => LoroValue::String(Arc::new(String::new())),
+            ContainerType::Tree => LoroValue::String(Arc::new(String::from("[]"))),
         }
     }
 

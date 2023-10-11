@@ -49,10 +49,7 @@ impl TreeState {
 
         if let Some(old_parent) = self.trees.get_mut(&target) {
             contained = true;
-            if old_parent
-                .map(|p| self.is_deleted(p).unwrap())
-                .unwrap_or(false)
-            {
+            if TreeID::is_deleted(*old_parent) {
                 deleted = true;
             }
         }
@@ -123,10 +120,6 @@ impl TreeState {
     pub fn delete(&mut self, target: TreeID) {
         // deletion never occurs CycleMoveError
         self.mov(target, DELETED_TREE_ROOT).unwrap()
-    }
-
-    pub fn is_deleted(&self, target: TreeID) -> Option<bool> {
-        self.trees.get(&target).map(|&p| p == DELETED_TREE_ROOT)
     }
 
     pub fn iter(&self) -> Iter<'_, TreeID, Option<TreeID>> {

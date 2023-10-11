@@ -189,7 +189,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => LoroValue::String(Arc::new(String::new())),
+                            TypeHint::Tree => LoroValue::String(Arc::new(String::from("[]"))),
                         })
                     }
                     Index::Seq(index) => {

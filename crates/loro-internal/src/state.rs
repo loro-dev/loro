@@ -310,7 +310,7 @@ impl DocState {
                 ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Tree => LoroValue::String(Arc::new(Default::default())),
+                ContainerType::Tree => LoroValue::String(Arc::new(String::from("[]"))),
             })
     }
 
