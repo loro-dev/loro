@@ -1,4 +1,4 @@
-use loro_common::{TreeID, DELETED_TREE_ROOT};
+use loro_common::TreeID;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Default, Serialize)]

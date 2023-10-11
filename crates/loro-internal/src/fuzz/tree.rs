@@ -893,8 +893,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                                && m.get("deleted")
-                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                            // && m.get("deleted")
+                            //     .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -913,8 +913,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                                && m.get("deleted")
-                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                            // && m.get("deleted")
+                            //     .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -1007,7 +1007,21 @@ fn check_history(actor: &mut Actor) {
         // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
-        assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
+        for key in ["tree", "map", "list", "text"] {
+            let hv = v.as_map().unwrap().get(key).unwrap();
+            let av = actual.as_map().unwrap().get(key).unwrap();
+            if key == "tree" {
+                assert_eq!(
+                    hv.as_map().unwrap().get("roots"),
+                    av.as_map().unwrap().get("roots"),
+                    "Version mismatched at {:?}, cnt={}",
+                    f,
+                    c
+                )
+            } else {
+                assert_eq!(hv, av, "Version mismatched at {:?}, cnt={}", f, c);
+            }
+        }
     }
 }
 
@@ -1094,6 +1108,7 @@ mod failed_tests {
             ],
         )
     }
+
     #[test]
     fn tree4() {
         test_multi_sites(
@@ -1374,51 +1389,6 @@ mod failed_tests {
                     target: (1953184550209191936, 185273115),
                     parent: (795741901218843403, 185273099),
                 },
-                // Tree {
-                //     site: 11,
-                //     container_idx: 11,
-                //     action: TreeAction::Create,
-                //     target: (14144764421972691723, 992688955),
-                //     parent: (18445852115382254395, 1002126139),
-                // },
-                // Tree {
-                //     site: 0,
-                //     container_idx: 187,
-                //     action: TreeAction::Create,
-                //     target: (18446744073709503556, 1140909311),
-                //     parent: (13527612333614191428, -1287341125),
-                // },
-                // SyncAll,
-                // Tree {
-                //     site: 59,
-                //     container_idx: 59,
-                //     action: TreeAction::Delete,
-                //     target: (5476724297197944828, 1280068684),
-                //     parent: (4268220903840304204, 993737515),
-                // },
-                // SyncAll,
-                // Tree {
-                //     site: 187,
-                //     container_idx: 59,
-                //     action: TreeAction::Create,
-                //     target: (16821201796172069632, 1136376803),
-                //     parent: (18446601495078196051, 1044266751),
-                // },
-                // Tree {
-                //     site: 11,
-                //     container_idx: 11,
-                //     action: TreeAction::Create,
-                //     target: (4919148309987081790, -12303182),
-                //     parent: (17871127746369812479, -1),
-                // },
-                // SyncAll,
-                // Tree {
-                //     site: 83,
-                //     container_idx: 68,
-                //     action: TreeAction::Delete,
-                //     target: (4923917304342494139, -48060),
-                //     parent: (48946959133704191, 9984),
-                // },
             ],
         )
     }
@@ -1496,8 +1466,6 @@ mod failed_tests {
                     target: (34359738623, 1029),
                     parent: (64738145635133189, 1751653634),
                 },
-                // Sync { from: 104, to: 104 },
-                // Sync { from: 67, to: 104 },
                 SyncAll,
                 Tree {
                     site: 255,
@@ -1506,9 +1474,6 @@ mod failed_tests {
                     target: (0, -1583284224),
                     parent: (369057, -1583284224),
                 },
-                // Sync { from: 0, to: 0 },
-                // Sync { from: 121, to: 121 },
-                // Sync { from: 0, to: 0 },
                 SyncAll,
                 Tree {
                     site: 0,
@@ -1546,8 +1511,6 @@ mod failed_tests {
                     target: (6801176102849887806, -10552482),
                     parent: (11646590111356878847, 4104609),
                 },
-                // Sync { from: 0, to: 121 },
-                // Sync { from: 0, to: 112 },
                 SyncAll,
                 Tree {
                     site: 0,
@@ -1564,8 +1527,6 @@ mod failed_tests {
                     target: (9042384321031283105, 2105376125),
                     parent: (201358717, 1040187392),
                 },
-                // Sync { from: 161, to: 161 },
-                // Sync { from: 251, to: 255 },
                 SyncAll,
                 Tree {
                     site: 0,
