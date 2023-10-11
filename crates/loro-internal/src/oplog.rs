@@ -418,10 +418,7 @@ impl OpLog {
                 }
             },
             crate::op::InnerContent::Map(map) => {
-                let value = map
-                    .value
-                    .map(|v| self.arena.get_value(v as usize))
-                    .flatten();
+                let value = map.value.and_then(|v| self.arena.get_value(v as usize));
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
                     value,

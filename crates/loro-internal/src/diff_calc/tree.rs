@@ -117,15 +117,18 @@ impl TreeDiffCache {
         lca: &VersionVector,
         to_max_lamport: Lamport,
         lca_min_lamport: Lamport,
-        from_min_lamport: Lamport,
-        from_max_lamport: Lamport,
+        from_min_max_lamport: (Lamport, Lamport),
     ) -> TreeDelta {
-        // TODO: calc min max lamport
         // println!("\nFROM {:?} TO {:?} LCA {:?}", from, to, lca);
-        self.checkout(from, 0, Lamport::MAX);
+        self.checkout(from, from_min_max_lamport.0, from_min_max_lamport.1);
         // println!(
         //     "current vv {:?}  all vv {:?}",
         //     self.current_version, self.all_version
+        // );
+        // println!("cache {:?}", self.cache);
+        // println!(
+        //     "to_max_lamport {} lca_min_lamport {}",
+        //     to_max_lamport, lca_min_lamport
         // );
         self.calc_diff(to, lca, to_max_lamport, lca_min_lamport)
     }
@@ -140,16 +143,18 @@ impl TreeDiffCache {
         let debug = false;
 
         let mut diff = Vec::new();
-        let revert_ops = self.retreat(lca, lca_min_lamport);
-        for op in revert_ops.iter().sorted().rev() {
+        let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
+        for (op, old_parent) in revert_ops.iter().sorted().rev() {
             if op.effected {
-                let old_parent = self.get_parent(op.target);
-                diff.push((op.target, old_parent));
+                diff.push((op.target, *old_parent));
             }
         }
         assert_eq!(&self.current_version, lca);
         if debug {
-            println!("revert diff {:?}", diff);
+            println!("revert diff:");
+            for (t, p) in diff.iter() {
+                println!("    target {:?} to {:?}", t, p);
+            }
         }
 
         let apply_ops = self.forward(to, to_max_lamport);
@@ -159,6 +164,9 @@ impl TreeDiffCache {
         for op in apply_ops.into_iter() {
             let effected = self.apply(op);
             if effected {
+                if debug {
+                    println!("    target {:?} to {:?}", op.target, op.parent);
+                }
                 diff.push((op.target, op.parent))
             }
         }
@@ -189,7 +197,7 @@ impl TreeDiffCache {
         if vv == &self.current_version {
             return;
         }
-        let _retreat_ops = self.retreat(vv, min_lamport);
+        self.retreat(vv, min_lamport);
         let apply_ops = self.forward(vv, max_lamport);
         for op in apply_ops {
             let _effected = self.apply(op);
@@ -214,7 +222,7 @@ impl TreeDiffCache {
         apply_ops
     }
 
-    fn retreat(&mut self, vv: &VersionVector, min_lamport: Lamport) -> Vec<MoveLamportAndID> {
+    fn retreat(&mut self, vv: &VersionVector, min_lamport: Lamport) {
         // remove ops from cache, and then insert to pending
         let mut retreat_ops = Vec::new();
         for (_, ops) in self.cache.iter() {
@@ -227,7 +235,6 @@ impl TreeDiffCache {
                 }
             }
         }
-        // TODO: perf
         for op in retreat_ops.iter() {
             self.cache.get_mut(&op.target).unwrap().remove(op);
             self.pending.insert(*op);
@@ -236,9 +243,39 @@ impl TreeDiffCache {
                 counter: CounterSpan::new(op.id.counter, op.id.counter + 1),
             })
         }
+    }
+
+    fn retreat_for_diff(
+        &mut self,
+        vv: &VersionVector,
+        min_lamport: Lamport,
+    ) -> Vec<(MoveLamportAndID, Option<TreeID>)> {
+        // remove ops from cache, and then insert to pending
+        let mut retreat_ops = Vec::new();
+        for (_, ops) in self.cache.iter() {
+            for op in ops.iter().rev() {
+                if op.lamport < min_lamport {
+                    break;
+                }
+                if !vv.includes_id(op.id) {
+                    retreat_ops.push((*op, None))
+                }
+            }
+        }
+        for (op, old_parent) in retreat_ops.iter_mut() {
+            self.cache.get_mut(&op.target).unwrap().remove(op);
+            self.pending.insert(*op);
+            self.current_version.shrink_to_exclude(IdSpan {
+                client_id: op.id.peer,
+                counter: CounterSpan::new(op.id.counter, op.id.counter + 1),
+            });
+            // calc old parent
+            *old_parent = self.get_parent(op.target);
+        }
         retreat_ops
     }
 
+    /// get the parent of the first effected op
     fn get_parent(&self, tree_id: TreeID) -> Option<TreeID> {
         if tree_id == DELETED_TREE_ROOT.unwrap() {
             return None;

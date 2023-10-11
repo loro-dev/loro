@@ -541,8 +541,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             &lca_vv,
             to_max_lamport,
             lca_min_lamport,
-            from_min_lamport,
-            from_max_lamport,
+            (from_min_lamport, from_max_lamport),
         );
         debug_log::debug_log!("\ndiff {:?}", diff);
 
