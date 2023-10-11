@@ -17,24 +17,5 @@ impl TreeDelta {
     // TODO:
     pub(crate) fn compose(&self, x: TreeDelta) -> TreeDelta {
         todo!();
-        // let mut diff = self
-        //     .diff
-        //     .iter()
-        //     .map(|(k, v)| (*k, *v))
-        //     .collect::<FxHashMap<_, _>>();
-        // for (k, v) in x.diff.into_iter() {
-        //     if let Some(old) = diff.get_mut(&k) {
-        //         if &v > old {
-        //             *old = v;
-        //         }
-        //     } else {
-        //         diff.insert(k, v);
-        //     }
-        // }
-        // let diff = diff
-        //     .into_iter()
-        //     .sorted_by_key(|(_, v)| *v)
-        //     .collect::<Vec<_>>();
-        // TreeDelta { diff }
     }
 }

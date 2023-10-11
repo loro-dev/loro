@@ -697,7 +697,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         mut key_lookup,
         mut value_lookup,
         mut peer_lookup,
-        mut tree_id_lookup,
+        tree_id_lookup,
         app_state,
     } = state_ref;
     if common.container_ids.is_empty() {
@@ -707,7 +707,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     let mut bytes = Vec::with_capacity(arena.text.len());
     let mut extra_keys = Vec::new();
     let mut extra_values = Vec::new();
-    let mut extra_tree_ids = Vec::new();
+    let extra_tree_ids = Vec::new();
 
     let mut record_key = |key: &InternalString| {
         if let Some(idx) = key_lookup.get(key) {

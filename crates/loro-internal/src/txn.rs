@@ -350,7 +350,7 @@ fn change_to_diff(
                         ),
                     },
                     crate::op::InnerContent::Map(map) => {
-                        let value = map.value.map(|v| arena.get_value(v as usize)).flatten();
+                        let value = map.value.and_then(|v| arena.get_value(v as usize));
                         let mut updated: FxHashMap<_, _> = Default::default();
                         updated.insert(
                             map.key.clone(),

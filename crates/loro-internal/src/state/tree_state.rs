@@ -9,7 +9,6 @@ use crate::{arena::SharedArena, container::tree::tree_op::TreeOp, event::Diff, o
 
 use super::ContainerState;
 
-// TODO: use arena save TreeID
 #[derive(Debug, Clone)]
 pub struct TreeState {
     trees: FxHashMap<TreeID, Option<TreeID>>,
@@ -38,7 +37,7 @@ impl TreeState {
         // let mut deleted = false;
         let mut contained = false;
 
-        if let Some(old_parent) = self.trees.get_mut(&target) {
+        if let Some(_old_parent) = self.trees.get_mut(&target) {
             contained = true;
             // if TreeID::is_deleted(*old_parent) {
             //     deleted = true;
@@ -107,9 +106,6 @@ impl TreeState {
                 }
                 None => return false,
             }
-            if TreeID::is_deleted(Some(*node_id)) {
-                return false;
-            }
         }
     }
 
@@ -169,14 +165,9 @@ impl TreeState {
 impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
-            let mut removed_diff = Vec::new();
-            for (idx, (target, parent)) in tree.diff.iter().enumerate() {
-                if let Err(LoroError::CyclicMoveError) = self.mov(*target, *parent) {
-                    removed_diff.push(idx);
-                }
-            }
-            while let Some(idx) = removed_diff.pop() {
-                tree.diff.remove(idx);
+            for (target, parent) in tree.diff.iter() {
+                // assert never cause cycle move
+                self.mov(*target, *parent).unwrap_or_default()
             }
         }
         Ok(())
@@ -204,11 +195,6 @@ impl ContainerState for TreeState {
         self.in_txn = false;
         while let Some(op) = self.undo_items.pop() {
             let TreeUndoItem { target, old_parent } = op;
-            // TODO: not delete? new node?
-            if old_parent == DELETED_TREE_ROOT {
-                self.trees.remove(&target);
-                continue;
-            }
             self.mov(target, old_parent).unwrap();
         }
     }

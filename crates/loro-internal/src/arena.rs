@@ -298,11 +298,7 @@ impl SharedArena {
     ) -> Op {
         match content {
             crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                let value = if let Some(value) = value {
-                    Some(self.alloc_value(value) as u32)
-                } else {
-                    None
-                };
+                let value = value.map(|value| self.alloc_value(value) as u32);
                 Op {
                     counter,
                     container,

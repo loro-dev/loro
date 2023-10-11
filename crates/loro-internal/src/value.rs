@@ -81,11 +81,7 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                     *value = Arc::new(s);
-                }
-                // else if value.is_empty() {
-                //     *value = Arc::new(Forest::default().apply_diffs(diff).to_json())
-                // }
-                else {
+                } else {
                     let forest = Forest::from_json(value).unwrap();
                     let diff_forest = forest.apply_diffs(diff);
                     *value = Arc::new(diff_forest.to_json())

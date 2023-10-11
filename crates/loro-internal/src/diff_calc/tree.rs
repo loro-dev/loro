@@ -1,13 +1,13 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{ BTreeSet},
     ops::{Deref, DerefMut},
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap};
 use itertools::Itertools;
 use loro_common::{CounterSpan, IdSpan, TreeID, DELETED_TREE_ROOT, ID};
 
-use crate::{change::Lamport, delta::TreeDelta, version::Frontiers, VersionVector};
+use crate::{change::Lamport, delta::TreeDelta,  VersionVector};
 
 use super::CompactTreeNode;
 
@@ -249,105 +249,3 @@ impl TreeDiffCache {
         }
     }
 }
-
-// impl TreeParentCache {
-//     pub(super) fn add_node(&mut self, node: &CompactTreeNode) -> Result<(), ()> {
-//         let lamport_id = node.lamport_id();
-//         if self.visited.contains(&lamport_id) {
-//             return Ok(());
-//         }
-//         self.visited.insert(lamport_id);
-//         if let Some(parent) = node.parent {
-//             let nodes = self.is_ancestor_of(node.target, parent);
-//             if !nodes.is_empty() {
-//                 let (id, n) = nodes
-//                     .into_iter()
-//                     .map(|n| {
-//                         let id = self
-//                             .cache
-//                             .get(&n)
-//                             .and_then(|n| n.last_key_value())
-//                             .map(|(k, _)| *k)
-//                             .unwrap();
-//                         (id, n)
-//                     })
-//                     .max()
-//                     .unwrap();
-//                 if id > (node.lamport, node.peer, node.counter) {
-//                     // the last one will cause cycle move, add new old parent for this lamport time
-//                     let len = self.cache.get_mut(&n).unwrap().len();
-//                     let p = if len > 1 {
-//                         let (_, old_parent) =
-//                             self.cache.get(&n).unwrap().iter().rev().nth(1).unwrap();
-//                         *old_parent
-//                     } else {
-//                         DELETED_TREE_ROOT
-//                     };
-//                     self.cache
-//                         .get_mut(&n)
-//                         .unwrap()
-//                         .insert((node.lamport, node.peer, node.counter), p);
-//                     // println!("REMOVE PARENT {:?}", p.unwrap().1)
-//                 } else {
-//                     return Err(());
-//                 }
-//             }
-//         }
-
-//         let entry = self
-//             .cache
-//             .entry(node.target)
-//             .or_insert_with(BTreeMap::default);
-//         if let Some((_, v)) = entry.last_key_value() {
-//             if *v != node.parent {
-//                 entry.insert((node.lamport, node.peer, node.counter), node.parent);
-//             }
-//         } else {
-//             entry.insert((node.lamport, node.peer, node.counter), node.parent);
-//         }
-
-//         Ok(())
-//     }
-
-//     fn get_old_parent(&self, node: &CompactTreeNode, from: &VersionVector) -> Option<TreeID> {
-//         let mut old_parent = DELETED_TREE_ROOT;
-//         if let Some(cache) = self.cache.get(&node.target) {
-//             for (id, parent) in cache.iter().rev() {
-//                 if from.includes_id(ID {
-//                     peer: id.1,
-//                     counter: id.2,
-//                 }) && *id < (node.lamport, node.peer, node.counter)
-//                 {
-//                     old_parent = *parent;
-//                     break;
-//                 }
-//             }
-//         }
-//         old_parent
-//     }
-
-//     fn is_ancestor_of(&self, maybe_ancestor: TreeID, mut node_id: TreeID) -> Vec<TreeID> {
-//         if maybe_ancestor == node_id {
-//             return vec![node_id];
-//         }
-
-//         let mut ans = vec![node_id];
-//         loop {
-//             let parent = self
-//                 .cache
-//                 .get(&node_id)
-//                 .and_then(|n| n.last_key_value())
-//                 .and_then(|(_, p)| *p);
-
-//             match parent {
-//                 Some(parent_id) if parent_id == maybe_ancestor => return ans,
-//                 Some(parent_id) if parent_id == node_id => panic!("loop detected"),
-//                 Some(parent_id) => {
-//                     node_id = parent_id;
-//                     ans.push(parent_id);
-//                 }
-//                 None => return vec![],
-//             }
-//         }
-//     }
-// }
