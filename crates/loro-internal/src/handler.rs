@@ -698,9 +698,9 @@ impl TreeHandler {
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
-        // let map_container_id = self.meta_container_id(tree_id);
-        // let child_idx = txn.arena.register_container(&container_id);
-        // txn.arena.set_parent(child_idx, Some(self.container_idx));
+        let container_id = self.meta_container_id(tree_id);
+        let child_idx = txn.arena.register_container(&container_id);
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -727,6 +727,9 @@ impl TreeHandler {
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
+        let container_id = self.meta_container_id(tree_id);
+        let child_idx = txn.arena.register_container(&container_id);
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -988,5 +991,16 @@ mod test {
         ];
         let loro = LoroDoc::new();
         loro.import(&bytes).unwrap();
+    }
+
+    #[test]
+    fn tree_meta_event() {
+        use std::sync::Arc;
+        let loro = LoroDoc::new();
+        loro.subscribe_deep(Arc::new(|e| println!("{e:?}")));
+        let tree = loro.get_tree("root");
+        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
+        loro.with_txn(|txn| tree.insert_meta(txn, id, "a", 1.into()))
+            .unwrap();
     }
 }

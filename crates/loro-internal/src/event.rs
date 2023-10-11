@@ -10,7 +10,7 @@ use crate::{
 
 use std::borrow::Cow;
 
-use loro_common::ContainerID;
+use loro_common::{ContainerID, TreeID};
 
 use crate::{container::idx::ContainerIdx, version::Frontiers};
 
@@ -112,6 +112,7 @@ pub type Path = SmallVec<[Index; 4]>;
 pub enum Index {
     Key(InternalString),
     Seq(usize),
+    Node(TreeID),
 }
 
 /// Diff is the diff between two versions of a container.

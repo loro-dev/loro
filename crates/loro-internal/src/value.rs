@@ -178,6 +178,7 @@ impl ApplyDiff for LoroValue {
                 match item {
                     Index::Key(_) => hints.push(TypeHint::Map),
                     Index::Seq(_) => hints.push(TypeHint::List),
+                    Index::Node(_) => hints.push(TypeHint::Tree),
                 }
             }
 
@@ -204,6 +205,33 @@ impl ApplyDiff for LoroValue {
                         let l = value.as_list_mut().unwrap();
                         let list = Arc::make_mut(l);
                         value = list.get_mut(*index).unwrap();
+                    }
+                    Index::Node(tree_id) => {
+                        let tree = value.as_map_mut().unwrap();
+                        // find the meta of `tree_id`
+                        let roots = Arc::make_mut(tree)
+                            .get_mut("roots")
+                            .unwrap()
+                            .as_list_mut()
+                            .unwrap();
+                        let roots = Arc::make_mut(roots);
+                        let mut s = vec![];
+                        s.extend(roots);
+                        let mut map_value = None;
+                        while let Some(root) = s.pop() {
+                            let root = Arc::make_mut(root.as_map_mut().unwrap());
+                            let this_node = root.get("id").unwrap().as_string().unwrap().as_ref()
+                                == &tree_id.to_string();
+                            if this_node {
+                                map_value = Some(root.get_mut("meta").unwrap());
+                                break;
+                            } else {
+                                let children =
+                                    root.get_mut("children").unwrap().as_list_mut().unwrap();
+                                s.extend(Arc::make_mut(children));
+                            }
+                        }
+                        value = map_value.unwrap();
                     }
                 }
             }
@@ -239,6 +267,7 @@ pub mod wasm {
             match value {
                 Index::Key(key) => JsValue::from_str(&key),
                 Index::Seq(num) => JsValue::from_f64(num as f64),
+                Index::Node(node) => JsValue::from_str(&node.to_string()),
             }
         }
     }

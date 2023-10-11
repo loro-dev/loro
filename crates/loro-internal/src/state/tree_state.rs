@@ -9,7 +9,10 @@ use std::collections::hash_map::Iter;
 use std::sync::Arc;
 
 use crate::{
-    arena::SharedArena, container::tree::tree_op::TreeOp, delta::TreeDiffItem, event::Diff,
+    arena::SharedArena,
+    container::tree::tree_op::TreeOp,
+    delta::TreeDiffItem,
+    event::{Diff, Index},
     op::RawOp,
 };
 
@@ -232,6 +235,22 @@ impl ContainerState for TreeState {
     fn get_value(&self) -> LoroValue {
         let forest = Forest::from_tree_state(&self.trees);
         forest.to_value(false)
+    }
+
+    /// Get the index of the child container
+    fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
+        let id = id.as_normal().unwrap();
+        Some(Index::Node(TreeID {
+            peer: *id.0,
+            counter: *id.1,
+        }))
+    }
+
+    fn get_child_containers(&self) -> Vec<ContainerID> {
+        self.nodes()
+            .into_iter()
+            .map(|n| ContainerID::new_normal(n.id(), ContainerType::Map))
+            .collect_vec()
     }
 }
 
