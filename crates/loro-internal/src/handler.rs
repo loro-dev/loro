@@ -13,7 +13,7 @@ use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroTreeError, LoroValue, TreeID, ID};
 use std::{
     borrow::Cow,
-    sync::{Mutex, Weak},
+    sync::{Arc, Mutex, Weak},
 };
 
 #[derive(Clone)]
@@ -837,6 +837,23 @@ impl TreeHandler {
             .get_value_by_idx(self.container_idx)
     }
 
+    pub fn get_deep_value(&self) -> LoroValue {
+        let mut value = self.get_value();
+        let state = self.state.upgrade().unwrap();
+        let state = state.lock().unwrap();
+        let roots = Arc::make_mut(value.as_map_mut().unwrap())
+            .get_mut("roots")
+            .unwrap();
+        for node in Arc::make_mut(roots.as_list_mut().unwrap()).iter_mut() {
+            let meta = Arc::make_mut(node.as_map_mut().unwrap())
+                .get_mut("meta")
+                .unwrap();
+            let id = meta.as_container().unwrap();
+            *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap())
+        }
+        value
+    }
+
     pub fn nodes(&self) -> Vec<TreeID> {
         self.state
             .upgrade()
@@ -883,7 +900,7 @@ impl TreeHandler {
 #[cfg(test)]
 mod test {
 
-    use crate::loro::LoroDoc;
+    use crate::{loro::LoroDoc, ToJson};
 
     #[test]
     fn test() {
@@ -940,5 +957,9 @@ mod test {
             .with_txn(|txn| tree.get_meta(txn, id, "a").map(|a| a.unwrap()))
             .unwrap();
         assert_eq!(meta, 123.into());
+        assert_eq!(
+            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#,
+            tree.get_deep_value().to_json()
+        )
     }
 }

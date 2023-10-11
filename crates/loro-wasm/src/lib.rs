@@ -797,11 +797,11 @@ impl LoroTree {
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
-export type ContainerType = "Text" | "Map" | "List";
+export type ContainerType = "Text" | "Map" | "List"| "Tree";
 export type ContainerID =
   | `/${string}:${ContainerType}`
   | `${number}@${number}:${ContainerType}`;
-export type TreeID = {lamport: number, peer: bigint};
+export type TreeID = {peer: bigint, counter: number};
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
