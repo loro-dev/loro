@@ -157,7 +157,11 @@ impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
             for (target, parent) in &tree.diff {
-                self.mov(*target, *parent)?
+                if let Some(p) = parent {
+                    self.mov(*target, *p)?
+                } else {
+                    self.delete(*target);
+                }
             }
         }
         Ok(())
@@ -295,7 +299,11 @@ impl Forest {
         let mut state = self.to_state();
         for item in diff {
             for (&id, &parent) in item.as_tree().unwrap().diff.iter() {
-                state.insert(id, parent);
+                if let Some(p) = parent {
+                    state.insert(id, p);
+                } else {
+                    state.remove(&id);
+                }
             }
         }
         Self::from_tree_state(&state)

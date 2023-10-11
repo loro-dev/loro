@@ -5,7 +5,7 @@ use crate::state::TreeID;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TreeDelta {
-    pub(crate) diff: FxHashMap<TreeID, Option<TreeID>>,
+    pub(crate) diff: FxHashMap<TreeID, Option<Option<TreeID>>>,
 }
 
 impl TreeDelta {

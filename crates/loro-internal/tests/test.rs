@@ -269,13 +269,32 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let mut doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1);
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
     let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
     let v1 = doc_a.oplog_frontiers();
-    let id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
+    let _id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
     let v2 = doc_a.oplog_frontiers();
-    println!("tree {:?}", tree.get_value());
+    doc_a.with_txn(|txn| tree.delete(txn, id2)).unwrap();
+    let v3 = doc_a.oplog_frontiers();
+    assert_eq!(
+        tree.get_value().to_json(),
+        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[]}]""#
+    );
     doc_a.checkout(&v1).unwrap();
-    println!("tree {:?}", tree.get_value());
+    assert_eq!(
+        tree.get_value().to_json(),
+        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[{\"id\":{\"peer\":1,\"counter\":1},\"parent\":{\"peer\":1,\"counter\":0},\"children\":[]}]}]""#
+    );
+    doc_a.checkout(&v2).unwrap();
+    assert_eq!(
+        tree.get_value().to_json(),
+        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[{\"id\":{\"peer\":1,\"counter\":1},\"parent\":{\"peer\":1,\"counter\":0},\"children\":[{\"id\":{\"peer\":1,\"counter\":2},\"parent\":{\"peer\":1,\"counter\":1},\"children\":[]}]}]}]""#
+    );
+    doc_a.checkout(&v3).unwrap();
+    assert_eq!(
+        tree.get_value().to_json(),
+        r#""[{\"id\":{\"peer\":1,\"counter\":0},\"parent\":null,\"children\":[]}]""#
+    );
 }

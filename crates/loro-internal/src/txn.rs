@@ -356,7 +356,7 @@ fn change_to_diff(
                     }
                     crate::op::InnerContent::Tree(tree) => {
                         let mut diff = FxHashMap::default();
-                        diff.insert(tree.target, tree.parent);
+                        diff.insert(tree.target, Some(tree.parent));
                         Diff::Tree(TreeDelta { diff })
                     }
                 },
