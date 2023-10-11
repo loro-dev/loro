@@ -99,7 +99,6 @@ impl DiffCalculator {
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
 
             let mut started_set = FxHashSet::default();
-            println!("\n");
             for (change, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
                     assert!(
@@ -644,8 +643,19 @@ impl TreeParentCache {
                     .max()
                     .unwrap();
                 if id > (node.lamport, node.peer, node.counter) {
-                    // replace
-                    let p = self.cache.get_mut(&n).unwrap().pop_last();
+                    // the last one will cause cycle move, add new old parent for this lamport time
+                    let len = self.cache.get_mut(&n).unwrap().len();
+                    let p = if len > 1 {
+                        let (_, old_parent) =
+                            self.cache.get(&n).unwrap().iter().rev().nth(1).unwrap();
+                        *old_parent
+                    } else {
+                        DELETED_TREE_ROOT
+                    };
+                    self.cache
+                        .get_mut(&n)
+                        .unwrap()
+                        .insert((node.lamport, node.peer, node.counter), p);
                     // println!("REMOVE PARENT {:?}", p.unwrap().1)
                 } else {
                     return Err(());
