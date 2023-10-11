@@ -4,6 +4,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
+use itertools::Itertools;
 use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
 use serde::{Deserialize, Serialize};
 
@@ -243,6 +244,7 @@ impl Forest {
             .iter()
             .filter(|(&id, parent)| parent.is_none() && id != DELETED_TREE_ROOT.unwrap())
             .map(|(id, _)| *id)
+            .sorted()
         {
             let mut stack = vec![(
                 root,

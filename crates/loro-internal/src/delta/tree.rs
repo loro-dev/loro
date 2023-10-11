@@ -39,3 +39,25 @@ impl TreeDelta {
         TreeDelta { diff }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn tree_diff_ord() {
+        let mut v = vec![
+            TreeDiff::Delete,
+            TreeDiff::Move((0, None)),
+            TreeDiff::Move((1, None)),
+        ];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                TreeDiff::Delete,
+                TreeDiff::Move((0, None)),
+                TreeDiff::Move((1, None))
+            ]
+        )
+    }
+}
