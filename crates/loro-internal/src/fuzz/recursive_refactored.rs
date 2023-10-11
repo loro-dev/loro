@@ -17,8 +17,13 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
-    ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx,
+    handler::TreeHandler,
+    loro::LoroDoc,
+    state::{TreeID, TreeNode},
+    value::ToJson,
+    version::Frontiers,
+    ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -42,6 +47,14 @@ pub enum Action {
         value: u16,
         is_del: bool,
     },
+    Tree {
+        site: u8,
+        container_idx: u8,
+        target: u8,
+        parent: u8,
+        is_new: bool,
+        is_del: bool,
+    },
     Sync {
         from: u8,
         to: u8,
@@ -56,9 +69,11 @@ struct Actor {
     map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
     list_tracker: Arc<Mutex<Vec<LoroValue>>>,
     text_tracker: Arc<Mutex<String>>,
+    tree_tracker: Arc<Mutex<FxHashMap<TreeID, Option<TreeID>>>>,
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
+    tree_containers: Vec<TreeHandler>,
     history: FxHashMap<Vec<ID>, LoroValue>,
 }
 
@@ -73,9 +88,11 @@ impl Actor {
             map_tracker: Default::default(),
             list_tracker: Default::default(),
             text_tracker: Default::default(),
+            tree_tracker: Default::default(),
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
+            tree_containers: Default::default(),
             history: Default::default(),
         };
 
@@ -116,6 +133,29 @@ impl Actor {
                         }
                     }
                     _ => unreachable!(),
+                }
+            }),
+        );
+
+        let tree = Arc::clone(&actor.tree_tracker);
+        actor.loro.subscribe(
+            &ContainerID::new_root("tree", ContainerType::Tree),
+            Arc::new(move |event| {
+                if event.from_children {
+                    return;
+                }
+                let mut tree = tree.lock().unwrap();
+                if let Diff::Tree(tree_delta) = &event.container.diff {
+                    for (key, value) in tree_delta.diff.iter() {
+                        if let Some(p) = value {
+                            tree.insert(*key, *p);
+                        } else {
+                            tree.remove(key);
+                        }
+                    }
+                } else {
+                    debug_dbg!(&event.container);
+                    unreachable!()
                 }
             }),
         );
@@ -186,6 +226,9 @@ impl Actor {
         actor
             .list_containers
             .push(actor.loro.txn().unwrap().get_list("list"));
+        actor
+            .tree_containers
+            .push(actor.loro.txn().unwrap().get_tree("tree"));
         actor
     }
 
@@ -265,6 +308,30 @@ impl Tabled for Action {
                 format!("{}", pos).into(),
                 format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
             ],
+            Action::Tree {
+                site,
+                container_idx,
+                target,
+                parent,
+                is_new,
+                is_del,
+            } => vec![
+                "tree".into(),
+                format!("{}", site).into(),
+                format!("{}", container_idx).into(),
+                format!("{}", target).into(),
+                format!(
+                    "{}",
+                    if *is_del {
+                        format!("Delete")
+                    } else if *is_new {
+                        format!("Create")
+                    } else {
+                        format!("MoveTo {parent}")
+                    }
+                )
+                .into(),
+            ],
         }
     }
 
@@ -296,10 +363,9 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Tree => {
-                // TODO: tree
-                todo!()
-            }
+            ContainerType::Tree => self
+                .tree_containers
+                .push(TreeHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
         }
     }
 }
@@ -316,6 +382,51 @@ impl Actionable for Vec<Actor> {
                 }
             }
             Action::SyncAll => {}
+            Action::Tree {
+                site,
+                container_idx,
+                target,
+                parent,
+                is_new,
+                is_del,
+            } => {
+                // TODO: better data
+                *site %= max_users;
+                *container_idx %= self[*site as usize].tree_containers.len().max(1) as u8;
+                if let Some(tree) = self[*site as usize]
+                    .tree_containers
+                    .get(*container_idx as usize)
+                {
+                    let tree_num = tree.max_counter();
+                    if tree_num > 255 {
+                        *is_new = false;
+                    }
+                    *parent %= (tree_num as u8).max(1);
+
+                    if tree.contains(TreeID {
+                        peer: 0,
+                        counter: *target as i32,
+                    }) {
+                        // target exists
+                        *is_new = false;
+                    } else {
+                        // target not exists
+                        if *is_new {
+                            *target = tree_num as u8 + 1;
+                        }
+                    }
+
+                    // avoid moving self
+                    if !*is_del && *target == *parent {
+                        *is_del = true;
+                    }
+                } else {
+                    *target = 0;
+                    *parent = 0;
+                    *is_del = false;
+                    *is_new = true;
+                }
+            }
             Action::Map {
                 site,
                 container_idx,
@@ -388,6 +499,9 @@ impl Actionable for Vec<Actor> {
                 a.text_containers.iter().for_each(|x| {
                     visited.insert(x.id());
                 });
+                a.tree_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
 
                 a.loro
                     .import(&b.loro.export_from(&a.loro.oplog_vv()))
@@ -421,6 +535,13 @@ impl Actionable for Vec<Actor> {
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
                 });
+                b.tree_containers.iter().for_each(|x| {
+                    let id = x.id();
+                    if !visited.contains(&id) {
+                        visited.insert(id.clone());
+                        a.tree_containers.push(a.loro.txn().unwrap().get_tree(id))
+                    }
+                });
 
                 b.map_containers = a
                     .map_containers
@@ -437,6 +558,11 @@ impl Actionable for Vec<Actor> {
                     .iter()
                     .map(|x| b.loro.get_text(x.id()))
                     .collect();
+                b.tree_containers = a
+                    .tree_containers
+                    .iter()
+                    .map(|x| b.loro.get_tree(x.id()))
+                    .collect();
             }
             Action::SyncAll => {
                 let mut visited = HashSet::new();
@@ -448,6 +574,9 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
                 a.text_containers.iter().for_each(|x| {
+                    visited.insert(x.id());
+                });
+                a.tree_containers.iter().for_each(|x| {
                     visited.insert(x.id());
                 });
 
@@ -477,6 +606,13 @@ impl Actionable for Vec<Actor> {
                             a.text_containers.push(a.loro.get_text(id))
                         }
                     });
+                    b.tree_containers.iter().for_each(|x| {
+                        let id = x.id();
+                        if !visited.contains(&id) {
+                            visited.insert(id.clone());
+                            a.tree_containers.push(a.loro.get_tree(id))
+                        }
+                    });
                 }
 
                 for i in 1..self.len() {
@@ -498,6 +634,11 @@ impl Actionable for Vec<Actor> {
                         .text_containers
                         .iter()
                         .map(|x| b.loro.get_text(x.id()))
+                        .collect();
+                    b.tree_containers = a
+                        .tree_containers
+                        .iter()
+                        .map(|x| b.loro.get_tree(x.id()))
                         .collect();
                 }
 
@@ -606,6 +747,47 @@ impl Actionable for Vec<Actor> {
                     container
                         .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
                         .unwrap();
+                }
+                drop(txn);
+                if actor.peer == 1 {
+                    actor.record_history();
+                }
+            }
+            Action::Tree {
+                site,
+                container_idx,
+                target,
+                parent,
+                is_new,
+                is_del,
+            } => {
+                let actor = &mut self[*site as usize];
+                let container = actor.tree_containers.get_mut(*container_idx as usize);
+                let container = if let Some(container) = container {
+                    container
+                } else {
+                    let tree = actor.loro.get_tree("tree");
+                    actor.tree_containers.push(tree);
+                    &mut actor.tree_containers[0]
+                };
+                let mut txn = actor.loro.txn().unwrap();
+                let target = TreeID {
+                    peer: 0,
+                    counter: *target as i32,
+                };
+                if *is_new {
+                    container.create_with_id(&mut txn, target);
+                } else if *is_del {
+                    container.delete(&mut txn, target);
+                } else {
+                    container.mov(
+                        &mut txn,
+                        target,
+                        TreeID {
+                            peer: 0,
+                            counter: *parent as i32,
+                        },
+                    );
                 }
                 drop(txn);
                 if actor.peer == 1 {

@@ -763,6 +763,29 @@ impl TreeHandler {
         )
     }
 
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+
+    pub fn contains(&self, target: TreeID) -> bool {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains(target)
+            })
+    }
+
     pub fn get_value(&self) -> LoroValue {
         self.state
             .upgrade()
@@ -770,6 +793,33 @@ impl TreeHandler {
             .lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn max_counter(&self) -> i32 {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.max_counter()
+            })
+    }
+
+    #[cfg(feature = "test_utils")]
+    #[cfg(feature = "test_utils")]
+    pub fn create_with_id(&self, txn: &mut Transaction, tree_id: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent: TreeID::delete_root(),
+            }),
+            None,
+            &self.state,
+        )
     }
 }
 

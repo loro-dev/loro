@@ -19,6 +19,7 @@ use crate::{
     },
     delta::{Delta, MapValue, TreeDelta},
     event::Diff,
+    handler::TreeHandler,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -256,6 +257,13 @@ impl Transaction {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
+        let idx = self.get_container_idx(id, ContainerType::Tree);
+        TreeHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {

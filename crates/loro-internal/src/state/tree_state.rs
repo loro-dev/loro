@@ -73,7 +73,7 @@ impl TreeState {
         if let Some(old_parent) = self.trees.get_mut(&target) {
             contained = true;
             if old_parent
-                .map(|p| self.is_deleted(&p).unwrap())
+                .map(|p| self.is_deleted(p).unwrap())
                 .unwrap_or(false)
             {
                 deleted = true;
@@ -148,8 +148,17 @@ impl TreeState {
         self.mov(target, DELETED_TREE_ROOT).unwrap()
     }
 
-    pub fn is_deleted(&self, target: &TreeID) -> Option<bool> {
-        self.trees.get(target).map(|&p| p == DELETED_TREE_ROOT)
+    pub fn is_deleted(&self, target: TreeID) -> Option<bool> {
+        self.trees.get(&target).map(|&p| p == DELETED_TREE_ROOT)
+    }
+
+    pub fn contains(&self, target: TreeID) -> bool {
+        self.trees.contains_key(&target)
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn max_counter(&self) -> i32 {
+        self.trees.keys().map(|k| k.counter).max().unwrap_or(0)
     }
 }
 
