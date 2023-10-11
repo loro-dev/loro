@@ -439,7 +439,6 @@ impl LoroDoc {
             after,
             Some(frontiers),
         );
-
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             local: true,

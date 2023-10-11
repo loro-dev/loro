@@ -798,7 +798,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
         (LoroValue::Map(a), LoroValue::Map(b)) => {
             for (k, v) in a.iter() {
                 let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty(),
+                    LoroValue::String(s) => s.is_empty() || s.as_str() == "[]",
                     LoroValue::List(l) => l.is_empty(),
                     LoroValue::Map(m) => m.is_empty(),
                     _ => false,

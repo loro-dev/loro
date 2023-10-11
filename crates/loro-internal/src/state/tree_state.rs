@@ -33,8 +33,7 @@ struct TreeUndoItem {
 
 impl TreeState {
     pub fn new(idx: ContainerIdx) -> Self {
-        let mut trees = FxHashMap::default();
-        // trees.insert(DELETED_TREE_ROOT.unwrap(), None);
+        let trees = FxHashMap::default();
         Self {
             idx,
             trees,
@@ -48,7 +47,7 @@ impl TreeState {
         let mut contained = false;
 
         if let Some(old_parent) = self.trees.get_mut(&target) {
-            contained = true;
+            contained = old_parent.is_some();
             if TreeID::is_deleted(*old_parent) {
                 deleted = true;
             }
@@ -61,7 +60,7 @@ impl TreeState {
                 return Ok(());
             }
             // new root node
-            self.trees.insert(target, parent);
+            self.trees.insert(target, None);
             if self.in_txn {
                 self.undo_items.push(TreeUndoItem {
                     target,
@@ -143,7 +142,7 @@ impl ContainerState for TreeState {
                 if let Some(p) = parent {
                     self.mov(*target, *p)?
                 } else {
-                    self.delete(*target);
+                    self.trees.remove(target);
                 }
             }
         }
