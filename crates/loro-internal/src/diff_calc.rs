@@ -480,7 +480,12 @@ impl TreeDiffCalculator {
     fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
         frontiers
             .iter()
-            .map(|id| oplog.get_change_at(*id).map(|c| c.lamport).unwrap())
+            .map(|id| {
+                oplog
+                    .get_change_at(*id)
+                    .map(|c| c.lamport + c.ops().len() as u32 - 1)
+                    .unwrap()
+            })
             .max()
             .unwrap_or(Lamport::MAX)
     }

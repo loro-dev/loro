@@ -126,6 +126,7 @@ impl TreeDiffCache {
         //     self.current_version, self.all_version
         // );
         // println!("cache {:?}", self.cache);
+        // println!("pending {:?}", self.pending);
         // println!(
         //     "to_max_lamport {} lca_min_lamport {}",
         //     to_max_lamport, lca_min_lamport
