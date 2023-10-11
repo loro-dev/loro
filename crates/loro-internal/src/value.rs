@@ -199,7 +199,6 @@ impl ApplyDiff for LoroValue {
                     }
                 }
             }
-
             value
         }
         .apply_diff(diff);
@@ -212,7 +211,7 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Tree => LoroValue::String(Default::default()),
+            crate::ContainerType::Tree => LoroValue::String(Arc::new(String::from("[]"))),
         }
     } else {
         v.clone()
