@@ -146,14 +146,14 @@ impl TreeDiffCache {
         let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
         for (op, old_parent) in revert_ops.iter().sorted().rev() {
             if op.effected {
-                diff.push((op.target, *old_parent));
+                diff.push((op.target, *old_parent).into());
             }
         }
         assert_eq!(&self.current_version, lca);
         if debug {
             println!("revert diff:");
-            for (t, p) in diff.iter() {
-                println!("    target {:?} to {:?}", t, p);
+            for d in diff.iter() {
+                println!("    {:?}", d);
             }
         }
 
@@ -167,7 +167,7 @@ impl TreeDiffCache {
                 if debug {
                     println!("    target {:?} to {:?}", op.target, op.parent);
                 }
-                diff.push((op.target, op.parent))
+                diff.push((op.target, op.parent).into())
             }
         }
         if debug {

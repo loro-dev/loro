@@ -17,8 +17,14 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, state::Forest,
-    value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx,
+    delta::{TreeDiff, TreeDiffItem},
+    handler::TreeHandler,
+    loro::LoroDoc,
+    state::Forest,
+    value::ToJson,
+    version::Frontiers,
+    ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -159,8 +165,19 @@ impl Actor {
                 }
                 let mut tree = tree.lock().unwrap();
                 if let Diff::Tree(tree_delta) = &event.container.diff {
-                    for (key, value) in tree_delta.diff.iter() {
-                        tree.insert(*key, *value);
+                    for diff in tree_delta.diff.iter() {
+                        let target = diff.target;
+                        match diff.action {
+                            TreeDiffItem::CreateOrRestore => {
+                                tree.insert(target, None);
+                            }
+                            TreeDiffItem::Move(parent) => {
+                                tree.insert(target, Some(parent));
+                            }
+                            TreeDiffItem::Delete => {
+                                tree.insert(target, DELETED_TREE_ROOT);
+                            }
+                        }
                     }
                 } else {
                     debug_dbg!(&event.container);

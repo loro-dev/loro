@@ -228,7 +228,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta, TreeDiffItem},
         event::{Diff, Index},
         LoroValue,
     };
@@ -384,36 +384,48 @@ pub mod wasm {
         }
     }
 
-    // impl From<TreeDiff> for JsValue {
-    //     fn from(value: TreeDiff) -> Self {
-    //         let obj = Object::new();
-    //         match value {
-    //             TreeDiff::Delete => {
-    //                 js_sys::Reflect::set(
-    //                     &obj,
-    //                     &JsValue::from_str("type"),
-    //                     &JsValue::from_str("delete"),
-    //                 )
-    //                 .unwrap();
-    //             }
-    //             TreeDiff::Move(parent) => {
-    //                 let ty = if parent.is_none() { "create" } else { "move" };
-    //                 js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(ty))
-    //                     .unwrap();
-    //                 if let Some(p) = parent {
-    //                     js_sys::Reflect::set(&obj, &JsValue::from_str("to"), &p.into()).unwrap();
-    //                 }
-    //             }
-    //         }
-    //         obj.into_js_result().unwrap()
-    //     }
-    // }
+    impl From<TreeDiffItem> for JsValue {
+        fn from(value: TreeDiffItem) -> Self {
+            let obj = Object::new();
+            match value {
+                TreeDiffItem::Delete => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("delete"),
+                    )
+                    .unwrap();
+                }
+                TreeDiffItem::Move(parent) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("move"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
+                        .unwrap();
+                }
+                TreeDiffItem::CreateOrRestore => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("create"),
+                    )
+                    .unwrap();
+                }
+            }
+            obj.into_js_result().unwrap()
+        }
+    }
 
     impl From<TreeDelta> for JsValue {
         fn from(value: TreeDelta) -> Self {
             let obj = Object::new();
-            for (key, value) in value.diff.into_iter() {
-                js_sys::Reflect::set(&obj, &key.into(), &value.into()).unwrap();
+            for diff in value.diff.into_iter() {
+                js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
+                js_sys::Reflect::set(&obj, &"action".into(), &diff.action.into()).unwrap();
             }
             obj.into_js_result().unwrap()
         }

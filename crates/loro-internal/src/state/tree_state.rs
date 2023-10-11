@@ -5,7 +5,10 @@ use itertools::Itertools;
 use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
 use serde::{Deserialize, Serialize};
 
-use crate::{arena::SharedArena, container::tree::tree_op::TreeOp, event::Diff, op::RawOp};
+use crate::{
+    arena::SharedArena, container::tree::tree_op::TreeOp, delta::TreeDiffItem, event::Diff,
+    op::RawOp,
+};
 
 use super::ContainerState;
 
@@ -165,9 +168,20 @@ impl TreeState {
 impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
-            for (target, parent) in tree.diff.iter() {
-                // assert never cause cycle move
-                self.mov(*target, *parent).unwrap_or_default()
+            // assert never cause cycle move
+            for diff in tree.diff.iter() {
+                let target = diff.target;
+                match diff.action {
+                    TreeDiffItem::CreateOrRestore => {
+                        self.trees.insert(target, None);
+                    }
+                    TreeDiffItem::Move(parent) => {
+                        self.trees.insert(target, Some(parent));
+                    }
+                    TreeDiffItem::Delete => {
+                        self.trees.insert(target, DELETED_TREE_ROOT);
+                    }
+                }
             }
         }
         Ok(())
@@ -318,8 +332,19 @@ impl Forest {
     pub(crate) fn apply_diffs(&self, diff: &[Diff]) -> Self {
         let mut state = self.to_state();
         for item in diff {
-            for (id, parent) in item.as_tree().unwrap().diff.iter() {
-                state.insert(*id, *parent);
+            for diff in item.as_tree().unwrap().diff.iter() {
+                let target = diff.target;
+                match diff.action {
+                    TreeDiffItem::CreateOrRestore => {
+                        state.insert(target, None);
+                    }
+                    TreeDiffItem::Move(parent) => {
+                        state.insert(target, Some(parent));
+                    }
+                    TreeDiffItem::Delete => {
+                        state.insert(target, DELETED_TREE_ROOT);
+                    }
+                }
             }
         }
         Self::from_tree_state(&state)

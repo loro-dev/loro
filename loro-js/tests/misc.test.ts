@@ -355,8 +355,7 @@ describe("tree", () => {
   const loro = new Loro();
   const tree = loro.getTree("root");
   
-  
-  it("create", ()=>{
+  it("create move", ()=>{
     const id = loro.transact((txn)=>{
       return tree.create(txn);
     })

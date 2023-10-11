@@ -138,7 +138,10 @@ export type MapDiff = {
 
 export type TreeDiff = {
   type: "tree";
-  diff: {target: TreeID, parent: TreeID | undefined}
+  diff: {
+    target: TreeID,
+    action: {type: "create"} | {type: "move", parent: TreeID} | {type: "delete"}
+  }[]
 }
 
 export type Diff = ListDiff | TextDiff | MapDiff| TreeDiff;
