@@ -250,8 +250,8 @@ pub const DELETED_TREE_ROOT: Option<TreeID> = Some(TreeID {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TreeID {
-    pub peer: PeerID,
     pub counter: Counter,
+    pub peer: PeerID,
 }
 
 impl TreeID {

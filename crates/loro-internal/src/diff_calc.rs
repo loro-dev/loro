@@ -1,7 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{HasIdSpan, PeerID, TreeID, ID};
 
 use crate::{
@@ -458,7 +459,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct TreeDiffCalculator {
-    trees: FxHashMap<TreeID, BTreeSet<CompactTreeNode>>,
+    trees: BTreeMap<TreeID, BTreeSet<CompactTreeNode>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -33,7 +33,8 @@ struct TreeUndoItem {
 
 impl TreeState {
     pub fn new(idx: ContainerIdx) -> Self {
-        let trees = FxHashMap::default();
+        let mut trees = FxHashMap::default();
+        trees.insert(DELETED_TREE_ROOT.unwrap(), None);
         Self {
             idx,
             trees,
@@ -70,7 +71,7 @@ impl TreeState {
             return Ok(());
         };
         if !self.contains(parent) {
-            return Err(LoroError::TreeNodeParentNotFound);
+            return Err(LoroError::TreeNodeParentNotFound(parent));
         }
         if contained {
             if self.is_ancestor_of(&target, &parent) {
@@ -135,12 +136,21 @@ impl TreeState {
     }
 
     pub fn nodes(&self) -> Vec<TreeID> {
-        self.trees.keys().copied().collect::<Vec<_>>()
+        self.trees
+            .keys()
+            .filter(|&k| *k != DELETED_TREE_ROOT.unwrap())
+            .copied()
+            .collect::<Vec<_>>()
     }
 
     #[cfg(feature = "test_utils")]
     pub fn max_counter(&self) -> i32 {
-        self.trees.keys().map(|k| k.counter).max().unwrap_or(0)
+        self.trees
+            .keys()
+            .filter(|&k| *k != DELETED_TREE_ROOT.unwrap())
+            .map(|k| k.counter)
+            .max()
+            .unwrap_or(0)
     }
 }
 

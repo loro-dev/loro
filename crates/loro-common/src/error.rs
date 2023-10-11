@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{PeerID, ID};
+use crate::{PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
@@ -34,8 +34,8 @@ pub enum LoroError {
     UsedOpID { id: ID },
     #[error("`Cycle move` occurs when moving tree nodes.")]
     CyclicMoveError,
-    #[error("The parent of tree node is not found")]
-    TreeNodeParentNotFound,
+    #[error("The parent of tree node is not found {0:?}")]
+    TreeNodeParentNotFound(TreeID),
     #[error("Deserialize json string error")]
     DeserializeJsonStringError,
     // #[error("the data for key `{0}` is not available")]

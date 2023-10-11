@@ -971,4 +971,22 @@ mod test {
             .to_string();
         assert_eq!("he llo", &actual);
     }
+
+    #[test]
+    fn tree_encode_decode() {
+        let a = LoroDoc::default();
+        let b = LoroDoc::default();
+        let tree_a = a.get_tree("tree");
+        let tree_b = b.get_tree("tree");
+        let id1 = a.with_txn(|txn| tree_a.create(txn)).unwrap();
+        let id2 = a.with_txn(|txn| tree_a.create_and_mov(txn, id1)).unwrap();
+        let bytes = a.export_snapshot();
+        b.import(&bytes).unwrap();
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+        let _id3 = b.with_txn(|txn| tree_b.create_and_mov(txn, id1)).unwrap();
+        b.with_txn(|txn| tree_b.delete(txn, id2)).unwrap();
+        let bytes = b.export_snapshot();
+        a.import(&bytes).unwrap();
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+    }
 }
