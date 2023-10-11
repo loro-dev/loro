@@ -310,7 +310,9 @@ impl DocState {
                 ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Tree => LoroValue::String(Arc::new(String::from("[]"))),
+                ContainerType::Tree => {
+                    LoroValue::String(Arc::new(String::from(r#"{"roots":[],"deleted":[]}"#)))
+                }
             })
     }
 
@@ -710,7 +712,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Text => State::TextState(TextState::new()),
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
-        ContainerType::Tree => State::TreeState(TreeState::new(idx)),
+        ContainerType::Tree => State::TreeState(TreeState::new()),
     }
 }
 

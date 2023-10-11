@@ -47,3 +47,9 @@ name = "import"
 path = "fuzz_targets/import.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "tree"
+path = "fuzz_targets/tree.rs"
+test = false
+doc = false

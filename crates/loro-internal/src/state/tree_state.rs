@@ -1,26 +1,17 @@
-use std::{
-    collections::hash_map::Iter,
-    ops::{Deref, DerefMut},
-};
+use std::collections::hash_map::Iter;
 
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{LoroError, LoroResult, LoroValue, TreeID, DELETED_TREE_ROOT};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    arena::SharedArena,
-    container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    event::Diff,
-    op::RawOp,
-};
+use crate::{arena::SharedArena, container::tree::tree_op::TreeOp, event::Diff, op::RawOp};
 
 use super::ContainerState;
 
 // TODO: use arena save TreeID
 #[derive(Debug, Clone)]
 pub struct TreeState {
-    idx: ContainerIdx,
     trees: FxHashMap<TreeID, Option<TreeID>>,
     in_txn: bool,
     undo_items: Vec<TreeUndoItem>,
@@ -33,11 +24,10 @@ struct TreeUndoItem {
 }
 
 impl TreeState {
-    pub fn new(idx: ContainerIdx) -> Self {
+    pub fn new() -> Self {
         let mut trees = FxHashMap::default();
         trees.insert(DELETED_TREE_ROOT.unwrap(), None);
         Self {
-            idx,
             trees,
             in_txn: false,
             undo_items: Vec::new(),
@@ -235,7 +225,10 @@ impl ContainerState for TreeState {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Forest(Vec<TreeNode>);
+pub struct Forest {
+    pub roots: Vec<TreeNode>,
+    deleted: Vec<TreeNode>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TreeNode {
@@ -251,7 +244,7 @@ impl Forest {
 
         for (id, parent) in state
             .iter()
-            .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
+            // .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
             .sorted()
         {
             if let Some(parent) = parent {
@@ -264,7 +257,7 @@ impl Forest {
 
         for root in state
             .iter()
-            .filter(|(&id, parent)| parent.is_none() && id != DELETED_TREE_ROOT.unwrap())
+            .filter(|(_, parent)| parent.is_none()) // && id != DELETED_TREE_ROOT.unwrap())
             .map(|(id, _)| *id)
             .sorted()
         {
@@ -304,20 +297,34 @@ impl Forest {
                     id_to_node.insert(id, node);
                 }
             }
-            forest.push(id_to_node.remove(&root).unwrap());
+            let root_node = id_to_node.remove(&root).unwrap();
+            if root_node.id == DELETED_TREE_ROOT.unwrap() {
+                forest.deleted = root_node.children;
+            } else {
+                forest.roots.push(root_node);
+            }
         }
         forest
     }
 
     fn to_state(&self) -> FxHashMap<TreeID, Option<TreeID>> {
         let mut ans = FxHashMap::default();
-        for root in self.0.iter() {
+        for root in self.roots.iter() {
             let mut stack = vec![root];
             while let Some(node) = stack.pop() {
                 ans.insert(node.id, node.parent);
                 stack.extend(node.children.iter())
             }
         }
+        ans.insert(DELETED_TREE_ROOT.unwrap(), None);
+        for root in self.deleted.iter() {
+            let mut stack = vec![root];
+            while let Some(node) = stack.pop() {
+                ans.insert(node.id, node.parent);
+                stack.extend(node.children.iter())
+            }
+        }
+
         ans
     }
 
@@ -334,6 +341,9 @@ impl Forest {
 
     #[cfg(feature = "json")]
     pub(crate) fn from_json(json: &str) -> LoroResult<Self> {
+        if json.is_empty() {
+            return Ok(Default::default());
+        }
         serde_json::from_str(json).map_err(|_| LoroError::DeserializeJsonStringError)
     }
 
@@ -341,18 +351,12 @@ impl Forest {
     pub(crate) fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
-}
 
-impl Deref for Forest {
-    type Target = Vec<TreeNode>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Forest {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    #[cfg(feature = "json")]
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn to_json_without_deleted(&self) -> String {
+        let v = self.roots.iter().collect::<Vec<_>>();
+        serde_json::to_string(&v).unwrap()
     }
 }
 
@@ -378,36 +382,27 @@ mod tests {
 
     #[test]
     fn test_tree_state() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
+        let mut state = TreeState::new();
         state.mov(ID1, None).unwrap();
         state.mov(ID2, Some(ID1)).unwrap();
     }
 
     #[test]
     fn tree_convert() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
+        let mut state = TreeState::new();
         state.mov(ID1, None).unwrap();
         state.mov(ID2, Some(ID1)).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
             json,
-            r#"[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":1},"parent":{"peer":0,"counter":0},"children":[]}]}]"#
+            r#"{"roots":[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":1},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[]}"#
         )
     }
 
     #[test]
     fn delete_node() {
-        let mut state = TreeState::new(ContainerIdx::from_index_and_type(
-            0,
-            loro_common::ContainerType::Tree,
-        ));
+        let mut state = TreeState::new();
         state.mov(ID1, None).unwrap();
         state.mov(ID2, Some(ID1)).unwrap();
         state.mov(ID3, Some(ID2)).unwrap();
@@ -417,7 +412,7 @@ mod tests {
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
             json,
-            r#"[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":3},"parent":{"peer":0,"counter":0},"children":[]}]}]"#
+            r#"{"roots":[{"id":{"peer":0,"counter":0},"parent":null,"children":[{"id":{"peer":0,"counter":3},"parent":{"peer":0,"counter":0},"children":[]}]}],"deleted":[{"id":{"peer":0,"counter":1},"parent":{"peer":18446744073709551615,"counter":2147483647},"children":[{"id":{"peer":0,"counter":2},"parent":{"peer":0,"counter":1},"children":[]}]}]}"#
         )
     }
 }

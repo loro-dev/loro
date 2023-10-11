@@ -294,7 +294,7 @@ pub fn decode_state<'b>(
                 container_states.insert(idx, State::ListState(list));
             }
             loro_preload::EncodedContainerState::Tree(tree_data) => {
-                let mut tree = TreeState::new(idx);
+                let mut tree = TreeState::new();
                 for (target, parent) in tree_data {
                     let (peer, counter) = state_arena.tree_ids[*target];
                     let target_peer = common.peer_ids[peer as usize];

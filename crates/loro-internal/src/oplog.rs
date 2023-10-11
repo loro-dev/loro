@@ -15,7 +15,7 @@ use rle::{HasLength, RleVec};
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
-use crate::diff_calc::{CompactTreeNode, TreeParentCache};
+use crate::diff_calc::{CompactTreeNode, TreeDiffCache};
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
@@ -50,7 +50,7 @@ pub struct OpLog {
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
 
-    pub(crate) tree_parent_cache: Mutex<TreeParentCache>,
+    pub(crate) tree_parent_cache: Mutex<TreeDiffCache>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -256,7 +256,7 @@ impl OpLog {
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
             if let crate::op::InnerContent::Tree(tree) = op.content {
-                let _ = tree_cache.add_cache(&CompactTreeNode {
+                let _ = tree_cache.add_node(&CompactTreeNode {
                     lamport: change.lamport,
                     peer: change.id.peer,
                     counter: op.counter,

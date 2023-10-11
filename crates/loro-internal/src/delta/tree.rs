@@ -1,7 +1,7 @@
 use loro_common::TreeID;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TreeDelta {
     pub(crate) diff: Vec<(TreeID, Option<TreeID>)>,
 }

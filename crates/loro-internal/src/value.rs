@@ -191,7 +191,9 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => LoroValue::String(Arc::new(String::from("[]"))),
+                            TypeHint::Tree => LoroValue::String(Arc::new(String::from(
+                                r#"{"roots":[],"deleted":[]}"#,
+                            ))),
                         })
                     }
                     Index::Seq(index) => {
@@ -213,7 +215,9 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Tree => LoroValue::String(Arc::new(String::from("[]"))),
+            crate::ContainerType::Tree => {
+                LoroValue::String(Arc::new(String::from(r#"{"roots":[],"deleted":[]}"#)))
+            }
         }
     } else {
         v.clone()

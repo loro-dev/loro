@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::{LoroError, TreeID, ID};
+use loro_common::ID;
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -17,8 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, state::Forest,
-    value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
+    ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -35,42 +35,18 @@ pub enum Action {
         key: u8,
         value: FuzzValue,
     },
-    // Text {
-    //     site: u8,
-    //     container_idx: u8,
-    //     pos: u8,
-    //     value: u16,
-    //     is_del: bool,
-    // },
-    Tree {
+    Text {
         site: u8,
         container_idx: u8,
-        action: TreeAction,
-        target: (u64, i32),
-        parent: (u64, i32),
+        pos: u8,
+        value: u16,
+        is_del: bool,
     },
     Sync {
         from: u8,
         to: u8,
     },
     SyncAll,
-}
-
-#[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq)]
-pub enum TreeAction {
-    Create,
-    Move,
-    Delete,
-}
-
-impl Debug for TreeAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TreeAction::Create => f.write_str("TreeAction::Create"),
-            TreeAction::Move => f.write_str("TreeAction::Move"),
-            TreeAction::Delete => f.write_str("TreeAction::Delete"),
-        }
-    }
 }
 
 struct Actor {
@@ -80,11 +56,9 @@ struct Actor {
     map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
     list_tracker: Arc<Mutex<Vec<LoroValue>>>,
     text_tracker: Arc<Mutex<String>>,
-    tree_tracker: Arc<Mutex<FxHashMap<TreeID, Option<TreeID>>>>,
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
-    tree_containers: Vec<TreeHandler>,
     history: FxHashMap<Vec<ID>, LoroValue>,
 }
 
@@ -99,11 +73,9 @@ impl Actor {
             map_tracker: Default::default(),
             list_tracker: Default::default(),
             text_tracker: Default::default(),
-            tree_tracker: Default::default(),
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
-            tree_containers: Default::default(),
             history: Default::default(),
         };
 
@@ -144,25 +116,6 @@ impl Actor {
                         }
                     }
                     _ => unreachable!(),
-                }
-            }),
-        );
-
-        let tree = Arc::clone(&actor.tree_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("tree", ContainerType::Tree),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut tree = tree.lock().unwrap();
-                if let Diff::Tree(tree_delta) = &event.container.diff {
-                    for (key, value) in tree_delta.diff.iter() {
-                        tree.insert(*key, *value);
-                    }
-                } else {
-                    debug_dbg!(&event.container);
-                    unreachable!()
                 }
             }),
         );
@@ -234,9 +187,6 @@ impl Actor {
             .list_containers
             .push(actor.loro.txn().unwrap().get_list("list"));
         actor
-            .tree_containers
-            .push(actor.loro.txn().unwrap().get_tree("tree"));
-        actor
     }
 
     fn record_history(&mut self) {
@@ -302,39 +252,19 @@ impl Tabled for Action {
                 format!("{}", key).into(),
                 format!("{:?}", value).into(),
             ],
-            // Action::Text {
-            //     site,
-            //     container_idx,
-            //     pos,
-            //     value,
-            //     is_del,
-            // } => vec![
-            //     "text".into(),
-            //     format!("{}", site).into(),
-            //     format!("{}", container_idx).into(),
-            //     format!("{}", pos).into(),
-            //     format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
-            // ],
-            Action::Tree {
+            Action::Text {
                 site,
                 container_idx,
-                action,
-                target,
-                parent,
-            } => {
-                let action_str = match action {
-                    TreeAction::Create => "Create".to_string(),
-                    TreeAction::Move => format!("Move to {parent:?}"),
-                    TreeAction::Delete => "Delete".to_string(),
-                };
-                vec![
-                    "tree".into(),
-                    format!("{}", site).into(),
-                    format!("{}", container_idx).into(),
-                    action_str.into(),
-                    format!("{:?}", target).into(),
-                ]
-            }
+                pos,
+                value,
+                is_del,
+            } => vec![
+                "text".into(),
+                format!("{}", site).into(),
+                format!("{}", container_idx).into(),
+                format!("{}", pos).into(),
+                format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
+            ],
         }
     }
 
@@ -366,9 +296,7 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Tree => self
-                .tree_containers
-                .push(TreeHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Tree => unreachable!(),
         }
     }
 }
@@ -385,68 +313,6 @@ impl Actionable for Vec<Actor> {
                 }
             }
             Action::SyncAll => {}
-            Action::Tree {
-                site,
-                container_idx,
-                target: (target_peer, target_counter),
-                parent: (parent_peer, parent_counter),
-                action,
-            } => {
-                *site %= max_users;
-                *container_idx %= self[*site as usize].tree_containers.len().max(1) as u8;
-                if let Some(tree) = self[*site as usize]
-                    .tree_containers
-                    .get(*container_idx as usize)
-                {
-                    let nodes = tree.nodes();
-                    let tree_num = nodes.len();
-                    let mut max_counter_mapping = FxHashMap::default();
-                    for TreeID { peer, counter } in nodes.clone() {
-                        if let Some(c) = max_counter_mapping.get_mut(&peer) {
-                            *c = counter.max(*c);
-                        } else {
-                            max_counter_mapping.insert(peer, counter);
-                        }
-                    }
-                    if tree_num == 0 || tree_num < 2 && matches!(action, TreeAction::Move) {
-                        *action = TreeAction::Create;
-                    } else if tree_num >= 255 && matches!(action, TreeAction::Create) {
-                        *action = TreeAction::Move;
-                    }
-
-                    match action {
-                        TreeAction::Create => {
-                            let actor = &mut self[*site as usize];
-                            let txn = actor.loro.txn().unwrap();
-                            let id = txn.next_id();
-                            *target_peer = id.peer;
-                            *target_counter = id.counter;
-                        }
-                        TreeAction::Move => {
-                            let target_idx = *target_peer as usize % tree_num;
-                            let mut parent_idx = *parent_peer as usize % tree_num;
-                            while target_idx == parent_idx {
-                                parent_idx = (parent_idx + 1) % tree_num;
-                            }
-                            *target_peer = nodes[target_idx].peer;
-                            *target_counter = nodes[target_idx].counter;
-                            *parent_peer = nodes[parent_idx].peer;
-                            *parent_counter = nodes[parent_idx].counter;
-                        }
-                        TreeAction::Delete => {
-                            let target_idx = *target_peer as usize % tree_num;
-                            *target_peer = nodes[target_idx].peer;
-                            *target_counter = nodes[target_idx].counter;
-                        }
-                    }
-                } else {
-                    *target_peer = *site as u64;
-                    *target_counter = 0;
-                    *parent_peer = 0;
-                    *parent_counter = 0;
-                    *action = TreeAction::Create;
-                }
-            }
             Action::Map {
                 site,
                 container_idx,
@@ -478,29 +344,30 @@ impl Actionable for Vec<Actor> {
                     }
                     *key = 0;
                 }
-            } // Action::Text {
-              //     site,
-              //     container_idx,
-              //     pos,
-              //     value,
-              //     is_del,
-              // } => {
-              //     *site %= max_users;
-              //     *container_idx %= self[*site as usize].text_containers.len().max(1) as u8;
-              //     if let Some(text) = self[*site as usize]
-              //         .text_containers
-              //         .get(*container_idx as usize)
-              //     {
-              //         *pos %= (text.len_unicode() as u8).max(1);
-              //         if *is_del {
-              //             *value &= 0x1f;
-              //             *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
-              //         }
-              //     } else {
-              //         *is_del = false;
-              //         *pos = 0;
-              //     }
-              // }
+            }
+            Action::Text {
+                site,
+                container_idx,
+                pos,
+                value,
+                is_del,
+            } => {
+                *site %= max_users;
+                *container_idx %= self[*site as usize].text_containers.len().max(1) as u8;
+                if let Some(text) = self[*site as usize]
+                    .text_containers
+                    .get(*container_idx as usize)
+                {
+                    *pos %= (text.len_unicode() as u8).max(1);
+                    if *is_del {
+                        *value &= 0x1f;
+                        *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
+                    }
+                } else {
+                    *is_del = false;
+                    *pos = 0;
+                }
+            }
         }
     }
 
@@ -516,9 +383,6 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
-                });
-                a.tree_containers.iter().for_each(|x| {
                     visited.insert(x.id());
                 });
 
@@ -554,13 +418,6 @@ impl Actionable for Vec<Actor> {
                         a.text_containers.push(a.loro.txn().unwrap().get_text(id))
                     }
                 });
-                b.tree_containers.iter().for_each(|x| {
-                    let id = x.id();
-                    if !visited.contains(&id) {
-                        visited.insert(id.clone());
-                        a.tree_containers.push(a.loro.txn().unwrap().get_tree(id))
-                    }
-                });
 
                 b.map_containers = a
                     .map_containers
@@ -577,11 +434,6 @@ impl Actionable for Vec<Actor> {
                     .iter()
                     .map(|x| b.loro.get_text(x.id()))
                     .collect();
-                b.tree_containers = a
-                    .tree_containers
-                    .iter()
-                    .map(|x| b.loro.get_tree(x.id()))
-                    .collect();
             }
             Action::SyncAll => {
                 let mut visited = HashSet::new();
@@ -593,9 +445,6 @@ impl Actionable for Vec<Actor> {
                     visited.insert(x.id());
                 });
                 a.text_containers.iter().for_each(|x| {
-                    visited.insert(x.id());
-                });
-                a.tree_containers.iter().for_each(|x| {
                     visited.insert(x.id());
                 });
 
@@ -625,13 +474,6 @@ impl Actionable for Vec<Actor> {
                             a.text_containers.push(a.loro.get_text(id))
                         }
                     });
-                    b.tree_containers.iter().for_each(|x| {
-                        let id = x.id();
-                        if !visited.contains(&id) {
-                            visited.insert(id.clone());
-                            a.tree_containers.push(a.loro.get_tree(id))
-                        }
-                    });
                 }
 
                 for i in 1..self.len() {
@@ -653,11 +495,6 @@ impl Actionable for Vec<Actor> {
                         .text_containers
                         .iter()
                         .map(|x| b.loro.get_text(x.id()))
-                        .collect();
-                    b.tree_containers = a
-                        .tree_containers
-                        .iter()
-                        .map(|x| b.loro.get_tree(x.id()))
                         .collect();
                 }
 
@@ -741,93 +578,32 @@ impl Actionable for Vec<Actor> {
                     actor.record_history();
                 }
             }
-            // Action::Text {
-            //     site,
-            //     container_idx,
-            //     pos,
-            //     value,
-            //     is_del,
-            // } => {
-            //     let actor = &mut self[*site as usize];
-            //     let container = actor.text_containers.get_mut(*container_idx as usize);
-            //     let container = if let Some(container) = container {
-            //         container
-            //     } else {
-            //         let text = actor.loro.get_text("text");
-            //         actor.text_containers.push(text);
-            //         &mut actor.text_containers[0]
-            //     };
-            //     let mut txn = actor.loro.txn().unwrap();
-            //     if *is_del {
-            //         container
-            //             .delete(&mut txn, *pos as usize, *value as usize)
-            //             .unwrap();
-            //     } else {
-            //         container
-            //             .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
-            //             .unwrap();
-            //     }
-            //     drop(txn);
-            //     if actor.peer == 1 {
-            //         actor.record_history();
-            //     }
-            // }
-            Action::Tree {
+            Action::Text {
                 site,
                 container_idx,
-                action,
-                target: (target_peer, target_counter),
-                parent: (parent_peer, parent_counter),
+                pos,
+                value,
+                is_del,
             } => {
                 let actor = &mut self[*site as usize];
-                let container = actor.tree_containers.get_mut(*container_idx as usize);
+                let container = actor.text_containers.get_mut(*container_idx as usize);
                 let container = if let Some(container) = container {
                     container
                 } else {
-                    let tree = actor.loro.get_tree("tree");
-                    actor.tree_containers.push(tree);
-                    &mut actor.tree_containers[0]
+                    let text = actor.loro.get_text("text");
+                    actor.text_containers.push(text);
+                    &mut actor.text_containers[0]
                 };
                 let mut txn = actor.loro.txn().unwrap();
-
-                match action {
-                    TreeAction::Create => {
-                        container.create(&mut txn).unwrap();
-                    }
-                    TreeAction::Move => {
-                        match container.mov(
-                            &mut txn,
-                            TreeID {
-                                peer: *target_peer,
-                                counter: *target_counter,
-                            },
-                            TreeID {
-                                peer: *parent_peer,
-                                counter: *parent_counter,
-                            },
-                        ) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                // TODO: cycle move
-                                if !matches!(err, LoroError::CyclicMoveError) {
-                                    panic!("{}", err)
-                                }
-                            }
-                        }
-                    }
-                    TreeAction::Delete => {
-                        container
-                            .delete(
-                                &mut txn,
-                                TreeID {
-                                    peer: *target_peer,
-                                    counter: *target_counter,
-                                },
-                            )
-                            .unwrap();
-                    }
+                if *is_del {
+                    container
+                        .delete(&mut txn, *pos as usize, *value as usize)
+                        .unwrap();
+                } else {
+                    container
+                        .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
+                        .unwrap();
                 }
-
                 drop(txn);
                 if actor.peer == 1 {
                     actor.record_history();
@@ -843,7 +619,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
         (LoroValue::Map(a), LoroValue::Map(b)) => {
             for (k, v) in a.iter() {
                 let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty() || s.as_str() == "[]",
+                    LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
                     LoroValue::Map(m) => m.is_empty(),
                     _ => false,
@@ -856,7 +632,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 
             for (k, v) in b.iter() {
                 let is_empty = match v {
-                    LoroValue::String(s) => s.is_empty() || s.as_str() == "[]",
+                    LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
                     LoroValue::Map(m) => m.is_empty(),
                     _ => false,
@@ -900,10 +676,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         &**value_a.as_list().unwrap(),
         &*a_actor.list_tracker.lock().unwrap(),
     );
-    let a = a_doc.get_tree("tree");
-    let value_a = a.get_value();
-    let forest = Forest::from_tree_state(&a_actor.tree_tracker.lock().unwrap());
-    assert_eq!(&**value_a.as_string().unwrap(), &forest.to_json(),);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -945,8 +717,6 @@ fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
     for (c, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
-        // println!("\nfrom {:?} checkout {:?}", actor.loro.oplog_vv(), f);
-        // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
         assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
@@ -1009,7 +779,6 @@ mod failed_tests {
     use super::test_multi_sites;
     use super::Action;
     use super::Action::*;
-    use super::FuzzValue;
     use super::FuzzValue::*;
     use arbtest::arbitrary::{self, Unstructured};
 
@@ -1176,88 +945,794 @@ mod failed_tests {
         );
     }
 
-    use super::TreeAction;
-
     #[test]
-    fn tree() {
+    fn fuzz_2() {
         test_multi_sites(
             5,
-            &mut vec![
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 55,
+                    container_idx: 55,
+                    key: 55,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 55,
+                    container_idx: 64,
+                    key: 53,
+                    value: Null,
+                },
+                List {
+                    site: 56,
+                    container_idx: 56,
+                    key: 56,
+                    value: Container(C::Text),
+                },
                 List {
                     site: 0,
                     container_idx: 0,
-                    key: 45,
-                    value: I32(1751657023),
+                    key: 0,
+                    value: Null,
                 },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9259542123273814144, -2139062144),
-                    parent: (396272614309760, -1835887982),
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: I32(1616928864),
                 },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (4611565701672637074, -1835887982),
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
                 },
-                Map {
-                    site: 109,
-                    container_idx: 146,
-                    key: 146,
-                    value: I32(-1835887982),
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 255,
+                    value: I32(7),
                 },
-                SyncAll,
-                Tree {
-                    site: 50,
-                    container_idx: 50,
-                    action: TreeAction::Move,
-                    target: (10561664796272530066, -1842703726),
-                    parent: (10561665234359194258, -1835887982),
+                Text {
+                    site: 97,
+                    container_idx: 225,
+                    pos: 97,
+                    value: 24929,
+                    is_del: false,
                 },
-                Tree {
-                    site: 146,
-                    container_idx: 50,
-                    action: TreeAction::Move,
-                    target: (10532954786734707346, -1835887982),
-                    parent: (7523544104899215488, 92264),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194257, -1835887982),
-                    parent: (71825597094072978, 708796507),
-                },
-                Tree {
-                    site: 128,
-                    container_idx: 128,
-                    action: TreeAction::Move,
-                    target: (9259542123273814063, -2139062144),
-                    parent: (7523377977694912640, -1835925503),
-                },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, -1835887982),
-                    parent: (10561665234359194258, -1835909121),
-                },
-                Tree {
+            ],
+        );
+    }
+
+    #[test]
+    fn notify_causal_order_check() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
                     site: 1,
                     container_idx: 0,
-                    action: TreeAction::Move,
-                    target: (10561665234359194258, 1073713810),
-                    parent: (395994148803218, 1704104557),
+                    pos: 0,
+                    value: 38912,
+                    is_del: false,
                 },
-                Tree {
-                    site: 146,
-                    container_idx: 146,
-                    action: TreeAction::Move,
-                    target: (10561664787682595474, -1835887982),
-                    parent: (4611565701672637074, 848466578),
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 138,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+            ],
+        )
+    }
+
+    #[test]
+    fn test() {
+        arbtest::builder()
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .run(|u| prop(u, 2))
+    }
+
+    #[test]
+    fn test_3sites() {
+        arbtest::builder()
+            .budget_ms((100 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10) as u64)
+            .run(|u| prop(u, 3))
+    }
+
+    #[test]
+    fn obs() {
+        test_multi_sites(
+            2,
+            &mut [List {
+                site: 1,
+                container_idx: 255,
+                key: 255,
+                value: Container(C::List),
+            }],
+        );
+    }
+
+    #[test]
+    fn obs_text() {
+        test_multi_sites(
+            5,
+            &mut [Text {
+                site: 0,
+                container_idx: 0,
+                pos: 0,
+                value: 13756,
+                is_del: false,
+            }],
+        )
+    }
+
+    #[test]
+    fn obs_map() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 225,
+                    container_idx: 233,
+                    key: 234,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 233,
+                    key: 233,
+                    value: I32(16777215),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn deleted_container() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1734829928),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn should_notify() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                Text {
+                    site: 4,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn hierarchy() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 3,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::Text),
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 4,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn apply_directly() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                Text {
+                    site: 4,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 39064,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn find_path_for_deleted_container() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 1,
+                    container_idx: 1,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 4,
+                    container_idx: 1,
+                    key: 9,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn list_unknown() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 139,
+                    container_idx: 133,
+                    key: 32,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 166,
+                    container_idx: 127,
+                    key: 207,
+                    value: Null,
+                },
+                Text {
+                    site: 203,
+                    container_idx: 105,
+                    pos: 87,
+                    value: 52649,
+                    is_del: false,
+                },
+                List {
+                    site: 122,
+                    container_idx: 137,
+                    key: 41,
+                    value: Container(C::List),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn path_issue() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn unknown_1() {
+        test_multi_sites(
+            5,
+            &mut [
+                SyncAll,
+                Map {
+                    site: 32,
+                    container_idx: 0,
+                    key: 110,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 90,
+                    container_idx: 90,
+                    key: 90,
+                    value: I32(5921392),
+                },
+                Text {
+                    site: 92,
+                    container_idx: 140,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                SyncAll,
+            ],
+        );
+    }
+
+    #[test]
+    fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 2,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 3,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 0,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 1,
+                    value: Container(C::Map),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn map_apply() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 255,
+                    value: Container(C::Map),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn maybe_because_of_hierarchy() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Sync { from: 1, to: 2 },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 1,
+                    container_idx: 2,
+                    pos: 0,
+                    value: 45232,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn checkout_error() {
+        test_multi_sites(
+            2,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn unknown() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 152,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 2,
+                    is_del: true,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Sync { from: 2, to: 3 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 28,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 41,
+                    value: 45232,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 39064,
+                    is_del: false,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-1734829928),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn list_slice_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 1,
+                    container_idx: 1,
+                    key: 37,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn utf16_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 2,
+                    is_del: true,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn merge_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 39064,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 2,
+                    is_del: true,
                 },
             ],
         )
@@ -1267,10 +1742,5 @@ mod failed_tests {
     #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
-    }
-
-    #[ctor::ctor]
-    fn init_color_backtrace() {
-        color_backtrace::install();
     }
 }

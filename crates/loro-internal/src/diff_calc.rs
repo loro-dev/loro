@@ -1,11 +1,10 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::{Deref, DerefMut},
-};
+use std::collections::BTreeSet;
+pub(super) mod tree;
+pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasIdSpan, PeerID, TreeID, DELETED_TREE_ROOT, ID};
+use loro_common::{HasIdSpan, PeerID, TreeID, ID};
 
 use crate::{
     change::Lamport,
@@ -458,7 +457,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct TreeDiffCalculator {
-    nodes: BTreeSet<CompactTreeNode>,
+    // nodes: BTreeSet<CompactTreeNode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -480,6 +479,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
+        // TODO: container id
         let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
         let node = CompactTreeNode {
             lamport: op.lamport(),
@@ -488,14 +488,8 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             target: *target,
             parent: *parent,
         };
-        let mut cache_lock = oplog.tree_parent_cache.lock().unwrap();
-        match cache_lock.add_cache(&node) {
-            Ok(_) => {}
-            Err(_) => {
-                // println!("gg {:?}", node);
-            }
-        }
-        self.nodes.insert(node);
+        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
+        tree_cache.add_node(&node);
     }
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
@@ -507,12 +501,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         from: &crate::VersionVector,
         to: &crate::VersionVector,
     ) -> Diff {
-        let tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        let debug = false;
-
-        if debug {
-            println!("from {:?} to {:?}", from, to);
-        }
+        debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers_inner;
@@ -527,196 +516,63 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         };
         let common_ancestors = oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-        if debug {
-            println!("lca vv {:?}", lca_vv);
-        }
-        let mut latest_vv = lca_vv.clone();
-        let mut need_revert_ops = Vec::new();
-        let mut apply_ops = Vec::new();
-        for node in self.nodes.iter() {
-            let id = ID {
-                peer: node.peer,
-                counter: node.counter,
-            };
+        debug_log::debug_log!("lca vv {:?}", lca_vv);
 
-            if from.includes_id(id) && !lca_vv.includes_id(id) {
-                need_revert_ops.push(node);
-                latest_vv.set_end(id);
-            }
-            if to.includes_id(id) && !lca_vv.includes_id(id) {
-                apply_ops.push(node)
-            }
-        }
+        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
+        let diff = tree_cache.diff(from, to, &lca_vv);
+        debug_log::debug_log!("\ndiff {:?}", diff);
 
-        let mut diff = Vec::new();
+        Diff::Tree(diff)
+        // let debug = false;
 
-        if debug {
-            println!("cache {:?}", tree_cache);
-        }
-        while let Some(node) = need_revert_ops.pop() {
-            let target = node.target;
-            let old_parent = tree_cache.get_old_parent(node, from);
-            if debug {
-                println!(
-                    "{:?} old parent {:?}   lamport {}",
-                    target, old_parent, node.lamport
-                );
-            }
-            diff.push((target, old_parent));
-        }
-        if debug {
-            println!("\nrevert op {:?}", diff);
-        }
+        // if debug {
+        //     println!("lca vv {:?}", lca_vv);
+        // }
+        // let mut latest_vv = lca_vv.clone();
+        // let mut need_revert_ops = Vec::new();
+        // let mut apply_ops = Vec::new();
+        // for node in self.nodes.iter() {
+        //     let id = ID {
+        //         peer: node.peer,
+        //         counter: node.counter,
+        //     };
 
-        for node in apply_ops {
-            diff.push((node.target, node.parent));
-        }
-        if debug {
-            println!("\ndiff {:?}", diff);
-        }
+        //     if from.includes_id(id) && !lca_vv.includes_id(id) {
+        //         need_revert_ops.push(node);
+        //         latest_vv.set_end(id);
+        //     }
+        //     if to.includes_id(id) && !lca_vv.includes_id(id) {
+        //         apply_ops.push(node)
+        //     }
+        // }
 
-        Diff::Tree(TreeDelta { diff })
-    }
-}
+        // let mut diff = Vec::new();
 
-#[derive(Debug, Default)]
-pub struct TreeParentCache {
-    cache: Cache,
-    visited: FxHashSet<(Lamport, PeerID, Counter)>,
-}
+        // if debug {
+        //     println!("cache {:?}", tree_cache);
+        // }
+        // while let Some(node) = need_revert_ops.pop() {
+        //     let target = node.target;
+        //     let old_parent = tree_cache.get_old_parent(node, from);
+        //     if debug {
+        //         println!(
+        //             "{:?} old parent {:?}   lamport {}",
+        //             target, old_parent, node.lamport
+        //         );
+        //     }
+        //     diff.push((target, old_parent));
+        // }
+        // if debug {
+        //     println!("\nrevert op {:?}", diff);
+        // }
 
-#[derive(Default)]
-struct Cache(FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>);
+        // for node in apply_ops {
+        //     diff.push((node.target, node.parent));
+        // }
+        // if debug {
+        //     println!("\ndiff {:?}", diff);
+        // }
 
-impl core::fmt::Debug for Cache {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.write_str("{\n")?;
-        for (k, v) in self.0.iter() {
-            f.write_str(&format!("  {:?}:", k))?;
-            f.write_str("{\n")?;
-            for (k, v) in v.iter() {
-                f.write_str(&format!("    {:?}:{:?}\n", k, v))?;
-            }
-            f.write_str("  }\n")?;
-        }
-        f.write_str("}")?;
-        Ok(())
-    }
-}
-
-impl Deref for Cache {
-    type Target = FxHashMap<TreeID, BTreeMap<(Lamport, PeerID, Counter), Option<TreeID>>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Cache {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl TreeParentCache {
-    pub(super) fn add_cache(&mut self, node: &CompactTreeNode) -> Result<(), ()> {
-        if self
-            .visited
-            .contains(&(node.lamport, node.peer, node.counter))
-        {
-            return Ok(());
-        }
-        self.visited.insert((node.lamport, node.peer, node.counter));
-        if let Some(parent) = node.parent {
-            let nodes = self.is_ancestor_of(node.target, parent);
-            if !nodes.is_empty() {
-                let (id, n) = nodes
-                    .into_iter()
-                    .map(|n| {
-                        let id = self
-                            .cache
-                            .get(&n)
-                            .and_then(|n| n.last_key_value())
-                            .map(|(k, _)| *k)
-                            .unwrap();
-                        (id, n)
-                    })
-                    .max()
-                    .unwrap();
-                if id > (node.lamport, node.peer, node.counter) {
-                    // the last one will cause cycle move, add new old parent for this lamport time
-                    let len = self.cache.get_mut(&n).unwrap().len();
-                    let p = if len > 1 {
-                        let (_, old_parent) =
-                            self.cache.get(&n).unwrap().iter().rev().nth(1).unwrap();
-                        *old_parent
-                    } else {
-                        DELETED_TREE_ROOT
-                    };
-                    self.cache
-                        .get_mut(&n)
-                        .unwrap()
-                        .insert((node.lamport, node.peer, node.counter), p);
-                    // println!("REMOVE PARENT {:?}", p.unwrap().1)
-                } else {
-                    return Err(());
-                }
-            }
-        }
-
-        let entry = self
-            .cache
-            .entry(node.target)
-            .or_insert_with(BTreeMap::default);
-        if let Some((_, v)) = entry.last_key_value() {
-            if *v != node.parent {
-                entry.insert((node.lamport, node.peer, node.counter), node.parent);
-            }
-        } else {
-            entry.insert((node.lamport, node.peer, node.counter), node.parent);
-        }
-
-        Ok(())
-    }
-
-    fn get_old_parent(&self, node: &CompactTreeNode, from: &VersionVector) -> Option<TreeID> {
-        let mut old_parent = DELETED_TREE_ROOT;
-        if let Some(cache) = self.cache.get(&node.target) {
-            for (id, parent) in cache.iter().rev() {
-                if from.includes_id(ID {
-                    peer: id.1,
-                    counter: id.2,
-                }) && *id < (node.lamport, node.peer, node.counter)
-                {
-                    old_parent = *parent;
-                    break;
-                }
-            }
-        }
-        old_parent
-    }
-
-    fn is_ancestor_of(&self, maybe_ancestor: TreeID, mut node_id: TreeID) -> Vec<TreeID> {
-        if maybe_ancestor == node_id {
-            return vec![node_id];
-        }
-
-        let mut ans = vec![node_id];
-        loop {
-            let parent = self
-                .cache
-                .get(&node_id)
-                .and_then(|n| n.last_key_value())
-                .and_then(|(_, p)| *p);
-
-            match parent {
-                Some(parent_id) if parent_id == maybe_ancestor => return ans,
-                Some(parent_id) if parent_id == node_id => panic!("loop detected"),
-                Some(parent_id) => {
-                    node_id = parent_id;
-                    ans.push(parent_id);
-                }
-                None => return vec![],
-            }
-        }
+        // Diff::Tree(TreeDelta { diff })
     }
 }
