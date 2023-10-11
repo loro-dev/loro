@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 pub(super) mod tree;
 pub(super) use tree::TreeDiffCache;
 
@@ -10,7 +9,7 @@ use crate::{
     change::Lamport,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
     dag::DagUtils,
-    delta::{MapDelta, MapValue, TreeDelta},
+    delta::{MapDelta, MapValue},
     event::Diff,
     id::Counter,
     op::RichOp,
@@ -469,6 +468,24 @@ pub(super) struct CompactTreeNode {
     pub(super) parent: Option<TreeID>,
 }
 
+impl TreeDiffCalculator {
+    fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
+        frontiers
+            .iter()
+            .map(|id| oplog.get_change_at(*id).map(|c| c.lamport).unwrap())
+            .min()
+            .unwrap_or(0)
+    }
+
+    fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
+        frontiers
+            .iter()
+            .map(|id| oplog.get_change_at(*id).map(|c| c.lamport).unwrap())
+            .max()
+            .unwrap_or(Lamport::MAX)
+    }
+}
+
 // TODO: tree
 impl DiffCalculatorTrait for TreeDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
@@ -504,75 +521,31 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
-        let from_frontiers_inner;
-        let to_frontiers_inner;
-        let from_frontiers = {
-            from_frontiers_inner = Some(from.to_frontiers(&oplog.dag));
-            from_frontiers_inner.as_ref().unwrap()
-        };
-        let to_frontiers = {
-            to_frontiers_inner = Some(to.to_frontiers(&oplog.dag));
-            to_frontiers_inner.as_ref().unwrap()
-        };
-        let common_ancestors = oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        let from_frontiers = from.to_frontiers(&oplog.dag);
+        let to_frontiers = to.to_frontiers(&oplog.dag);
+        let common_ancestors = oplog
+            .dag
+            .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
         debug_log::debug_log!("lca vv {:?}", lca_vv);
 
         let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        let diff = tree_cache.diff(from, to, &lca_vv);
+        let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+        let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
+        let from_min_lamport = self.get_min_lamport_by_frontiers(&from_frontiers, oplog);
+        let from_max_lamport = self.get_max_lamport_by_frontiers(&from_frontiers, oplog);
+        let diff = tree_cache.diff(
+            from,
+            to,
+            &lca_vv,
+            to_max_lamport,
+            lca_min_lamport,
+            from_min_lamport,
+            from_max_lamport,
+        );
         debug_log::debug_log!("\ndiff {:?}", diff);
 
         Diff::Tree(diff)
-        // let debug = false;
-
-        // if debug {
-        //     println!("lca vv {:?}", lca_vv);
-        // }
-        // let mut latest_vv = lca_vv.clone();
-        // let mut need_revert_ops = Vec::new();
-        // let mut apply_ops = Vec::new();
-        // for node in self.nodes.iter() {
-        //     let id = ID {
-        //         peer: node.peer,
-        //         counter: node.counter,
-        //     };
-
-        //     if from.includes_id(id) && !lca_vv.includes_id(id) {
-        //         need_revert_ops.push(node);
-        //         latest_vv.set_end(id);
-        //     }
-        //     if to.includes_id(id) && !lca_vv.includes_id(id) {
-        //         apply_ops.push(node)
-        //     }
-        // }
-
-        // let mut diff = Vec::new();
-
-        // if debug {
-        //     println!("cache {:?}", tree_cache);
-        // }
-        // while let Some(node) = need_revert_ops.pop() {
-        //     let target = node.target;
-        //     let old_parent = tree_cache.get_old_parent(node, from);
-        //     if debug {
-        //         println!(
-        //             "{:?} old parent {:?}   lamport {}",
-        //             target, old_parent, node.lamport
-        //         );
-        //     }
-        //     diff.push((target, old_parent));
-        // }
-        // if debug {
-        //     println!("\nrevert op {:?}", diff);
-        // }
-
-        // for node in apply_ops {
-        //     diff.push((node.target, node.parent));
-        // }
-        // if debug {
-        //     println!("\ndiff {:?}", diff);
-        // }
-
-        // Diff::Tree(TreeDelta { diff })
     }
 }

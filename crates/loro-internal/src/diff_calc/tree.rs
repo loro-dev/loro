@@ -115,6 +115,10 @@ impl TreeDiffCache {
         from: &VersionVector,
         to: &VersionVector,
         lca: &VersionVector,
+        to_max_lamport: Lamport,
+        lca_min_lamport: Lamport,
+        from_min_lamport: Lamport,
+        from_max_lamport: Lamport,
     ) -> TreeDelta {
         // TODO: calc min max lamport
         // println!("\nFROM {:?} TO {:?} LCA {:?}", from, to, lca);
@@ -123,14 +127,20 @@ impl TreeDiffCache {
         //     "current vv {:?}  all vv {:?}",
         //     self.current_version, self.all_version
         // );
-        self.calc_diff(to, lca)
+        self.calc_diff(to, lca, to_max_lamport, lca_min_lamport)
     }
 
-    fn calc_diff(&mut self, to: &VersionVector, lca: &VersionVector) -> TreeDelta {
+    fn calc_diff(
+        &mut self,
+        to: &VersionVector,
+        lca: &VersionVector,
+        to_max_lamport: Lamport,
+        lca_min_lamport: Lamport,
+    ) -> TreeDelta {
         let debug = false;
 
         let mut diff = Vec::new();
-        let revert_ops = self.retreat(lca, 0);
+        let revert_ops = self.retreat(lca, lca_min_lamport);
         for op in revert_ops.iter().sorted().rev() {
             if op.effected {
                 let old_parent = self.get_parent(op.target);
@@ -142,7 +152,7 @@ impl TreeDiffCache {
             println!("revert diff {:?}", diff);
         }
 
-        let apply_ops = self.forward(to, Lamport::MAX);
+        let apply_ops = self.forward(to, to_max_lamport);
         if debug {
             println!("apply ops {:?}", apply_ops);
         }
