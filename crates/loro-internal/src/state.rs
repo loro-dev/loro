@@ -491,7 +491,6 @@ impl DocState {
                     "value".into() => LoroValue::Map(map)
                 )))
             }
-            // TODO: tree
             _ => LoroValue::Map(Arc::new(fx_map!(
                 "cid".into() => cid_str,
                 "value".into() => value

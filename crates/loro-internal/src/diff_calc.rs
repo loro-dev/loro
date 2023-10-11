@@ -519,7 +519,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
-    // TODO: tree
     fn calculate_diff(
         &mut self,
         oplog: &OpLog,
