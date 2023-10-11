@@ -69,7 +69,9 @@ impl TreeState {
             }
             return Ok(());
         };
-
+        if !self.contains(parent) {
+            return Err(LoroError::TreeNodeParentNotFound);
+        }
         if contained {
             if self.is_ancestor_of(&target, &parent) {
                 return Err(LoroError::CyclicMoveError);
@@ -113,6 +115,9 @@ impl TreeState {
                 }
                 None => return false,
             }
+            if TreeID::is_deleted(Some(*node_id)) {
+                return false;
+            }
         }
     }
 
@@ -127,6 +132,10 @@ impl TreeState {
 
     pub fn contains(&self, target: TreeID) -> bool {
         self.trees.contains_key(&target)
+    }
+
+    pub fn nodes(&self) -> Vec<TreeID> {
+        self.trees.keys().copied().collect::<Vec<_>>()
     }
 
     #[cfg(feature = "test_utils")]

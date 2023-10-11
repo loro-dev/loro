@@ -794,6 +794,18 @@ impl TreeHandler {
             .get_value_by_idx(self.container_idx)
     }
 
+    pub fn nodes(&self) -> Vec<TreeID> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.nodes()
+            })
+    }
+
     #[cfg(feature = "test_utils")]
     pub fn max_counter(&self) -> i32 {
         self.state

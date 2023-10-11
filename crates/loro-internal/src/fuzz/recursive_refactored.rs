@@ -410,7 +410,13 @@ impl Actionable for Vec<Actor> {
                             *target = tree_num as u8 + 1;
                         }
                     }
-
+                    // fix move
+                    if !*is_new && !*is_del {
+                        let parents = tree.nodes();
+                        let p_idx = *parent as usize % parents.len().max(1);
+                        let p = parents[p_idx];
+                        *parent = p.counter as u8;
+                    }
                     // avoid moving self
                     if !*is_del && *target == *parent {
                         *is_del = true;
