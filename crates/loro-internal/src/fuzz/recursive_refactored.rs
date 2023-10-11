@@ -319,10 +319,10 @@ impl Tabled for Action {
                 format!("{}", site).into(),
                 format!("{}", container_idx).into(),
                 format!("{:?}", target).into(),
-                (if *is_del {
-                    "Delete".to_string()
-                } else if *is_new {
+                (if *is_new {
                     "Create".to_string()
+                } else if *is_del {
+                    "Delete".to_string()
                 } else {
                     format!("MoveTo {parent:?}")
                 })
@@ -407,7 +407,7 @@ impl Actionable for Vec<Actor> {
                     // let this_tree_num = max_counter_mapping.get(&(*site as u64)).unwrap_or(&-1) + 1;
                     if tree_num > 255 {
                         *is_new = false;
-                    } else if !max_counter_mapping.contains_key(&(*target_counter as u64)) {
+                    } else if !max_counter_mapping.contains_key(&(*target_peer as u64)) {
                         *is_new = true;
                     }
                     let tree_num = tree_num as u8;
@@ -421,11 +421,11 @@ impl Actionable for Vec<Actor> {
                     } else {
                         // target not exists
                         if *is_new {
-                            *target_counter = max_counter_mapping
+                            *target_counter = (max_counter_mapping
                                 .get(&(*target_peer as u64))
                                 .copied()
-                                .unwrap_or(-1) as u8
-                                + 1;
+                                .unwrap_or(-1)
+                                + 1) as u8;
                         }
                     }
                     let target = TreeID {
@@ -1967,14 +1967,24 @@ mod failed_tests {
     fn tree() {
         test_multi_sites(
             5,
-            &mut [Tree {
-                site: 96,
-                container_idx: 0,
-                target: (0, 0),
-                parent: (2, 0),
-                is_new: false,
-                is_del: false,
-            }],
+            &mut [
+                Tree {
+                    site: 96,
+                    container_idx: 0,
+                    target: (0, 0),
+                    parent: (255, 126),
+                    is_new: true,
+                    is_del: true,
+                },
+                Tree {
+                    site: 131,
+                    container_idx: 255,
+                    target: (0, 0),
+                    parent: (0, 238),
+                    is_new: true,
+                    is_del: true,
+                },
+            ],
         )
     }
 

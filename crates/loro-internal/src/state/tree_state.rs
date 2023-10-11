@@ -46,22 +46,22 @@ impl TreeState {
     }
 
     pub fn mov(&mut self, target: TreeID, parent: Option<TreeID>) -> Result<(), LoroError> {
-        let mut deleted = false;
+        // let mut deleted = false;
         let mut contained = false;
 
         if let Some(old_parent) = self.trees.get_mut(&target) {
-            if TreeID::is_deleted(*old_parent) {
-                deleted = true;
-            }
-            contained = !deleted && old_parent.is_some();
+            contained = true;
+            // if TreeID::is_deleted(*old_parent) {
+            //     deleted = true;
+            // }
         }
 
         let Some(parent) = parent else{
-            if deleted{
-                // the node exists but is deleted, now want to create it.
-                // keep the deleted state
-                return Ok(());
-            }
+            // if deleted{
+            //     // the node exists but is deleted, now want to create it.
+            //     // keep the deleted state
+            //     return Ok(());
+            // }
             // new root node
             self.trees.insert(target, None);
             if self.in_txn {
