@@ -46,8 +46,8 @@ pub enum Action {
     Tree {
         site: u8,
         container_idx: u8,
-        target: u8,
-        parent: u8,
+        target: (u8, u8),
+        parent: (u8, u8),
         is_new: bool,
         is_del: bool,
     },
@@ -318,13 +318,13 @@ impl Tabled for Action {
                 "tree".into(),
                 format!("{}", site).into(),
                 format!("{}", container_idx).into(),
-                format!("{}", target).into(),
+                format!("{:?}", target).into(),
                 (if *is_del {
                     "Delete".to_string()
                 } else if *is_new {
                     "Create".to_string()
                 } else {
-                    format!("MoveTo {parent}")
+                    format!("MoveTo {parent:?}")
                 })
                 .into(),
             ],
@@ -381,11 +381,12 @@ impl Actionable for Vec<Actor> {
             Action::Tree {
                 site,
                 container_idx,
-                target,
-                parent,
+                target: (target_peer, target_counter),
+                parent: (parent_peer, parent_counter),
                 is_new,
                 is_del,
             } => {
+                let parent = *site;
                 // TODO: better data
                 *site %= max_users;
                 *container_idx %= self[*site as usize].tree_containers.len().max(1) as u8;
@@ -393,41 +394,68 @@ impl Actionable for Vec<Actor> {
                     .tree_containers
                     .get(*container_idx as usize)
                 {
-                    let tree_num = tree.max_counter();
-                    if tree_num == 0 {
-                        *is_new = true;
+                    let nodes = tree.nodes();
+                    let tree_num = nodes.len();
+                    let mut max_counter_mapping = FxHashMap::default();
+                    for TreeID { peer, counter } in nodes.clone() {
+                        if let Some(c) = max_counter_mapping.get_mut(&peer) {
+                            *c = counter.max(*c);
+                        } else {
+                            max_counter_mapping.insert(peer, counter);
+                        }
                     }
+                    // let this_tree_num = max_counter_mapping.get(&(*site as u64)).unwrap_or(&-1) + 1;
                     if tree_num > 255 {
                         *is_new = false;
+                    } else if !max_counter_mapping.contains_key(&(*target_counter as u64)) {
+                        *is_new = true;
                     }
-                    *parent %= (tree_num as u8).max(1);
+                    let tree_num = tree_num as u8;
 
                     if tree.contains(TreeID {
-                        peer: 0,
-                        counter: *target as i32,
+                        peer: *target_peer as u64,
+                        counter: *target_counter as i32,
                     }) {
                         // target exists
                         *is_new = false;
                     } else {
                         // target not exists
                         if *is_new {
-                            *target = tree_num as u8 + 1;
+                            *target_counter = max_counter_mapping
+                                .get(&(*target_peer as u64))
+                                .copied()
+                                .unwrap_or(-1) as u8
+                                + 1;
                         }
                     }
+                    let target = TreeID {
+                        peer: *target_peer as u64,
+                        counter: *target_counter as i32,
+                    };
                     // fix move
                     if !*is_new && !*is_del {
-                        let parents = tree.nodes();
-                        let p_idx = *parent as usize % parents.len().max(1);
-                        let p = parents[p_idx];
-                        *parent = p.counter as u8;
+                        let p_idx = (parent % tree_num) as usize;
+                        let mut p = nodes[p_idx];
+                        let mut i = 0;
+                        while p == target {
+                            p = nodes[((parent + i) % tree_num) as usize];
+                            i += 1;
+                        }
+                        *parent_peer = p.peer as u8;
+                        *parent_counter = p.counter as u8;
                     }
                     // avoid moving self
-                    if !*is_del && *target == *parent {
+                    if !*is_del
+                        && (target.peer as u8, target.counter as u8)
+                            == (*parent_peer, *parent_counter)
+                    {
                         *is_del = true;
                     }
                 } else {
-                    *target = 0;
-                    *parent = 0;
+                    *target_peer = *site;
+                    *target_counter = 0;
+                    *parent_peer = 0;
+                    *parent_counter = 0;
                     *is_del = false;
                     *is_new = true;
                 }
@@ -761,8 +789,8 @@ impl Actionable for Vec<Actor> {
             Action::Tree {
                 site,
                 container_idx,
-                target,
-                parent,
+                target: (target_peer, target_counter),
+                parent: (parent_peer, parent_counter),
                 is_new,
                 is_del,
             } => {
@@ -777,8 +805,8 @@ impl Actionable for Vec<Actor> {
                 };
                 let mut txn = actor.loro.txn().unwrap();
                 let target = TreeID {
-                    peer: 0,
-                    counter: *target as i32,
+                    peer: *target_peer as u64,
+                    counter: *target_counter as i32,
                 };
                 if *is_new {
                     container.create_with_id(&mut txn, target).unwrap();
@@ -790,8 +818,8 @@ impl Actionable for Vec<Actor> {
                             &mut txn,
                             target,
                             TreeID {
-                                peer: 0,
-                                counter: *parent as i32,
+                                peer: *parent_peer as u64,
+                                counter: *parent_counter as i32,
                             },
                         )
                         .unwrap();
@@ -1936,14 +1964,16 @@ mod failed_tests {
     }
 
     #[test]
-    fn ddd() {
+    fn tree() {
         test_multi_sites(
             5,
-            &mut [Map {
-                site: 1,
-                container_idx: 1,
-                key: 37,
-                value: FuzzValue::I32(1),
+            &mut [Tree {
+                site: 96,
+                container_idx: 0,
+                target: (0, 0),
+                parent: (2, 0),
+                is_new: false,
+                is_del: false,
             }],
         )
     }
