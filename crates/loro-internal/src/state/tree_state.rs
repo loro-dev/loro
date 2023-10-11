@@ -34,7 +34,7 @@ struct TreeUndoItem {
 impl TreeState {
     pub fn new(idx: ContainerIdx) -> Self {
         let mut trees = FxHashMap::default();
-        trees.insert(DELETED_TREE_ROOT.unwrap(), None);
+        // trees.insert(DELETED_TREE_ROOT.unwrap(), None);
         Self {
             idx,
             trees,

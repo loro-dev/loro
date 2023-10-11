@@ -17,8 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, value::ToJson,
-    version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
+    container::idx::ContainerIdx, handler::TreeHandler, loro::LoroDoc, state::Forest,
+    value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -855,6 +855,10 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
         &**value_a.as_list().unwrap(),
         &*a_actor.list_tracker.lock().unwrap(),
     );
+    let a = a_doc.get_tree("tree");
+    let value_a = a.get_value();
+    let forest = Forest::from_tree_state(&a_actor.tree_tracker.lock().unwrap());
+    assert_eq!(&**value_a.as_string().unwrap(), &forest.to_json(),);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -958,6 +962,7 @@ mod failed_tests {
     use super::test_multi_sites;
     use super::Action;
     use super::Action::*;
+    use super::FuzzValue;
     use super::FuzzValue::*;
     use arbtest::arbitrary::{self, Unstructured};
 
@@ -1914,6 +1919,19 @@ mod failed_tests {
                     is_del: true,
                 },
             ],
+        )
+    }
+
+    #[test]
+    fn ddd() {
+        test_multi_sites(
+            5,
+            &mut [Map {
+                site: 1,
+                container_idx: 1,
+                key: 37,
+                value: FuzzValue::I32(1),
+            }],
         )
     }
 

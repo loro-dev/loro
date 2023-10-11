@@ -808,13 +808,12 @@ impl TreeHandler {
     }
 
     #[cfg(feature = "test_utils")]
-    #[cfg(feature = "test_utils")]
     pub fn create_with_id(&self, txn: &mut Transaction, tree_id: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
-                parent: TreeID::delete_root(),
+                parent: None,
             }),
             None,
             &self.state,
