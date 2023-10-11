@@ -17,7 +17,7 @@ use crate::{
         idx::ContainerIdx, list::list_op::InnerListOp, text::text_content::SliceRanges,
         IntoContainerId,
     },
-    delta::{Delta, MapValue},
+    delta::{Delta, MapValue, TreeDelta},
     event::Diff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
@@ -354,8 +354,11 @@ fn change_to_diff(
                         );
                         Diff::NewMap(crate::delta::MapDelta { updated })
                     }
-                    // TODO: tree
-                    crate::op::InnerContent::Tree(map) => todo!(),
+                    crate::op::InnerContent::Tree(tree) => {
+                        let mut diff = FxHashMap::default();
+                        diff.insert(tree.target, tree.parent);
+                        Diff::Tree(TreeDelta { diff })
+                    }
                 },
             }
         };

@@ -407,7 +407,6 @@ impl OpLog {
                     value,
                 }))
             }
-            // TODO: tree RawOp
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
         };
 

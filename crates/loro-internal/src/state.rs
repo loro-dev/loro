@@ -26,7 +26,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use text_state::TextState;
-pub(crate) use tree_state::{TreeID, TreeState};
+pub(crate) use tree_state::{Forest, TreeID, TreeState};
 
 use super::{
     arena::SharedArena,
@@ -311,7 +311,6 @@ impl DocState {
                 ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
                 ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                // TODO: Tree
                 ContainerType::Tree => LoroValue::String(Arc::new(Default::default())),
             })
     }

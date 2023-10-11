@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::TreeID;
 
-// TODO: tree id
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct TreeOp {
     pub(crate) target: TreeID,
@@ -20,7 +18,7 @@ impl HasLength for TreeOp {
 impl Sliceable for TreeOp {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(from == 0 && to == 1);
-        self.clone()
+        *self
     }
 }
 

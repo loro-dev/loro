@@ -127,8 +127,11 @@ impl<'a> OpConverter<'a> {
                     content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
                 },
             },
-            // TODO: Tree
-            crate::op::RawOpContent::Tree(tree) => todo!(),
+            crate::op::RawOpContent::Tree(tree) => Op {
+                container,
+                counter,
+                content: crate::op::InnerContent::Tree(tree),
+            },
         }
     }
 }
@@ -340,8 +343,11 @@ impl SharedArena {
                     content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
                 },
             },
-            // TODO: tree
-            crate::op::RawOpContent::Tree(tree) => todo!(),
+            crate::op::RawOpContent::Tree(tree) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Tree(tree),
+            },
         }
     }
 

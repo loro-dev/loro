@@ -535,7 +535,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         let mut updated = FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
         for (key, value) in changed {
             // TODO: if None?
-            let value = value.map(|v| v.parent).flatten();
+            let value = value.and_then(|v| v.parent);
             updated.insert(key, value);
         }
 

@@ -58,6 +58,8 @@ impl ApplyDiff for LoroValue {
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
             LoroValue::String(value) => {
+                // TODO: tree
+
                 let mut s = value.to_string();
                 for item in diff.iter() {
                     let delta = item.as_text().unwrap();
@@ -179,10 +181,7 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => {
-                                // TODO: tree
-                                todo!()
-                            }
+                            TypeHint::Tree => LoroValue::String(Arc::new(String::new())),
                         })
                     }
                     Index::Seq(index) => {
@@ -205,10 +204,7 @@ fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
             crate::ContainerType::Text => LoroValue::String(Default::default()),
             crate::ContainerType::Map => LoroValue::Map(Default::default()),
             crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Tree => {
-                // TODO: tree
-                todo!()
-            }
+            crate::ContainerType::Tree => LoroValue::String(Default::default()),
         }
     } else {
         v.clone()
@@ -223,8 +219,9 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, TreeDelta},
         event::{Diff, Index},
+        state::TreeID,
         LoroValue,
     };
 
@@ -279,9 +276,15 @@ pub mod wasm {
             // create a obj
             let obj = Object::new();
             match value {
-                Diff::Tree(_) => {
-                    // TODO: tree
-                    todo!()
+                Diff::Tree(tree) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("tree"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
                 }
                 Diff::List(list) => {
                     // set type as "list"
@@ -369,6 +372,27 @@ pub mod wasm {
             };
 
             // convert object to js value
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<TreeID> for JsValue {
+        fn from(value: TreeID) -> Self {
+            let TreeID { peer, counter } = value;
+            let obj = Object::new();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("peer"), &JsValue::from(peer)).unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("counter"), &JsValue::from(counter))
+                .unwrap();
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<TreeDelta> for JsValue {
+        fn from(value: TreeDelta) -> Self {
+            let obj = Object::new();
+            for (key, value) in value.diff.into_iter() {
+                js_sys::Reflect::set(&obj, &key.into(), &value.into()).unwrap();
+            }
             obj.into_js_result().unwrap()
         }
     }
