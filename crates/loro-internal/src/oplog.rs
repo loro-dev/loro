@@ -5,14 +5,17 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
+use std::sync::Mutex;
 
 use fxhash::FxHashMap;
+use loro_common::TreeID;
 use rle::{HasLength, RleVec};
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
+use crate::diff_calc::TreeParentCache;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
@@ -46,6 +49,8 @@ pub struct OpLog {
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
+
+    pub(crate) tree_parent_cache: Mutex<TreeParentCache>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -78,6 +83,7 @@ impl Clone for OpLog {
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
+            tree_parent_cache: Default::default(),
         }
     }
 }
@@ -148,6 +154,7 @@ impl OpLog {
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
+            tree_parent_cache: Default::default(),
         }
     }
 

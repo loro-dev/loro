@@ -2134,6 +2134,123 @@ mod failed_tests {
         )
     }
 
+    #[test]
+    fn tree_not_latest_cache() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 6,
+                    container_idx: 249,
+                    pos: 1,
+                    value: 59136,
+                    is_del: false,
+                },
+                Tree {
+                    site: 3,
+                    container_idx: 7,
+                    action: TreeAction::Delete,
+                    target: (6221254864071514616, 1448498774),
+                    parent: (10561665233348613718, -1835887982),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10538422658059637394, 842175122),
+                    parent: (10561665234359194165, -1835888084),
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Move,
+                    target: (10777884193502357608, 1643550101),
+                    parent: (16645306395562868862, -1),
+                },
+                SyncAll,
+                Text {
+                    site: 39,
+                    container_idx: 1,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 249,
+                    action: TreeAction::Create,
+                    target: (8394148497429324032, 754974784),
+                    parent: (7523309629210296575, -2139062168),
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Move,
+                    target: (9290786945552646272, -8355712),
+                    parent: (10561504082183874664, -1835887982),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561665234359194258, -1835887982),
+                    parent: (10561665234359194258, -1842572654),
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Delete,
+                    target: (13587923031776847976, -1785358958),
+                    parent: (142396720129401334, -6400),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 97,
+                    key: 39,
+                    value: Null,
+                },
+                Tree {
+                    site: 149,
+                    container_idx: 0,
+                    action: TreeAction::Delete,
+                    target: (9079702791598964738, 16500),
+                    parent: (4566750081992949760, 1751672874),
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Move,
+                    target: (9259542123273814144, -276725611),
+                    parent: (7523378624104267904, -16776856),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 122,
+                    container_idx: 122,
+                    pos: 122,
+                    value: 31354,
+                    is_del: false,
+                },
+                Text {
+                    site: 122,
+                    container_idx: 198,
+                    pos: 122,
+                    value: 31354,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
     use super::ContainerType as C;
     #[test]
     fn to_minify() {
