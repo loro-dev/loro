@@ -12,7 +12,6 @@ pub struct TreeDiff {
     pub action: TreeDiffItem,
 }
 
-// TODO: tree
 #[derive(Debug, Clone, Serialize)]
 pub enum TreeDiffItem {
     CreateOrRestore,
@@ -23,11 +22,11 @@ pub enum TreeDiffItem {
 impl From<(TreeID, Option<TreeID>)> for TreeDiff {
     fn from(value: (TreeID, Option<TreeID>)) -> Self {
         let (target, parent) = value;
-        let action = if parent.is_some() {
+        let action = if let Some(p) = parent {
             if TreeID::is_deleted(parent) {
                 TreeDiffItem::Delete
             } else {
-                TreeDiffItem::Move(parent.unwrap())
+                TreeDiffItem::Move(p)
             }
         } else {
             TreeDiffItem::CreateOrRestore

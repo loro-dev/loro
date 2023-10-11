@@ -972,11 +972,12 @@ mod test {
         use std::sync::Arc;
         let loro = LoroDoc::new();
         let tree = loro.get_tree("root");
-        // loro.subscribe_deep(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
+        let text = loro.get_text("text");
         loro.with_txn(|txn| {
             let id = tree.create(txn)?;
-            let id2 = tree.create(txn)?;
             tree.insert_meta(txn, id, "a", 1.into())?;
+            text.insert(txn, 0, "abc")?;
+            let _id2 = tree.create(txn)?;
             tree.insert_meta(txn, id, "b", 2.into())?;
             Ok(id)
         })

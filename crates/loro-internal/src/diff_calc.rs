@@ -483,7 +483,11 @@ impl TreeDiffCalculator {
             .map(|id| {
                 oplog
                     .get_change_at(*id)
-                    .map(|c| c.lamport + c.ops().len() as u32 - 1)
+                    .map(|c| {
+                        let change_counter = c.id.counter as u32;
+                        c.lamport + c.ops().last().map(|op| op.counter).unwrap_or(0) as u32
+                            - change_counter
+                    })
                     .unwrap()
             })
             .max()
@@ -491,7 +495,6 @@ impl TreeDiffCalculator {
     }
 }
 
-// TODO: tree
 impl DiffCalculatorTrait for TreeDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
 
