@@ -47,10 +47,10 @@ impl TreeState {
         let mut contained = false;
 
         if let Some(old_parent) = self.trees.get_mut(&target) {
-            contained = old_parent.is_some();
             if TreeID::is_deleted(*old_parent) {
                 deleted = true;
             }
+            contained = !deleted && old_parent.is_some();
         }
 
         let Some(parent) = parent else{

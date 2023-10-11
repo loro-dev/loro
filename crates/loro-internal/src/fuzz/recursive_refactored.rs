@@ -390,6 +390,9 @@ impl Actionable for Vec<Actor> {
                     .get(*container_idx as usize)
                 {
                     let tree_num = tree.max_counter();
+                    if tree_num == 0 {
+                        *is_new = true;
+                    }
                     if tree_num > 255 {
                         *is_new = false;
                     }
