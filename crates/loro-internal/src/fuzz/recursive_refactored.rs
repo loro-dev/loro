@@ -1971,7 +1971,7 @@ mod failed_tests {
     }
     use super::TreeAction;
     #[test]
-    fn tree() {
+    fn tree_cycle_move() {
         test_multi_sites(
             5,
             &mut [
@@ -2018,6 +2018,117 @@ mod failed_tests {
                     action: TreeAction::Move,
                     target: (9256093509146179978, -1778386433),
                     parent: (113280941038474645, -885325759),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_revert_multi_cache() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Move,
+                    target: (9259542123273814144, -2139062144),
+                    parent: (3242706529344356224, 1750794495),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (9259542019790350911, -2139062144),
+                    parent: (9259542123273814063, -2139062144),
+                },
+                SyncAll,
+                Tree {
+                    site: 1,
+                    container_idx: 146,
+                    action: TreeAction::Create,
+                    target: (10561665234359194258, -1835887982),
+                    parent: (10561665234359194258, -1835887982),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 63,
+                    action: TreeAction::Move,
+                    target: (10551089508041331346, -1835899502),
+                    parent: (10561665234359194258, -1835887982),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561574443045524114, 892482194),
+                    parent: (10561665234359194258, -1835887982),
+                },
+                Text {
+                    site: 128,
+                    container_idx: 128,
+                    pos: 128,
+                    value: 32896,
+                    is_del: false,
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 128,
+                    action: TreeAction::Move,
+                    target: (9259542123273814144, -2139062144),
+                    parent: (9259542123273814144, -2139062144),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_old_parent_cache() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561665234359194258, -1835887982),
+                    parent: (10561665234359718546, -1835887982),
+                },
+                Tree {
+                    site: 153,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561665234359194258, 37522),
+                    parent: (10561665234359194112, 1616941714),
+                },
+                SyncAll,
+                Text {
+                    site: 96,
+                    container_idx: 146,
+                    pos: 146,
+                    value: 37522,
+                    is_del: false,
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561664992897817178, -1835887982),
+                    parent: (6496727131078431378, 1247425114),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 192,
+                    action: TreeAction::Delete,
+                    target: (211934100111552, 1512123904),
+                    parent: (41939773041695322, -1835888128),
+                },
+                Tree {
+                    site: 146,
+                    container_idx: 146,
+                    action: TreeAction::Move,
+                    target: (10561665234359194258, -1835887982),
+                    parent: (18374686479681229458, -1839111937),
                 },
             ],
         )

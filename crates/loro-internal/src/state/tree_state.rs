@@ -140,10 +140,27 @@ impl TreeState {
         self.trees.get(&target).copied()
     }
 
+    // TODO: cache deleted
+    fn is_deleted(&self, mut target: TreeID) -> bool {
+        if TreeID::is_deleted(Some(target)) {
+            return true;
+        }
+        let mut deleted = FxHashSet::default();
+        deleted.insert(DELETED_TREE_ROOT.unwrap());
+        while let Some(parent) = self.trees.get(&target) {
+            let Some(parent) = parent else{return false;};
+            if deleted.contains(parent) {
+                return true;
+            }
+            target = *parent;
+        }
+        false
+    }
+
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
-            .filter(|&k| *k != DELETED_TREE_ROOT.unwrap())
+            .filter(|&k| !self.is_deleted(*k))
             .copied()
             .collect::<Vec<_>>()
     }
@@ -152,7 +169,7 @@ impl TreeState {
     pub fn max_counter(&self) -> i32 {
         self.trees
             .keys()
-            .filter(|&k| *k != DELETED_TREE_ROOT.unwrap())
+            .filter(|&k| !self.is_deleted(*k))
             .map(|k| k.counter)
             .max()
             .unwrap_or(0)
@@ -162,13 +179,13 @@ impl TreeState {
 impl ContainerState for TreeState {
     fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
         if let Diff::Tree(tree) = diff {
-            let mut removed_diff = FxHashSet::default();
+            let mut removed_diff = Vec::new();
             for (idx, (target, parent)) in tree.diff.iter().enumerate() {
                 if let Err(LoroError::CyclicMoveError) = self.mov(*target, *parent) {
-                    removed_diff.insert(idx);
+                    removed_diff.push(idx);
                 }
             }
-            for idx in removed_diff {
+            while let Some(idx) = removed_diff.pop() {
                 tree.diff.remove(idx);
             }
         }

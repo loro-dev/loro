@@ -547,15 +547,16 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         }
 
         let mut diff = Vec::new();
+        // if (lamport, peer) > key, old_parent will be value
         let mut cache = FxHashMap::default();
-        for (change, _vv) in oplog.iter_causally(VersionVector::default(), oplog.vv().clone()) {
+        for (change, _vv) in oplog.iter_causally(VersionVector::default(), merged_vv.clone()) {
             for op in change.ops().iter() {
                 match op.content {
                     crate::op::InnerContent::Tree(tree) => {
                         cache
                             .entry(tree.target)
                             .or_insert_with(BTreeMap::default)
-                            .insert(change.lamport, tree.parent);
+                            .insert((change.lamport, change.id), tree.parent);
                     }
                     _ => continue,
                 }
@@ -570,10 +571,18 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             // TODO: old parent
             let mut old_parent = DELETED_TREE_ROOT;
             if let Some(cache) = cache.get(&target) {
-                for (lamport, parent) in cache {
-                    if *lamport < node.lamport {
-                        old_parent = *parent
-                    } else {
+                for (id, parent) in cache.iter().rev() {
+                    if from.includes_id(id.1)
+                        && *id
+                            < (
+                                node.lamport,
+                                ID {
+                                    peer: node.peer,
+                                    counter: node.counter,
+                                },
+                            )
+                    {
+                        old_parent = *parent;
                         break;
                     }
                 }
