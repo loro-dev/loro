@@ -137,6 +137,10 @@ impl TreeState {
         self.trees.contains_key(&target)
     }
 
+    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+        self.trees.get(&target).copied()
+    }
+
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
@@ -162,9 +166,10 @@ impl ContainerState for TreeState {
             for (target, parent) in &tree.diff {
                 match parent {
                     TreeDiff::Delete => {
+                        // TODO: ???
                         self.trees.remove(target);
                     }
-                    TreeDiff::Move((_, p)) => self.mov(*target, *p)?,
+                    TreeDiff::Move(p) => self.mov(*target, *p)?,
                 };
             }
         }
@@ -174,7 +179,7 @@ impl ContainerState for TreeState {
     fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) -> LoroResult<()> {
         match op.content {
             crate::op::RawOpContent::Tree(tree) => {
-                let TreeOp { target, parent } = tree;
+                let TreeOp { target, parent, .. } = tree;
                 self.mov(target, parent)
             }
             _ => unreachable!(),
@@ -307,7 +312,7 @@ impl Forest {
             for (id, parent) in item.as_tree().unwrap().diff.iter() {
                 match parent {
                     TreeDiff::Delete => state.remove(id),
-                    TreeDiff::Move((_, p)) => state.insert(*id, *p),
+                    TreeDiff::Move(p) => state.insert(*id, *p),
                 };
             }
         }

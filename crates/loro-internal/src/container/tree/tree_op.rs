@@ -8,6 +8,16 @@ pub struct TreeOp {
     pub(crate) parent: Option<TreeID>,
 }
 
+impl TreeOp {
+    pub(crate) fn is_delete(&self) -> bool {
+        TreeID::is_deleted(self.parent)
+    }
+
+    pub(crate) fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+}
+
 impl HasLength for TreeOp {
     fn content_len(&self) -> usize {
         1

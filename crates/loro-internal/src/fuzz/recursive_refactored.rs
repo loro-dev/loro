@@ -147,7 +147,7 @@ impl Actor {
                             TreeDiff::Delete => {
                                 tree.remove(key);
                             }
-                            TreeDiff::Move((_, p)) => {
+                            TreeDiff::Move(p) => {
                                 tree.insert(*key, *p);
                             }
                         }
@@ -947,6 +947,8 @@ fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
     for (c, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
+        // println!("\nfrom {:?} checkout {:?}", actor.loro.oplog_vv(), f);
+        // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
         assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
@@ -1974,61 +1976,56 @@ mod failed_tests {
         test_multi_sites(
             5,
             &mut [
-                Tree {
-                    site: 136,
-                    container_idx: 136,
-                    target: (136, 136),
-                    parent: (136, 136),
-                    is_new: false,
+                Text {
+                    site: 251,
+                    container_idx: 1,
+                    pos: 0,
+                    value: 24576,
                     is_del: false,
                 },
+                SyncAll,
                 Tree {
-                    site: 136,
-                    container_idx: 136,
-                    target: (136, 139),
-                    parent: (136, 136),
-                    is_new: false,
-                    is_del: false,
+                    site: 141,
+                    container_idx: 141,
+                    target: (141, 141),
+                    parent: (141, 141),
+                    is_new: true,
+                    is_del: true,
                 },
-                Tree {
-                    site: 136,
-                    container_idx: 136,
-                    target: (136, 136),
-                    parent: (0, 0),
-                    is_new: false,
-                    is_del: false,
+                Map {
+                    site: 96,
+                    container_idx: 124,
+                    key: 4,
+                    value: FuzzValue::Container(C::Tree),
                 },
-                Tree {
-                    site: 0,
-                    container_idx: 136,
-                    target: (136, 136),
-                    parent: (120, 104),
-                    is_new: false,
+                Text {
+                    site: 124,
+                    container_idx: 141,
+                    pos: 141,
+                    value: 36237,
                     is_del: true,
                 },
                 Tree {
-                    site: 104,
-                    container_idx: 104,
-                    target: (1, 136),
-                    parent: (136, 136),
+                    site: 143,
+                    container_idx: 143,
+                    target: (143, 143),
+                    parent: (143, 143),
+                    is_new: true,
+                    is_del: true,
+                },
+                Tree {
+                    site: 141,
+                    container_idx: 141,
+                    target: (141, 141),
+                    parent: (141, 141),
                     is_new: false,
                     is_del: false,
                 },
-                Tree {
-                    site: 136,
-                    container_idx: 136,
-                    target: (136, 136),
-                    parent: (136, 136),
-                    is_new: false,
-                    is_del: false,
-                },
-                Tree {
-                    site: 136,
-                    container_idx: 136,
-                    target: (136, 136),
-                    parent: (96, 136),
-                    is_new: false,
-                    is_del: false,
+                Map {
+                    site: 1,
+                    container_idx: 241,
+                    key: 241,
+                    value: FuzzValue::Container(C::Tree),
                 },
             ],
         )

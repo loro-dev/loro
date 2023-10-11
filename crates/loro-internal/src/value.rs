@@ -394,7 +394,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                TreeDiff::Move((_, parent)) => {
+                TreeDiff::Move(parent) => {
                     let ty = if parent.is_none() { "create" } else { "move" };
                     js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str(ty))
                         .unwrap();

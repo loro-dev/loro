@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
-use loro_common::{HasIdSpan, PeerID, TreeID, ID};
+use loro_common::{HasIdSpan, PeerID, TreeID, DELETED_TREE_ROOT, ID};
 
 use crate::{
     change::Lamport,
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
+    dag::DagUtils,
     delta::{MapDelta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
     id::Counter,
@@ -459,7 +459,7 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 
 #[derive(Debug, Default)]
 struct TreeDiffCalculator {
-    trees: FxHashMap<TreeID, BTreeSet<CompactTreeNode>>,
+    nodes: BTreeSet<CompactTreeNode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -467,6 +467,7 @@ struct CompactTreeNode {
     lamport: Lamport,
     peer: PeerID,
     counter: Counter,
+    target: TreeID,
     parent: Option<TreeID>,
 }
 
@@ -485,12 +486,10 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             lamport: op.lamport(),
             peer: op.client_id(),
             counter: op.id_start().counter,
+            target: *target,
             parent: *parent,
         };
-        self.trees
-            .entry(*target)
-            .or_insert_with(BTreeSet::new)
-            .insert(c_node);
+        self.nodes.insert(c_node);
     }
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
@@ -498,49 +497,93 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
     // TODO: tree
     fn calculate_diff(
         &mut self,
-        _oplog: &OpLog,
+        oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
     ) -> Diff {
-        let mut changed = Vec::new();
-        for (k, g) in self.trees.iter_mut() {
-            let (peek_from, peek_to) = {
-                let mut f = None;
-                let mut t = None;
-                for v in g.iter().rev() {
-                    if t.is_none() && to.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                        t = Some(*v);
-                    }
-                    if f.is_none() && from.get(&v.peer).copied().unwrap_or(0) > v.counter {
-                        f = Some(*v);
-                    }
-                    if t.is_some() && f.is_some() {
-                        break;
-                    }
-                }
-                (f, t)
+        // let mut from = VersionVector::default();
+        // let mut to = VersionVector::default();
+        // from.insert(1, 3);
+        // to.insert(1, 1);
+        // self.current_vv.insert(1, 3);
+
+        // println!("from {:?} to {:?}", from, to);
+        let mut merged_vv = from.clone();
+        merged_vv.merge(to);
+        let from_frontiers_inner;
+        let to_frontiers_inner;
+        let from_frontiers = {
+            from_frontiers_inner = Some(from.to_frontiers(&oplog.dag));
+            from_frontiers_inner.as_ref().unwrap()
+        };
+        let to_frontiers = {
+            to_frontiers_inner = Some(to.to_frontiers(&oplog.dag));
+            to_frontiers_inner.as_ref().unwrap()
+        };
+        let common_ancestors = oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        // println!("lca vv {:?}", lca_vv);
+        let mut latest_vv = lca_vv.clone();
+        let mut need_revert_ops = Vec::new();
+        let mut apply_ops = Vec::new();
+        for node in self.nodes.iter() {
+            let id = ID {
+                peer: node.peer,
+                counter: node.counter,
             };
 
-            let tree_diff = if let Some(t) = peek_to {
-                TreeDiff::Move((t.lamport, t.parent))
-            } else {
-                TreeDiff::Delete
-            };
+            if from.includes_id(id) && !lca_vv.includes_id(id) {
+                need_revert_ops.push(node);
+                latest_vv.set_end(id);
+            }
+            if to.includes_id(id) && !lca_vv.includes_id(id) {
+                apply_ops.push(node)
+            }
+        }
 
-            match (peek_from, peek_to) {
-                (None, None) => {}
-                (None, Some(_)) => changed.push((*k, tree_diff)),
-                (Some(_), None) => changed.push((*k, tree_diff)),
-                (Some(a), Some(b)) => {
-                    if a != b {
-                        changed.push((*k, tree_diff))
+        let mut diff = Vec::new();
+        let mut cache = FxHashMap::default();
+        for (change, _vv) in oplog.iter_causally(VersionVector::default(), latest_vv) {
+            for op in change.ops().iter() {
+                match op.content {
+                    crate::op::InnerContent::Tree(tree) => {
+                        cache
+                            .entry(tree.target)
+                            .or_insert_with(BTreeMap::default)
+                            .insert(change.lamport, tree.parent);
                     }
+                    _ => continue,
                 }
             }
         }
 
-        changed.sort_by_key(|(_, v)| *v);
+        // println!("cache {:?}", cache);
+        while let Some(node) = need_revert_ops.pop() {
+            let target = node.target;
+            // TODO: old parent
+            let mut old_parent = DELETED_TREE_ROOT;
+            if let Some(cache) = cache.get(&target) {
+                for (lamport, parent) in cache {
+                    if *lamport < node.lamport {
+                        old_parent = *parent
+                    } else {
+                        break;
+                    }
+                }
+            }
+            // println!(
+            //     "{:?} old parent {:?}   lamport {}",
+            //     target, old_parent, node.lamport
+            // );
+            diff.push((target, TreeDiff::Move(old_parent)))
+        }
+        // println!("\nrevert op {:?}", diff);
 
-        Diff::Tree(TreeDelta { diff: changed })
+        for node in apply_ops {
+            diff.push((node.target, TreeDiff::Move(node.parent)))
+        }
+        // println!("\ndiff {:?}", diff);
+
+        Diff::Tree(TreeDelta { diff })
     }
 }

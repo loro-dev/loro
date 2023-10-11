@@ -363,7 +363,7 @@ fn change_to_diff(
                         Diff::NewMap(crate::delta::MapDelta { updated })
                     }
                     crate::op::InnerContent::Tree(tree) => {
-                        let tree_diff = TreeDiff::Move((lamport, tree.parent));
+                        let tree_diff = TreeDiff::Move(tree.parent);
                         Diff::Tree(TreeDelta {
                             diff: vec![(tree.target, tree_diff)],
                         })

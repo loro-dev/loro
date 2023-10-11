@@ -312,6 +312,7 @@ pub fn decode_state<'b>(
                             TreeID { peer, counter }
                         })
                     };
+                    // TODO: set state
                     tree.mov(target, parent).unwrap();
                 }
                 container_states.insert(idx, State::TreeState(tree));
@@ -768,7 +769,6 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         for op in change.ops.iter() {
             match &op.content {
                 InnerContent::Tree(TreeOp { target, parent }) => {
-                    // TODO: tree
                     let target = (
                         *peer_lookup.get(&target.peer).unwrap() as u32,
                         target.counter,
