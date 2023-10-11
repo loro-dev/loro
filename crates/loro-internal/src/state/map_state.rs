@@ -50,7 +50,7 @@ impl ContainerState for MapState {
                             value: None,
                         },
                     );
-                    return;
+                    return Ok(());
                 }
                 let value = value.unwrap();
                 if value.is_container() {

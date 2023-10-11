@@ -206,7 +206,7 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                         } else {
                             LoroValue::Null
                         };
-                        (prop, value)
+                        (prop, Some(value))
                     }
                     crate::op::RawOpContent::Map(MapSet { key, value }) => (
                         *key_to_idx.entry(key.clone()).or_insert_with(|| {
@@ -318,7 +318,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                 let content = match container_type {
                     ContainerType::Tree => {
                         let target = tree_ids[prop].into();
-                        let parent = match value {
+                        let parent = match value.unwrap() {
                             LoroValue::Null => None,
                             LoroValue::I32(i) => Some(tree_ids[i as usize].into()),
                             _ => unreachable!(),

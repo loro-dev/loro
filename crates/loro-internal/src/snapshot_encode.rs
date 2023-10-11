@@ -459,7 +459,7 @@ impl EncodedSnapshotOp {
         } else if self.value == 0 {
             None
         } else {
-            Some(self.value)
+            Some(self.value as usize)
         };
         SnapshotOp::Tree {
             target: self.prop,
@@ -513,7 +513,7 @@ impl EncodedSnapshotOp {
                     prop: target,
                     len: 0,
                     is_del,
-                    value: parent.unwrap_or(0),
+                    value: parent.unwrap_or(0) as isize,
                 }
             }
         }
