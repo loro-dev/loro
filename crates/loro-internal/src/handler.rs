@@ -760,7 +760,7 @@ impl TreeHandler {
         )
     }
 
-    pub fn insert_metadata(
+    pub fn insert_meta(
         &self,
         txn: &mut Transaction,
         target: TreeID,
@@ -779,7 +779,7 @@ impl TreeHandler {
         map.insert(txn, key, value)
     }
 
-    pub fn get_metadata(
+    pub fn get_meta(
         &self,
         txn: &mut Transaction,
         target: TreeID,
@@ -926,5 +926,19 @@ mod test {
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn tree_meta() {
+        let loro = LoroDoc::new();
+        loro.set_peer_id(1);
+        let tree = loro.get_tree("root");
+        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
+        loro.with_txn(|txn| tree.insert_meta(txn, id, "a", 123.into()))
+            .unwrap();
+        let meta = loro
+            .with_txn(|txn| tree.get_meta(txn, id, "a").map(|a| a.unwrap()))
+            .unwrap();
+        assert_eq!(meta, 123.into());
     }
 }

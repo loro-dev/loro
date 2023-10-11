@@ -98,12 +98,12 @@ LoroTree.prototype.delete = function(txn, target){
   this.__txn_delete(txn, target)
 }
 
-LoroTree.prototype.insertMetadata = function(txn, target, key, value){
-  this.__txn_insert_metadata(txn, target, key, value)
+LoroTree.prototype.insertMeta = function(txn, target, key, value){
+  this.__txn_insert_meta(txn, target, key, value)
 }
 
-LoroTree.prototype.getMetadata = function(txn, target, key){
-  this.__txn_get_metadata(txn, target, key)
+LoroTree.prototype.getMeta = function(txn, target, key){
+  this.__txn_get_meta(txn, target, key)
 }
 
 export type Value =
@@ -291,9 +291,8 @@ declare module "loro-wasm" {
     createChild(txn: Transaction, parent: TreeID): TreeID;
     delete(txn: Transaction, target: TreeID):void;
     move(txn: Transaction, target: TreeID, parent: TreeID):void;
-    insertMetadata(txn: Transaction, target: TreeID, key: string, value: Value | Prelim):void;
-    getMetadata(txn: Transaction, target: TreeID, key: string):Value;
+    insertMeta(txn: Transaction, target: TreeID, key: string, value: Value | Prelim):void;
+    getMeta(txn: Transaction, target: TreeID, key: string):Value;
     subscribe(txn: Loro, listener: Listener): number;
-    
   }
 }

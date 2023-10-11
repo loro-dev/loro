@@ -721,7 +721,7 @@ impl LoroTree {
         Ok(())
     }
 
-    pub fn __txn_insert_metadata(
+    pub fn __txn_insert_meta(
         &mut self,
         txn: &mut Transaction,
         target: JsTreeID,
@@ -730,18 +730,18 @@ impl LoroTree {
     ) -> JsResult<()> {
         let target: JsValue = target.into();
         self.0
-            .insert_metadata(txn.as_mut()?, target.into(), key, value.into())?;
+            .insert_meta(txn.as_mut()?, target.into(), key, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_get_metadata(
+    pub fn __txn_get_meta(
         &mut self,
         txn: &mut Transaction,
         target: JsTreeID,
         key: &str,
     ) -> JsResult<JsValue> {
         let target: JsValue = target.into();
-        let ans = self.0.get_metadata(txn.as_mut()?, target.into(), key)?;
+        let ans = self.0.get_meta(txn.as_mut()?, target.into(), key)?;
         Ok(ans.into())
     }
 
