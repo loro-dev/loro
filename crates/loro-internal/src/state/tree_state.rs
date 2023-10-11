@@ -231,6 +231,7 @@ impl Forest {
         for (id, parent) in state
             .iter()
             .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
+            .sorted()
         {
             if let Some(parent) = parent {
                 node_to_children

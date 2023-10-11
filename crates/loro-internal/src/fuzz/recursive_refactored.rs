@@ -410,6 +410,7 @@ impl Actionable for Vec<Actor> {
                     } else if !max_counter_mapping.contains_key(&(*target_peer as u64)) {
                         *is_new = true;
                     }
+
                     let tree_num = tree_num as u8;
 
                     if tree.contains(TreeID {
@@ -418,6 +419,9 @@ impl Actionable for Vec<Actor> {
                     }) {
                         // target exists
                         *is_new = false;
+                        if tree_num == 1 && !*is_del {
+                            *is_del = true;
+                        }
                     } else {
                         // target not exists
                         if *is_new {
@@ -432,13 +436,15 @@ impl Actionable for Vec<Actor> {
                         peer: *target_peer as u64,
                         counter: *target_counter as i32,
                     };
+
                     // fix move
                     if !*is_new && !*is_del {
-                        let p_idx = (parent % tree_num) as usize;
+                        let mut p_idx = (parent % tree_num) as usize;
                         let mut p = nodes[p_idx];
                         let mut i = 0;
                         while p == target {
-                            p = nodes[((parent + i) % tree_num) as usize];
+                            p_idx = (parent as usize + i) % tree_num as usize;
+                            p = nodes[p_idx];
                             i += 1;
                         }
                         *parent_peer = p.peer as u8;
@@ -1969,20 +1975,60 @@ mod failed_tests {
             5,
             &mut [
                 Tree {
-                    site: 96,
-                    container_idx: 0,
-                    target: (0, 0),
-                    parent: (255, 126),
-                    is_new: true,
+                    site: 136,
+                    container_idx: 136,
+                    target: (136, 136),
+                    parent: (136, 136),
+                    is_new: false,
+                    is_del: false,
+                },
+                Tree {
+                    site: 136,
+                    container_idx: 136,
+                    target: (136, 139),
+                    parent: (136, 136),
+                    is_new: false,
+                    is_del: false,
+                },
+                Tree {
+                    site: 136,
+                    container_idx: 136,
+                    target: (136, 136),
+                    parent: (0, 0),
+                    is_new: false,
+                    is_del: false,
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 136,
+                    target: (136, 136),
+                    parent: (120, 104),
+                    is_new: false,
                     is_del: true,
                 },
                 Tree {
-                    site: 131,
-                    container_idx: 255,
-                    target: (0, 0),
-                    parent: (0, 238),
-                    is_new: true,
-                    is_del: true,
+                    site: 104,
+                    container_idx: 104,
+                    target: (1, 136),
+                    parent: (136, 136),
+                    is_new: false,
+                    is_del: false,
+                },
+                Tree {
+                    site: 136,
+                    container_idx: 136,
+                    target: (136, 136),
+                    parent: (136, 136),
+                    is_new: false,
+                    is_del: false,
+                },
+                Tree {
+                    site: 136,
+                    container_idx: 136,
+                    target: (136, 136),
+                    parent: (96, 136),
+                    is_new: false,
+                    is_del: false,
                 },
             ],
         )
