@@ -959,7 +959,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}]}"#,
+            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}],"deleted":[]}"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();
