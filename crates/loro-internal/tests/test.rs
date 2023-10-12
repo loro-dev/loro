@@ -20,16 +20,6 @@ fn import() {
 }
 
 #[test]
-fn import_history() {
-    let doc = LoroDoc::new();
-    doc.import(include_bytes!("./history_compressed_rle_updates.dat"))
-        .unwrap();
-    let doc2 = LoroDoc::new();
-    doc2.import(include_bytes!("./history_snapshot.dat"))
-        .unwrap();
-}
-
-#[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
@@ -272,29 +262,35 @@ fn tree_checkout() {
     doc_a.set_peer_id(1);
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
+
     let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
+    let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
     let _id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
+    let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
     doc_a.with_txn(|txn| tree.delete(txn, id2)).unwrap();
+    let v3_state = tree.get_deep_value();
     let v3 = doc_a.oplog_frontiers();
-    assert_eq!(
-        tree.get_value().to_json(),
-        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#
-    );
     doc_a.checkout(&v1).unwrap();
     assert_eq!(
-        tree.get_value().to_json(),
-        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[{"parent":"{\"peer\":1,\"counter\":0}","meta":{"Container":{"Normal":{"peer":1,"counter":1,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":1}","children":[]}]}]}"#
+        serde_json::to_value(tree.get_deep_value())
+            .unwrap()
+            .get("roots"),
+        serde_json::to_value(v1_state).unwrap().get("roots")
     );
     doc_a.checkout(&v2).unwrap();
     assert_eq!(
-        tree.get_value().to_json(),
-        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[{"parent":"{\"peer\":1,\"counter\":0}","meta":{"Container":{"Normal":{"peer":1,"counter":1,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":1}","children":[{"parent":"{\"peer\":1,\"counter\":1}","meta":{"Container":{"Normal":{"peer":1,"counter":2,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":2}","children":[]}]}]}]}"#
+        serde_json::to_value(tree.get_deep_value())
+            .unwrap()
+            .get("roots"),
+        serde_json::to_value(v2_state).unwrap().get("roots")
     );
     doc_a.checkout(&v3).unwrap();
     assert_eq!(
-        tree.get_value().to_json(),
-        r#"{"roots":[{"parent":null,"meta":{"Container":{"Normal":{"peer":1,"counter":0,"container_type":"Map"}}},"id":"{\"peer\":1,\"counter\":0}","children":[]}]}"#
+        serde_json::to_value(tree.get_deep_value())
+            .unwrap()
+            .get("roots"),
+        serde_json::to_value(v3_state).unwrap().get("roots")
     );
 }

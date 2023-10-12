@@ -52,6 +52,7 @@ impl std::fmt::Debug for ListHandler {
     }
 }
 
+///
 #[derive(Clone)]
 pub struct TreeHandler {
     container_idx: ContainerIdx,
@@ -840,14 +841,6 @@ impl TreeHandler {
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
-        // let mut value = self.get_value();
-        // let state = self.state.upgrade().unwrap();
-        // let state = state.lock().unwrap();
-        // let roots = Arc::make_mut(value.as_map_mut().unwrap())
-        //     .get_mut("roots")
-        //     .unwrap();
-        // get_meta_value(roots, &state);
-        // value
         self.state
             .upgrade()
             .unwrap()

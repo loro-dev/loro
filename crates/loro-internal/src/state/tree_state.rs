@@ -248,6 +248,8 @@ impl ContainerState for TreeState {
         self.in_txn = false;
     }
 
+    // TODO: whether the node in deleted exists in the current version
+    // when checkout to a past version, deleted may have some nodes from the future.
     fn get_value(&self) -> LoroValue {
         let forest = Forest::from_tree_state(&self.trees);
         forest.to_value()
