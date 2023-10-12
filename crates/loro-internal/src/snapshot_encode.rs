@@ -617,7 +617,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                     .map(|(target, parent)| {
                         let peer_idx = record_peer(target.peer, &mut peer_lookup);
                         let t = record_tree_id(*target, peer_idx);
-                        let p = if TreeID::is_deleted(*parent) {
+                        let p = if TreeID::is_deleted_root(*parent) {
                             Some(0)
                         } else {
                             parent.map(|p| {
@@ -774,7 +774,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                     );
                     let target_idx = *tree_id_lookup.get(&target).unwrap();
 
-                    let parent_idx = if TreeID::is_deleted(*parent) {
+                    let parent_idx = if TreeID::is_deleted_root(*parent) {
                         Some(0)
                     } else {
                         parent.map(|p| {

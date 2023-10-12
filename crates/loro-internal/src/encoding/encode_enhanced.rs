@@ -1,5 +1,5 @@
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasCounterSpan, HasLamportSpan, TreeID, DELETED_TREE_ROOT};
+use loro_common::{HasCounterSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
@@ -206,7 +206,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                 tree_ids.len()
                             });
                         let (is_none, parent_idx) = if let Some(parent) = parent {
-                            if TreeID::is_deleted(Some(parent)) {
+                            if TreeID::is_deleted_root(Some(parent)) {
                                 (false, 0)
                             } else {
                                 let parent_peer_idx = *peer_id_to_idx.get(&parent.peer).unwrap();
@@ -478,7 +478,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                         let parent = if is_del {
                             None
                         } else if insert_del_len == 0 {
-                            DELETED_TREE_ROOT
+                            TreeID::delete_root()
                         } else {
                             let parent_encoding = tree_ids[insert_del_len as usize - 1];
                             let parent = TreeID {

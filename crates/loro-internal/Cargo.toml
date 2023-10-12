@@ -60,8 +60,6 @@ doctest = false
 bench = false
 
 [features]
-# movable tree need json
-default = ["json"]
 compress = ["serde_columnar/compress"]
 # "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]

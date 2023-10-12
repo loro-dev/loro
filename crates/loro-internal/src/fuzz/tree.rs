@@ -8,7 +8,7 @@ use arbitrary::Arbitrary;
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
-use loro_common::{LoroError, LoroTreeError, TreeID, DELETED_TREE_ROOT, ID};
+use loro_common::{LoroError, LoroTreeError, TreeID, ID};
 use tabled::{TableIteratorExt, Tabled};
 
 #[allow(unused_imports)]
@@ -96,7 +96,7 @@ impl Actor {
         let app = LoroDoc::new();
         app.set_peer_id(id);
         let mut default_tree_tracker = FxHashMap::default();
-        default_tree_tracker.insert(DELETED_TREE_ROOT.unwrap(), None);
+        default_tree_tracker.insert(TreeID::delete_root().unwrap(), None);
         let mut actor = Actor {
             peer: id,
             loro: app,
@@ -172,7 +172,7 @@ impl Actor {
                                 tree.insert(target, Some(parent));
                             }
                             TreeDiffItem::Delete => {
-                                tree.insert(target, DELETED_TREE_ROOT);
+                                tree.insert(target, TreeID::delete_root());
                             }
                         }
                     }
@@ -372,6 +372,7 @@ trait Actionable {
 }
 
 impl Actor {
+    #[allow(unused)]
     fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
         match type_ {
             ContainerType::Text => self

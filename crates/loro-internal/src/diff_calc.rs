@@ -3,7 +3,7 @@ pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasIdSpan, PeerID, TreeID, ID};
+use loro_common::{HasIdSpan, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -18,6 +18,8 @@ use crate::{
     version::Frontiers,
     InternalString, VersionVector,
 };
+
+use self::tree::MoveLamportAndID;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -455,18 +457,16 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 }
 
 #[derive(Debug, Default)]
-struct TreeDiffCalculator {
-    // nodes: BTreeSet<CompactTreeNode>,
-}
+struct TreeDiffCalculator;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct CompactTreeNode {
-    pub(super) lamport: Lamport,
-    pub(super) peer: PeerID,
-    pub(super) counter: Counter,
-    pub(super) target: TreeID,
-    pub(super) parent: Option<TreeID>,
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// pub(super) struct CompactTreeNode {
+//     pub(super) lamport: Lamport,
+//     pub(super) peer: PeerID,
+//     pub(super) counter: Counter,
+//     pub(super) target: TreeID,
+//     pub(super) parent: Option<TreeID>,
+// }
 
 impl TreeDiffCalculator {
     fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
@@ -504,17 +504,19 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
-        // TODO: container id
         let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
-        let node = CompactTreeNode {
+        let node = MoveLamportAndID {
             lamport: op.lamport(),
-            peer: op.client_id(),
-            counter: op.id_start().counter,
+            id: ID {
+                peer: op.client_id(),
+                counter: op.id_start().counter,
+            },
             target: *target,
             parent: *parent,
+            effected: true,
         };
         let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        tree_cache.add_node(&node);
+        tree_cache.add_node(node);
     }
 
     fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}

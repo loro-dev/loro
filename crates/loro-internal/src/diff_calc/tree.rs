@@ -5,19 +5,20 @@ use std::{
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{CounterSpan, IdSpan, TreeID, DELETED_TREE_ROOT, ID};
+use loro_common::{CounterSpan, IdSpan, TreeID, ID};
 
 use crate::{change::Lamport, delta::TreeDelta, VersionVector};
 
-use super::CompactTreeNode;
-
+/// All information of an operation for diff calculating of movable tree.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MoveLamportAndID {
-    pub(super) lamport: Lamport,
-    pub(super) id: ID,
-    pub(super) target: TreeID,
-    pub(super) parent: Option<TreeID>,
-    pub(super) effected: bool,
+    pub(crate) lamport: Lamport,
+    pub(crate) id: ID,
+    pub(crate) target: TreeID,
+    pub(crate) parent: Option<TreeID>,
+    /// Whether this action is applied in the current version.
+    /// If this action will cause a circular reference, then this action will not be applied.
+    pub(crate) effected: bool,
 }
 
 impl core::hash::Hash for MoveLamportAndID {
@@ -30,6 +31,9 @@ impl core::hash::Hash for MoveLamportAndID {
     }
 }
 
+/// We need cache all actions of movable tree to calculate diffs between any two versions.
+///
+///
 #[derive(Debug, Default)]
 pub struct TreeDiffCache {
     cache: Cache,
@@ -70,46 +74,34 @@ impl DerefMut for Cache {
     }
 }
 
-impl CompactTreeNode {
-    fn move_lamport_id(&self) -> MoveLamportAndID {
-        MoveLamportAndID {
-            lamport: self.lamport,
-            id: self.id(),
-            target: self.target,
-            parent: self.parent,
-            effected: true,
-        }
-    }
-
-    fn id(&self) -> ID {
-        ID {
-            peer: self.peer,
-            counter: self.counter,
-        }
-    }
-}
-
 impl TreeDiffCache {
-    pub(crate) fn add_node(&mut self, node: &CompactTreeNode) {
-        if !self.all_version.includes_id(node.id()) {
-            self.pending.insert(node.move_lamport_id());
+    pub(crate) fn add_node(&mut self, node: MoveLamportAndID) {
+        if !self.all_version.includes_id(node.id) {
+            self.pending.insert(node);
             // assert len == 1
-            self.all_version.set_last(node.id());
+            self.all_version.set_last(node.id);
         }
     }
 
-    pub(crate) fn add_node_uncheck(&mut self, node: &CompactTreeNode) {
-        if !self.all_version.includes_id(node.id()) {
+    // When we cache local ops, we can apply these directly.
+    // Because importing the local op must not cause circular references, it has been checked.
+    pub(crate) fn add_node_uncheck(&mut self, node: MoveLamportAndID) {
+        if !self.all_version.includes_id(node.id) {
             self.cache
                 .entry(node.target)
                 .or_insert_with(Default::default)
-                .insert(node.move_lamport_id());
+                .insert(node);
             // assert len == 1
-            self.current_version.set_last(node.id());
-            self.all_version.set_last(node.id());
+            self.current_version.set_last(node.id);
+            self.all_version.set_last(node.id);
         }
     }
 
+    /// To calculate diff of movable tree.
+    ///
+    /// Firstly, Switch the cache version to the from version.
+    /// And then, retreat to the `lca version` of `from version` and `to version` and record every op at the same time.
+    /// Finally, apply the ops in the lamport id order. If the op will cause circular references, its `effected` will be marked false.
     pub(super) fn diff(
         &mut self,
         from: &VersionVector,
@@ -275,10 +267,10 @@ impl TreeDiffCache {
 
     /// get the parent of the first effected op
     fn get_parent(&self, tree_id: TreeID) -> Option<TreeID> {
-        if tree_id == DELETED_TREE_ROOT.unwrap() {
+        if TreeID::is_deleted_root(Some(tree_id)) {
             return None;
         }
-        let mut ans = DELETED_TREE_ROOT;
+        let mut ans = TreeID::delete_root();
         for op in self.cache.get(&tree_id).unwrap().iter().rev() {
             if op.effected {
                 ans = op.parent;

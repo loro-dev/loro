@@ -50,14 +50,15 @@ pub struct ChangeEncoding {
 struct OpEncoding {
     #[columnar(strategy = "Rle")]
     container: usize,
-    /// key index or insert/delete pos
+    /// key index or insert/delete pos or target index of tree ids
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
+    /// parent index of tree ids (0 is deleted root)
     value: Option<LoroValue>,
 }
 
 #[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) struct DepsEncoding {
     #[columnar(strategy = "Rle")]
     pub(super) client_idx: ClientIdx,
@@ -65,32 +66,33 @@ pub(super) struct DepsEncoding {
     pub(super) counter: Counter,
 }
 
-#[columnar(vec, ser, de)]
-#[derive(Debug, Copy, Clone)]
-pub(super) struct TreeIDEncoding {
-    #[columnar(strategy = "Rle")]
-    peer: PeerID,
-    #[columnar(strategy = "DeltaRle")]
-    counter: Counter,
-}
+type TreeIDEncoding = DepsEncoding;
+// #[columnar(vec, ser, de)]
+// #[derive(Debug, Copy, Clone)]
+// pub(super) struct TreeIDEncoding {
+//     #[columnar(strategy = "Rle")]
+//     peer: PeerID,
+//     #[columnar(strategy = "DeltaRle")]
+//     counter: Counter,
+// }
 
-impl From<TreeID> for TreeIDEncoding {
-    fn from(value: TreeID) -> Self {
-        Self {
-            peer: value.peer,
-            counter: value.counter,
-        }
-    }
-}
+// impl From<TreeID> for TreeIDEncoding {
+//     fn from(value: TreeID) -> Self {
+//         Self {
+//             peer: value.peer,
+//             counter: value.counter,
+//         }
+//     }
+// }
 
-impl From<TreeIDEncoding> for TreeID {
-    fn from(value: TreeIDEncoding) -> Self {
-        Self {
-            peer: value.peer,
-            counter: value.counter,
-        }
-    }
-}
+// impl From<TreeIDEncoding> for TreeID {
+//     fn from(value: TreeIDEncoding) -> Self {
+//         Self {
+//             peer: value.peer,
+//             counter: value.counter,
+//         }
+//     }
+// }
 
 impl DepsEncoding {
     pub(super) fn new(client_idx: ClientIdx, counter: Counter) -> Self {
@@ -160,7 +162,7 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
     let mut keys = Vec::new();
     let mut key_to_idx = FxHashMap::default();
     let mut tree_ids = Vec::new();
-    let mut tree_to_idx = FxHashMap::default();
+    let mut tree_id_to_idx = FxHashMap::default();
 
     let mut deps = Vec::with_capacity(change_num);
 
@@ -193,16 +195,31 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
             for content in op.contents.into_iter() {
                 let (prop, value) = match content {
                     crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
-                        let prop = *tree_to_idx.entry(target).or_insert_with(|| {
-                            tree_ids.push(target.into());
-                            tree_ids.len() - 1
+                        let target_peer_idx = *client_id_to_idx.get(&target.peer).unwrap();
+                        let target_encoding = TreeIDEncoding {
+                            client_idx: target_peer_idx,
+                            counter: target.counter,
+                        };
+                        let prop = *tree_id_to_idx.entry(target_encoding).or_insert_with(|| {
+                            tree_ids.push(target_encoding);
+                            tree_ids.len()
                         });
 
                         let value = if let Some(p) = parent {
-                            LoroValue::I32(*tree_to_idx.entry(p).or_insert_with(|| {
-                                tree_ids.push(p.into());
-                                tree_ids.len() - 1
-                            }) as i32)
+                            if TreeID::is_deleted_root(parent) {
+                                LoroValue::I32(0)
+                            } else {
+                                let p_peer_idx = *client_id_to_idx.get(&p.peer).unwrap();
+                                let p_encoding = TreeIDEncoding {
+                                    client_idx: p_peer_idx,
+                                    counter: p.counter,
+                                };
+                                let prop = *tree_id_to_idx.entry(p_encoding).or_insert_with(|| {
+                                    tree_ids.push(p_encoding);
+                                    tree_ids.len()
+                                });
+                                LoroValue::I32(prop as i32)
+                            }
                         } else {
                             LoroValue::Null
                         };
@@ -317,10 +334,24 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                 let container_type = container_id.container_type();
                 let content = match container_type {
                     ContainerType::Tree => {
-                        let target = tree_ids[prop].into();
+                        let target = tree_ids[prop - 1];
+                        let target = TreeID {
+                            peer: clients[target.client_idx as usize],
+                            counter: target.counter,
+                        };
                         let parent = match value.unwrap() {
                             LoroValue::Null => None,
-                            LoroValue::I32(i) => Some(tree_ids[i as usize].into()),
+                            LoroValue::I32(i) => {
+                                if i == 0 {
+                                    TreeID::delete_root()
+                                } else {
+                                    let p = tree_ids[i as usize - 1];
+                                    Some(TreeID {
+                                        peer: clients[p.client_idx as usize],
+                                        counter: p.counter,
+                                    })
+                                }
+                            }
                             _ => unreachable!(),
                         };
                         RawOpContent::Tree(TreeOp { target, parent })

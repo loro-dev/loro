@@ -1,8 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
-    DELETED_TREE_ROOT, ID,
+    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, VecDeque};
@@ -20,6 +19,9 @@ use crate::{
 
 use super::ContainerState;
 
+/// The state of movable tree.
+///
+/// using flat representation
 #[derive(Debug, Clone)]
 pub struct TreeState {
     pub(crate) trees: FxHashMap<TreeID, Option<TreeID>>,
@@ -27,7 +29,7 @@ pub struct TreeState {
     undo_items: Vec<TreeUndoItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct TreeUndoItem {
     target: TreeID,
     old_parent: Option<TreeID>,
@@ -36,7 +38,7 @@ struct TreeUndoItem {
 impl TreeState {
     pub fn new() -> Self {
         let mut trees = FxHashMap::default();
-        trees.insert(DELETED_TREE_ROOT.unwrap(), None);
+        trees.insert(TreeID::delete_root().unwrap(), None);
         Self {
             trees,
             in_txn: false,
@@ -66,7 +68,7 @@ impl TreeState {
             if self.in_txn {
                 self.undo_items.push(TreeUndoItem {
                     target,
-                    old_parent: DELETED_TREE_ROOT,
+                    old_parent: TreeID::delete_root(),
                 })
             }
             return Ok(());
@@ -92,7 +94,7 @@ impl TreeState {
             if self.in_txn {
                 self.undo_items.push(TreeUndoItem {
                     target,
-                    old_parent: DELETED_TREE_ROOT,
+                    old_parent: TreeID::delete_root(),
                 })
             }
         }
@@ -120,17 +122,12 @@ impl TreeState {
         }
     }
 
-    pub fn delete(&mut self, target: TreeID) {
-        // deletion never occurs CycleMoveError
-        self.mov(target, DELETED_TREE_ROOT).unwrap()
-    }
-
     pub fn iter(&self) -> Iter<'_, TreeID, Option<TreeID>> {
         self.trees.iter()
     }
 
     pub fn contains(&self, target: TreeID) -> bool {
-        if TreeID::is_deleted(Some(target)) {
+        if TreeID::is_deleted_root(Some(target)) {
             return true;
         }
         !self.is_deleted(target)
@@ -146,12 +143,12 @@ impl TreeState {
 
     // TODO: cache deleted
     fn is_deleted(&self, mut target: TreeID) -> bool {
-        if !self.trees.contains_key(&target) || TreeID::is_deleted(Some(target)) {
+        if !self.trees.contains_key(&target) || TreeID::is_deleted_root(Some(target)) {
             return true;
         }
 
         let mut deleted = FxHashSet::default();
-        deleted.insert(DELETED_TREE_ROOT.unwrap());
+        deleted.insert(TreeID::delete_root().unwrap());
         while let Some(parent) = self.trees.get(&target) {
             let Some(parent) = parent else{return false;};
             if deleted.contains(parent) {
@@ -195,7 +192,7 @@ impl ContainerState for TreeState {
                         self.trees.insert(target, Some(parent));
                     }
                     TreeDiffItem::Delete => {
-                        self.trees.insert(target, DELETED_TREE_ROOT);
+                        self.trees.insert(target, TreeID::delete_root());
                     }
                 }
             }
@@ -273,12 +270,21 @@ impl ContainerState for TreeState {
     }
 }
 
+/// Convert flatten tree structure to hierarchy for user interface.
+///
+/// ```json
+/// {
+///     "roots": [......],
+///     "deleted": [......]
+/// }
+/// ```
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Forest {
     pub roots: Vec<TreeNode>,
     deleted: Vec<TreeNode>,
 }
 
+/// The node with metadata in hierarchy tree structure.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TreeNode {
     id: TreeID,
@@ -296,11 +302,7 @@ impl Forest {
         let mut node_to_meta = FxHashMap::default();
         let mut node_to_parent = FxHashMap::default();
 
-        for (id, (parent, meta)) in state
-            .into_iter()
-            // .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
-            .sorted_by_key(|(k, _)| *k)
-        {
+        for (id, (parent, meta)) in state.into_iter().sorted_by_key(|(k, _)| *k) {
             node_to_meta.insert(id, meta);
             node_to_parent.insert(id, parent);
             if let Some(parent) = parent {
@@ -313,7 +315,7 @@ impl Forest {
 
         for root in node_to_parent
             .iter()
-            .filter(|(_, parent)| parent.is_none()) // && id != DELETED_TREE_ROOT.unwrap())
+            .filter(|(_, parent)| parent.is_none())
             .map(|(id, _)| *id)
             .sorted()
         {
@@ -356,7 +358,7 @@ impl Forest {
                 }
             }
             let root_node = id_to_node.remove(&root).unwrap();
-            if root_node.id == DELETED_TREE_ROOT.unwrap() {
+            if root_node.id == TreeID::delete_root().unwrap() {
                 forest.deleted = root_node.children;
             } else {
                 forest.roots.push(root_node);
@@ -369,11 +371,7 @@ impl Forest {
         let mut forest = Self::default();
         let mut node_to_children = FxHashMap::default();
 
-        for (id, parent) in state
-            .iter()
-            // .filter(|(_, &parent)| parent != DELETED_TREE_ROOT)
-            .sorted()
-        {
+        for (id, parent) in state.iter().sorted() {
             if let Some(parent) = parent {
                 node_to_children
                     .entry(*parent)
@@ -384,7 +382,7 @@ impl Forest {
 
         for root in state
             .iter()
-            .filter(|(_, parent)| parent.is_none()) // && id != DELETED_TREE_ROOT.unwrap())
+            .filter(|(_, parent)| parent.is_none())
             .map(|(id, _)| *id)
             .sorted()
         {
@@ -433,7 +431,7 @@ impl Forest {
                 }
             }
             let root_node = id_to_node.remove(&root).unwrap();
-            if root_node.id == DELETED_TREE_ROOT.unwrap() {
+            if root_node.id == TreeID::delete_root().unwrap() {
                 forest.deleted = root_node.children;
             } else {
                 forest.roots.push(root_node);
@@ -451,7 +449,7 @@ impl Forest {
                 stack.extend(node.children.iter())
             }
         }
-        ans.insert(DELETED_TREE_ROOT.unwrap(), (None, LoroValue::Null));
+        ans.insert(TreeID::delete_root().unwrap(), (None, LoroValue::Null));
         for root in self.deleted.iter() {
             let mut stack = vec![root];
             while let Some(node) = stack.pop() {
@@ -462,7 +460,7 @@ impl Forest {
         ans
     }
 
-    // for test
+    // for test only
     pub(crate) fn apply_diffs(&self, diff: &[Diff]) -> Self {
         let mut state = self.to_state();
         for item in diff {
@@ -481,7 +479,7 @@ impl Forest {
                         state.insert(target, (Some(parent), meta));
                     }
                     TreeDiffItem::Delete => {
-                        state.insert(target, (DELETED_TREE_ROOT, meta));
+                        state.insert(target, (TreeID::delete_root(), meta));
                     }
                 }
             }
@@ -506,6 +504,7 @@ impl Forest {
         ans.into()
     }
 
+    // for test only
     pub(crate) fn from_value(value: LoroValue) -> LoroResult<Self> {
         let mut map = Arc::try_unwrap(value.into_map().unwrap()).unwrap();
         // TODO: perf
@@ -535,6 +534,7 @@ impl Forest {
 }
 
 impl TreeNode {
+    // for test only
     fn from_value(value: LoroValue) -> Self {
         let map = value.into_map().unwrap();
         let id = map.get("id").unwrap().clone().into_string().unwrap();
@@ -589,6 +589,7 @@ impl TreeNode {
     }
 }
 
+// convert map container to LoroValue
 pub(crate) fn get_meta_value(nodes: &mut LoroValue, state: &DocState) {
     for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
@@ -647,7 +648,7 @@ mod tests {
         state.mov(ID2, Some(ID1)).unwrap();
         state.mov(ID3, Some(ID2)).unwrap();
         state.mov(ID4, Some(ID1)).unwrap();
-        state.delete(ID2);
+        state.mov(ID2, TreeID::delete_root()).unwrap();
         let roots = Forest::from_tree_state(&state.trees);
         let json = serde_json::to_string(&roots).unwrap();
         assert_eq!(
