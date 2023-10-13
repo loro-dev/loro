@@ -82,13 +82,10 @@ LoroMap.prototype.delete = function (txn, key) {
   this.__txn_delete(txn, key);
 };
 
-LoroTree.prototype.create = function(txn){
-  return this.__txn_create(txn, undefined);
+LoroTree.prototype.create = function(txn, parent){
+  return this.__txn_create(txn, parent);
 }
 
-LoroTree.prototype.createChild = function(txn, id){
-  return this.__txn_create(txn, id)
-}
 
 LoroTree.prototype.move = function(txn, target, parent){
   this.__txn_move(txn, target, parent)
@@ -300,8 +297,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroTree{
-    create(txn: Transaction): TreeID;
-    createChild(txn: Transaction, parent: TreeID): TreeID;
+    create(txn: Transaction, parent: TreeID | undefined): TreeID;
     delete(txn: Transaction, target: TreeID):void;
     move(txn: Transaction, target: TreeID, parent: TreeID):void;
     asRoot(txn: Transaction, target:TreeID):void;

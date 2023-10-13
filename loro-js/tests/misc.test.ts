@@ -360,7 +360,7 @@ describe("tree", () => {
       return tree.create(txn);
     })
     const childID = loro.transact((txn)=>{
-      return tree.createChild(txn, id);
+      return tree.create(txn, id);
     })
     console.log(typeof id);
     
