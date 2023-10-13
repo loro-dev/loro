@@ -70,7 +70,7 @@ impl TreeState {
         if self.is_ancestor_of(&target, &parent) {
             return Err(LoroTreeError::CyclicMoveError.into());
         }
-        if *self.trees.get(&target).unwrap() == Some(parent) {
+        if self.trees.get(&target).copied().flatten() == Some(parent) {
             return Ok(());
         }
         // move or delete or create children node

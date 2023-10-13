@@ -686,21 +686,18 @@ pub struct LoroTree(TreeHandler);
 
 #[wasm_bindgen]
 impl LoroTree {
-    pub fn __txn_create(&mut self, txn: &mut Transaction) -> JsResult<JsTreeID> {
-        let id = self.0.create(txn.as_mut()?)?;
-        let js_id: JsValue = id.into();
-        Ok(js_id.into())
-    }
-
-    pub fn __txn_create_children(
+    pub fn __txn_create(
         &mut self,
         txn: &mut Transaction,
-        parent: JsTreeID,
+        parent: Option<JsTreeID>,
     ) -> JsResult<JsTreeID> {
-        let parent: JsValue = parent.into();
-        let id = self
-            .0
-            .create_and_mov(txn.as_mut()?, parent.try_into().unwrap())?;
+        let id = if let Some(p) = parent {
+            let parent: JsValue = p.into();
+            self.0
+                .create_and_mov(txn.as_mut()?, parent.try_into().unwrap())?
+        } else {
+            self.0.create(txn.as_mut()?)?
+        };
         let js_id: JsValue = id.into();
         Ok(js_id.into())
     }

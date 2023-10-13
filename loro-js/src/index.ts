@@ -83,11 +83,11 @@ LoroMap.prototype.delete = function (txn, key) {
 };
 
 LoroTree.prototype.create = function(txn){
-  return this.__txn_create(txn);
+  return this.__txn_create(txn, undefined);
 }
 
 LoroTree.prototype.createChild = function(txn, id){
-  return this.__txn_create_children(txn, id)
+  return this.__txn_create(txn, id)
 }
 
 LoroTree.prototype.move = function(txn, target, parent){

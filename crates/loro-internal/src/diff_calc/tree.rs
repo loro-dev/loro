@@ -133,8 +133,7 @@ impl TreeDiffCache {
         to_max_lamport: Lamport,
         lca_min_lamport: Lamport,
     ) -> TreeDelta {
-        let debug = false;
-
+        debug_log::group!("tree calc diff");
         let mut diff = Vec::new();
         let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
         for (op, old_parent) in revert_ops.iter().sorted().rev() {
@@ -142,30 +141,21 @@ impl TreeDiffCache {
                 diff.push((op.target, *old_parent).into());
             }
         }
-        if debug {
-            println!("revert diff:");
-            for d in diff.iter() {
-                println!("    {:?}", d);
-            }
+        debug_log::debug_log!("revert diff:");
+        for d in diff.iter() {
+            debug_log::debug_log!("    {:?}", d);
         }
-
         let apply_ops = self.forward(to, to_max_lamport);
-        if debug {
-            println!("apply ops {:?}", apply_ops);
-        }
+        debug_log::debug_log!("apply ops {:?}", apply_ops);
         for op in apply_ops.into_iter() {
             let effected = self.apply(op);
             if effected {
-                if debug {
-                    println!("    target {:?} to {:?}", op.target, op.parent);
-                }
+                debug_log::debug_log!("    target {:?} to {:?}", op.target, op.parent);
+
                 diff.push((op.target, op.parent).into())
             }
         }
-        if debug {
-            println!("diff {:?}", diff);
-        }
-
+        debug_log::debug_log!("diff {:?}", diff);
         TreeDelta { diff }
     }
 

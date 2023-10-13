@@ -39,8 +39,8 @@ impl From<(TreeID, Option<TreeID>)> for TreeDiff {
 }
 
 impl TreeDelta {
-    // TODO:
+    // TODO: cannot handle this for now
     pub(crate) fn compose(&self, _x: TreeDelta) -> TreeDelta {
-        todo!();
+        unimplemented!("tree compose")
     }
 }

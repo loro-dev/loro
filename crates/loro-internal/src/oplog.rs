@@ -360,6 +360,19 @@ impl OpLog {
         changes
     }
 
+    pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
+        self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
+    }
+
+    pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
+        self.get_change_at(id)
+            .map(|c| {
+                let change_counter = c.id.counter as u32;
+                c.lamport + c.ops().last().map(|op| op.counter).unwrap_or(0) as u32 - change_counter
+            })
+            .unwrap_or(Lamport::MAX)
+    }
+
     pub fn get_change_at(&self, id: ID) -> Option<&Change> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
             if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
