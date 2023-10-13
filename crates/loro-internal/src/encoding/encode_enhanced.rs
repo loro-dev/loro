@@ -216,7 +216,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                         }
                         ListOp::Delete(span) => {
                             // span.len maybe negative
-                            (span.pos as usize, true, span.len)
+                            (span.pos as usize, true, span.signed_len)
                         }
                         ListOp::StyleStart {
                             start,
@@ -445,7 +445,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                         if is_del {
                             RawOpContent::List(ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: insert_del_len,
+                                signed_len: insert_del_len,
                             }))
                         } else {
                             match container_type {

@@ -239,7 +239,7 @@ impl TextHandler {
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
                     pos: range.start as isize,
-                    len: (range.end - range.start) as isize,
+                    signed_len: (range.end - range.start) as isize,
                 })),
                 None,
                 &self.state,
@@ -269,7 +269,7 @@ impl TextHandler {
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
                     pos: range.start as isize,
-                    len: (range.end - range.start) as isize,
+                    signed_len: (range.end - range.start) as isize,
                 })),
                 None,
                 &self.state,
@@ -398,7 +398,7 @@ impl ListHandler {
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
                 pos: pos as isize,
-                len: len as isize,
+                signed_len: len as isize,
             })),
             None,
             &self.state,

@@ -13,7 +13,12 @@ use smallvec::smallvec;
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, list::list_op::InnerListOp, IntoContainerId},
+    container::{
+        idx::ContainerIdx,
+        list::list_op::InnerListOp,
+        richtext::{richtext_state::RichtextStateChunk, AnchorType, StyleOp},
+        IntoContainerId,
+    },
     delta::{Delta, MapValue},
     event::Diff,
     handler::TextHandler,
@@ -297,60 +302,100 @@ fn change_to_diff(
     let mut diff = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
+    let mut style_op = None;
     for op in change.ops.iter() {
         let counter = op.counter;
-        let diff_op = if let Some(hint) = event_hints.get(&counter) {
-            match hint {
-                EventHint::Utf16 { pos, len } => {
-                    // only use utf16 pos & len in wasm context
-                    assert!(cfg!(feature = "wasm"));
-                    todo!()
-                }
-            }
-        } else {
-            InternalContainerDiff {
-                idx: op.container,
-                diff: match &op.content {
-                    crate::op::InnerContent::List(list) => match list {
-                        InnerListOp::Insert { slice, pos } => Diff::SeqRaw(
-                            Delta::new()
-                                .retain(*pos)
-                                .insert(SliceRanges(smallvec![slice.clone()])),
-                        ),
-                        InnerListOp::Delete(del) => Diff::SeqRaw(
-                            Delta::new()
-                                .retain(del.pos as usize)
-                                .delete(del.len as usize),
-                        ),
-                        InnerListOp::StyleStart {
-                            start,
-                            end,
-                            key,
-                            info,
-                        } => unimplemented!(),
-                        InnerListOp::StyleEnd => unimplemented!(),
-                    },
-                    crate::op::InnerContent::Map(map) => {
-                        let value = map.value.map(|v| arena.get_value(v as usize)).flatten();
-                        let mut updated: FxHashMap<_, _> = Default::default();
-                        updated.insert(
-                            map.key.clone(),
-                            MapValue {
-                                counter,
-                                value,
-                                lamport: (lamport, peer),
-                            },
-                        );
-                        Diff::NewMap(crate::delta::MapDelta { updated })
+        let diff_op =
+            if let Some(hint) = event_hints.get(&counter) {
+                match hint {
+                    EventHint::Utf16 { pos, len } => {
+                        // only use utf16 pos & len in wasm context
+                        assert!(cfg!(feature = "wasm"));
+                        todo!()
                     }
-                },
-            }
-        };
+                }
+            } else {
+                InternalContainerDiff {
+                    idx: op.container,
+                    diff: match &op.container.get_type() {
+                        ContainerType::Text => {
+                            let list = op.content.as_list().unwrap();
+                            match list {
+                                InnerListOp::Insert { slice, pos } => {
+                                    Diff::RichtextRaw(Delta::new().retain(*pos).insert(
+                                        RichtextStateChunk::new_text(arena.slice_by_unicode(
+                                            slice.0.start as usize..slice.0.end as usize,
+                                        )),
+                                    ))
+                                }
+                                InnerListOp::Delete(del) => Diff::RichtextRaw(
+                                    Delta::new().retain(del.start() as usize).delete(del.len()),
+                                ),
+                                InnerListOp::StyleStart {
+                                    start,
+                                    end,
+                                    key,
+                                    info,
+                                } => {
+                                    let new_style = Arc::new(StyleOp {
+                                        lamport,
+                                        peer,
+                                        cnt: op.counter,
+                                        key: key.clone(),
+                                        info: *info,
+                                    });
+                                    style_op = Some((new_style.clone(), *end));
+                                    Diff::RichtextRaw(Delta::new().retain(*start as usize).insert(
+                                        RichtextStateChunk::new_style(new_style, AnchorType::Start),
+                                    ))
+                                }
+                                InnerListOp::StyleEnd => {
+                                    let (style, pos) = style_op.take().unwrap();
+                                    Diff::RichtextRaw(Delta::new().retain(pos as usize).insert(
+                                        RichtextStateChunk::new_style(style, AnchorType::End),
+                                    ))
+                                }
+                            }
+                        }
+                        ContainerType::Map => {
+                            let map = op.content.as_map().unwrap();
+                            let value = map.value.and_then(|v| arena.get_value(v as usize));
+                            let mut updated: FxHashMap<_, _> = Default::default();
+                            updated.insert(
+                                map.key.clone(),
+                                MapValue {
+                                    counter,
+                                    value,
+                                    lamport: (lamport, peer),
+                                },
+                            );
+                            Diff::NewMap(crate::delta::MapDelta { updated })
+                        }
+                        ContainerType::List => {
+                            let list = op.content.as_list().unwrap();
+                            match list {
+                                InnerListOp::Insert { slice, pos } => Diff::SeqRaw(
+                                    Delta::new()
+                                        .retain(*pos)
+                                        .insert(SliceRanges(smallvec![slice.clone()])),
+                                ),
+                                InnerListOp::Delete(del) => Diff::SeqRaw(
+                                    Delta::new()
+                                        .retain(del.pos as usize)
+                                        .delete(del.signed_len as usize),
+                                ),
+                                _ => unreachable!(),
+                            }
+                        }
+                    },
+                }
+            };
 
         lamport += op.content_len() as Lamport;
         diff.push(diff_op);
     }
 
+    debug_assert!(style_op.is_none(), "style op should be closed");
     debug_dbg!(&diff);
     diff
 }

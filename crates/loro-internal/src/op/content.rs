@@ -207,7 +207,10 @@ mod test {
     #[test]
     fn fix_fields_order() {
         let remote_content = vec![
-            RawOpContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
+            RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: 0,
+                signed_len: 1,
+            })),
             RawOpContent::Map(MapSet {
                 key: "a".to_string().into(),
                 value: Some("b".to_string().into()),

@@ -176,9 +176,10 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                                 } => LoroValue::String(Arc::new(str.to_string())),
                             }),
                         ),
-                        ListOp::Delete(span) => {
-                            (span.pos as usize, Some(LoroValue::I32(span.len as i32)))
-                        }
+                        ListOp::Delete(span) => (
+                            span.pos as usize,
+                            Some(LoroValue::I32(span.signed_len as i32)),
+                        ),
                         ListOp::StyleStart {
                             start,
                             end,
@@ -280,7 +281,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                         let list_op = match value {
                             LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: len as isize,
+                                signed_len: len as isize,
                             }),
                             _ => {
                                 let slice = match value {

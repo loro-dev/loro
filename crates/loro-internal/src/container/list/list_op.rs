@@ -48,25 +48,12 @@ pub enum InnerListOp {
     StyleEnd,
 }
 
-/// `len` can be negative so that we can merge text deletions efficiently.
-/// It looks like [crate::span::CounterSpan], but how should they merge ([Mergable] impl) and slice ([Sliceable] impl) are very different
-///
-/// len cannot be zero;
-///
-/// pos: 5, len: -3 eq a range of (2, 5]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-// Note: It will be encoded into binary format, so the order of its fields should not be changed.
-pub struct DeleteSpan {
-    pub pos: isize,
-    pub len: isize,
-}
-
 impl<'a> ListOp<'a> {
     pub fn new_del(pos: usize, len: usize) -> Self {
         assert!(len != 0);
         Self::Delete(DeleteSpan {
             pos: pos as isize,
-            len: len as isize,
+            signed_len: len as isize,
         })
     }
 }
@@ -76,7 +63,7 @@ impl InnerListOp {
         assert!(len != 0);
         Self::Delete(DeleteSpan {
             pos: pos as isize,
-            len,
+            signed_len: len,
         })
     }
 
@@ -90,29 +77,45 @@ impl InnerListOp {
 
 impl HasLength for DeleteSpan {
     fn content_len(&self) -> usize {
-        self.len.unsigned_abs()
+        self.signed_len.unsigned_abs()
     }
+}
+
+/// `len` can be negative so that we can merge text deletions efficiently.
+/// It looks like [crate::span::CounterSpan], but how should they merge ([Mergable] impl) and slice ([Sliceable] impl) are very different
+///
+/// len cannot be zero;
+///
+/// pos: 5, len: -3 eq a range of (2, 5]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// Note: It will be encoded into binary format, so the order of its fields should not be changed.
+pub struct DeleteSpan {
+    pub pos: isize,
+    pub signed_len: isize,
 }
 
 impl DeleteSpan {
     pub fn new(pos: isize, len: isize) -> Self {
         debug_assert!(len != 0);
-        Self { pos, len }
+        Self {
+            pos,
+            signed_len: len,
+        }
     }
 
     #[inline(always)]
     pub fn start(&self) -> isize {
-        if self.len > 0 {
+        if self.signed_len > 0 {
             self.pos
         } else {
-            self.pos + 1 + self.len
+            self.pos + 1 + self.signed_len
         }
     }
 
     #[inline(always)]
     pub fn last(&self) -> isize {
-        if self.len > 0 {
-            self.pos + self.len - 1
+        if self.signed_len > 0 {
+            self.pos + self.signed_len - 1
         } else {
             self.pos
         }
@@ -120,8 +123,8 @@ impl DeleteSpan {
 
     #[inline(always)]
     pub fn end(&self) -> isize {
-        if self.len > 0 {
-            self.pos + self.len
+        if self.signed_len > 0 {
+            self.pos + self.signed_len
         } else {
             self.pos + 1
         }
@@ -134,17 +137,17 @@ impl DeleteSpan {
 
     #[inline(always)]
     pub fn bidirectional(&self) -> bool {
-        self.len.abs() == 1
+        self.signed_len.abs() == 1
     }
 
     #[inline(always)]
     pub fn is_reversed(&self) -> bool {
-        self.len < 0
+        self.signed_len < 0
     }
 
     #[inline(always)]
     pub fn direction(&self) -> isize {
-        if self.len > 0 {
+        if self.signed_len > 0 {
             1
         } else {
             -1
@@ -153,7 +156,7 @@ impl DeleteSpan {
 
     #[inline(always)]
     pub fn next_pos(&self) -> isize {
-        if self.len > 0 {
+        if self.signed_len > 0 {
             self.start()
         } else {
             self.start() - 1
@@ -162,11 +165,15 @@ impl DeleteSpan {
 
     #[inline(always)]
     pub fn prev_pos(&self) -> isize {
-        if self.len > 0 {
+        if self.signed_len > 0 {
             self.pos
         } else {
             self.end()
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.signed_len.unsigned_abs()
     }
 }
 
@@ -190,24 +197,24 @@ impl Mergable for DeleteSpan {
         match (self.bidirectional(), other.bidirectional()) {
             (true, true) => {
                 if self.pos == other.pos {
-                    self.len = 2;
+                    self.signed_len = 2;
                 } else if self.pos == other.pos + 1 {
-                    self.len = -2;
+                    self.signed_len = -2;
                 } else {
                     unreachable!()
                 }
             }
             (true, false) => {
                 assert!(self.pos == other.prev_pos());
-                self.len = other.len + other.direction();
+                self.signed_len = other.signed_len + other.direction();
             }
             (false, true) => {
                 assert!(self.next_pos() == other.pos);
-                self.len += self.direction();
+                self.signed_len += self.direction();
             }
             (false, false) => {
                 assert!(self.next_pos() == other.pos && self.direction() == other.direction());
-                self.len += other.len;
+                self.signed_len += other.signed_len;
             }
         }
     }
@@ -215,7 +222,7 @@ impl Mergable for DeleteSpan {
 
 impl Sliceable for DeleteSpan {
     fn slice(&self, from: usize, to: usize) -> Self {
-        if self.len > 0 {
+        if self.signed_len > 0 {
             Self::new(self.pos, to as isize - from as isize)
         } else {
             Self::new(self.pos - from as isize, from as isize - to as isize)
@@ -381,7 +388,10 @@ mod test {
             list_op
         );
 
-        let delete_span = DeleteSpan { pos: 0, len: 3 };
+        let delete_span = DeleteSpan {
+            pos: 0,
+            signed_len: 3,
+        };
         let delete_span_buf = vec![0, 6];
         assert_eq!(
             postcard::from_bytes::<DeleteSpan>(&delete_span_buf).unwrap(),

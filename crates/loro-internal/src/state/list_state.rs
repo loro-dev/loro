@@ -446,7 +446,7 @@ impl ContainerState for ListState {
                     _ => unreachable!(),
                 },
                 crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
+                    self.delete_range(del.pos as usize..del.pos as usize + del.signed_len as usize);
                 }
                 crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),

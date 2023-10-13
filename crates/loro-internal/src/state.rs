@@ -8,7 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    delta::{Delta, DeltaItem},
+    delta::{Delta, DeltaItem, StyleMeta},
     event::InternalContainerDiff,
     event::{Diff, Index},
     fx_map,
@@ -635,15 +635,10 @@ impl DocState {
 
     /// convert seq raw to text/list
     pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
-        let seq = match diff {
-            Diff::SeqRaw(seq) => seq,
-            _ => return,
-        };
-
-        match idx.get_type() {
-            ContainerType::List => {
+        match diff {
+            Diff::SeqRaw(seq) => {
+                assert_eq!(idx.get_type(), ContainerType::List);
                 let mut list: Delta<Vec<LoroValue>> = Delta::new();
-
                 for span in seq.iter() {
                     match span {
                         DeltaItem::Retain { len, .. } => {
@@ -665,9 +660,11 @@ impl DocState {
                 }
                 *diff = Diff::List(list);
             }
-            ContainerType::Map => unreachable!(),
-            ContainerType::Text => unimplemented!(),
-        }
+            Diff::RichtextRaw(seq) => {
+                unreachable!()
+            }
+            _ => {}
+        };
     }
 }
 

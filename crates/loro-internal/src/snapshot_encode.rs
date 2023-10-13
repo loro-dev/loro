@@ -729,7 +729,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::TextOrListDelete {
                                 pos: del.pos as usize,
-                                len: del.len,
+                                len: del.signed_len,
                             },
                             op.container.to_index(),
                         ));
