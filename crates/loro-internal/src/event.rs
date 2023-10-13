@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, MapDiff},
+    delta::{Delta, MapDelta, MapDiff, StyleMeta},
     op::SliceRanges,
     InternalString, LoroValue,
 };
@@ -133,9 +133,7 @@ pub enum Diff {
     SeqRaw(Delta<SliceRanges>),
     /// This always uses entity indexes.
     RichtextRaw(Delta<RichtextStateChunk>),
-    Text(Delta<String>),
-    /// @deprecated
-    Map(MapDiff<LoroValue>),
+    Text(Delta<String, StyleMeta>),
     NewMap(MapDelta),
 }
 
@@ -146,7 +144,6 @@ impl Diff {
             (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
             (Diff::SeqRaw(a), Diff::SeqRaw(b)) => Ok(Diff::SeqRaw(a.compose(b))),
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
-            (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
             (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
             (a, _) => Err(a),
         }

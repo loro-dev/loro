@@ -103,18 +103,6 @@ impl ApplyDiff for LoroValue {
             LoroValue::Map(map) => {
                 for item in diff.iter() {
                     match item {
-                        Diff::Map(diff) => {
-                            let map = Arc::make_mut(map);
-                            for v in diff.added.iter() {
-                                map.insert(v.0.to_string(), unresolved_to_collection(v.1));
-                            }
-                            for (k, _) in diff.deleted.iter() {
-                                map.remove(k.as_ref());
-                            }
-                            for (key, value) in diff.updated.iter() {
-                                map.insert(key.to_string(), unresolved_to_collection(&value.new));
-                            }
-                        }
                         Diff::NewMap(diff) => {
                             let map = Arc::make_mut(map);
                             for (key, value) in diff.updated.iter() {
@@ -149,7 +137,6 @@ impl ApplyDiff for LoroValue {
         let hint = match diff[0] {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
-            Diff::Map(_) => TypeHint::Map,
             Diff::NewMap(_) => TypeHint::Map,
             Diff::SeqRaw(_) => TypeHint::Text,
             Diff::RichtextRaw(_) => TypeHint::Richtext,
@@ -296,17 +283,12 @@ pub mod wasm {
                     )
                     .unwrap();
                     // set diff as array
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &text.into()).unwrap();
-                }
-                Diff::Map(map) => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("map"),
+                        &JsValue::from_str("diff"),
+                        &serde_wasm_bindgen::to_value(&text).unwrap(),
                     )
                     .unwrap();
-
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &map.into()).unwrap();
                 }
                 Diff::NewMap(map) => {
                     js_sys::Reflect::set(
