@@ -329,7 +329,6 @@ impl DocState {
                 self.arena.set_parent(child_idx, Some(*idx));
             }
         }
-
         if self.is_recording() {
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),

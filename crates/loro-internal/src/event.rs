@@ -148,8 +148,8 @@ impl Diff {
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
             (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
             (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
-            // TODO: tree
-            (Diff::Tree(_), Diff::Tree(_)) => todo!(),
+
+            (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }

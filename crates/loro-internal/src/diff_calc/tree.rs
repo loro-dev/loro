@@ -181,7 +181,7 @@ impl TreeDiffCache {
         self.current_version = vv.clone();
     }
 
-    // return true if it can be effected
+    /// return true if it can be effected
     fn apply(&mut self, mut node: MoveLamportAndID) -> bool {
         let mut ans = true;
         if node.parent.is_some() && self.is_ancestor_of(node.target, node.parent.unwrap()) {

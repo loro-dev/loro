@@ -67,32 +67,6 @@ pub(super) struct DepsEncoding {
 }
 
 type TreeIDEncoding = DepsEncoding;
-// #[columnar(vec, ser, de)]
-// #[derive(Debug, Copy, Clone)]
-// pub(super) struct TreeIDEncoding {
-//     #[columnar(strategy = "Rle")]
-//     peer: PeerID,
-//     #[columnar(strategy = "DeltaRle")]
-//     counter: Counter,
-// }
-
-// impl From<TreeID> for TreeIDEncoding {
-//     fn from(value: TreeID) -> Self {
-//         Self {
-//             peer: value.peer,
-//             counter: value.counter,
-//         }
-//     }
-// }
-
-// impl From<TreeIDEncoding> for TreeID {
-//     fn from(value: TreeIDEncoding) -> Self {
-//         Self {
-//             peer: value.peer,
-//             counter: value.counter,
-//         }
-//     }
-// }
 
 impl DepsEncoding {
     pub(super) fn new(client_idx: ClientIdx, counter: Counter) -> Self {

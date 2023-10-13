@@ -459,15 +459,6 @@ impl DiffCalculatorTrait for TextDiffCalculator {
 #[derive(Debug, Default)]
 struct TreeDiffCalculator;
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// pub(super) struct CompactTreeNode {
-//     pub(super) lamport: Lamport,
-//     pub(super) peer: PeerID,
-//     pub(super) counter: Counter,
-//     pub(super) target: TreeID,
-//     pub(super) parent: Option<TreeID>,
-// }
-
 impl TreeDiffCalculator {
     fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
         frontiers

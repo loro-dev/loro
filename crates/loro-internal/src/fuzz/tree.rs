@@ -24,25 +24,6 @@ use crate::{
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
-    // Map {
-    //     site: u8,
-    //     container_idx: u8,
-    //     key: u8,
-    //     value: FuzzValue,
-    // },
-    // List {
-    //     site: u8,
-    //     container_idx: u8,
-    //     key: u8,
-    //     value: FuzzValue,
-    // },
-    // Text {
-    //     site: u8,
-    //     container_idx: u8,
-    //     pos: u8,
-    //     value: u16,
-    //     is_del: bool,
-    // },
     Tree {
         site: u8,
         container_idx: u8,
@@ -294,43 +275,6 @@ impl Tabled for Action {
                 "".into(),
             ],
             Action::SyncAll => vec!["sync all".into(), "".into(), "".into(), "".into()],
-            // Action::Map {
-            //     site,
-            //     container_idx,
-            //     key,
-            //     value,
-            // } => vec![
-            //     "map".into(),
-            //     format!("{}", site).into(),
-            //     format!("{}", container_idx).into(),
-            //     format!("{}", key).into(),
-            //     format!("{:?}", value).into(),
-            // ],
-            // Action::List {
-            //     site,
-            //     container_idx,
-            //     key,
-            //     value,
-            // } => vec![
-            //     "list".into(),
-            //     format!("{}", site).into(),
-            //     format!("{}", container_idx).into(),
-            //     format!("{}", key).into(),
-            //     format!("{:?}", value).into(),
-            // ],
-            // Action::Text {
-            //     site,
-            //     container_idx,
-            //     pos,
-            //     value,
-            //     is_del,
-            // } => vec![
-            //     "text".into(),
-            //     format!("{}", site).into(),
-            //     format!("{}", container_idx).into(),
-            //     format!("{}", pos).into(),
-            //     format!("{}{}", if *is_del { "Delete " } else { "" }, value).into(),
-            // ],
             Action::Tree {
                 site,
                 container_idx,
@@ -473,61 +417,7 @@ impl Actionable for Vec<Actor> {
                     *parent_counter = 0;
                     *action = TreeAction::Create;
                 }
-            } // Action::Map {
-              //     site,
-              //     container_idx,
-              //     ..
-              // } => {
-              //     *site %= max_users;
-              //     *container_idx %= self[*site as usize].map_containers.len().max(1) as u8;
-              // }
-              // Action::List {
-              //     site,
-              //     container_idx,
-              //     key,
-              //     value,
-              // } => {
-              //     *site %= max_users;
-              //     *container_idx %= self[*site as usize].list_containers.len().max(1) as u8;
-              //     if let Some(list) = self[*site as usize]
-              //         .list_containers
-              //         .get(*container_idx as usize)
-              //     {
-              //         *key %= (list.len() as u8).max(1);
-              //         if *value == FuzzValue::Null && list.is_empty() {
-              //             // no value, cannot delete
-              //             *value = FuzzValue::I32(1);
-              //         }
-              //     } else {
-              //         if *value == FuzzValue::Null {
-              //             *value = FuzzValue::I32(1);
-              //         }
-              //         *key = 0;
-              //     }
-              // }
-              // Action::Text {
-              //     site,
-              //     container_idx,
-              //     pos,
-              //     value,
-              //     is_del,
-              // } => {
-              //     *site %= max_users;
-              //     *container_idx %= self[*site as usize].text_containers.len().max(1) as u8;
-              //     if let Some(text) = self[*site as usize]
-              //         .text_containers
-              //         .get(*container_idx as usize)
-              //     {
-              //         *pos %= (text.len_unicode() as u8).max(1);
-              //         if *is_del {
-              //             *value &= 0x1f;
-              //             *value = (*value).min(text.len_unicode() as u16 - (*pos) as u16);
-              //         }
-              //     } else {
-              //         *is_del = false;
-              //         *pos = 0;
-              //     }
-              // }
+            }
         }
     }
 
@@ -690,115 +580,6 @@ impl Actionable for Vec<Actor> {
 
                 self[1].record_history();
             }
-            // Action::Map {
-            //     site,
-            //     container_idx,
-            //     key,
-            //     value,
-            // } => {
-            //     let actor = &mut self[*site as usize];
-            //     let container = actor.map_containers.get_mut(*container_idx as usize);
-            //     let container = if let Some(container) = container {
-            //         container
-            //     } else {
-            //         let map = actor.loro.get_map("map");
-            //         actor.map_containers.push(map);
-            //         &mut actor.map_containers[0]
-            //     };
-            //     let mut txn = actor.loro.txn().unwrap();
-            //     match value {
-            //         FuzzValue::Null => {
-            //             container.delete(&mut txn, &key.to_string()).unwrap();
-            //         }
-            //         FuzzValue::I32(i) => {
-            //             container
-            //                 .insert(&mut txn, &key.to_string(), LoroValue::from(*i))
-            //                 .unwrap();
-            //         }
-            //         FuzzValue::Container(c) => {
-            //             let idx = container
-            //                 .insert_container(&mut txn, &key.to_string(), *c)
-            //                 .unwrap()
-            //                 .container_idx();
-            //             actor.add_new_container(idx, *c);
-            //         }
-            //     };
-
-            //     txn.commit().unwrap();
-            //     if actor.peer == 1 {
-            //         actor.record_history();
-            //     }
-            // }
-            // Action::List {
-            //     site,
-            //     container_idx,
-            //     key,
-            //     value,
-            // } => {
-            //     let actor = &mut self[*site as usize];
-            //     let container = actor.list_containers.get_mut(*container_idx as usize);
-            //     let container = if container.is_none() {
-            //         let list = actor.loro.get_list("list");
-            //         actor.list_containers.push(list);
-            //         &mut actor.list_containers[0]
-            //     } else {
-            //         #[allow(clippy::unnecessary_unwrap)]
-            //         container.unwrap()
-            //     };
-            //     let mut txn = actor.loro.txn().unwrap();
-            //     match value {
-            //         FuzzValue::Null => {
-            //             container.delete(&mut txn, *key as usize, 1).unwrap();
-            //         }
-            //         FuzzValue::I32(i) => {
-            //             container
-            //                 .insert(&mut txn, *key as usize, LoroValue::from(*i))
-            //                 .unwrap();
-            //         }
-            //         FuzzValue::Container(c) => {
-            //             let idx = container
-            //                 .insert_container(&mut txn, *key as usize, *c)
-            //                 .unwrap()
-            //                 .container_idx();
-            //             actor.add_new_container(idx, *c);
-            //         }
-            //     };
-            //     txn.commit().unwrap();
-            //     if actor.peer == 1 {
-            //         actor.record_history();
-            //     }
-            // }
-            // Action::Text {
-            //     site,
-            //     container_idx,
-            //     pos,
-            //     value,
-            //     is_del,
-            // } => {
-            //     let actor = &mut self[*site as usize];
-            //     let container = actor.text_containers.get_mut(*container_idx as usize);
-            //     let container = if let Some(container) = container {
-            //         container
-            //     } else {
-            //         let text = actor.loro.get_text("text");
-            //         actor.text_containers.push(text);
-            //         &mut actor.text_containers[0]
-            //     };
-            //     let mut txn = actor.loro.txn().unwrap();
-            //     if *is_del {
-            //         container
-            //             .delete(&mut txn, *pos as usize, *value as usize)
-            //             .unwrap();
-            //     } else {
-            //         container
-            //             .insert(&mut txn, *pos as usize, &(format!("[{}]", value)))
-            //             .unwrap();
-            //     }
-            //     drop(txn);
-            //     if actor.peer == 1 {
-            //         actor.record_history();
-            //     }
-            // }
             Action::Tree {
                 site,
                 container_idx,
@@ -835,7 +616,6 @@ impl Actionable for Vec<Actor> {
                         ) {
                             Ok(_) => {}
                             Err(err) => {
-                                // TODO: cycle move
                                 if !matches!(
                                     err,
                                     LoroError::TreeError(LoroTreeError::CyclicMoveError)
