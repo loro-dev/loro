@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
@@ -259,10 +261,10 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let mut doc_a = LoroDoc::new();
+    doc_a.subscribe_deep(Arc::new(|_e| {}));
     doc_a.set_peer_id(1);
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
-
     let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
@@ -293,4 +295,12 @@ fn tree_checkout() {
             .get("roots"),
         serde_json::to_value(v3_state).unwrap().get("roots")
     );
+
+    doc_a.attach();
+    doc_a
+        .with_txn(|txn| {
+            tree.create(txn)
+            //tree.insert_meta(txn, id1, "a", 1.into())
+        })
+        .unwrap();
 }

@@ -445,7 +445,10 @@ impl LoroDoc {
             diff: Cow::Owned(diff),
             new_version: Cow::Owned(frontiers.clone()),
         });
-
+        let events = state.take_events();
+        for event in events {
+            self.observer.emit(event);
+        }
         Ok(())
     }
 
