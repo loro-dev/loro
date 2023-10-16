@@ -250,7 +250,7 @@ mod container {
     }
 }
 
-/// In movable tree, we use a specific [`TreeID`] to represent the root of **ALL** non-existent tree node.
+/// In movable tree, we use a specific [`TreeID`] to represent the root of **ALL** non-existent tree nodes.
 ///
 /// When we create some tree node and then we checkout the previous vision, we need to delete it from the state.
 /// If the parent of node is [`UNEXIST_TREE_ROOT`], we could infer this node is first created and delete it from the state directly,

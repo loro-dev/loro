@@ -29,12 +29,12 @@ mod tree {
             })
         });
 
-        b.bench_function("100 node random checkout 10^3", |b| {
+        b.bench_function("1000 node checkout 10^3", |b| {
             let mut loro = LoroDoc::default();
             let tree = loro.get_tree("tree");
             let mut ids = vec![];
             let mut versions = vec![];
-            let size = 100;
+            let size = 1000;
             for _ in 0..size {
                 ids.push(loro.with_txn(|txn| tree.create(txn)).unwrap())
             }
@@ -51,6 +51,32 @@ mod tree {
             b.iter(|| {
                 for _ in 0..1000 {
                     let i = rng.gen::<usize>() % 1000;
+                    let f = &versions[i];
+                    loro.checkout(f).unwrap();
+                }
+            })
+        });
+
+        b.bench_function("300 deep node random checkout 10^3", |b| {
+            let depth = 300;
+            let mut loro = LoroDoc::default();
+            let tree = loro.get_tree("tree");
+            let mut ids = vec![];
+            let mut versions = vec![];
+            let id1 = loro.with_txn(|txn| tree.create(txn)).unwrap();
+            ids.push(id1);
+            versions.push(loro.oplog_frontiers());
+            for _ in 1..depth {
+                let id = loro
+                    .with_txn(|txn| tree.create_and_mov(txn, *ids.last().unwrap()))
+                    .unwrap();
+                ids.push(id);
+                versions.push(loro.oplog_frontiers());
+            }
+            let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
+            b.iter(|| {
+                for _ in 0..1000 {
+                    let i = rng.gen::<usize>() % depth;
                     let f = &versions[i];
                     loro.checkout(f).unwrap();
                 }
