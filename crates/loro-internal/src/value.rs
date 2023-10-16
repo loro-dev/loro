@@ -173,7 +173,7 @@ impl ApplyDiff for LoroValue {
             Diff::SeqRawUtf16(_) => TypeHint::Text,
             Diff::Tree(_) => TypeHint::Tree,
         };
-        {
+        let value = {
             let mut hints = Vec::with_capacity(path.len());
             for item in path.iter().skip(1) {
                 match item {
@@ -210,8 +210,8 @@ impl ApplyDiff for LoroValue {
                 }
             }
             value
-        }
-        .apply_diff(diff);
+        };
+        value.apply_diff(diff);
     }
 }
 
@@ -421,7 +421,7 @@ pub mod wasm {
         fn from(value: TreeDiffItem) -> Self {
             let obj = Object::new();
             match value {
-                TreeDiffItem::Delete => {
+                TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),

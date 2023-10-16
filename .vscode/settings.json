@@ -18,6 +18,7 @@
     "smstring",
     "thiserror",
     "txns",
+    "UNEXIST",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {

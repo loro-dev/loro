@@ -20,6 +20,7 @@ pub enum TreeDiffItem {
     CreateOrRestore,
     Move(TreeID),
     Delete,
+    UnCreate,
 }
 
 impl From<(TreeID, Option<TreeID>)> for TreeDiff {
@@ -28,6 +29,8 @@ impl From<(TreeID, Option<TreeID>)> for TreeDiff {
         let action = if let Some(p) = parent {
             if TreeID::is_deleted_root(parent) {
                 TreeDiffItem::Delete
+            } else if TreeID::is_unexist_root(parent) {
+                TreeDiffItem::UnCreate
             } else {
                 TreeDiffItem::Move(p)
             }

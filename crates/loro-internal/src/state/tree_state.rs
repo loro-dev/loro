@@ -40,6 +40,7 @@ impl TreeState {
     pub fn new() -> Self {
         let mut trees = FxHashMap::default();
         trees.insert(TreeID::delete_root().unwrap(), None);
+        trees.insert(TreeID::unexist_root().unwrap(), None);
         let mut deleted = FxHashSet::default();
         deleted.insert(TreeID::delete_root().unwrap());
         Self {
@@ -58,8 +59,7 @@ impl TreeState {
             if self.in_txn {
                 self.undo_items.push(TreeUndoItem {
                     target,
-                    // TODO: use UnExistRoot?
-                    old_parent: TreeID::delete_root(),
+                    old_parent: TreeID::unexist_root(),
                 })
             }
             return Ok(());
@@ -80,8 +80,7 @@ impl TreeState {
         if self.in_txn {
             self.undo_items.push(TreeUndoItem {
                 target,
-                // TODO: use UnExistRoot?
-                old_parent: old_parent.unwrap_or(TreeID::delete_root()),
+                old_parent: old_parent.unwrap_or(TreeID::unexist_root()),
             })
         }
 
@@ -177,7 +176,7 @@ impl TreeState {
     pub fn nodes(&self) -> Vec<TreeID> {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k))
+            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(Some(*k)))
             .copied()
             .collect::<Vec<_>>()
     }
@@ -186,7 +185,7 @@ impl TreeState {
     pub fn max_counter(&self) -> i32 {
         self.trees
             .keys()
-            .filter(|&k| !self.is_deleted(k))
+            .filter(|&k| !self.is_deleted(k) && !TreeID::is_unexist_root(Some(*k)))
             .map(|k| k.counter)
             .max()
             .unwrap_or(0)
@@ -203,6 +202,11 @@ impl ContainerState for TreeState {
                     TreeDiffItem::CreateOrRestore => None,
                     TreeDiffItem::Move(parent) => Some(parent),
                     TreeDiffItem::Delete => TreeID::delete_root(),
+                    TreeDiffItem::UnCreate => {
+                        // delete it from state
+                        self.trees.remove(&target);
+                        continue;
+                    }
                 };
                 let old_parent = self.trees.insert(target, parent);
                 if Some(parent) != old_parent {
@@ -268,7 +272,12 @@ impl ContainerState for TreeState {
         self.in_txn = false;
         while let Some(op) = self.undo_items.pop() {
             let TreeUndoItem { target, old_parent } = op;
-            self.mov(target, old_parent).unwrap();
+            if TreeID::is_unexist_root(old_parent) {
+                self.trees.remove(&target);
+            } else {
+                let parent = self.trees.insert(target, old_parent);
+                self.update_deleted_cache(target, old_parent, parent);
+            }
         }
     }
 
@@ -417,6 +426,9 @@ impl Forest {
             .map(|(id, _)| *id)
             .sorted()
         {
+            if root == TreeID::unexist_root().unwrap() {
+                continue;
+            }
             let mut stack = vec![(
                 root,
                 TreeNode {
@@ -511,6 +523,14 @@ impl Forest {
                     }
                     TreeDiffItem::Delete => {
                         state.insert(target, (TreeID::delete_root(), meta));
+                    }
+                    TreeDiffItem::UnCreate => {
+                        // If fuzz test, un exist node move to delete,
+                        // Because it is necessary to record the meta created by these nodes before.
+                        #[cfg(feature = "test_utils")]
+                        state.insert(target, (TreeID::delete_root(), meta));
+                        #[cfg(not(feature = "test_utils"))]
+                        state.remove(&target);
                     }
                 }
             }

@@ -260,7 +260,7 @@ impl TreeDiffCache {
         if TreeID::is_deleted_root(Some(tree_id)) {
             return None;
         }
-        let mut ans = TreeID::delete_root();
+        let mut ans = TreeID::unexist_root();
         for op in self.cache.get(&tree_id).unwrap().iter().rev() {
             if op.effected {
                 ans = op.parent;

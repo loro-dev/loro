@@ -152,7 +152,7 @@ impl Actor {
                             TreeDiffItem::Move(parent) => {
                                 tree.insert(target, Some(parent));
                             }
-                            TreeDiffItem::Delete => {
+                            TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
                                 tree.insert(target, TreeID::delete_root());
                             }
                         }
@@ -674,8 +674,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                            // && m.get("deleted")
-                            //     .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                                && m.get("deleted")
+                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -694,8 +694,8 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                         m.is_empty() || {
                             m.get("roots")
                                 .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                            // && m.get("deleted")
-                            //     .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
+                                && m.get("deleted")
+                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
                         }
                     }
                     _ => false,
@@ -803,6 +803,7 @@ fn check_history(actor: &mut Actor) {
                 assert_eq!(hv, av, "Version mismatched at {:?}, cnt={}", f, c);
             }
         }
+        // assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
     }
 }
 
@@ -885,6 +886,43 @@ mod failed_tests {
                     action: TreeAction::Delete,
                     target: (729335883198625631, 655616),
                     parent: (3761688988315248897, 875836468),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_meta() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (1297037105016282879, -65536),
+                    parent: (71810203921678335, 16842592),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Create,
+                    target: (7523378309278230528, -1),
+                    parent: (7040879940371245160, -1634364121),
+                },
+                Tree {
+                    site: 97,
+                    container_idx: 68,
+                    action: TreeAction::Move,
+                    target: (2369443269732456, 2130710784),
+                    parent: (10995706711611801855, -32104),
+                },
+                Tree {
+                    site: 30,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (280710472564735, -256),
+                    parent: (8584986789609525, -16777216),
                 },
             ],
         )
