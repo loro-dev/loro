@@ -60,6 +60,7 @@ impl IdToCursor {
         )
     }
 
+    // FIXME: delete id span can be reversed
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
@@ -119,10 +120,16 @@ impl IdToCursor {
                         continue;
                     }
 
-                    let from = (iter_id_span.counter.start - start_counter).max(0);
+                    let from = (iter_id_span.counter.start - start_counter)
+                        .max(0)
+                        .min(span.atom_len() as Counter);
                     let to = (iter_id_span.counter.end - start_counter)
                         .max(0)
                         .min(span.atom_len() as Counter);
+                    if from == to {
+                        continue;
+                    }
+
                     return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
                 }
             }

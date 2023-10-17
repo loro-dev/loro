@@ -20,7 +20,7 @@ mod tracker;
 use crate::{change::Lamport, utils::string_slice::StringSlice, InternalString};
 use fugue_span::*;
 use loro_common::{Counter, LoroValue, PeerID};
-use std::{borrow::Cow, fmt::Debug};
+use std::fmt::Debug;
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
 pub(crate) use richtext_state::{query, RichtextState};

@@ -1,5 +1,8 @@
 {
-  "version": "2",
+  "version": "3",
+  "redirects": {
+    "https://x.nest.land/std@0.73.0/path/mod.ts": "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/mod.ts"
+  },
   "remote": {
     "https://deno.land/std@0.105.0/_util/assert.ts": "2f868145a042a11d5ad0a3c748dcf580add8a0dbc0e876eaa0026303a5488f58",
     "https://deno.land/std@0.105.0/_util/os.ts": "dfb186cc4e968c770ab6cc3288bd65f4871be03b93beecae57d657232ecffcac",

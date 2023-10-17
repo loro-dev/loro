@@ -1747,6 +1747,63 @@ mod failed_tests {
         )
     }
 
+    #[test]
+    fn unknown_fuzz_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 167,
+                    container_idx: 163,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 144,
+                    container_idx: 7,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                SyncAll,
+                Text {
+                    site: 126,
+                    container_idx: 13,
+                    pos: 122,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 6,
+                    container_idx: 191,
+                    pos: 249,
+                    value: 255,
+                    is_del: true,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 126,
+                    pos: 126,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 126,
+                    pos: 246,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 92,
+                    pos: 126,
+                    value: 65406,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
     use super::ContainerType as C;
     #[test]
     fn to_minify() {

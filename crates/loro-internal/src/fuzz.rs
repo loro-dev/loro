@@ -145,7 +145,8 @@ impl Actionable for Vec<LoroDoc> {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                text.insert(&mut txn, *pos, &content.to_string()).unwrap();
+                text.insert(&mut txn, *pos, &format!("[{}]", content))
+                    .unwrap();
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
@@ -193,9 +194,10 @@ impl Actionable for Vec<LoroDoc> {
                 if text.is_empty() {
                     *len = 0;
                     *pos = 0;
+                } else {
+                    *pos %= text.len_unicode();
+                    *len = (*len).min(text.len_unicode() - (*pos));
                 }
-                *pos %= text.len_unicode();
-                *len = (*len).min(text.len_unicode() - (*pos));
             }
             Action::Sync { from, to } => {
                 *from %= self.len() as u8;
@@ -1072,6 +1074,70 @@ mod test {
                     pos: 4,
                     len: 1,
                     site: 2,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn text_fuzz_2() {
+        test_multi_sites_refactored(
+            8,
+            &mut [
+                Ins {
+                    content: 111,
+                    pos: 0,
+                    site: 1,
+                },
+                Ins {
+                    content: 222,
+                    pos: 0,
+                    site: 0,
+                },
+                Del {
+                    pos: 3,
+                    len: 2,
+                    site: 0,
+                },
+                Ins {
+                    content: 332,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 163,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 113,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 888,
+                    pos: 4268070197446523707,
+                    site: 3,
+                },
+                Ins {
+                    content: 999,
+                    pos: 3,
+                    site: 0,
                 },
             ],
         )

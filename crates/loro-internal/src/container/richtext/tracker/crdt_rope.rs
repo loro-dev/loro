@@ -35,6 +35,7 @@ impl CrdtRope {
         &self.tree
     }
 
+    // FIXME: be cautious, check that offset may points to the end of a element
     pub(super) fn insert(
         &mut self,
         pos: usize,
@@ -53,8 +54,9 @@ impl CrdtRope {
 
         let pos = pos as i32;
         let start = self.tree.query::<ActiveLenQuery>(&pos).unwrap();
+        debug_log::debug_dbg!(start);
 
-        let (parent_right, parent_right_leaf, in_between) = {
+        let (parent_right_leaf, in_between) = {
             // calculate origin_left and origin_right
             // origin_left is the alive op at `pos-1`, origin_right is the first non-future op between `pos-1` and `pos`.
 
@@ -79,15 +81,20 @@ impl CrdtRope {
                 Some(left_node.elem().id.inc(start.offset() as Counter - 1))
             };
 
-            let (origin_right, parent_right, parent_right_leaf, in_between) = {
+            let (origin_right, parent_right_leaf, in_between) = {
                 let mut in_between = Vec::new();
                 let mut origin_right = None;
-                let mut parent_right = None;
                 let mut parent_right_idx = None;
                 for iter in self.tree.iter_range(start.cursor..) {
+                    if let Some(offset) = iter.start {
+                        if offset >= iter.elem.rle_len() {
+                            continue;
+                        }
+                    }
+
                     if !iter.elem.status.future {
                         origin_right = Some(iter.elem.id.inc(iter.start.unwrap_or(0) as Counter));
-                        parent_right = match iter.start {
+                        let parent_right = match iter.start {
                             Some(_) => {
                                 // It's guaranteed that origin_right's origin_left == this.origin_left.
                                 // Because the first non-future node is just the leaf node in `start.cursor` node (iter.start.is_some())
@@ -111,12 +118,12 @@ impl CrdtRope {
                     in_between.push((iter.cursor().leaf, *iter.elem));
                 }
 
-                (origin_right, parent_right, parent_right_idx, in_between)
+                (origin_right, parent_right_idx, in_between)
             };
 
             content.origin_left = origin_left;
             content.origin_right = origin_right;
-            (parent_right, parent_right_leaf, in_between)
+            (parent_right_leaf, in_between)
         };
 
         let mut insert_pos = start.cursor;
@@ -420,6 +427,8 @@ impl BTreeTrait for CrdtRopeTrait {
 /// If there are zero length spans (deleted, or spans from future) before the
 /// active index, the query will return the position of the first non-zero length
 /// content.
+///
+/// NOTE: it may points to the end of a leaf node (with offset = rle_len) while the next leaf node is available.
 struct ActiveLenQuery {
     left: i32,
 }
@@ -440,7 +449,7 @@ impl Query<CrdtRopeTrait> for ActiveLenQuery {
         let mut left = self.left;
         for (i, child) in child_caches.iter().enumerate() {
             let cache = &child.cache;
-            if (cache.len == 0 && left == 0) || left < cache.len {
+            if left <= cache.len {
                 // Prefer left. So if both `cache.len` and `left` equal zero, return here.
                 self.left = left;
                 return generic_btree::FindResult::new_found(i, left as usize);

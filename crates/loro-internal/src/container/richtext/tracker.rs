@@ -73,6 +73,8 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
+        debug_log::debug_log!("before insert {} pos={}", op_id, pos);
+        debug_log::debug_dbg!(&self);
         if self.applied_vv.includes_id(op_id) {
             assert!(self
                 .applied_vv
@@ -102,6 +104,8 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+        debug_log::debug_log!("after insert {}", op_id);
+        debug_log::debug_dbg!(&self);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -225,7 +229,6 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
-        // debug_log::debug_dbg!(&from, &to, &self,);
         self.rope.get_diff()
     }
 }

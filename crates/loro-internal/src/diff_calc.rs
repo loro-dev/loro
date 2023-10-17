@@ -529,8 +529,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             }
         }
 
-        debug_log::debug_dbg!(&delta, from, to);
-        debug_log::debug_dbg!(&self.tracker);
+        // debug_log::debug_dbg!(&delta, from, to);
+        // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
     }
 }

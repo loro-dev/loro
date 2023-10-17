@@ -79,7 +79,7 @@ enum UndoItem {
 
 impl ContainerState for RichtextState {
     // TODO: refactor
-    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _arena: &SharedArena) -> Diff {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
