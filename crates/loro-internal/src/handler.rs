@@ -205,6 +205,7 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        debug_log::group!("delete pos={} len={}", pos, len);
         let ranges =
             self.state
                 .upgrade()
@@ -237,6 +238,7 @@ impl TextHandler {
             is_first = false;
         }
 
+        debug_log::group_end!();
         Ok(())
     }
 

@@ -177,6 +177,14 @@ impl Actionable for Vec<LoroDoc> {
         match action {
             Action::Ins { pos, site, .. } => {
                 *site %= self.len() as u8;
+                *pos %= self[*site as usize]
+                    .app_state()
+                    .lock()
+                    .unwrap()
+                    .get_text("text")
+                    .unwrap()
+                    .len_unicode()
+                    + 1;
             }
             Action::Del { pos, len, site } => {
                 *site %= self.len() as u8;
@@ -186,6 +194,8 @@ impl Actionable for Vec<LoroDoc> {
                     *len = 0;
                     *pos = 0;
                 }
+                *pos %= text.len_unicode();
+                *len = (*len).min(text.len_unicode() - (*pos));
             }
             Action::Sync { from, to } => {
                 *from %= self.len() as u8;

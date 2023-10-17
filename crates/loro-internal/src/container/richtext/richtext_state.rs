@@ -824,69 +824,37 @@ impl RichtextState {
     // TODO: refactor extract common code
     pub(crate) fn get_text_entity_ranges<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
         &self,
-        mut pos: usize,
-        mut len: usize,
+        pos: usize,
+        len: usize,
     ) -> Vec<Range<usize>> {
         if self.tree.is_empty() {
             return Vec::new();
         }
 
-        pos = pos.min(self.len_unicode());
-        len = len.min(self.len_unicode() - pos);
         if len == 0 {
             return Vec::new();
         }
 
-        let mut ans = Vec::new();
+        let mut ans: Vec<Range<usize>> = Vec::new();
         let start = self.tree.query::<Q>(&pos).unwrap().cursor;
         let end = self.tree.query::<Q>(&(pos + len)).unwrap().cursor;
+        // TODO: assert end cursor is valid
         let mut entity_index = self.get_entity_index_from_path(start);
         for span in self.tree.iter_range(start..end) {
             let start = span.start.unwrap_or(0);
             let end = span.end.unwrap_or(span.elem.rle_len());
             let len = end - start;
             match span.elem {
-                RichtextStateChunk::Text { unicode_len, .. } => {
-                    ans.push(entity_index..entity_index + len);
-                    entity_index += *unicode_len as usize;
-                }
-                RichtextStateChunk::Style { .. } => {
-                    ans.push(entity_index..entity_index + 1);
-                    entity_index += 1;
-                }
-            }
-        }
-
-        ans
-    }
-
-    pub(crate) fn get_text_entity_ranges_in_utf16_range(
-        &self,
-        mut pos: usize,
-        mut len: usize,
-    ) -> Vec<Range<usize>> {
-        if self.tree.is_empty() {
-            return Vec::new();
-        }
-
-        pos = pos.min(self.len_utf16());
-        len = len.min(self.len_utf16() - pos);
-        if len == 0 {
-            return Vec::new();
-        }
-
-        let mut ans = Vec::new();
-        let start = self.tree.query::<Utf16Query>(&pos).unwrap().cursor;
-        let end = self.tree.query::<Utf16Query>(&(pos + len)).unwrap().cursor;
-        let mut entity_index = self.get_entity_index_from_path(start);
-        for span in self.tree.iter_range(start..end) {
-            let start = span.start.unwrap_or(0);
-            let end = span.end.unwrap_or(span.elem.rle_len());
-            let len = end - start;
-            match span.elem {
-                RichtextStateChunk::Text { unicode_len, .. } => {
-                    ans.push(entity_index..entity_index + len);
-                    entity_index += *unicode_len as usize;
+                RichtextStateChunk::Text { .. } => {
+                    match ans.last_mut() {
+                        Some(last) if last.end == entity_index => {
+                            last.end += len;
+                        }
+                        _ => {
+                            ans.push(entity_index..entity_index + len);
+                        }
+                    }
+                    entity_index += len;
                 }
                 RichtextStateChunk::Style { .. } => {
                     ans.push(entity_index..entity_index + 1);
@@ -906,6 +874,13 @@ impl RichtextState {
         pos: usize,
         len: usize,
     ) -> (impl Iterator<Item = RichtextStateChunk> + '_, usize, usize) {
+        assert!(
+            pos + len <= self.len_entity(),
+            "pos: {}, len: {}, self.len(): {}",
+            pos,
+            len,
+            self.len_entity()
+        );
         // FIXME: need to check whether style is removed when its anchors are removed
         self.style_ranges.delete(pos..pos + len);
         let range = pos..pos + len;
