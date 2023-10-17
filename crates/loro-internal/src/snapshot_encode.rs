@@ -611,7 +611,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
         text: app_state.arena.slice_by_unicode(..).deref().to_vec().into(),
     };
 
-    debug_log::debug_dbg!(&encoded);
+    // debug_log::debug_dbg!(&encoded);
     PreEncodedState {
         common,
         arena,

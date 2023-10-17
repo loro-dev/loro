@@ -249,7 +249,6 @@ impl Sliceable for RichtextStateChunk {
 }
 
 pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usize> {
-    dbg!(s, unicode_index);
     let mut current_unicode_index = 0;
     for (byte_index, _) in s.char_indices() {
         if current_unicode_index == unicode_index {
@@ -887,7 +886,7 @@ impl RichtextState {
         let start = self.tree.query::<EntityQuery>(&range.start);
         let end = self.tree.query::<EntityQuery>(&range.end);
         let start_event_index = self.cursor_to_event_index(start.unwrap().cursor);
-        let end_event_index = self.cursor_to_event_index(start.unwrap().cursor);
+        let end_event_index = self.cursor_to_event_index(end.unwrap().cursor);
         (
             generic_btree::iter::Drain::new(&mut self.tree, start, end),
             start_event_index,

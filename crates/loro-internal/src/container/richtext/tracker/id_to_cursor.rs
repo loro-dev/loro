@@ -67,7 +67,6 @@ impl IdToCursor {
         let mut offset_in_insert_set = 0;
         let mut counter = 0;
 
-        debug_log::debug_dbg!(iter_id_span);
         if !list.is_empty() {
             index = match list.binary_search_by_key(&iter_id_span.counter.start, |x| x.counter) {
                 Ok(index) => index,

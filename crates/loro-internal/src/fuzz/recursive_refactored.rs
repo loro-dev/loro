@@ -85,6 +85,7 @@ impl Actor {
 
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Arc::new(move |event| {
+            debug_dbg!(&event);
             let mut root_value = root_value.lock().unwrap();
             debug_dbg!(&event);
             root_value.apply(
@@ -101,11 +102,9 @@ impl Actor {
                     return;
                 }
 
-                dbg!(&event);
                 let mut text = text.lock().unwrap();
                 match &event.container.diff {
                     Diff::Text(delta) => {
-                        dbg!(delta, &text);
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
