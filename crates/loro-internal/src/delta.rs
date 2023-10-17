@@ -5,4 +5,4 @@ pub use map::{MapDiff, ValuePair};
 mod map_delta;
 pub use map_delta::{MapDelta, MapValue};
 mod text;
-pub use text::{StyleMeta, StyleMetaItem};
+pub use text::StyleMeta;

@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use crate::Timestamp;
 
@@ -21,6 +18,8 @@ impl Debug for Configure {
 
 pub struct DefaultRandom;
 
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
 #[cfg(test)]
 static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
 

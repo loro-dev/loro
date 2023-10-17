@@ -65,8 +65,8 @@ impl ApplyDiff for LoroValue {
                                 index += len;
                             }
                             DeltaItem::Insert { value, .. } => {
-                                s.insert_str(index, value);
-                                index += value.len();
+                                s.insert_str(index, value.as_str());
+                                index += value.len_bytes();
                             }
                             DeltaItem::Delete { len, .. } => {
                                 s.drain(index..index + len);
@@ -138,8 +138,6 @@ impl ApplyDiff for LoroValue {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
             Diff::NewMap(_) => TypeHint::Map,
-            Diff::SeqRaw(_) => TypeHint::Text,
-            Diff::RichtextRaw(_) => TypeHint::Richtext,
         };
         {
             let mut hints = Vec::with_capacity(path.len());
@@ -300,23 +298,6 @@ pub mod wasm {
 
                     js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map.into()).unwrap();
                 }
-                Diff::SeqRaw(text) => {
-                    // set type as "text"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("seq_raw"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&text).unwrap(),
-                    )
-                    .unwrap();
-                }
-                Diff::RichtextRaw(_) => todo!(),
             };
 
             // convert object to js value

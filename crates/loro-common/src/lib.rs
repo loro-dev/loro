@@ -88,7 +88,7 @@ impl ContainerType {
         match self {
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-            ContainerType::Text => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
         }
     }
 

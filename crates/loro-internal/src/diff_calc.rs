@@ -15,7 +15,7 @@ use crate::{
         text::tracker::Tracker,
     },
     delta::{Delta, MapDelta, MapValue},
-    event::Diff,
+    event::InternalDiff,
     id::Counter,
     op::RichOp,
     span::{HasId, HasLamport},
@@ -181,14 +181,14 @@ impl DiffCalculator {
                 let calc = self.calculators.get_mut(&idx).unwrap();
                 diffs.push(InternalContainerDiff {
                     idx,
-                    diff: calc.calculate_diff(oplog, before, after),
+                    diff: calc.calculate_diff(oplog, before, after).into(),
                 });
             }
         } else {
             for (&idx, calculator) in self.calculators.iter_mut() {
                 diffs.push(InternalContainerDiff {
                     idx,
-                    diff: calculator.calculate_diff(oplog, before, after),
+                    diff: calculator.calculate_diff(oplog, before, after).into(),
                 });
             }
         }
@@ -219,7 +219,7 @@ pub trait DiffCalculatorTrait {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-    ) -> Diff;
+    ) -> InternalDiff;
 }
 
 #[enum_dispatch(DiffCalculatorTrait)]
@@ -271,7 +271,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-    ) -> Diff {
+    ) -> InternalDiff {
         let mut changed = Vec::new();
         for (k, g) in self.grouped.iter_mut() {
             let (peek_from, peek_to) = g.peek_at_ab(from, to);
@@ -306,7 +306,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             updated.insert(key, value);
         }
 
-        Diff::NewMap(MapDelta { updated })
+        InternalDiff::Map(MapDelta { updated })
     }
 }
 
@@ -408,8 +408,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         _oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-    ) -> Diff {
-        Diff::SeqRaw(self.tracker.diff(from, to))
+    ) -> InternalDiff {
+        InternalDiff::SeqRaw(self.tracker.diff(from, to))
     }
 }
 
@@ -498,7 +498,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-    ) -> Diff {
+    ) -> InternalDiff {
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
             match item {
@@ -531,6 +531,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
         debug_log::debug_dbg!(&delta, from, to);
         debug_log::debug_dbg!(&self.tracker);
-        Diff::RichtextRaw(delta)
+        InternalDiff::RichtextRaw(delta)
     }
 }

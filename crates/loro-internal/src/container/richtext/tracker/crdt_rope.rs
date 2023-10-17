@@ -1,8 +1,7 @@
 use std::cmp::Ordering;
 
 use generic_btree::{
-    rle::{HasLength, Sliceable},
-    BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
+    rle::HasLength, BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
 };
 use itertools::Itertools;
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, ID};

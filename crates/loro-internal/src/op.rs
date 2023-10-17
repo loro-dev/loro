@@ -309,8 +309,14 @@ impl SliceRange {
         self.0.start == UNKNOWN_START
     }
 
+    #[inline(always)]
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
+    }
+
+    #[inline(always)]
+    pub fn to_range(&self) -> Range<usize> {
+        self.0.start as usize..self.0.end as usize
     }
 }
 

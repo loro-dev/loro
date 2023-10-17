@@ -35,6 +35,12 @@ pub fn count_utf16_chars(utf8_str: &[u8]) -> usize {
     utf16_count
 }
 
+// TODO: FIXME: Tests
+/// Count unicode chars in a utf8 string
+pub fn count_unicode_chars(s: &[u8]) -> usize {
+    std::str::from_utf8(s).unwrap().chars().count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

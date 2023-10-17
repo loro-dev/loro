@@ -17,20 +17,20 @@ mod style_range_map;
 mod tinyvec;
 mod tracker;
 
-use crate::{change::Lamport, InternalString};
+use crate::{change::Lamport, utils::string_slice::StringSlice, InternalString};
 use fugue_span::*;
 use loro_common::{Counter, LoroValue, PeerID};
 use std::{borrow::Cow, fmt::Debug};
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
-pub(crate) use richtext_state::RichtextState;
+pub(crate) use richtext_state::{query, RichtextState};
 pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 
 /// This is the data structure that represents a span of rich text.
 /// It's used to communicate with the frontend.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct RichtextSpan<'a> {
-    pub text: Cow<'a, str>,
+pub struct RichtextSpan {
+    pub text: StringSlice,
     pub styles: Vec<Style>,
 }
 

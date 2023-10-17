@@ -29,6 +29,19 @@ impl MapDelta {
         }
         MapDelta { updated }
     }
+
+    #[inline]
+    pub fn new() -> Self {
+        MapDelta {
+            updated: FxHashMap::default(),
+        }
+    }
+
+    #[inline]
+    pub fn with_entry(mut self, key: InternalString, map_value: MapValue) -> Self {
+        self.updated.insert(key, map_value);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

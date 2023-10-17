@@ -1,18 +1,10 @@
-use loro_common::LoroValue;
-
-use crate::InternalString;
+use crate::container::richtext::Style;
 
 use super::Meta;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct StyleMetaItem {
-    pub style_key: InternalString,
-    pub value: LoroValue,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StyleMeta {
-    pub vec: Vec<StyleMetaItem>,
+    pub vec: Vec<Style>,
 }
 
 impl Meta for StyleMeta {
@@ -20,12 +12,10 @@ impl Meta for StyleMeta {
         self.vec.is_empty()
     }
 
-    fn compose(&mut self, other: &Self, type_pair: (super::DeltaType, super::DeltaType)) {
-        unimplemented!()
-    }
+    fn compose(&mut self, other: &Self, type_pair: (super::DeltaType, super::DeltaType)) {}
 
     fn is_mergeable(&self, other: &Self) -> bool {
-        true
+        self.vec == other.vec
     }
 
     fn merge(&mut self, other: &Self) {

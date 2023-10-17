@@ -8,7 +8,7 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
-    event::{Diff, Index},
+    event::{Diff, Index, InternalDiff},
     op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
@@ -354,35 +354,51 @@ impl ListState {
 }
 
 impl ContainerState for ListState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
         match diff {
-            Diff::List(delta) => {
+            InternalDiff::SeqRaw(delta) => {
+                let mut ans: Delta<_> = Delta::default();
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
                         crate::delta::DeltaItem::Retain { len, .. } => {
                             index += len;
+                            ans = ans.retain(*len);
                         }
                         crate::delta::DeltaItem::Insert { value, .. } => {
-                            let len = value.len();
-                            for value in value.iter() {
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = arena.register_container(c);
-                                    arena.set_parent(idx, Some(self.idx));
+                            let mut arr = Vec::new();
+                            for slices in value.0.iter() {
+                                for i in slices.0.start..slices.0.end {
+                                    let value = arena.get_value(i as usize).unwrap();
+                                    if value.is_container() {
+                                        let c = value.as_container().unwrap();
+                                        let idx = arena.register_container(c);
+                                        arena.set_parent(idx, Some(self.idx));
+                                    }
+                                    arr.push(value);
                                 }
                             }
-
-                            self.insert_batch(index, value.clone());
+                            ans = ans.insert(arr.clone());
+                            let len = arr.len();
+                            self.insert_batch(index, arr);
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { len, .. } => {
-                            self.delete_range(index..index + len)
+                            self.delete_range(index..index + len);
+                            ans = ans.delete(*len);
                         }
                     }
                 }
+
+                Diff::List(ans)
             }
-            Diff::SeqRaw(delta) => {
+            _ => unreachable!(),
+        }
+    }
+
+    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
+        match diff {
+            InternalDiff::SeqRaw(delta) => {
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
@@ -407,13 +423,13 @@ impl ContainerState for ListState {
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { len, .. } => {
-                            self.delete_range(index..index + len)
+                            self.delete_range(index..index + len);
                         }
                     }
                 }
             }
             _ => unreachable!(),
-        };
+        }
     }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {

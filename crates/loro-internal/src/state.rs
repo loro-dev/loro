@@ -8,9 +8,9 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    delta::{Delta, DeltaItem, StyleMeta},
-    event::InternalContainerDiff,
-    event::{Diff, Index},
+    delta::{Delta, DeltaItem},
+    event::{Diff, DiffVariant, Index},
+    event::{InternalContainerDiff, InternalDiff},
     fx_map,
     id::PeerID,
     op::{Op, RawOp},
@@ -49,7 +49,12 @@ pub struct DocState {
 
 #[enum_dispatch]
 pub trait ContainerState: Clone {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena);
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff;
+
+    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
+        self.apply_diff_and_convert(diff, arena);
+    }
+
     fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena);
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&self) -> Diff;
@@ -218,6 +223,7 @@ impl DocState {
         self.peer
     }
 
+    /// It's expected that diff only contains [`InternalDiff`]
     pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
@@ -228,6 +234,7 @@ impl DocState {
             unreachable!()
         };
         for diff in inner.iter_mut() {
+            let is_recording = self.is_recording();
             let state = self
                 .states
                 .entry(diff.idx)
@@ -238,7 +245,18 @@ impl DocState {
                 self.changed_idx_in_txn.insert(diff.idx);
             }
 
-            state.apply_diff(&mut diff.diff, &self.arena);
+            let internal_diff = std::mem::replace(
+                &mut diff.diff,
+                DiffVariant::External(Diff::List(Delta::default())),
+            );
+
+            if is_recording {
+                let external_diff = state
+                    .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena);
+                diff.diff = external_diff.into();
+            } else {
+                state.apply_diff(internal_diff.into_internal().unwrap(), &self.arena);
+            }
         }
 
         self.frontiers = (*diff.new_version).to_owned();
@@ -343,10 +361,10 @@ impl DocState {
                     .iter()
                     .map(|(&idx, state)| InternalContainerDiff {
                         idx,
-                        diff: state.to_diff(),
+                        diff: state.to_diff().into(),
                     })
                     .collect(),
-                new_version: Cow::Owned(frontiers.clone()),
+                new_version: Cow::Borrowed(&frontiers),
             });
         }
 
@@ -563,8 +581,7 @@ impl DocState {
         let local = diffs[0].local;
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
-            for mut container_diff in diff.diff.into_owned() {
-                self.convert_raw(&mut container_diff.diff, container_diff.idx);
+            for container_diff in diff.diff.into_owned() {
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
                         containers.insert(container_diff.idx, (container_diff.diff, path));
@@ -579,7 +596,9 @@ impl DocState {
                     continue;
                 };
 
-                *last_container_diff = take(last_container_diff)
+                // TODO: PERF avoid this clone
+                *last_container_diff = last_container_diff
+                    .clone()
                     .compose(container_diff.diff)
                     .unwrap();
             }
@@ -592,7 +611,7 @@ impl DocState {
                 ContainerDiff {
                     id,
                     idx,
-                    diff,
+                    diff: diff.into_external().unwrap(),
                     path,
                 }
             })
@@ -631,40 +650,6 @@ impl DocState {
 
         ans.reverse();
         Some(ans)
-    }
-
-    /// convert seq raw to text/list
-    pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
-        match diff {
-            Diff::SeqRaw(seq) => {
-                assert_eq!(idx.get_type(), ContainerType::List);
-                let mut list: Delta<Vec<LoroValue>> = Delta::new();
-                for span in seq.iter() {
-                    match span {
-                        DeltaItem::Retain { len, .. } => {
-                            list = list.retain(*len);
-                        }
-                        DeltaItem::Insert { value, .. } => {
-                            let mut arr = Vec::new();
-                            for slice in value.0.iter() {
-                                let values = self
-                                    .arena
-                                    .get_values(slice.0.start as usize..slice.0.end as usize);
-                                arr.extend_from_slice(&values);
-                            }
-
-                            list = list.insert(arr)
-                        }
-                        DeltaItem::Delete { len, .. } => list = list.delete(*len),
-                    }
-                }
-                *diff = Diff::List(list);
-            }
-            Diff::RichtextRaw(seq) => {
-                unreachable!()
-            }
-            _ => {}
-        };
     }
 }
 

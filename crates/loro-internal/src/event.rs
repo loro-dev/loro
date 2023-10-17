@@ -1,11 +1,14 @@
+use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
+use rle::Mergable;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, MapDiff, StyleMeta},
+    container::richtext::richtext_state::{unicode_to_utf8_index, RichtextStateChunk},
+    delta::{Delta, DeltaValue, MapDelta, MapDiff, StyleMeta},
     op::SliceRanges,
+    utils::string_slice::StringSlice,
     InternalString, LoroValue,
 };
 
@@ -48,7 +51,13 @@ pub struct DocDiff {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
-    pub(crate) diff: Diff,
+    pub(crate) diff: DiffVariant,
+}
+
+#[derive(Debug, Clone, EnumAsInner)]
+pub(crate) enum DiffVariant {
+    Internal(InternalDiff),
+    External(Diff),
 }
 
 /// It's used for transmitting and recording the diff internally.
@@ -84,19 +93,17 @@ impl<'a> InternalDocDiff<'a> {
 mod test {
     use std::sync::Arc;
 
-    use crate::LoroDoc;
+    use loro_common::LoroValue;
+
+    use crate::{ApplyDiff, LoroDoc};
 
     #[test]
     fn test_text_event() {
         let loro = LoroDoc::new();
         loro.subscribe_deep(Arc::new(|event| {
-            assert_eq!(
-                &event.container.diff.as_text().unwrap().vec[0]
-                    .as_insert()
-                    .unwrap()
-                    .0,
-                &"h223ello"
-            );
+            let mut value = LoroValue::String(Default::default());
+            value.apply_diff(&[event.container.diff.clone()]);
+            assert_eq!(value, "h223ello".into());
         }));
         let mut txn = loro.txn().unwrap();
         let text = loro.get_text("id");
@@ -114,27 +121,74 @@ pub enum Index {
     Seq(usize),
 }
 
+impl DiffVariant {
+    pub fn compose(self, other: Self) -> Result<Self, Self> {
+        match (self, other) {
+            (DiffVariant::Internal(a), DiffVariant::Internal(b)) => {
+                Ok(DiffVariant::Internal(a.compose(b)?))
+            }
+            (DiffVariant::External(a), DiffVariant::External(b)) => {
+                Ok(DiffVariant::External(a.compose(b)?))
+            }
+            (a, _) => Err(a),
+        }
+    }
+}
+
+impl From<Diff> for DiffVariant {
+    fn from(diff: Diff) -> Self {
+        DiffVariant::External(diff)
+    }
+}
+
+impl From<InternalDiff> for DiffVariant {
+    fn from(diff: InternalDiff) -> Self {
+        DiffVariant::Internal(diff)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, EnumAsInner, Serialize)]
+pub enum InternalDiff {
+    SeqRaw(Delta<SliceRanges>),
+    /// This always uses entity indexes.
+    RichtextRaw(Delta<RichtextStateChunk>),
+    Map(MapDelta),
+}
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
 /// # Internal
 ///
-/// SeqRaw & SeqRawUtf16 & RichtextRaw is internal stuff, it should not be exposed to user.
-/// The len inside SeqRaw uses utf8 for Text by default.
-///
-/// Text always uses platform specific indexes:
+/// Text index variants:
 ///
 /// - When `wasm` is enabled, it should use utf16 indexes.
-/// - When `wasm` is disabled, it should use utf8 indexes.
+/// - When `wasm` is disabled, it should use unicode indexes.
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
 pub enum Diff {
     List(Delta<Vec<LoroValue>>),
-    SeqRaw(Delta<SliceRanges>),
-    /// This always uses entity indexes.
-    RichtextRaw(Delta<RichtextStateChunk>),
-    Text(Delta<String, StyleMeta>),
+    /// - When feature `wasm` is enabled, it should use utf16 indexes.
+    /// - When feature `wasm` is disabled, it should use unicode indexes.
+    Text(Delta<StringSlice, StyleMeta>),
     NewMap(MapDelta),
+}
+
+impl InternalDiff {
+    pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
+        // PERF: avoid clone
+        match (self, diff) {
+            (InternalDiff::SeqRaw(a), InternalDiff::SeqRaw(b)) => {
+                Ok(InternalDiff::SeqRaw(a.compose(b)))
+            }
+            (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
+                Ok(InternalDiff::RichtextRaw(a.compose(b)))
+            }
+            (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
+            (a, _) => Err(a),
+        }
+    }
 }
 
 impl Diff {
@@ -142,16 +196,9 @@ impl Diff {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
-            (Diff::SeqRaw(a), Diff::SeqRaw(b)) => Ok(Diff::SeqRaw(a.compose(b))),
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
             (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
             (a, _) => Err(a),
         }
-    }
-}
-
-impl Default for Diff {
-    fn default() -> Self {
-        Diff::List(Delta::default())
     }
 }

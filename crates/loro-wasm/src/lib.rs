@@ -448,7 +448,7 @@ impl LoroText {
         index: usize,
         content: &str,
     ) -> JsResult<()> {
-        self.0.insert_utf16(txn.as_mut()?, index, content)?;
+        self.0.insert(txn.as_mut()?, index, content)?;
         Ok(())
     }
 
@@ -458,7 +458,7 @@ impl LoroText {
         index: usize,
         len: usize,
     ) -> JsResult<()> {
-        self.0.delete_utf16(txn.as_mut()?, index, len)?;
+        self.0.delete(txn.as_mut()?, index, len)?;
         Ok(())
     }
 

@@ -7,6 +7,7 @@ use crate::{
     },
     delta::MapValue,
     op::ListSlice,
+    txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -163,34 +164,10 @@ impl TextHandler {
             })
     }
 
-    pub fn insert_utf16(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        let entity_index =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    state
-                        .as_richtext_state()
-                        .unwrap()
-                        .get_entity_index_for_text_insert_pos(pos)
-                });
-
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawStr {
-                    str: Cow::Borrowed(s),
-                    unicode_len: s.chars().count(),
-                },
-                pos: entity_index,
-            }),
-            None,
-            &self.state,
-        )
-    }
-
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         let entity_index =
             self.state
@@ -202,7 +179,7 @@ impl TextHandler {
                     state
                         .as_richtext_state()
                         .unwrap()
-                        .get_entity_index_for_text_insert_pos(pos)
+                        .get_entity_index_for_text_insert_event_index(pos)
                 });
 
         txn.apply_local_op(
@@ -214,11 +191,19 @@ impl TextHandler {
                 },
                 pos: entity_index,
             }),
-            None,
+            EventHint::InsertText {
+                pos,
+                // FIXME: this is wrong
+                styles: vec![],
+            },
             &self.state,
         )
     }
 
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         let ranges =
             self.state
@@ -230,10 +215,11 @@ impl TextHandler {
                     state
                         .as_richtext_state()
                         .unwrap()
-                        .get_text_entity_ranges_in_unicode_range(pos, len)
+                        .get_text_entity_ranges_in_event_index_range(pos, len)
                 });
 
         debug_log::debug_dbg!(&ranges, pos, len);
+        let mut is_first = true;
         for range in ranges.iter().rev() {
             txn.apply_local_op(
                 self.container_idx,
@@ -241,44 +227,23 @@ impl TextHandler {
                     pos: range.start as isize,
                     signed_len: (range.end - range.start) as isize,
                 })),
-                None,
+                if is_first {
+                    EventHint::DeleteText { pos, len }
+                } else {
+                    EventHint::None
+                },
                 &self.state,
             )?;
+            is_first = false;
         }
 
         Ok(())
     }
 
-    pub fn delete_utf16(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
-        let ranges =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    state
-                        .as_richtext_state()
-                        .unwrap()
-                        .get_text_entity_ranges_in_utf16_range(pos, len)
-                });
-
-        debug_log::debug_dbg!(&ranges, pos, len);
-        for range in ranges.iter().rev() {
-            txn.apply_local_op(
-                self.container_idx,
-                crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                    pos: range.start as isize,
-                    signed_len: (range.end - range.start) as isize,
-                })),
-                None,
-                &self.state,
-            )?;
-        }
-
-        Ok(())
-    }
-
+    /// `start` and `end` are [Event Index]s:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
     pub fn mark(
         &self,
         txn: &mut Transaction,
@@ -304,11 +269,11 @@ impl TextHandler {
                         state
                             .as_richtext_state()
                             .unwrap()
-                            .get_entity_index_for_text_insert_pos(start),
+                            .get_entity_index_for_text_insert_event_index(start),
                         state
                             .as_richtext_state()
                             .unwrap()
-                            .get_entity_index_for_text_insert_pos(end),
+                            .get_entity_index_for_text_insert_event_index(end),
                     )
                 });
 
@@ -320,14 +285,22 @@ impl TextHandler {
                 key: key.into(),
                 info: flag,
             }),
-            None,
+            EventHint::Mark {
+                start,
+                end,
+                style: crate::container::richtext::Style {
+                    key: key.into(),
+                    // FIXME: style meta is incorrect
+                    data: LoroValue::Bool(true),
+                },
+            },
             &self.state,
         )?;
 
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
-            None,
+            EventHint::None,
             &self.state,
         )?;
 
@@ -353,10 +326,13 @@ impl ListHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawData(Cow::Owned(vec![v])),
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            None,
+            EventHint::InsertList {
+                pos,
+                value: v.clone(),
+            },
             &self.state,
         )
     }
@@ -380,10 +356,13 @@ impl ListHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
-                slice: ListSlice::RawData(Cow::Owned(vec![v])),
+                slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            None,
+            EventHint::InsertList {
+                pos,
+                value: v.clone(),
+            },
             &self.state,
         )?;
         Ok(Handler::new(child_idx, self.state.clone()))
@@ -400,7 +379,7 @@ impl ListHandler {
                 pos: pos as isize,
                 signed_len: len as isize,
             })),
-            None,
+            EventHint::DeleteList { pos, len },
             &self.state,
         )
     }
@@ -530,9 +509,12 @@ impl MapHandler {
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
-                value: Some(value),
+                value: Some(value.clone()),
             }),
-            None,
+            EventHint::Map {
+                key: key.into(),
+                value: Some(value.clone()),
+            },
             &self.state,
         )
     }
@@ -551,9 +533,12 @@ impl MapHandler {
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
-                value: Some(LoroValue::Container(container_id)),
+                value: Some(LoroValue::Container(container_id.clone())),
             }),
-            None,
+            EventHint::Map {
+                key: key.into(),
+                value: Some(LoroValue::Container(container_id)),
+            },
             &self.state,
         )?;
 
@@ -567,7 +552,10 @@ impl MapHandler {
                 key: key.into(),
                 value: None,
             }),
-            None,
+            EventHint::Map {
+                key: key.into(),
+                value: None,
+            },
             &self.state,
         )
     }

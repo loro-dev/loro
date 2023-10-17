@@ -1,11 +1,11 @@
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    container::richtext::{StyleOp, TextStyleInfoFlag},
+    container::richtext::TextStyleInfoFlag,
     op::{ListSlice, SliceRange},
     InternalString,
 };

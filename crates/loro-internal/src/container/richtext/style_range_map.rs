@@ -1,13 +1,19 @@
 //! This map a Range<usize> to a set of style
 //!
 
-use std::{collections::BTreeSet, ops::Range, sync::Arc, usize};
+use std::{
+    collections::{BTreeSet, HashMap},
+    ops::Range,
+    sync::Arc,
+    usize,
+};
 
 use fxhash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, LengthFinder, UseLengthFinder,
 };
+use once_cell::sync::Lazy;
 
 use crate::InternalString;
 
@@ -22,14 +28,19 @@ pub(super) struct StyleRangeMap(pub(super) BTree<RangeNumMapTrait>);
 #[derive(Debug, Clone)]
 pub(super) struct RangeNumMapTrait;
 
+pub(crate) type Styles = FxHashMap<InternalString, StyleValue>;
+
+pub(super) static EMPTY_STYLES: Lazy<Styles> =
+    Lazy::new(|| HashMap::with_hasher(Default::default()));
+
 #[derive(Debug, Clone)]
 pub(super) struct Elem {
-    styles: FxHashMap<InternalString, StyleValue>,
+    styles: Styles,
     len: usize,
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub(super) struct StyleValue {
+pub(crate) struct StyleValue {
     set: BTreeSet<Arc<StyleOp>>,
     should_merge: bool,
 }
@@ -48,6 +59,7 @@ impl StyleValue {
         }
     }
 
+    // PERF: can we avoid this box
     pub fn to_styles(&self) -> Box<dyn Iterator<Item = Style> + '_> {
         if self.should_merge {
             Box::new(self.set.iter().rev().take(1).filter_map(|x| x.to_style()))
@@ -97,7 +109,6 @@ impl StyleRangeMap {
 
                 None
             });
-        dbg!(&self);
     }
 
     /// Insert entities at `pos` with length of `len`
@@ -114,13 +125,13 @@ impl StyleRangeMap {
     /// - If there is a style x that exists in rightStyleSet but not in leftStyleSet, it means that the position pos is the start anchor of x.
     ///   The newly inserted text is before the start anchor of x, so the StyleSet of the new text should not include this style.
     /// - If both leftStyleSet and rightStyleSet contain style x, it means that the newly inserted text is within the style range, so the StyleSet should include x.
-    pub fn insert(&mut self, pos: usize, len: usize) {
+    pub fn insert(&mut self, pos: usize, len: usize) -> &Styles {
         if pos == 0 {
             self.0.prepend(Elem {
                 len,
                 styles: Default::default(),
             });
-            return;
+            return &EMPTY_STYLES;
         }
 
         if pos as isize == *self.0.root_cache() {
@@ -128,7 +139,7 @@ impl StyleRangeMap {
                 len,
                 styles: Default::default(),
             });
-            return;
+            return &EMPTY_STYLES;
         }
 
         let right = self.0.query::<LengthFinder>(&pos).unwrap().cursor;
@@ -139,7 +150,7 @@ impl StyleRangeMap {
                 x.len += len;
                 (true, Some(len as isize), None, None)
             });
-            return;
+            return &self.0.get_elem(left.leaf).unwrap().styles;
         }
 
         // insert by the intersection of left styles and right styles
@@ -155,6 +166,7 @@ impl StyleRangeMap {
         });
 
         self.0.insert_by_path(right, Elem { len, styles });
+        return &self.0.get_elem(right.leaf).unwrap().styles;
     }
 
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
@@ -172,6 +184,25 @@ impl StyleRangeMap {
             let range = index..index + len;
             index += len;
             if elem.styles.is_empty() {
+                return None;
+            }
+
+            Some((range, value))
+        })
+    }
+
+    pub fn iter_from(
+        &self,
+        start_entity_index: usize,
+    ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
+        let start = self.0.query::<LengthFinder>(&start_entity_index).unwrap();
+        let mut index = start_entity_index - start.offset();
+        self.0.iter_range(start.cursor()..).filter_map(move |elem| {
+            let len = elem.elem.len;
+            let value = &elem.elem.styles;
+            let range = index.max(start_entity_index)..index + len;
+            index += len;
+            if elem.elem.styles.is_empty() {
                 return None;
             }
 

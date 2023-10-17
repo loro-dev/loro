@@ -15,7 +15,6 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
         map::{InnerMapSet, MapSet},
-        richtext::StyleOp,
         ContainerID,
     },
     id::Counter,

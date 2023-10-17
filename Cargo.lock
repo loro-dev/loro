@@ -1069,6 +1069,7 @@ dependencies = [
  "loro-preload",
  "miniz_oxide 0.7.1",
  "num",
+ "once_cell",
  "postcard",
  "proptest",
  "proptest-derive",

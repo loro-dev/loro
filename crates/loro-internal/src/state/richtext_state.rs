@@ -9,13 +9,16 @@ use crate::{
     arena::SharedArena,
     container::{
         idx::ContainerIdx,
-        richtext::{AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag},
+        richtext::{
+            query::{EventIndexQuery, Utf16Query},
+            AnchorType, RichtextState as InnerState, Style, StyleOp, TextStyleInfoFlag,
+        },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
-    delta::DeltaItem,
-    event::Diff,
+    delta::{Delta, DeltaItem, StyleMeta},
+    event::{Diff, InternalDiff},
     op::{Op, RawOp},
-    utils::bitmap::BitMap,
+    utils::{bitmap::BitMap, string_slice::StringSlice, utf16::count_utf16_chars},
     InternalString,
 };
 
@@ -75,32 +78,79 @@ enum UndoItem {
 }
 
 impl ContainerState for RichtextState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
-        let Diff::RichtextRaw(richtext) = diff else {
+    // TODO: refactor
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+        let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
 
-        let mut index = 0;
+        debug_log::group!("apply richtext diff and convert");
+        debug_log::debug_dbg!(&richtext);
+        let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
+        let mut entity_index = 0;
+        let mut event_index = 0;
+        let mut last_style_index = 0;
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         for span in richtext.vec.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, meta } => {
-                    index += len;
+                crate::delta::DeltaItem::Retain { len, .. } => {
+                    entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { value, meta } => {
+                crate::delta::DeltaItem::Insert { value, .. } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
-                            self.state.insert_elem_at_entity_index(
-                                index,
+                            let (pos, styles) = self.state.insert_elem_at_entity_index(
+                                entity_index,
                                 RichtextStateChunk::Text {
                                     unicode_len: *unicode_len,
                                     text: text.clone(),
                                 },
                             );
+                            let insert_styles = StyleMeta {
+                                vec: styles
+                                    .iter()
+                                    .flat_map(|(_, value)| value.to_styles())
+                                    .collect(),
+                            };
+
+                            if pos > event_index {
+                                let mut new_len = 0;
+                                for (len, styles) in self
+                                    .state
+                                    .iter_styles_in_event_index_range(event_index..pos)
+                                {
+                                    new_len += len;
+                                    ans = ans.retain_with_meta(
+                                        len,
+                                        StyleMeta {
+                                            vec: styles
+                                                .iter()
+                                                .flat_map(|(_, value)| value.to_styles())
+                                                .collect(),
+                                        },
+                                    );
+                                }
+
+                                assert_eq!(new_len, pos - event_index);
+                            }
+                            event_index = pos
+                                + (if cfg!(feature = "wasm") {
+                                    count_utf16_chars(text)
+                                } else {
+                                    *unicode_len as usize
+                                });
+                            ans = ans
+                                .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
                         }
                         RichtextStateChunk::Style { style, anchor_type } => {
+                            match anchor_type {
+                                AnchorType::Start => {}
+                                AnchorType::End => {
+                                    last_style_index = event_index;
+                                }
+                            }
                             self.state.insert_elem_at_entity_index(
-                                index,
+                                entity_index,
                                 RichtextStateChunk::Style {
                                     style: style.clone(),
                                     anchor_type: *anchor_type,
@@ -108,27 +158,136 @@ impl ContainerState for RichtextState {
                             );
 
                             if *anchor_type == AnchorType::Start {
-                                style_starts.insert(style.clone(), index);
+                                style_starts.insert(style.clone(), entity_index);
                             } else {
                                 let start_pos =
                                     style_starts.get(style).expect("Style start not found");
                                 // we need to + 1 because we also need to annotate the end anchor
-                                self.state
-                                    .annotate_style_range(*start_pos..index + 1, style.clone());
+                                self.state.annotate_style_range(
+                                    *start_pos..entity_index + 1,
+                                    style.clone(),
+                                );
                             }
                         }
                     }
                     self.undo_stack.push(UndoItem::Insert {
-                        index: index as u32,
+                        index: entity_index as u32,
                         len: value.rle_len() as u32,
                     });
-                    index += value.rle_len();
+                    entity_index += value.rle_len();
                 }
-                crate::delta::DeltaItem::Delete { len, meta } => {
-                    let content = self.state.drain_by_entity_index(index, *len);
+                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                    let (content, start, end) =
+                        self.state.drain_by_entity_index(entity_index, *len);
                     for span in content {
                         self.undo_stack.push(UndoItem::Delete {
-                            index: index as u32,
+                            index: entity_index as u32,
+                            content: span,
+                        })
+                    }
+                    if start > event_index {
+                        for (len, styles) in self
+                            .state
+                            .iter_styles_in_event_index_range(event_index..start)
+                        {
+                            ans = ans.retain_with_meta(
+                                len,
+                                StyleMeta {
+                                    vec: styles
+                                        .iter()
+                                        .flat_map(|(_, value)| value.to_styles())
+                                        .collect(),
+                                },
+                            );
+                        }
+
+                        event_index = start;
+                    }
+
+                    ans = ans.delete(end - start);
+                }
+            }
+        }
+
+        if last_style_index > event_index {
+            for (len, styles) in self
+                .state
+                .iter_styles_in_event_index_range(event_index..last_style_index)
+            {
+                ans = ans.retain_with_meta(
+                    len,
+                    StyleMeta {
+                        vec: styles
+                            .iter()
+                            .flat_map(|(_, value)| value.to_styles())
+                            .collect(),
+                    },
+                );
+            }
+        }
+
+        debug_log::debug_dbg!(&ans);
+        debug_log::group_end!();
+        Diff::Text(ans)
+    }
+
+    fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {
+        let InternalDiff::RichtextRaw(richtext) = diff else {
+            unreachable!()
+        };
+
+        let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
+        let mut entity_index = 0;
+        for span in richtext.vec.iter() {
+            match span {
+                crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                    entity_index += len;
+                }
+                crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                    match value {
+                        RichtextStateChunk::Text { unicode_len, text } => {
+                            self.state.insert_elem_at_entity_index(
+                                entity_index,
+                                RichtextStateChunk::Text {
+                                    unicode_len: *unicode_len,
+                                    text: text.clone(),
+                                },
+                            );
+                        }
+                        RichtextStateChunk::Style { style, anchor_type } => {
+                            let (pos, _) = self.state.insert_elem_at_entity_index(
+                                entity_index,
+                                RichtextStateChunk::Style {
+                                    style: style.clone(),
+                                    anchor_type: *anchor_type,
+                                },
+                            );
+
+                            if *anchor_type == AnchorType::Start {
+                                style_starts.insert(style.clone(), entity_index);
+                            } else {
+                                let start_pos =
+                                    style_starts.get(style).expect("Style start not found");
+                                // we need to + 1 because we also need to annotate the end anchor
+                                self.state.annotate_style_range(
+                                    *start_pos..entity_index + 1,
+                                    style.clone(),
+                                );
+                            }
+                        }
+                    }
+                    self.undo_stack.push(UndoItem::Insert {
+                        index: entity_index as u32,
+                        len: value.rle_len() as u32,
+                    });
+                    entity_index += value.rle_len();
+                }
+                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                    let (content, _start, _end) =
+                        self.state.drain_by_entity_index(entity_index, *len);
+                    for span in content {
+                        self.undo_stack.push(UndoItem::Delete {
+                            index: entity_index as u32,
                             content: span,
                         })
                     }
@@ -157,6 +316,7 @@ impl ContainerState for RichtextState {
                     for span in self
                         .state
                         .drain_by_entity_index(del.start() as usize, rle::HasLength::atom_len(&del))
+                        .0
                     {
                         if self.in_txn {
                             self.undo_stack.push(UndoItem::Delete {
@@ -191,14 +351,14 @@ impl ContainerState for RichtextState {
 
     fn to_diff(&self) -> Diff {
         let mut delta = crate::delta::Delta::new();
-        for span in self.state.iter_chunk() {
+        for span in self.state.iter() {
             delta.vec.push(DeltaItem::Insert {
-                value: span.clone(),
-                meta: (),
+                value: span.text,
+                meta: StyleMeta { vec: span.styles },
             })
         }
 
-        Diff::RichtextRaw(delta)
+        Diff::Text(delta)
     }
 
     fn start_txn(&mut self) {
@@ -266,22 +426,25 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_text_insert_pos(&self, pos: usize) -> usize {
-        self.state.get_entity_index_for_text_insert_pos(pos)
+    pub(crate) fn get_entity_index_for_text_insert_event_index(&self, pos: usize) -> usize {
+        self.state
+            .get_entity_index_for_text_insert::<EventIndexQuery>(pos)
     }
 
     #[inline(always)]
     pub(crate) fn get_entity_index_for_utf16_insert_pos(&self, pos: usize) -> usize {
-        self.state.get_entity_index_for_utf16_insert_pos(pos)
+        self.state
+            .get_entity_index_for_text_insert::<Utf16Query>(pos)
     }
 
     #[inline(always)]
-    pub(crate) fn get_text_entity_ranges_in_unicode_range(
+    pub(crate) fn get_text_entity_ranges_in_event_index_range(
         &self,
         pos: usize,
         len: usize,
     ) -> Vec<Range<usize>> {
-        self.state.get_text_entity_ranges_in_unicode_range(pos, len)
+        self.state
+            .get_text_entity_ranges::<EventIndexQuery>(pos, len)
     }
 
     #[inline(always)]
@@ -290,7 +453,7 @@ impl RichtextState {
         pos: usize,
         len: usize,
     ) -> Vec<Range<usize>> {
-        self.state.get_text_entity_ranges_in_utf16_range(pos, len)
+        self.state.get_text_entity_ranges::<Utf16Query>(pos, len)
     }
 
     #[inline(always)]

@@ -17,8 +17,12 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, handler::TextHandler, loro::LoroDoc, value::ToJson,
-    version::Frontiers, ApplyDiff, ListHandler, MapHandler,
+    container::{idx::ContainerIdx, richtext::richtext_state::unicode_to_utf8_index},
+    handler::TextHandler,
+    loro::LoroDoc,
+    value::ToJson,
+    version::Frontiers,
+    ApplyDiff, ListHandler, MapHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -96,9 +100,12 @@ impl Actor {
                 if event.from_children {
                     return;
                 }
+
+                dbg!(&event);
                 let mut text = text.lock().unwrap();
                 match &event.container.diff {
                     Diff::Text(delta) => {
+                        dbg!(delta, &text);
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
@@ -106,8 +113,9 @@ impl Actor {
                                     index += len;
                                 }
                                 DeltaItem::Insert { value, meta: _ } => {
-                                    text.insert_str(index, value);
-                                    index += value.len();
+                                    let utf8_index = unicode_to_utf8_index(&text, index).unwrap();
+                                    text.insert_str(utf8_index, value.as_str());
+                                    index += value.len_unicode();
                                 }
                                 DeltaItem::Delete { len, .. } => {
                                     text.drain(index..index + *len);
@@ -1278,14 +1286,14 @@ mod failed_tests {
                     site: 4,
                     container_idx: 0,
                     pos: 0,
-                    value: 39064,
+                    value: 39061,
                     is_del: false,
                 },
                 Text {
                     site: 2,
                     container_idx: 0,
                     pos: 0,
-                    value: 39064,
+                    value: 39062,
                     is_del: false,
                 },
                 SyncAll,
@@ -1293,7 +1301,7 @@ mod failed_tests {
                     site: 2,
                     container_idx: 0,
                     pos: 5,
-                    value: 39064,
+                    value: 39063,
                     is_del: false,
                 },
             ],
