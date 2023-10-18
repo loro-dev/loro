@@ -1144,8 +1144,555 @@ mod test {
     }
 
     #[test]
+    fn text_fuzz_3() {
+        test_multi_sites_refactored(
+            2,
+            &mut [
+                Ins {
+                    content: 12850,
+                    pos: 3617008641906848306,
+                    site: 10,
+                },
+                SyncAll,
+                Ins {
+                    content: 12850,
+                    pos: 4048798961467195395,
+                    site: 255,
+                },
+                SyncAll,
+                Ins {
+                    content: 12850,
+                    pos: 3280475,
+                    site: 0,
+                },
+                Ins {
+                    content: 12851,
+                    pos: 89064736817458,
+                    site: 0,
+                },
+                Ins {
+                    content: 13077,
+                    pos: 4557431322972336690,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 16191,
+                    pos: 4557430888798830399,
+                    site: 63,
+                },
+                Ins {
+                    content: 42148,
+                    pos: 171061810,
+                    site: 12,
+                },
+                Ins {
+                    content: 3675,
+                    pos: 336666162111538,
+                    site: 0,
+                },
+                Sync { from: 164, to: 164 },
+                Ins {
+                    content: 4112,
+                    pos: 1157442765409226768,
+                    site: 16,
+                },
+                Ins {
+                    content: 4112,
+                    pos: 3732657327335018512,
+                    site: 45,
+                },
+                Ins {
+                    content: 52530,
+                    pos: 3906253595950239181,
+                    site: 15,
+                },
+                Ins {
+                    content: 5911,
+                    pos: 18446743885640439575,
+                    site: 255,
+                },
+                Ins {
+                    content: 11822,
+                    pos: 3327609269301292590,
+                    site: 46,
+                },
+                SyncAll,
+                Ins {
+                    content: 1568,
+                    pos: 13836783189022944192,
+                    site: 43,
+                },
+                SyncAll,
+                Del {
+                    pos: 16789419410837209344,
+                    len: 14774117067329253930,
+                    site: 0,
+                },
+                Ins {
+                    content: 27242,
+                    pos: 7668058320836127338,
+                    site: 106,
+                },
+                Del {
+                    pos: 7639230867934177898,
+                    len: 7668058320836127338,
+                    site: 106,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn text_fuzz_4() {
+        test_multi_sites_refactored(
+            2,
+            &mut [
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3607136139932740138,
+                    site: 0,
+                },
+                Ins {
+                    content: 13071,
+                    pos: 14976676367971893,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 0,
+                    pos: 0,
+                    site: 68,
+                },
+                Ins {
+                    content: 52532,
+                    pos: 6629299531957718322,
+                    site: 92,
+                },
+                Del {
+                    pos: 6655295901103053916,
+                    len: 6655295901103053916,
+                    site: 92,
+                },
+                Del {
+                    pos: 6655295901103053916,
+                    len: 14738250545257564,
+                    site: 0,
+                },
+                Ins {
+                    content: 52309,
+                    pos: 3038287258827541861,
+                    site: 255,
+                },
+                Ins {
+                    content: 15159,
+                    pos: 298,
+                    site: 108,
+                },
+                Ins {
+                    content: 10782,
+                    pos: 18446602417805601322,
+                    site: 255,
+                },
+                Ins {
+                    content: 771,
+                    pos: 3027266685993419523,
+                    site: 42,
+                },
+                Ins {
+                    content: 0,
+                    pos: 2560,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 7740398491872002048,
+                    site: 107,
+                },
+                Del {
+                    pos: 7740398493674204011,
+                    len: 7740398493674204011,
+                    site: 107,
+                },
+                Del {
+                    pos: 7740398493674204011,
+                    len: 7740398493674204011,
+                    site: 107,
+                },
+                Del {
+                    pos: 7812738666512280684,
+                    len: 10634005385065557100,
+                    site: 147,
+                },
+                Ins {
+                    content: 108,
+                    pos: 3830030471958364160,
+                    site: 224,
+                },
+                SyncAll,
+                Ins {
+                    content: 52730,
+                    pos: 3442658613,
+                    site: 11,
+                },
+                Ins {
+                    content: 3871,
+                    pos: 8444828877984183605,
+                    site: 117,
+                },
+                Del {
+                    pos: 8463800222054970741,
+                    len: 3635941421513799029,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 12884901966,
+                    site: 0,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 143833902818798636,
+                    site: 0,
+                },
+                Ins {
+                    content: 65535,
+                    pos: 1567663063039,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 4121356608997425152,
+                    site: 37,
+                },
+                Ins {
+                    content: 24576,
+                    pos: 3182967475521064462,
+                    site: 44,
+                },
+                Ins {
+                    content: 47148,
+                    pos: 1021239783737535532,
+                    site: 44,
+                },
+                Ins {
+                    content: 11283,
+                    pos: 1021239783737535532,
+                    site: 14,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 15420,
+                    pos: 4340410370284600380,
+                    site: 60,
+                },
+                Ins {
+                    content: 11324,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3617346860830436396,
+                    site: 170,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 57927929864792618,
+                    site: 0,
+                },
+                Ins {
+                    content: 64012,
+                    pos: 900719925474099199,
+                    site: 12,
+                },
+                Ins {
+                    content: 3084,
+                    pos: 789516,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 86131342873526272,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 3038287259199220224,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 3038287259199220266,
+                    site: 42,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875111468,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 3182967604875373612,
+                    site: 44,
+                },
+                Ins {
+                    content: 11308,
+                    pos: 48568231275564,
+                    site: 0,
+                },
+                Ins {
+                    content: 13568,
+                    pos: 8463800223526997301,
+                    site: 117,
+                },
+                Del {
+                    pos: 216718996853,
+                    len: 335007449137,
+                    site: 3,
+                },
+                Ins {
+                    content: 0,
+                    pos: 3819052576016433152,
+                    site: 53,
+                },
+                Ins {
+                    content: 0,
+                    pos: 4548370641345118208,
+                    site: 212,
+                },
+                Ins {
+                    content: 15104,
+                    pos: 144115188075855872,
+                    site: 20,
+                },
+                Ins {
+                    content: 63999,
+                    pos: 327908794171647,
+                    site: 0,
+                },
+                Ins {
+                    content: 65388,
+                    pos: 3038287258997104158,
+                    site: 42,
+                },
+                SyncAll,
+                Ins {
+                    content: 771,
+                    pos: 217020518514230019,
+                    site: 42,
+                },
+                Ins {
+                    content: 0,
+                    pos: 655360,
+                    site: 0,
+                },
+                Del {
+                    pos: 7710162562058289173,
+                    len: 7740398493674204011,
+                    site: 107,
+                },
+                Del {
+                    pos: 7740398493674204011,
+                    len: 7039851,
+                    site: 49,
+                },
+                Ins {
+                    content: 54335,
+                    pos: 64872246332757,
+                    site: 0,
+                },
+                Ins {
+                    content: 5122,
+                    pos: 72050993380600362,
+                    site: 50,
+                },
+                Ins {
+                    content: 0,
+                    pos: 2170452909760708608,
+                    site: 30,
+                },
+                Ins {
+                    content: 10794,
+                    pos: 217021605090393898,
+                    site: 3,
+                },
+                Ins {
+                    content: 763,
+                    pos: 2606223169945797379,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 7799953079628988416,
+                    site: 21,
+                },
+                Ins {
+                    content: 0,
+                    pos: 7740398493674204011,
+                    site: 107,
+                },
+                Del {
+                    pos: 7740398493674204011,
+                    len: 7740398493674204011,
+                    site: 107,
+                },
+                Del {
+                    pos: 7740398493674204011,
+                    len: 7782338265204091755,
+                    site: 108,
+                },
+                Del {
+                    pos: 7812738666512280684,
+                    len: 10664523451937821582,
+                    site: 0,
+                },
+                Ins {
+                    content: 0,
+                    pos: 18302637545179512940,
+                    site: 255,
+                },
+                Ins {
+                    content: 52730,
+                    pos: 3442658613,
+                    site: 11,
+                },
+                Ins {
+                    content: 3871,
+                    pos: 8444828877984183605,
+                    site: 117,
+                },
+                Del {
+                    pos: 8463800222054970741,
+                    len: 10049067290889385333,
+                    site: 138,
+                },
+                Sync { from: 138, to: 129 },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
-        minify_error(8, vec![], test_multi_sites_refactored, |_, ans| {
+        minify_error(2, vec![], test_multi_sites_refactored, |_, ans| {
             ans.to_vec()
         })
     }

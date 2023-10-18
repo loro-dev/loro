@@ -887,11 +887,19 @@ impl RichtextState {
         let end = self.tree.query::<EntityQuery>(&range.end);
         let start_event_index = self.cursor_to_event_index(start.unwrap().cursor);
         let end_event_index = self.cursor_to_event_index(end.unwrap().cursor);
+        debug_log::debug_dbg!(&start, &end);
+        // debug_log::debug_dbg!(&self.tree);
         (
             generic_btree::iter::Drain::new(&mut self.tree, start, end),
             start_event_index,
             end_event_index,
         )
+    }
+
+    #[allow(unused)]
+    pub(crate) fn check(&self) {
+        // FIXME: remove
+        self.tree.check();
     }
 
     pub(crate) fn mark_with_entity_index(&mut self, range: Range<usize>, style: Arc<StyleOp>) {

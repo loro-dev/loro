@@ -589,7 +589,7 @@ impl DocState {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
                         debug_log::debug_log!(
-                            "ignore because cannot find path {:#?}",
+                            "⚠️ WARNING: ignore because cannot find path {:#?}",
                             &container_diff
                         );
                     }
@@ -631,10 +631,12 @@ impl DocState {
 
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+        debug_log::group!("GET PATH {:?}", idx);
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
+            debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
                 let prop = parent_state.get_child_index(&id)?;
@@ -649,6 +651,7 @@ impl DocState {
         }
 
         ans.reverse();
+        debug_log::group_end!();
         Some(ans)
     }
 }

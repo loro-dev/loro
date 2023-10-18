@@ -125,8 +125,6 @@ impl ApplyDiff for LoroValue {
             }
             _ => unreachable!(),
         }
-
-        debug_dbg!(&self);
     }
 
     fn apply(&mut self, path: &Path, diff: &[Diff]) {

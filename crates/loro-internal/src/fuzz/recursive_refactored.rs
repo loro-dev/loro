@@ -85,9 +85,8 @@ impl Actor {
 
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Arc::new(move |event| {
-            debug_dbg!(&event);
             let mut root_value = root_value.lock().unwrap();
-            debug_dbg!(&event);
+            debug_log::debug_dbg!(&event);
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
@@ -1038,6 +1037,111 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_3() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(0),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(2),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(3),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(4),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(5),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(6),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(7),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(8),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(9),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(10),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(11),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(12),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(13),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(14),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(15),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,
@@ -1718,6 +1822,59 @@ mod failed_tests {
                     pos: 1,
                     value: 2,
                     is_del: true,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_4() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 1,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1634495596),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
                 },
             ],
         )
