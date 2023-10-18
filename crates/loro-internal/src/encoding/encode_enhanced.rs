@@ -198,9 +198,10 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                     }
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => {
-                            let mut len = 0;
+                            let len;
                             match slice {
                                 ListSlice::RawData(v) => {
+                                    len = 0;
                                     values.push(Some(LoroValue::List(Arc::new(v.to_vec()))));
                                 }
                                 ListSlice::RawStr {
@@ -208,10 +209,10 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     unicode_len: _,
                                 } => {
                                     len = str.len();
+                                    assert!(len > 0);
                                     string.push_str(str.deref());
                                 }
                             };
-                            assert!(len > 0);
                             (pos, false, len as isize)
                         }
                         ListOp::Delete(span) => {
