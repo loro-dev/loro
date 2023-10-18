@@ -55,7 +55,6 @@ struct Elem {
     v: LoroValue,
 }
 
-const MAX_LEN: usize = 16;
 impl HasLength for Elem {
     fn rle_len(&self) -> usize {
         1
@@ -156,7 +155,6 @@ impl ListState {
     }
 
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
-        debug_dbg!(self.get_value(), id, &self.child_container_to_leaf);
         let leaf = *self.child_container_to_leaf.get(id).unwrap();
         self.list.get_elem(leaf)?;
         let mut index = 0;
@@ -182,7 +180,6 @@ impl ListState {
                 self.child_container_to_leaf
                     .insert(value.into_container().unwrap(), idx);
             }
-            debug_dbg!(self.get_value());
             return;
         }
 
@@ -206,7 +203,6 @@ impl ListState {
         if self.in_txn {
             self.undo_stack.push(UndoItem::Insert { index, len: 1 });
         }
-        debug_dbg!(self.get_value());
     }
 
     pub fn delete(&mut self, index: usize) {
@@ -216,13 +212,9 @@ impl ListState {
         if self.in_txn {
             self.undo_stack.push(UndoItem::Delete { index, value });
         }
-
-        self.check();
-        debug_dbg!(self.get_value());
     }
 
     pub fn delete_range(&mut self, range: impl RangeBounds<usize>) {
-        self.check();
         let start: usize = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
             std::ops::Bound::Excluded(x) => *x + 1,
@@ -235,7 +227,6 @@ impl ListState {
         };
         if end - start == 1 {
             self.delete(start);
-            debug_dbg!(self.get_value());
             return;
         }
 
@@ -257,9 +248,6 @@ impl ListState {
             let end1 = self1.query::<LengthFinder>(&q.end);
             iter::Drain::new(self1, start1, end1);
         }
-
-        self.check();
-        debug_dbg!(self.get_value());
     }
 
     // PERF: use &[LoroValue]
@@ -306,7 +294,6 @@ impl ListState {
 
 impl ContainerState for ListState {
     fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
-        debug_log::debug_dbg!(&diff);
         let InternalDiff::SeqRaw(delta) = diff else {
             unreachable!()
         };
@@ -333,10 +320,7 @@ impl ContainerState for ListState {
                     }
                     ans = ans.insert(arr.clone());
                     let len = arr.len();
-                    debug_log::debug_log!("Compare list value: {}", index);
-                    debug_log::debug_dbg!(self.get_value());
                     self.insert_batch(index, arr);
-                    debug_log::debug_dbg!(self.get_value());
                     index += len;
                 }
                 crate::delta::DeltaItem::Delete { len, .. } => {
@@ -346,47 +330,45 @@ impl ContainerState for ListState {
             }
         }
 
-        debug_log::debug_dbg!(&ans);
-        debug_dbg!(self.get_value());
         Diff::List(ans)
     }
 
-    // fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
-    //     match diff {
-    //         InternalDiff::SeqRaw(delta) => {
-    //             let mut index = 0;
-    //             for span in delta.iter() {
-    //                 match span {
-    //                     crate::delta::DeltaItem::Retain { len, .. } => {
-    //                         index += len;
-    //                     }
-    //                     crate::delta::DeltaItem::Insert { value, .. } => {
-    //                         let mut arr = Vec::new();
-    //                         for slices in value.0.iter() {
-    //                             for i in slices.0.start..slices.0.end {
-    //                                 let value = arena.get_value(i as usize).unwrap();
-    //                                 if value.is_container() {
-    //                                     let c = value.as_container().unwrap();
-    //                                     let idx = arena.register_container(c);
-    //                                     arena.set_parent(idx, Some(self.idx));
-    //                                 }
-    //                                 arr.push(value);
-    //                             }
-    //                         }
-    //                         let len = arr.len();
+    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
+        match diff {
+            InternalDiff::SeqRaw(delta) => {
+                let mut index = 0;
+                for span in delta.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { len, .. } => {
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Insert { value, .. } => {
+                            let mut arr = Vec::new();
+                            for slices in value.0.iter() {
+                                for i in slices.0.start..slices.0.end {
+                                    let value = arena.get_value(i as usize).unwrap();
+                                    if value.is_container() {
+                                        let c = value.as_container().unwrap();
+                                        let idx = arena.register_container(c);
+                                        arena.set_parent(idx, Some(self.idx));
+                                    }
+                                    arr.push(value);
+                                }
+                            }
+                            let len = arr.len();
 
-    //                         self.insert_batch(index, arr);
-    //                         index += len;
-    //                     }
-    //                     crate::delta::DeltaItem::Delete { len, .. } => {
-    //                         self.delete_range(index..index + len);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         _ => unreachable!(),
-    //     }
-    // }
+                            self.insert_batch(index, arr);
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Delete { len, .. } => {
+                            self.delete_range(index..index + len);
+                        }
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
 
     fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
         match &op.content {
@@ -424,7 +406,6 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
-        debug_dbg!(self.get_value());
     }
 
     #[doc = " Start a transaction"]

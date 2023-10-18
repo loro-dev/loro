@@ -86,7 +86,7 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            debug_log::debug_dbg!(&event);
+            // debug_log::debug_dbg!(&event);
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],

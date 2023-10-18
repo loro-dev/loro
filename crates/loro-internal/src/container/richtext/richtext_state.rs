@@ -898,7 +898,6 @@ impl RichtextState {
 
     #[allow(unused)]
     pub(crate) fn check(&self) {
-        // FIXME: remove
         self.tree.check();
     }
 
