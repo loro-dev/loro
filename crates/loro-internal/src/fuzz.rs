@@ -6,6 +6,17 @@ use enum_as_inner::EnumAsInner;
 use std::{fmt::Debug, time::Instant};
 use tabled::{TableIteratorExt, Tabled};
 
+const STYLES: [TextStyleInfoFlag; 8] = [
+    TextStyleInfoFlag::BOLD,
+    TextStyleInfoFlag::COMMENT,
+    TextStyleInfoFlag::LINK,
+    TextStyleInfoFlag::LINK.to_delete(),
+    TextStyleInfoFlag::BOLD.to_delete(),
+    TextStyleInfoFlag::COMMENT.to_delete(),
+    TextStyleInfoFlag::from_byte(0),
+    TextStyleInfoFlag::from_byte(0).to_delete(),
+];
+
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
     Ins {
@@ -22,7 +33,6 @@ pub enum Action {
         pos: usize,
         len: usize,
         site: u8,
-        style_info: u8,
         style_key: u8,
     },
     Sync {
@@ -69,14 +79,13 @@ impl Tabled for Action {
                 pos,
                 len,
                 site,
-                style_info,
                 style_key,
             } => vec![
                 "mark".into(),
                 site.to_string().into(),
                 pos.to_string().into(),
                 len.to_string().into(),
-                format!("{} {}", style_info, style_key).into(),
+                format!("style {}", style_key).into(),
             ],
         }
     }
@@ -123,7 +132,6 @@ impl Action {
                 pos,
                 len,
                 site,
-                style_info,
                 style_key,
             } => {
                 if max_len == 0 {
@@ -224,7 +232,6 @@ impl Actionable for Vec<LoroDoc> {
                 pos,
                 len,
                 site,
-                style_info,
                 style_key,
             } => {
                 if *len == 0 {
@@ -239,7 +246,7 @@ impl Actionable for Vec<LoroDoc> {
                     *pos,
                     *pos + *len,
                     &style_key.to_string(),
-                    TextStyleInfoFlag::from_byte(*style_info),
+                    STYLES[*style_key as usize],
                 )
                 .unwrap();
             }
@@ -280,7 +287,6 @@ impl Actionable for Vec<LoroDoc> {
                 pos,
                 len,
                 site,
-                style_info: _,
                 style_key,
             } => {
                 *site %= self.len() as u8;
@@ -1814,13 +1820,81 @@ mod test {
                     pos: 144373576751199690,
                     len: 39583260855602,
                     site: 38,
-                    style_info: 53,
                     style_key: 227,
                 },
                 Del {
                     pos: 18446521092732302645,
                     len: 15028556109460991,
                     site: 53,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn richtext_fuzz_1() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 41009,
+                    pos: 10884953820616207167,
+                    site: 151,
+                },
+                Mark {
+                    pos: 150995095,
+                    len: 7502773972505002496,
+                    site: 0,
+                    style_key: 0,
+                },
+                Mark {
+                    pos: 11821702543106517760,
+                    len: 4251403153421165732,
+                    site: 151,
+                    style_key: 151,
+                },
+                Mark {
+                    pos: 589824,
+                    len: 2233786514697303298,
+                    site: 51,
+                    style_key: 151,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn richtext_fuzz_2() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Del {
+                    pos: 3617008641902972703,
+                    len: 3617008641903833650,
+                    site: 50,
+                },
+                Ins {
+                    content: 12850,
+                    pos: 7668058320836112946,
+                    site: 106,
+                },
+                Mark {
+                    pos: 7667941315552635498,
+                    len: 7668058320836127338,
+                    site: 106,
+                    style_key: 106,
+                },
+                Mark {
+                    pos: 1096122290479458922,
+                    len: 17749549354505267,
+                    site: 1,
+                    style_key: 0,
+                },
+                Mark {
+                    pos: 7668058389825092218,
+                    len: 7668058320836127338,
+                    site: 106,
+                    style_key: 50,
                 },
             ],
         )

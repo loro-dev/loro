@@ -275,7 +275,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                 keys.len() - 1
                             });
                             style_key_idx.push(key_idx);
-                            style_info.push(info.to_u8());
+                            style_info.push(info.to_byte());
                             (
                                 start as usize,
                                 Kind::TextAnchorStart,

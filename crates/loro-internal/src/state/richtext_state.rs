@@ -570,7 +570,7 @@ impl RichtextState {
                         key_idx: record_key(&style.key) as u32,
                         counter: style.cnt as u32,
                         lamport: style.lamport,
-                        style_info: style.info.to_u8(),
+                        style_info: style.info.to_byte(),
                     })
                 }
             }

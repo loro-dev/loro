@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, Query,
@@ -1102,10 +1102,11 @@ impl RichtextState {
 
     pub fn get_richtext_value(&self) -> LoroValue {
         let mut ans: Vec<LoroValue> = Vec::new();
-        let mut last_styles: Option<Vec<_>> = None;
-        for mut span in self.iter() {
-            if let Some(last) = last_styles.as_ref() {
-                if last == &span.styles {
+        let mut last_style_set: Option<FxHashSet<_>> = None;
+        for span in self.iter() {
+            let style_set: FxHashSet<Style> = span.styles.iter().cloned().collect();
+            if let Some(last) = last_style_set.as_ref() {
+                if &style_set == last {
                     let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
                     let s = Arc::make_mut(hash_map)
                         .get_mut("insert")
@@ -1133,7 +1134,7 @@ impl RichtextState {
             }
 
             ans.push(LoroValue::Map(Arc::new(value)));
-            last_styles = Some(take(&mut span.styles));
+            last_style_set = Some(style_set);
         }
 
         LoroValue::List(Arc::new(ans))

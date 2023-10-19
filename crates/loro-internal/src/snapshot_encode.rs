@@ -749,7 +749,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         ));
                         styles.push(StyleInfo {
                             key_idx: record_key(key) as u32,
-                            info: info.to_u8(),
+                            info: info.to_byte(),
                         })
                     }
                     InnerListOp::StyleEnd => {

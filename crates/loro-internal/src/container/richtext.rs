@@ -267,11 +267,11 @@ impl TextStyleInfoFlag {
     pub const COMMENT: TextStyleInfoFlag =
         TextStyleInfoFlag::new(false, ExpandType::None, false, true);
 
-    pub fn to_u8(&self) -> u8 {
+    pub const fn to_byte(&self) -> u8 {
         self.data
     }
 
-    pub fn from_byte(data: u8) -> Self {
+    pub const fn from_byte(data: u8) -> Self {
         Self { data }
     }
 }
