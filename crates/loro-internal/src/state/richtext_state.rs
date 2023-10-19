@@ -576,7 +576,6 @@ impl RichtextState {
             }
         }
 
-        dbg!(&is_style_start);
         EncodedRichtextState {
             len: lengths,
             text: text_ranges,
