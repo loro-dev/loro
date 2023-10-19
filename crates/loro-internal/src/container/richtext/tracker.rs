@@ -73,8 +73,8 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
-        debug_log::debug_log!("before insert {} pos={}", op_id, pos);
-        debug_log::debug_dbg!(&self);
+        // debug_log::debug_log!("before insert {} pos={}", op_id, pos);
+        // debug_log::debug_dbg!(&self);
         if self.applied_vv.includes_id(op_id) {
             assert!(self
                 .applied_vv
@@ -105,7 +105,6 @@ impl Tracker {
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
         debug_log::debug_log!("after insert {}", op_id);
-        debug_log::debug_dbg!(&self);
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {

@@ -6,10 +6,18 @@ use serde::{Deserialize, Serialize};
 
 use super::AnchorType;
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
 pub(crate) struct RichtextChunk {
     start: u32,
     end: u32,
+}
+
+impl std::fmt::Debug for RichtextChunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RichtextChunk")
+            .field("value", &self.value())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]

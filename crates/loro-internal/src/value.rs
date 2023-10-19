@@ -5,7 +5,6 @@ use crate::{
     event::{Diff, Index, Path},
 };
 
-use debug_log::debug_dbg;
 pub use loro_common::LoroValue;
 
 pub trait ToJson {
@@ -43,7 +42,6 @@ enum TypeHint {
     Map,
     Text,
     List,
-    Richtext,
 }
 
 pub trait ApplyDiff {
@@ -157,7 +155,6 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Richtext => LoroValue::List(Default::default()),
                         })
                     }
                     Index::Seq(index) => {

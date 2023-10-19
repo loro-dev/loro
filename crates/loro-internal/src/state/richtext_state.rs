@@ -11,7 +11,7 @@ use crate::{
         idx::ContainerIdx,
         richtext::{
             query::{EventIndexQuery, Utf16Query},
-            AnchorType, RichtextState as InnerState, Style, StyleOp, TextStyleInfoFlag,
+            AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},

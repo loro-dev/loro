@@ -1,6 +1,6 @@
 pub mod recursive_refactored;
 
-use crate::{array_mut_ref, loro::LoroDoc};
+use crate::{array_mut_ref, container::richtext::TextStyleInfoFlag, loro::LoroDoc};
 use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
 use std::{fmt::Debug, time::Instant};
@@ -8,9 +8,27 @@ use tabled::{TableIteratorExt, Tabled};
 
 #[derive(arbitrary::Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
-    Ins { content: u16, pos: usize, site: u8 },
-    Del { pos: usize, len: usize, site: u8 },
-    Sync { from: u8, to: u8 },
+    Ins {
+        content: u16,
+        pos: usize,
+        site: u8,
+    },
+    Del {
+        pos: usize,
+        len: usize,
+        site: u8,
+    },
+    Mark {
+        pos: usize,
+        len: usize,
+        site: u8,
+        style_info: u8,
+        style_key: u8,
+    },
+    Sync {
+        from: u8,
+        to: u8,
+    },
     SyncAll,
 }
 
@@ -46,6 +64,19 @@ impl Tabled for Action {
                 "".into(),
                 "".into(),
                 "".into(),
+            ],
+            Action::Mark {
+                pos,
+                len,
+                site,
+                style_info,
+                style_key,
+            } => vec![
+                "mark".into(),
+                site.to_string().into(),
+                pos.to_string().into(),
+                len.to_string().into(),
+                format!("{} {}", style_info, style_key).into(),
             ],
         }
     }
@@ -88,6 +119,24 @@ impl Action {
                 *to %= max_users;
             }
             Action::SyncAll => {}
+            Action::Mark {
+                pos,
+                len,
+                site,
+                style_info,
+                style_key,
+            } => {
+                if max_len == 0 {
+                    *pos = 0;
+                    *len = 0;
+                } else {
+                    *pos %= max_len;
+                    *len = (*len).min(max_len - (*pos));
+                }
+
+                *site %= max_users;
+                *style_key %= 8;
+            }
         }
     }
 }
@@ -171,6 +220,29 @@ impl Actionable for Vec<LoroDoc> {
                     b.import(&a.export_from(&b.oplog_vv())).unwrap();
                 }
             }
+            Action::Mark {
+                pos,
+                len,
+                site,
+                style_info,
+                style_key,
+            } => {
+                if *len == 0 {
+                    return;
+                }
+
+                let site = &mut self[*site as usize];
+                let mut txn = site.txn().unwrap();
+                let text = txn.get_text("text");
+                text.mark(
+                    &mut txn,
+                    *pos,
+                    *pos + *len,
+                    &style_key.to_string(),
+                    TextStyleInfoFlag::from_byte(*style_info),
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -204,6 +276,26 @@ impl Actionable for Vec<LoroDoc> {
                 *to %= self.len() as u8;
             }
             Action::SyncAll => {}
+            Action::Mark {
+                pos,
+                len,
+                site,
+                style_info: _,
+                style_key,
+            } => {
+                *site %= self.len() as u8;
+                let app_state = &mut self[*site as usize].app_state().lock().unwrap();
+                let text = app_state.get_text("text").unwrap();
+                if text.is_empty() {
+                    *len = 0;
+                    *pos = 0;
+                } else {
+                    *pos %= text.len_unicode();
+                    *len = (*len).min(text.len_unicode() - (*pos));
+                }
+
+                *style_key %= 8;
+            }
         }
     }
 }
@@ -238,28 +330,45 @@ fn check_synced_refactored(sites: &mut [LoroDoc]) {
                 b.import(&a.export_from(&b.oplog_vv())).unwrap();
                 debug_log::group_end!();
             }
-            check_eq_refactored(a, b);
+            check_eq(a, b);
             debug_log::group_end!();
         }
     }
 }
 
-fn check_eq_refactored(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
+fn check_eq(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
     let a = site_a.txn().unwrap();
     let text_a = a.get_text("text");
     let b = site_b.txn().unwrap();
     let text_b = b.get_text("text");
-    let value_a = text_a.get_value();
-    let value_b = text_b.get_value();
-    assert_eq!(
-        value_a,
-        value_b,
-        "peer{}={:?}, peer{}={:?}",
-        site_a.peer_id(),
-        value_a,
-        site_b.peer_id(),
-        value_b
-    );
+    let value_a = text_a.get_richtext_value();
+    let value_b = text_b.get_richtext_value();
+    if value_a != value_b {
+        {
+            // compare plain text value
+            let value_a = text_a.get_value();
+            let value_b = text_b.get_value();
+            assert_eq!(
+                value_a,
+                value_b,
+                "Plain Text not equal. peer{}={:?}, peer{}={:?}",
+                site_a.peer_id(),
+                value_a,
+                site_b.peer_id(),
+                value_b
+            );
+        }
+
+        assert_eq!(
+            value_a,
+            value_b,
+            "Richtext Style not equal. peer{}={:?}, peer{}={:?}",
+            site_a.peer_id(),
+            value_a,
+            site_b.peer_id(),
+            value_b
+        );
+    }
 }
 
 pub fn minify_error<T, F, N>(site_num: u8, actions: Vec<T>, f: F, normalize: N)
@@ -1686,6 +1795,33 @@ mod test {
                     site: 138,
                 },
                 Sync { from: 138, to: 129 },
+            ],
+        )
+    }
+
+    #[test]
+    fn richtext_fuzz_0() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 9728,
+                    pos: 3829748534148603701,
+                    site: 31,
+                },
+                SyncAll,
+                Mark {
+                    pos: 144373576751199690,
+                    len: 39583260855602,
+                    site: 38,
+                    style_info: 53,
+                    style_key: 227,
+                },
+                Del {
+                    pos: 18446521092732302645,
+                    len: 15028556109460991,
+                    site: 53,
+                },
             ],
         )
     }

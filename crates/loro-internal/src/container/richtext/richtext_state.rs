@@ -7,14 +7,13 @@ use generic_btree::{
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
-    borrow::Cow,
-    ops::{Add, AddAssign, Range, RangeBounds, Sub},
-    str::{from_utf8_unchecked, Utf8Error},
-    sync::Arc,
-};
-use std::{
     fmt::{Display, Formatter},
     mem::take,
+};
+use std::{
+    ops::{Add, AddAssign, Range, Sub},
+    str::{from_utf8_unchecked, Utf8Error},
+    sync::Arc,
 };
 
 use crate::{
@@ -23,7 +22,7 @@ use crate::{
 };
 
 // FIXME: Check splice and other things are using unicode index
-use self::query::{EntityQuery, EntityQueryT, EventIndexQuery, UnicodeQuery, Utf16Query};
+use self::query::{EntityQuery, EntityQueryT, EventIndexQuery, UnicodeQuery};
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
@@ -270,7 +269,7 @@ pub(crate) fn utf16_to_utf8_index(s: &str, utf16_index: usize) -> Option<usize> 
         let len = c.len_utf16();
         current_utf16_index += len;
         if current_utf16_index == utf16_index {
-            return Some(byte_index);
+            return Some(byte_index + c.len_utf8());
         }
     }
 
@@ -820,7 +819,6 @@ impl RichtextState {
         removed_entity_ranges
     }
 
-    // TODO: refactor extract common code
     pub(crate) fn get_text_entity_ranges<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
         &self,
         pos: usize,
@@ -842,6 +840,10 @@ impl RichtextState {
         for span in self.tree.iter_range(start..end) {
             let start = span.start.unwrap_or(0);
             let end = span.end.unwrap_or(span.elem.rle_len());
+            if end == 0 {
+                break;
+            }
+
             let len = end - start;
             match span.elem {
                 RichtextStateChunk::Text { .. } => {
@@ -856,7 +858,6 @@ impl RichtextState {
                     entity_index += len;
                 }
                 RichtextStateChunk::Style { .. } => {
-                    ans.push(entity_index..entity_index + 1);
                     entity_index += 1;
                 }
             }
@@ -887,8 +888,6 @@ impl RichtextState {
         let end = self.tree.query::<EntityQuery>(&range.end);
         let start_event_index = self.cursor_to_event_index(start.unwrap().cursor);
         let end_event_index = self.cursor_to_event_index(end.unwrap().cursor);
-        debug_log::debug_dbg!(&start, &end);
-        // debug_log::debug_dbg!(&self.tree);
         (
             generic_btree::iter::Drain::new(&mut self.tree, start, end),
             start_event_index,
@@ -1102,7 +1101,6 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
-        debug_log::debug_dbg!(&self);
         let mut ans: Vec<LoroValue> = Vec::new();
         let mut last_styles: Option<Vec<_>> = None;
         for mut span in self.iter() {

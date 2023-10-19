@@ -23,7 +23,7 @@
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {
-    "RUST_BACKTRACE": "full",
+    "RUST_BACKTRACE": "1",
     "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": ["test_utils"],

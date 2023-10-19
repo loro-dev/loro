@@ -253,6 +253,7 @@ impl LoroDoc {
                     let app = LoroDoc::new();
                     decode_app_snapshot(&app, &input[1..], false)?;
                     let oplog = self.oplog.lock().unwrap();
+                    // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
                     return self.import_with(&updates, origin);

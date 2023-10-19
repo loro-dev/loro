@@ -82,7 +82,6 @@ impl StyleRangeMap {
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
         debug_log::debug_log!("Annotate {:?}", &range);
-        dbg!(&self);
         let range = self.0.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();

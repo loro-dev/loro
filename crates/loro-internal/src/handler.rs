@@ -10,7 +10,7 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -164,6 +164,23 @@ impl TextHandler {
             })
     }
 
+    /// if `wasm` feature is enabled, it is a UTF-16 length
+    /// otherwise, it is a Unicode length
+    pub fn len_event(&self) -> usize {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                if cfg!(feature = "wasm") {
+                    state.as_richtext_state().unwrap().len_utf16()
+                } else {
+                    state.as_richtext_state().unwrap().len_unicode()
+                }
+            })
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
@@ -213,6 +230,13 @@ impl TextHandler {
             return Ok(());
         }
 
+        if pos + len > self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len_event(),
+            });
+        }
+
         debug_log::group!("delete pos={} len={}", pos, len);
         let ranges =
             self.state
@@ -227,7 +251,7 @@ impl TextHandler {
                         .get_text_entity_ranges_in_event_index_range(pos, len)
                 });
 
-        debug_log::debug_dbg!(&ranges, pos, len);
+        debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
         let mut is_first = true;
         for range in ranges.iter().rev() {
             txn.apply_local_op(
