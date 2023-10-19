@@ -13,6 +13,7 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
+        richtext::TextStyleInfoFlag,
         ContainerID, ContainerType,
     },
     id::{Counter, PeerID, ID},
@@ -68,14 +69,47 @@ struct ChangeEncoding {
 struct OpEncoding {
     #[columnar(strategy = "DeltaRle")]
     container: usize,
-    /// key index or insert/delete pos
+    /// Key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    #[columnar(strategy = "BoolRle")]
-    is_del: bool,
-    // the length of the deletion or insertion
+    /// 0: insert
+    /// 1: delete
+    /// 2: text-anchor-start
+    /// 3: text-anchor-end
+    #[columnar(strategy = "Rle")]
+    kind: u8,
+    /// the length of the deletion or insertion
     #[columnar(strategy = "Rle")]
     insert_del_len: isize,
+}
+
+#[derive(PartialEq, Eq)]
+enum Kind {
+    Insert,
+    Delete,
+    TextAnchorStart,
+    TextAnchorEnd,
+}
+
+impl Kind {
+    fn from_byte(byte: u8) -> Self {
+        match byte {
+            0 => Self::Insert,
+            1 => Self::Delete,
+            2 => Self::TextAnchorStart,
+            3 => Self::TextAnchorEnd,
+            _ => panic!("invalid kind byte"),
+        }
+    }
+
+    fn to_byte(&self) -> u8 {
+        match self {
+            Self::Insert => 0,
+            Self::Delete => 1,
+            Self::TextAnchorStart => 2,
+            Self::TextAnchorEnd => 3,
+        }
+    }
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -108,6 +142,9 @@ struct DocEncoding<'a> {
     normal_containers: Vec<NormalContainer>,
     #[columnar(borrow)]
     str: Cow<'a, str>,
+    #[columnar(borrow)]
+    style_info: Cow<'a, [u8]>,
+    style_key: Vec<usize>,
     #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
     start_counter: Vec<Counter>,
@@ -161,6 +198,8 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut deps = Vec::with_capacity(change_num);
     let mut values = Vec::new();
     let mut string: String = String::new();
+    let mut style_key_idx = Vec::new();
+    let mut style_info = Vec::new();
 
     for change in &diff_changes {
         let client_idx = peer_id_to_idx[&change.id.peer];
@@ -184,22 +223,28 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let container_index = *container_idx2index.get(&container).unwrap();
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
-                let (prop, is_del, insert_del_len) = match content {
+                let (prop, kind, insert_del_len) = match content {
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
-                        values.push(value.clone());
+                        if value.is_some() {
+                            values.push(value.clone());
+                        }
                         (
                             *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key.clone());
                                 keys.len() - 1
                             }),
-                            false,
+                            if value.is_some() {
+                                Kind::Insert
+                            } else {
+                                Kind::Delete
+                            },
                             0,
                         )
                     }
                     crate::op::RawOpContent::List(list) => match list {
                         ListOp::Insert { slice, pos } => {
                             let len;
-                            match slice {
+                            match &slice {
                                 ListSlice::RawData(v) => {
                                     len = 0;
                                     values.push(Some(LoroValue::List(Arc::new(v.to_vec()))));
@@ -209,29 +254,41 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                     unicode_len: _,
                                 } => {
                                     len = str.len();
-                                    assert!(len > 0);
+                                    assert!(len > 0, "{:?}", &slice);
                                     string.push_str(str.deref());
                                 }
                             };
-                            (pos, false, len as isize)
+                            (pos, Kind::Insert, len as isize)
                         }
                         ListOp::Delete(span) => {
                             // span.len maybe negative
-                            (span.pos as usize, true, span.signed_len)
+                            (span.pos as usize, Kind::Delete, span.signed_len)
                         }
                         ListOp::StyleStart {
                             start,
                             end,
                             key,
                             info,
-                        } => unimplemented!("style encode"),
-                        ListOp::StyleEnd => unimplemented!("style encode"),
+                        } => {
+                            let key_idx = *key_to_idx.entry(key.clone()).or_insert_with(|| {
+                                keys.push(key.clone());
+                                keys.len() - 1
+                            });
+                            style_key_idx.push(key_idx);
+                            style_info.push(info.to_u8());
+                            (
+                                start as usize,
+                                Kind::TextAnchorStart,
+                                end as isize - start as isize,
+                            )
+                        }
+                        ListOp::StyleEnd => (0, Kind::TextAnchorEnd, 0),
                     },
                 };
                 op_len += 1;
                 ops.push(OpEncoding {
                     prop,
-                    is_del,
+                    kind: kind.to_byte(),
                     insert_del_len,
                     container: container_index,
                 })
@@ -258,6 +315,8 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         root_containers: VarZeroVec::from(&root_containers),
         normal_containers,
         values,
+        style_key: style_key_idx,
+        style_info: Cow::Owned(style_info),
     };
 
     to_vec(&encoded).unwrap()
@@ -359,6 +418,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         keys,
         root_containers,
         values,
+        style_key,
+        style_info,
     } = encoded;
 
     let start_vv: VersionVector = peers
@@ -382,6 +443,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
 
     let mut op_iter = ops;
     let mut deps_iter = deps;
+    let mut style_key_iter = style_key.into_iter();
+    let mut style_info_iter = style_info.iter();
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
             let Some(container) = root_containers.get(idx) else {
@@ -425,8 +488,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 let OpEncoding {
                     container: container_idx,
                     prop,
-                    is_del,
                     insert_del_len,
+                    kind,
                 } = op;
 
                 let Some(container_id) = get_container(container_idx) else {
@@ -436,20 +499,19 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 let content = match container_type {
                     ContainerType::Map => {
                         let key = keys[prop].clone();
-                        RawOpContent::Map(MapSet {
-                            key,
-                            value: value_iter.next().unwrap(),
-                        })
+                        if Kind::from_byte(kind) == Kind::Delete {
+                            RawOpContent::Map(MapSet { key, value: None })
+                        } else {
+                            RawOpContent::Map(MapSet {
+                                key,
+                                value: value_iter.next().unwrap(),
+                            })
+                        }
                     }
                     ContainerType::List | ContainerType::Text => {
                         let pos = prop;
-                        if is_del {
-                            RawOpContent::List(ListOp::Delete(DeleteSpan {
-                                pos: pos as isize,
-                                signed_len: insert_del_len,
-                            }))
-                        } else {
-                            match container_type {
+                        match Kind::from_byte(kind) {
+                            Kind::Insert => match container_type {
                                 ContainerType::Text => {
                                     let insert_len = insert_del_len as usize;
                                     let s = &str[str_index..str_index + insert_len];
@@ -472,10 +534,25 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                     })
                                 }
                                 _ => unreachable!(),
+                            },
+                            Kind::Delete => RawOpContent::List(ListOp::Delete(DeleteSpan {
+                                pos: pos as isize,
+                                signed_len: insert_del_len,
+                            })),
+                            Kind::TextAnchorStart => RawOpContent::List(ListOp::StyleStart {
+                                start: pos as u32,
+                                end: insert_del_len as u32 + pos as u32,
+                                key: keys[style_key_iter.next().unwrap()].clone(),
+                                info: TextStyleInfoFlag::from_byte(
+                                    *style_info_iter.next().unwrap(),
+                                ),
+                            }),
+                            Kind::TextAnchorEnd => RawOpContent::List(ListOp::StyleEnd),
+                            _ => {
+                                unreachable!()
                             }
                         }
                     }
-                    ContainerType::Text => unimplemented!(),
                 };
                 let remote_op = RemoteOp {
                     container: container_id,

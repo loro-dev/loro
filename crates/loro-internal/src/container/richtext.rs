@@ -271,7 +271,7 @@ impl TextStyleInfoFlag {
         self.data
     }
 
-    pub fn from_u8(data: u8) -> Self {
+    pub fn from_byte(data: u8) -> Self {
         Self { data }
     }
 }

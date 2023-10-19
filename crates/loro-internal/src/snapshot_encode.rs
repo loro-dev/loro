@@ -136,7 +136,7 @@ pub fn decode_oplog(
                                     start: start as u32,
                                     end: end as u32,
                                     key,
-                                    info: TextStyleInfoFlag::from_u8(info),
+                                    info: TextStyleInfoFlag::from_byte(info),
                                 }),
                                 container_idx,
                             )

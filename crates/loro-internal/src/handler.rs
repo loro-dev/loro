@@ -169,6 +169,10 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+        if s.is_empty() {
+            return Ok(());
+        }
+
         let entity_index =
             self.state
                 .upgrade()
@@ -205,6 +209,10 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
         debug_log::group!("delete pos={} len={}", pos, len);
         let ranges =
             self.state

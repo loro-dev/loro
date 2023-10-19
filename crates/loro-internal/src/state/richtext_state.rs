@@ -511,7 +511,7 @@ impl RichtextState {
                             peer: common.peer_ids[style_compact.peer_idx as usize],
                             cnt: style_compact.counter as Counter,
                             key: state_arena.keywords[style_compact.key_idx as usize].clone(),
-                            info: TextStyleInfoFlag::from_u8(style_compact.style_info),
+                            info: TextStyleInfoFlag::from_byte(style_compact.style_info),
                         }),
                         if is_start {
                             AnchorType::Start
