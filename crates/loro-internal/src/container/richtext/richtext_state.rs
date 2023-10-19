@@ -911,7 +911,7 @@ impl RichtextState {
         );
         self.insert_elem_at_entity_index(
             range.start,
-            RichtextStateChunk::from_style(style.clone(), AnchorType::End),
+            RichtextStateChunk::from_style(style.clone(), AnchorType::Start),
         );
         // end_entity_index + 2, because
         // 1. We inserted a start anchor before end_entity_index, so we need to +1

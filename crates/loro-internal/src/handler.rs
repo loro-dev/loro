@@ -854,4 +854,27 @@ mod test {
             );
         }
     }
+
+    #[test]
+    fn richtext_snapshot() {
+        let loro = LoroDoc::new();
+        let mut txn = loro.txn().unwrap();
+        let handler = loro.get_text("richtext");
+        handler.insert(&mut txn, 0, "hello world").unwrap();
+        handler
+            .mark(&mut txn, 0, 5, "bold", TextStyleInfoFlag::BOLD)
+            .unwrap();
+        txn.commit().unwrap();
+
+        let loro2 = LoroDoc::new();
+        loro2.import(&loro.export_snapshot()).unwrap();
+        let handler2 = loro2.get_text("richtext");
+        assert_eq!(
+            handler2.get_richtext_value().to_json_value(),
+            serde_json::json!([
+                {"insert": "hello", "attributes": {"bold": true}},
+                {"insert": " world"}
+            ])
+        );
+    }
 }

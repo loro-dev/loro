@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{Counter, LoroValue, PeerID, ID};
@@ -255,7 +256,7 @@ impl ContainerState for RichtextState {
                             );
                         }
                         RichtextStateChunk::Style { style, anchor_type } => {
-                            let (pos, _) = self.state.insert_elem_at_entity_index(
+                            self.state.insert_elem_at_entity_index(
                                 entity_index,
                                 RichtextStateChunk::Style {
                                     style: style.clone(),
@@ -462,10 +463,11 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub(crate) fn get_loader(&mut self) -> RichtextStateLoader {
+    fn get_loader(&mut self) -> RichtextStateLoader {
         RichtextStateLoader {
             state: self,
             start_anchor_pos: Default::default(),
+            entity_index: 0,
         }
     }
 
@@ -488,11 +490,11 @@ impl RichtextState {
     ) {
         let bit_len = is_style_start.len() * 8;
         let is_style_start = BitMap::from_vec(is_style_start, bit_len);
+        let mut is_style_start_iter = is_style_start.iter();
         let mut loader = self.get_loader();
         let mut is_text = true;
         let mut text_range_iter = text.iter();
         let mut style_iter = styles.iter();
-        let mut style_index = 0;
         for &len in len.iter() {
             if is_text {
                 for _ in 0..len {
@@ -502,8 +504,7 @@ impl RichtextState {
                 }
             } else {
                 for _ in 0..len {
-                    let is_start = is_style_start.get(style_index);
-                    style_index += 1;
+                    let is_start = is_style_start_iter.next().unwrap();
                     let style_compact = style_iter.next().unwrap();
                     loader.push(RichtextStateChunk::new_style(
                         Arc::new(StyleOp {
@@ -531,38 +532,38 @@ impl RichtextState {
         record_peer: &mut impl FnMut(PeerID) -> u32,
         record_key: &mut impl FnMut(&InternalString) -> usize,
     ) -> EncodedRichtextState {
-        let mut len = Vec::new();
+        // lengths are interleaved [text_elem_len, style_elem_len, ..]
+        let mut lengths = Vec::new();
         let mut text_ranges = Vec::new();
         let mut styles = Vec::new();
         let mut is_style_start = BitMap::new();
 
-        let mut is_last_style = false;
         for chunk in self.iter_chunk() {
+            debug_log::debug_dbg!(&chunk);
             match chunk {
-                RichtextStateChunk::Text { text, unicode_len } => {
-                    if is_last_style || len.is_empty() {
-                        len.push(1);
-                    } else {
-                        *len.last_mut().unwrap() += 1;
+                RichtextStateChunk::Text {
+                    text,
+                    unicode_len: _,
+                } => {
+                    if lengths.len() % 2 == 0 {
+                        lengths.push(0);
                     }
 
-                    is_last_style = false;
+                    *lengths.last_mut().unwrap() += 1;
                     text_ranges.push((text.start() as u32, text.end() as u32));
                 }
                 RichtextStateChunk::Style { style, anchor_type } => {
-                    if !is_last_style {
-                        len.push(1);
-                    } else {
-                        if len.is_empty() {
-                            // zero text chunk to switch to style mode
-                            len.push(0);
-                            len.push(0);
-                        }
-
-                        *len.last_mut().unwrap() += 1;
+                    if lengths.is_empty() {
+                        lengths.reserve(2);
+                        lengths.push(0);
+                        lengths.push(0);
                     }
 
-                    is_last_style = true;
+                    if lengths.len() % 2 == 1 {
+                        lengths.push(0);
+                    }
+
+                    *lengths.last_mut().unwrap() += 1;
                     is_style_start.push(*anchor_type == AnchorType::Start);
                     styles.push(loro_preload::CompactStyleOp {
                         peer_idx: record_peer(style.peer),
@@ -575,8 +576,9 @@ impl RichtextState {
             }
         }
 
+        dbg!(&is_style_start);
         EncodedRichtextState {
-            len,
+            len: lengths,
             text: text_ranges,
             styles,
             is_style_start: is_style_start.into_vec(),
@@ -588,17 +590,31 @@ impl RichtextState {
 pub(crate) struct RichtextStateLoader<'a> {
     state: &'a mut RichtextState,
     start_anchor_pos: FxHashMap<ID, usize>,
+    entity_index: usize,
 }
 
 impl<'a> RichtextStateLoader<'a> {
     pub fn push(&mut self, elem: RichtextStateChunk) {
-        match &elem {
-            RichtextStateChunk::Style { style, anchor_type } => {
-                // FIXME: detect style bound
+        debug_log::debug_dbg!(&elem);
+        if let RichtextStateChunk::Style { style, anchor_type } = &elem {
+            if *anchor_type == AnchorType::Start {
+                self.start_anchor_pos
+                    .insert(ID::new(style.peer, style.cnt), self.entity_index);
+            } else {
+                debug_log::debug_dbg!(&self.start_anchor_pos);
+                let start_pos = self
+                    .start_anchor_pos
+                    .remove(&ID::new(style.peer, style.cnt))
+                    .expect("Style start not found");
+
+                // we need to + 1 because we also need to annotate the end anchor
+                self.state
+                    .state
+                    .annotate_style_range(start_pos..self.entity_index, style.clone());
             }
-            RichtextStateChunk::Text { .. } => {}
         }
 
+        self.entity_index += elem.rle_len();
         self.state.state.push(elem);
     }
 }
