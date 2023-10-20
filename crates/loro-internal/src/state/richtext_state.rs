@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{Counter, LoroValue, PeerID, ID};
-use loro_preload::{CommonArena, EncodedRichtextState, TempArena};
+use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
 use crate::{
     arena::SharedArena,
@@ -505,7 +505,7 @@ impl RichtextState {
         &mut self,
         EncodedRichtextState {
             len,
-            text,
+            text_bytes,
             styles,
             is_style_start,
         }: EncodedRichtextState,
@@ -519,13 +519,13 @@ impl RichtextState {
         let mut is_style_start_iter = is_style_start.iter();
         let mut loader = Self::get_loader();
         let mut is_text = true;
-        let mut text_range_iter = text.iter();
+        let mut text_range_iter = TextRanges::decode_iter(&text_bytes).unwrap();
         let mut style_iter = styles.iter();
         for &len in len.iter() {
             if is_text {
                 for _ in 0..len {
-                    let &range = text_range_iter.next().unwrap();
-                    let text = arena.slice_by_utf8(range.0 as usize..range.1 as usize);
+                    let range = text_range_iter.next().unwrap();
+                    let text = arena.slice_by_utf8(range.start..range.start + range.len);
                     loader.push(RichtextStateChunk::new_text(text));
                 }
             } else {
@@ -562,7 +562,7 @@ impl RichtextState {
     ) -> EncodedRichtextState {
         // lengths are interleaved [text_elem_len, style_elem_len, ..]
         let mut lengths = Vec::new();
-        let mut text_ranges = Vec::new();
+        let mut text_ranges: TextRanges = Default::default();
         let mut styles = Vec::new();
         let mut is_style_start = BitMap::new();
 
@@ -577,7 +577,10 @@ impl RichtextState {
                     }
 
                     *lengths.last_mut().unwrap() += 1;
-                    text_ranges.push((text.start() as u32, text.end() as u32));
+                    text_ranges.ranges.push(loro_preload::TextRange {
+                        start: text.start(),
+                        len: text.len(),
+                    });
                 }
                 RichtextStateChunk::Style { style, anchor_type } => {
                     if lengths.is_empty() {
@@ -603,9 +606,11 @@ impl RichtextState {
             }
         }
 
+        let text_bytes = text_ranges.encode();
+        // eprintln!("bytes len={}", text_bytes.len());
         EncodedRichtextState {
             len: lengths,
-            text: text_ranges,
+            text_bytes: std::borrow::Cow::Owned(text_bytes),
             styles,
             is_style_start: is_style_start.into_vec(),
         }

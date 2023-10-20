@@ -522,36 +522,12 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0dd3cd20dc6b5a876612a6e5accfe7f3dd883db6d07acfbf14c128f61550dfa"
-dependencies = [
- "darling_core 0.14.2",
- "darling_macro 0.14.2",
-]
-
-[[package]]
-name = "darling"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0209d94da627ab5605dcccf08bb18afa5009cfbef48d8a8b7d7bdbc79be25c5e"
 dependencies = [
- "darling_core 0.20.3",
- "darling_macro 0.20.3",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a784d2ccaf7c98501746bf0be29b2022ba41fd62a2e622af997a03e9f972859f"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2 1.0.67",
- "quote 1.0.29",
- "strsim",
- "syn 1.0.107",
+ "darling_core",
+ "darling_macro",
 ]
 
 [[package]]
@@ -570,22 +546,11 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7618812407e9402654622dd402b0a89dff9ba93badd6540781526117b92aab7e"
-dependencies = [
- "darling_core 0.14.2",
- "quote 1.0.29",
- "syn 1.0.107",
-]
-
-[[package]]
-name = "darling_macro"
 version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "836a9bbc7ad63342d6d6e7b815ccab164bc77a2d95d84bc3117a8c0d5c98e2d5"
 dependencies = [
- "darling_core 0.20.3",
+ "darling_core",
  "quote 1.0.29",
  "syn 2.0.25",
 ]
@@ -1077,7 +1042,7 @@ dependencies = [
  "rle",
  "serde",
  "serde-wasm-bindgen",
- "serde_columnar 0.3.2",
+ "serde_columnar",
  "serde_json",
  "smallvec",
  "static_assertions",
@@ -1106,7 +1071,7 @@ dependencies = [
  "bytes",
  "loro-common",
  "serde",
- "serde_columnar 0.2.5",
+ "serde_columnar",
 ]
 
 [[package]]
@@ -1881,19 +1846,6 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f5e09c91d7107faf75e9754748e3cb11fa3414a3761225a3d47c98aad153d40"
-dependencies = [
- "itertools 0.10.5",
- "postcard",
- "serde",
- "serde_columnar_derive 0.2.2",
- "thiserror",
-]
-
-[[package]]
-name = "serde_columnar"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98e0e9eb205e8f31604c26118d3f3626b21e3170a243ddfe1b7131b79725b114"
@@ -1902,20 +1854,8 @@ dependencies = [
  "itertools 0.11.0",
  "postcard",
  "serde",
- "serde_columnar_derive 0.3.2",
+ "serde_columnar_derive",
  "thiserror",
-]
-
-[[package]]
-name = "serde_columnar_derive"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c78a4cb8421e4666b4e71a5a896be4f8db66ba90af88257e1072609dc4f3abbb"
-dependencies = [
- "darling 0.14.2",
- "proc-macro2 1.0.67",
- "quote 1.0.29",
- "syn 1.0.107",
 ]
 
 [[package]]
@@ -1924,7 +1864,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46d50a130ce1b4cf3b1585342ee0bf71e7589845ec23283e85fc875606018520"
 dependencies = [
- "darling 0.20.3",
+ "darling",
  "proc-macro2 1.0.67",
  "quote 1.0.29",
  "syn 2.0.25",

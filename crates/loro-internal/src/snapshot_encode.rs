@@ -33,7 +33,8 @@ use super::{
 };
 
 pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
-    let pre_encoded_state = preprocess_app_state(&app.app_state().lock().unwrap());
+    let state = app.app_state().lock().unwrap();
+    let pre_encoded_state = preprocess_app_state(&state);
     let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
     // f.diagnose_size();
     f.encode()
@@ -503,13 +504,13 @@ struct DepsEncoding {
 }
 
 #[derive(Default)]
-struct PreEncodedState {
+struct PreEncodedState<'a> {
     common: CommonArena<'static>,
     arena: TempArena<'static>,
     key_lookup: FxHashMap<InternalString, usize>,
     value_lookup: FxHashMap<LoroValue, usize>,
     peer_lookup: FxHashMap<PeerID, usize>,
-    app_state: EncodedAppState,
+    app_state: EncodedAppState<'a>,
 }
 
 fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {

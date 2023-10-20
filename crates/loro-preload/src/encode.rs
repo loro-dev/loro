@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
-use loro_common::{ContainerID, InternalString, LoroError, LoroValue, ID};
-use serde_columnar::to_vec;
+use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
+use serde_columnar::{columnar, to_vec};
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
@@ -109,48 +109,83 @@ impl<'a> CommonArena<'a> {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct EncodedAppState {
+pub struct EncodedAppState<'a> {
     pub frontiers: Vec<ID>,
     /// container states
-    pub states: Vec<EncodedContainerState>,
+    #[serde(borrow)]
+    pub states: Vec<EncodedContainerState<'a>>,
     /// containers' parents
     pub parents: Vec<Option<u32>>,
 }
 
-impl EncodedAppState {
+impl<'a> EncodedAppState<'a> {
     pub fn encode(&self) -> Vec<u8> {
         to_vec(self).unwrap()
     }
 
-    pub fn decode(data: &FinalPhase) -> Result<Self, LoroError> {
+    pub fn decode(data: &'a FinalPhase) -> Result<EncodedAppState<'a>, LoroError> {
         serde_columnar::from_bytes(&data.app_state)
             .map_err(|e| LoroError::DecodeError(e.to_string().into_boxed_str()))
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EncodedContainerState {
+pub enum EncodedContainerState<'a> {
     Map(Vec<MapEntry>),
     List(Vec<usize>),
-    Richtext(EncodedRichtextState),
+    #[serde(borrow)]
+    Richtext(EncodedRichtextState<'a>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncodedRichtextState {
+pub struct EncodedRichtextState<'a> {
     /// It's composed of interleaved:
     ///
     /// - len of text ranges
     /// - len of styles anchors
     pub len: Vec<u32>,
-    /// Text ranges in the [`TempArena`] `richtext` field
-    pub text: Vec<(u32, u32)>,
+    /// This is encoded [TextRanges]
+    #[serde(borrow)]
+    pub text_bytes: Cow<'a, [u8]>,
     /// Style anchor index in the style arena
+    // TODO: can be optimized
     pub styles: Vec<CompactStyleOp>,
     /// It is a start or end anchor. It's indexed by bit position.
     pub is_style_start: Vec<u8>,
 }
 
-impl EncodedContainerState {
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone, Copy)]
+pub struct TextRange {
+    #[columnar(strategy = "DeltaRle")]
+    pub start: usize,
+    #[columnar(strategy = "DeltaRle")]
+    pub len: usize,
+}
+
+#[columnar(ser, de)]
+#[derive(Debug, Default)]
+pub struct TextRanges {
+    #[columnar(class = "vec", iter = "TextRange")]
+    pub ranges: Vec<TextRange>,
+}
+
+impl TextRanges {
+    #[inline]
+    pub fn decode_iter(bytes: &[u8]) -> LoroResult<impl Iterator<Item = TextRange> + '_> {
+        let iter = serde_columnar::iter_from_bytes::<TextRanges>(bytes).map_err(|e| {
+            LoroError::DecodeError(format!("Failed to decode TextRange: {}", e).into_boxed_str())
+        })?;
+        Ok(iter.ranges)
+    }
+
+    #[inline]
+    pub fn encode(&self) -> Vec<u8> {
+        to_vec(self).unwrap()
+    }
+}
+
+impl<'a> EncodedContainerState<'a> {
     pub fn container_type(&self) -> loro_common::ContainerType {
         match self {
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,

@@ -2,7 +2,7 @@ use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait, Cursor, LeafDirtyMap, Query,
+    BTree, BTreeTrait, Cursor, Query,
 };
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
