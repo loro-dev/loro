@@ -146,7 +146,7 @@ impl Transaction {
         self.timestamp = Some(time);
     }
 
-    pub fn set_on_commit(&mut self, f: OnCommitFn) {
+    pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
         self.on_commit = Some(f);
     }
 

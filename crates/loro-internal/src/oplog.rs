@@ -367,9 +367,9 @@ impl OpLog {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
                     loro_common::ContainerType::Text => {
-                        let str = self
-                            .arena
-                            .slice_str(slice.0.start as usize..slice.0.end as usize);
+                        let str = self.arena.slice_str_by_unicode_range(
+                            slice.0.start as usize..slice.0.end as usize,
+                        );
                         contents.push(RawOpContent::List(list_op::ListOp::Insert {
                             slice: ListSlice::RawStr {
                                 unicode_len: str.chars().count(),

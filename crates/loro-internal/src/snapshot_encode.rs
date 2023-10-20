@@ -36,14 +36,12 @@ pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
     let pre_encoded_state = preprocess_app_state(&app.app_state().lock().unwrap());
     let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
     // f.diagnose_size();
-    miniz_oxide::deflate::compress_to_vec(&f.encode(), 6)
+    f.encode()
 }
 
 pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8], with_state: bool) -> Result<(), LoroError> {
     assert!(app.is_empty());
-    let bytes = miniz_oxide::inflate::decompress_to_vec(bytes)
-        .map_err(|_| LoroError::DecodeError("".into()))?;
-    let data = FinalPhase::decode(&bytes)?;
+    let data = FinalPhase::decode(bytes)?;
     if with_state {
         let mut app_state = app.app_state().lock().unwrap();
         let (state_arena, common) = decode_state(&mut app_state, &data)?;
@@ -84,7 +82,6 @@ pub fn decode_oplog(
     let mut dep_iter = oplog_data.deps;
     let mut op_iter = oplog_data.ops;
     let mut counters = FxHashMap::default();
-    let mut text_idx = 0;
     for change in oplog_data.changes {
         let peer_idx = change.peer_idx as usize;
         let peer_id = common.peer_ids[peer_idx];

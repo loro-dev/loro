@@ -95,14 +95,14 @@ impl ContainerState for MapState {
         self.in_txn = false;
     }
 
-    fn get_value(&self) -> LoroValue {
+    fn get_value(&mut self) -> LoroValue {
         let ans = self.to_map();
         LoroValue::Map(Arc::new(ans))
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&self) -> Diff {
+    fn to_diff(&mut self) -> Diff {
         Diff::NewMap(crate::delta::MapDelta {
             updated: self.map.clone(),
         })

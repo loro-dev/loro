@@ -268,9 +268,22 @@ impl SharedArena {
     }
 
     #[inline]
-    pub fn slice_str(&self, range: Range<usize>) -> String {
+    pub fn slice_by_unicode(&self, range: impl RangeBounds<usize>) -> BytesSlice {
+        self.inner.str.lock().unwrap().slice_by_unicode(range)
+    }
+
+    #[inline]
+    pub fn slice_by_utf8(&self, range: impl RangeBounds<usize>) -> BytesSlice {
+        self.inner.str.lock().unwrap().slice_bytes(range)
+    }
+
+    #[inline]
+    pub fn slice_str_by_unicode_range(&self, range: Range<usize>) -> String {
         let mut s = self.inner.str.lock().unwrap();
-        _slice_str(range, &mut s)
+        let s: &mut StrArena = &mut s;
+        let mut ans = String::with_capacity(range.len());
+        ans.push_str(s.slice_str_by_unicode(range));
+        ans
     }
 
     #[inline]
@@ -286,11 +299,6 @@ impl SharedArena {
     #[inline]
     pub fn get_values(&self, range: Range<usize>) -> Vec<LoroValue> {
         (self.inner.values.lock().unwrap()[range]).to_vec()
-    }
-
-    #[inline]
-    pub fn slice_by_unicode(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.str.lock().unwrap().slice_by_unicode(range)
     }
 
     #[inline(always)]

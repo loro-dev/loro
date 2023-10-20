@@ -2,14 +2,11 @@ use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait, Cursor, Query,
+    BTree, BTreeTrait, Cursor, LeafDirtyMap, Query,
 };
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
-use std::{
-    fmt::{Display, Formatter},
-    mem::take,
-};
+use std::fmt::{Display, Formatter};
 use std::{
     ops::{Add, AddAssign, Range, Sub},
     str::{from_utf8_unchecked, Utf8Error},
@@ -363,14 +360,17 @@ impl BTreeTrait for RichtextTreeTrait {
         diff
     }
 
+    #[inline(always)]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += *diff2;
     }
 
+    #[inline(always)]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         *cache += *diff;
     }
 
+    #[inline]
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
             RichtextStateChunk::Text { unicode_len, text } => Cache {
@@ -388,10 +388,12 @@ impl BTreeTrait for RichtextTreeTrait {
         }
     }
 
+    #[inline(always)]
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }
 
+    #[inline(always)]
     fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
         Cache {
             bytes: cache_lhs.bytes - cache_rhs.bytes,
@@ -535,6 +537,13 @@ pub(crate) mod query {
 }
 
 impl RichtextState {
+    pub(crate) fn from_chunks<I: Iterator<Item = impl Into<RichtextStateChunk>>>(i: I) -> Self {
+        Self {
+            tree: i.collect(),
+            style_ranges: Default::default(),
+        }
+    }
+
     /// Insert text at a unicode index. Return the entity index.
     pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
         if self.tree.is_empty() {
@@ -583,7 +592,12 @@ impl RichtextState {
         entity_index: usize,
         elem: RichtextStateChunk,
     ) -> (usize, &Styles) {
-        debug_assert!(entity_index <= self.len_entity());
+        debug_assert!(
+            entity_index <= self.len_entity(),
+            "entity_index={} len={}",
+            entity_index,
+            self.len_entity()
+        );
 
         match self.tree.query::<EntityQuery>(&entity_index) {
             Some(cursor) => {

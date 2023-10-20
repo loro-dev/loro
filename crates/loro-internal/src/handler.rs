@@ -111,8 +111,8 @@ impl TextHandler {
             .unwrap()
             .lock()
             .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_richtext_state().unwrap().get_richtext_value()
+            .with_state_mut(self.container_idx, |state| {
+                state.as_richtext_state_mut().unwrap().get_richtext_value()
             })
     }
 
@@ -137,8 +137,8 @@ impl TextHandler {
             .unwrap()
             .lock()
             .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_richtext_state().unwrap().len_utf8()
+            .with_state_mut(self.container_idx, |state| {
+                state.as_richtext_state_mut().unwrap().len_utf8()
             })
     }
 
@@ -148,8 +148,8 @@ impl TextHandler {
             .unwrap()
             .lock()
             .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_richtext_state().unwrap().len_utf16()
+            .with_state_mut(self.container_idx, |state| {
+                state.as_richtext_state_mut().unwrap().len_utf16()
             })
     }
 
@@ -159,8 +159,8 @@ impl TextHandler {
             .unwrap()
             .lock()
             .unwrap()
-            .with_state(self.container_idx, |state| {
-                state.as_richtext_state().unwrap().len_unicode()
+            .with_state_mut(self.container_idx, |state| {
+                state.as_richtext_state_mut().unwrap().len_unicode()
             })
     }
 
@@ -172,11 +172,11 @@ impl TextHandler {
             .unwrap()
             .lock()
             .unwrap()
-            .with_state(self.container_idx, |state| {
+            .with_state_mut(self.container_idx, |state| {
                 if cfg!(feature = "wasm") {
-                    state.as_richtext_state().unwrap().len_utf16()
+                    state.as_richtext_state_mut().unwrap().len_utf16()
                 } else {
-                    state.as_richtext_state().unwrap().len_unicode()
+                    state.as_richtext_state_mut().unwrap().len_unicode()
                 }
             })
     }
@@ -190,18 +190,18 @@ impl TextHandler {
             return Ok(());
         }
 
-        let entity_index =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    state
-                        .as_richtext_state()
-                        .unwrap()
-                        .get_entity_index_for_text_insert_event_index(pos)
-                });
+        let entity_index = self
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_entity_index_for_text_insert_event_index(pos)
+            });
 
         txn.apply_local_op(
             self.container_idx,
@@ -238,18 +238,18 @@ impl TextHandler {
         }
 
         debug_log::group!("delete pos={} len={}", pos, len);
-        let ranges =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    state
-                        .as_richtext_state()
-                        .unwrap()
-                        .get_text_entity_ranges_in_event_index_range(pos, len)
-                });
+        let ranges = self
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_text_entity_ranges_in_event_index_range(pos, len)
+            });
 
         debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
         let mut is_first = true;
@@ -292,24 +292,24 @@ impl TextHandler {
             ));
         }
 
-        let (entity_start, entity_end) =
-            self.state
-                .upgrade()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .with_state(self.container_idx, |state| {
-                    (
-                        state
-                            .as_richtext_state()
-                            .unwrap()
-                            .get_entity_index_for_text_insert_event_index(start),
-                        state
-                            .as_richtext_state()
-                            .unwrap()
-                            .get_entity_index_for_text_insert_event_index(end),
-                    )
-                });
+        let (entity_start, entity_end) = self
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                (
+                    state
+                        .as_richtext_state_mut()
+                        .unwrap()
+                        .get_entity_index_for_text_insert_event_index(start),
+                    state
+                        .as_richtext_state_mut()
+                        .unwrap()
+                        .get_entity_index_for_text_insert_event_index(end),
+                )
+            });
 
         txn.apply_local_op(
             self.container_idx,

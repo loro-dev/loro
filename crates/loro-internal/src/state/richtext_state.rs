@@ -1,6 +1,5 @@
 use std::{ops::Range, sync::Arc};
 
-use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{Counter, LoroValue, PeerID, ID};
@@ -19,7 +18,7 @@ use crate::{
     delta::{Delta, DeltaItem, StyleMeta},
     event::{Diff, InternalDiff},
     op::{Op, RawOp},
-    utils::{bitmap::BitMap, string_slice::StringSlice, utf16::count_utf16_chars},
+    utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice, utf16::count_utf16_chars},
     InternalString,
 };
 
@@ -28,7 +27,7 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
-    state: InnerState,
+    state: LazyLoad<RichtextStateLoader, InnerState>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
 }
@@ -38,20 +37,23 @@ impl RichtextState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            state: Default::default(),
+            state: LazyLoad::new_dst(Default::default()),
             in_txn: false,
             undo_stack: Default::default(),
         }
     }
 
     #[inline]
-    pub fn to_string(&self) -> String {
-        self.state.to_string()
+    pub fn to_string(&mut self) -> String {
+        self.state.get_mut().to_string()
     }
 
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.state.is_emtpy()
+        match &self.state {
+            LazyLoad::Src(s) => s.elements.is_empty(),
+            LazyLoad::Dst(d) => d.is_emtpy(),
+        }
     }
 }
 
@@ -100,7 +102,7 @@ impl ContainerState for RichtextState {
                 crate::delta::DeltaItem::Insert { value, .. } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
-                            let (pos, styles) = self.state.insert_elem_at_entity_index(
+                            let (pos, styles) = self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
                                 RichtextStateChunk::Text {
                                     unicode_len: *unicode_len,
@@ -118,6 +120,7 @@ impl ContainerState for RichtextState {
                                 let mut new_len = 0;
                                 for (len, styles) in self
                                     .state
+                                    .get_mut()
                                     .iter_styles_in_event_index_range(event_index..pos)
                                 {
                                     new_len += len;
@@ -150,7 +153,7 @@ impl ContainerState for RichtextState {
                                     last_style_index = event_index;
                                 }
                             }
-                            self.state.insert_elem_at_entity_index(
+                            self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
                                 RichtextStateChunk::Style {
                                     style: style.clone(),
@@ -164,7 +167,7 @@ impl ContainerState for RichtextState {
                                 let start_pos =
                                     style_starts.get(style).expect("Style start not found");
                                 // we need to + 1 because we also need to annotate the end anchor
-                                self.state.annotate_style_range(
+                                self.state.get_mut().annotate_style_range(
                                     *start_pos..entity_index + 1,
                                     style.clone(),
                                 );
@@ -178,8 +181,10 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, start, end) =
-                        self.state.drain_by_entity_index(entity_index, *len);
+                    let (content, start, end) = self
+                        .state
+                        .get_mut()
+                        .drain_by_entity_index(entity_index, *len);
                     for span in content {
                         self.undo_stack.push(UndoItem::Delete {
                             index: entity_index as u32,
@@ -189,6 +194,7 @@ impl ContainerState for RichtextState {
                     if start > event_index {
                         for (len, styles) in self
                             .state
+                            .get_mut()
                             .iter_styles_in_event_index_range(event_index..start)
                         {
                             ans = ans.retain_with_meta(
@@ -213,6 +219,7 @@ impl ContainerState for RichtextState {
         if last_style_index > event_index {
             for (len, styles) in self
                 .state
+                .get_mut()
                 .iter_styles_in_event_index_range(event_index..last_style_index)
             {
                 ans = ans.retain_with_meta(
@@ -237,6 +244,7 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        debug_log::debug_dbg!(&richtext);
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;
         for span in richtext.vec.iter() {
@@ -247,7 +255,7 @@ impl ContainerState for RichtextState {
                 crate::delta::DeltaItem::Insert { value, meta: _ } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
-                            self.state.insert_elem_at_entity_index(
+                            self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
                                 RichtextStateChunk::Text {
                                     unicode_len: *unicode_len,
@@ -256,7 +264,7 @@ impl ContainerState for RichtextState {
                             );
                         }
                         RichtextStateChunk::Style { style, anchor_type } => {
-                            self.state.insert_elem_at_entity_index(
+                            self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
                                 RichtextStateChunk::Style {
                                     style: style.clone(),
@@ -270,7 +278,7 @@ impl ContainerState for RichtextState {
                                 let start_pos =
                                     style_starts.get(style).expect("Style start not found");
                                 // we need to + 1 because we also need to annotate the end anchor
-                                self.state.annotate_style_range(
+                                self.state.get_mut().annotate_style_range(
                                     *start_pos..entity_index + 1,
                                     style.clone(),
                                 );
@@ -284,8 +292,10 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, _start, _end) =
-                        self.state.drain_by_entity_index(entity_index, *len);
+                    let (content, _start, _end) = self
+                        .state
+                        .get_mut()
+                        .drain_by_entity_index(entity_index, *len);
                     for span in content {
                         self.undo_stack.push(UndoItem::Delete {
                             index: entity_index as u32,
@@ -301,7 +311,7 @@ impl ContainerState for RichtextState {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice, pos } => {
-                    self.state.insert_at_entity_index(
+                    self.state.get_mut().insert_at_entity_index(
                         *pos,
                         arena.slice_by_unicode(slice.0.start as usize..slice.0.end as usize),
                     );
@@ -316,6 +326,7 @@ impl ContainerState for RichtextState {
                 list_op::InnerListOp::Delete(del) => {
                     for span in self
                         .state
+                        .get_mut()
                         .drain_by_entity_index(del.start() as usize, rle::HasLength::atom_len(&del))
                         .0
                     {
@@ -333,7 +344,7 @@ impl ContainerState for RichtextState {
                     key,
                     info,
                 } => {
-                    self.state.mark_with_entity_index(
+                    self.state.get_mut().mark_with_entity_index(
                         *start as usize..*end as usize,
                         Arc::new(StyleOp {
                             lamport: r_op.lamport,
@@ -350,9 +361,9 @@ impl ContainerState for RichtextState {
         }
     }
 
-    fn to_diff(&self) -> Diff {
+    fn to_diff(&mut self) -> Diff {
         let mut delta = crate::delta::Delta::new();
-        for span in self.state.iter() {
+        for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
                 value: span.text,
                 meta: StyleMeta { vec: span.styles },
@@ -377,8 +388,8 @@ impl ContainerState for RichtextState {
     }
 
     // value is a list
-    fn get_value(&self) -> LoroValue {
-        LoroValue::String(Arc::new(self.state.to_string()))
+    fn get_value(&mut self) -> LoroValue {
+        LoroValue::String(Arc::new(self.state.get_mut().to_string()))
     }
 }
 
@@ -389,6 +400,7 @@ impl RichtextState {
                 UndoItem::Insert { index, len } => {
                     let _ = self
                         .state
+                        .get_mut()
                         .drain_by_entity_index(index as usize, len as usize);
                 }
                 UndoItem::Delete { index, content } => {
@@ -400,6 +412,7 @@ impl RichtextState {
                     }
 
                     self.state
+                        .get_mut()
                         .insert_elem_at_entity_index(index as usize, content);
                 }
             }
@@ -407,73 +420,85 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub fn len_utf8(&self) -> usize {
-        self.state.len_utf8()
+    pub fn len_utf8(&mut self) -> usize {
+        self.state.get_mut().len_utf8()
     }
 
     #[inline(always)]
-    pub fn len_utf16(&self) -> usize {
-        self.state.len_utf16()
+    pub fn len_utf16(&mut self) -> usize {
+        self.state.get_mut().len_utf16()
     }
 
     #[inline(always)]
     pub fn len_entity(&self) -> usize {
-        self.state.len_entity()
+        match &self.state {
+            LazyLoad::Src(s) => s.entity_index,
+            LazyLoad::Dst(d) => d.len_entity(),
+        }
     }
 
     #[inline(always)]
-    pub fn len_unicode(&self) -> usize {
-        self.state.len_unicode()
+    pub fn len_unicode(&mut self) -> usize {
+        self.state.get_mut().len_unicode()
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_text_insert_event_index(&self, pos: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
         self.state
+            .get_mut()
             .get_entity_index_for_text_insert::<EventIndexQuery>(pos)
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_utf16_insert_pos(&self, pos: usize) -> usize {
+    pub(crate) fn get_entity_index_for_utf16_insert_pos(&mut self, pos: usize) -> usize {
         self.state
+            .get_mut()
             .get_entity_index_for_text_insert::<Utf16Query>(pos)
     }
 
     #[inline(always)]
     pub(crate) fn get_text_entity_ranges_in_event_index_range(
-        &self,
+        &mut self,
         pos: usize,
         len: usize,
     ) -> Vec<Range<usize>> {
         self.state
+            .get_mut()
             .get_text_entity_ranges::<EventIndexQuery>(pos, len)
     }
 
     #[inline(always)]
     pub(crate) fn get_text_entity_ranges_in_utf16_range(
-        &self,
+        &mut self,
         pos: usize,
         len: usize,
     ) -> Vec<Range<usize>> {
-        self.state.get_text_entity_ranges::<Utf16Query>(pos, len)
+        self.state
+            .get_mut()
+            .get_text_entity_ranges::<Utf16Query>(pos, len)
     }
 
     #[inline(always)]
-    pub fn get_richtext_value(&self) -> LoroValue {
-        self.state.get_richtext_value()
+    pub fn get_richtext_value(&mut self) -> LoroValue {
+        self.state.get_mut().get_richtext_value()
     }
 
     #[inline(always)]
-    fn get_loader(&mut self) -> RichtextStateLoader {
+    fn get_loader() -> RichtextStateLoader {
         RichtextStateLoader {
-            state: self,
+            elements: Default::default(),
             start_anchor_pos: Default::default(),
             entity_index: 0,
+            style_ranges: Default::default(),
         }
     }
 
     #[inline(always)]
-    pub(crate) fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
-        self.state.iter_chunk()
+    pub(crate) fn iter_chunk(&self) -> Box<dyn Iterator<Item = &RichtextStateChunk> + '_> {
+        match &self.state {
+            LazyLoad::Src(s) => Box::new(s.elements.iter()),
+            LazyLoad::Dst(s) => Box::new(s.iter_chunk()),
+        }
     }
 
     pub(crate) fn decode_snapshot(
@@ -488,10 +513,11 @@ impl RichtextState {
         common: &CommonArena,
         arena: &SharedArena,
     ) {
+        assert!(self.is_empty());
         let bit_len = is_style_start.len() * 8;
         let is_style_start = BitMap::from_vec(is_style_start, bit_len);
         let mut is_style_start_iter = is_style_start.iter();
-        let mut loader = self.get_loader();
+        let mut loader = Self::get_loader();
         let mut is_text = true;
         let mut text_range_iter = text.iter();
         let mut style_iter = styles.iter();
@@ -499,7 +525,7 @@ impl RichtextState {
             if is_text {
                 for _ in 0..len {
                     let &range = text_range_iter.next().unwrap();
-                    let text = arena.slice_by_unicode(range.0 as usize..range.1 as usize);
+                    let text = arena.slice_by_utf8(range.0 as usize..range.1 as usize);
                     loader.push(RichtextStateChunk::new_text(text));
                 }
             } else {
@@ -525,6 +551,8 @@ impl RichtextState {
 
             is_text = !is_text;
         }
+
+        self.state = LazyLoad::new(loader);
     }
 
     pub(crate) fn encode_snapshot(
@@ -539,7 +567,6 @@ impl RichtextState {
         let mut is_style_start = BitMap::new();
 
         for chunk in self.iter_chunk() {
-            debug_log::debug_dbg!(&chunk);
             match chunk {
                 RichtextStateChunk::Text {
                     text,
@@ -585,14 +612,21 @@ impl RichtextState {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct RichtextStateLoader<'a> {
-    state: &'a mut RichtextState,
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RichtextStateLoader {
     start_anchor_pos: FxHashMap<ID, usize>,
+    elements: Vec<RichtextStateChunk>,
+    style_ranges: Vec<(Arc<StyleOp>, Range<usize>)>,
     entity_index: usize,
 }
 
-impl<'a> RichtextStateLoader<'a> {
+impl From<RichtextStateLoader> for InnerState {
+    fn from(value: RichtextStateLoader) -> Self {
+        value.into_state()
+    }
+}
+
+impl RichtextStateLoader {
     pub fn push(&mut self, elem: RichtextStateChunk) {
         debug_log::debug_dbg!(&elem);
         if let RichtextStateChunk::Style { style, anchor_type } = &elem {
@@ -607,13 +641,24 @@ impl<'a> RichtextStateLoader<'a> {
                     .expect("Style start not found");
 
                 // we need to + 1 because we also need to annotate the end anchor
-                self.state
-                    .state
-                    .annotate_style_range(start_pos..self.entity_index, style.clone());
+                self.style_ranges
+                    .push((style.clone(), start_pos..self.entity_index + 1));
             }
         }
 
         self.entity_index += elem.rle_len();
-        self.state.state.push(elem);
+        self.elements.push(elem);
+    }
+
+    pub fn into_state(self) -> InnerState {
+        debug_log::debug_dbg!(&self);
+        let mut state = InnerState::from_chunks(self.elements.into_iter());
+        for (style, range) in self.style_ranges {
+            state.annotate_style_range(range, style);
+        }
+
+        debug_log::debug_dbg!(&state);
+        state.check();
+        state
     }
 }

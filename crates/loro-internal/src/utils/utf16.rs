@@ -1,4 +1,3 @@
-#[allow(unused)]
 pub fn count_utf16_chars(utf8_str: &[u8]) -> usize {
     let mut utf16_count = 0;
 

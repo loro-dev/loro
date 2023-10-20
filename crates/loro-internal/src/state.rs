@@ -57,7 +57,7 @@ pub trait ContainerState: Clone {
 
     fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena);
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
-    fn to_diff(&self) -> Diff;
+    fn to_diff(&mut self) -> Diff;
 
     /// Start a transaction
     ///
@@ -68,7 +68,7 @@ pub trait ContainerState: Clone {
     /// If `record_diff` in [Self::start_txn] is false, return None.
     fn commit_txn(&mut self);
 
-    fn get_value(&self) -> LoroValue;
+    fn get_value(&mut self) -> LoroValue;
 
     /// Get the index of the child container
     #[allow(unused)]
@@ -320,9 +320,9 @@ impl DocState {
         self.states.get(&idx)
     }
 
-    pub(crate) fn get_value_by_idx(&self, container_idx: ContainerIdx) -> LoroValue {
+    pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
         self.states
-            .get(&container_idx)
+            .get_mut(&container_idx)
             .map(|x| x.get_value())
             .unwrap_or_else(|| match container_idx.get_type() {
                 ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
@@ -353,17 +353,18 @@ impl DocState {
         }
 
         if self.is_recording() {
+            let diff = self
+                .states
+                .iter_mut()
+                .map(|(&idx, state)| InternalContainerDiff {
+                    idx,
+                    diff: state.to_diff().into(),
+                })
+                .collect();
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 local: false,
-                diff: self
-                    .states
-                    .iter()
-                    .map(|(&idx, state)| InternalContainerDiff {
-                        idx,
-                        diff: state.to_diff().into(),
-                    })
-                    .collect(),
+                diff,
                 new_version: Cow::Borrowed(&frontiers),
             });
         }
@@ -376,7 +377,7 @@ impl DocState {
     pub fn get_text<I: Into<ContainerIdRaw>>(
         &mut self,
         id: I,
-    ) -> Option<&richtext_state::RichtextState> {
+    ) -> Option<&mut richtext_state::RichtextState> {
         let id: ContainerIdRaw = id.into();
         let idx = match id {
             ContainerIdRaw::Root { name } => Some(self.arena.register_container(
@@ -394,7 +395,7 @@ impl DocState {
         self.states
             .entry(idx)
             .or_insert_with(|| State::new_richtext(idx))
-            .as_richtext_state()
+            .as_richtext_state_mut()
     }
 
     #[inline(always)]
@@ -410,6 +411,19 @@ impl DocState {
         }
     }
 
+    #[inline(always)]
+    pub(crate) fn with_state_mut<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
+    where
+        F: FnOnce(&mut State) -> R,
+    {
+        let state = self.states.get_mut(&idx);
+        if let Some(state) = state {
+            f(state)
+        } else {
+            f(&mut create_state(idx))
+        }
+    }
+
     pub(super) fn is_in_txn(&self) -> bool {
         self.in_txn
     }
@@ -418,7 +432,7 @@ impl DocState {
         !self.in_txn && self.states.is_empty() && self.arena.is_empty()
     }
 
-    pub fn get_deep_value(&self) -> LoroValue {
+    pub fn get_deep_value(&mut self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
@@ -436,7 +450,7 @@ impl DocState {
         LoroValue::Map(Arc::new(ans))
     }
 
-    pub fn get_deep_value_with_id(&self) -> LoroValue {
+    pub fn get_deep_value_with_id(&mut self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
@@ -458,12 +472,12 @@ impl DocState {
     }
 
     pub(crate) fn get_container_deep_value_with_id(
-        &self,
+        &mut self,
         container: ContainerIdx,
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(state) = self.states.get(&container) else {
+        let Some(state) = self.states.get_mut(&container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
@@ -523,8 +537,8 @@ impl DocState {
         }
     }
 
-    pub fn get_container_deep_value(&self, container: ContainerIdx) -> LoroValue {
-        let Some(state) = self.states.get(&container) else {
+    pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
+        let Some(state) = self.states.get_mut(&container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
