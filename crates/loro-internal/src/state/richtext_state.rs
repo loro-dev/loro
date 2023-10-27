@@ -10,7 +10,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            query::{EventIndexQuery, Utf16Query},
+            query::{EventIndexQuery, EventIndexQueryT},
             AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
         },
     },
@@ -446,14 +446,7 @@ impl RichtextState {
     pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert::<EventIndexQuery>(pos)
-    }
-
-    #[inline(always)]
-    pub(crate) fn get_entity_index_for_utf16_insert_pos(&mut self, pos: usize) -> usize {
-        self.state
-            .get_mut()
-            .get_entity_index_for_text_insert::<Utf16Query>(pos)
+            .get_entity_index_for_text_insert::<EventIndexQueryT>(pos)
     }
 
     #[inline(always)]
@@ -465,17 +458,6 @@ impl RichtextState {
         self.state
             .get_mut()
             .get_text_entity_ranges::<EventIndexQuery>(pos, len)
-    }
-
-    #[inline(always)]
-    pub(crate) fn get_text_entity_ranges_in_utf16_range(
-        &mut self,
-        pos: usize,
-        len: usize,
-    ) -> Vec<Range<usize>> {
-        self.state
-            .get_mut()
-            .get_text_entity_ranges::<Utf16Query>(pos, len)
     }
 
     #[inline(always)]
@@ -663,7 +645,10 @@ impl RichtextStateLoader {
         }
 
         debug_log::debug_dbg!(&state);
-        state.check();
+        if cfg!(debug_assertions) {
+            state.check();
+        }
+
         state
     }
 }

@@ -1901,8 +1901,44 @@ mod test {
     }
 
     #[test]
+    fn richtext_fuzz_3() {
+        test_multi_sites_refactored(
+            5,
+            &mut [Del {
+                pos: 36310271995488768,
+                len: 5859553690644468061,
+                site: 81,
+            }],
+        );
+    }
+
+    #[test]
+    fn fuzz_4() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 17733,
+                    pos: 4991471925827290437,
+                    site: 69,
+                },
+                Del {
+                    pos: 4991471925827290437,
+                    len: 4991471925827290437,
+                    site: 69,
+                },
+                Del {
+                    pos: 4991471925827290437,
+                    len: 4991471925827290437,
+                    site: 69,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
-        minify_error(2, vec![], test_multi_sites_refactored, |_, ans| {
+        minify_error(5, vec![], test_multi_sites_refactored, |_, ans| {
             ans.to_vec()
         })
     }

@@ -23,7 +23,10 @@ use super::{Style, StyleOp};
 ///
 /// It's initialized with usize::MAX/2 length.
 #[derive(Debug, Clone)]
-pub(super) struct StyleRangeMap(pub(super) BTree<RangeNumMapTrait>);
+pub(super) struct StyleRangeMap {
+    pub(super) tree: BTree<RangeNumMapTrait>,
+    has_style: bool,
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct RangeNumMapTrait;
@@ -77,19 +80,23 @@ impl StyleRangeMap {
             len: usize::MAX / 4,
         });
 
-        Self(tree)
+        Self {
+            tree,
+            has_style: false,
+        }
     }
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
         debug_log::debug_log!("Annotate {:?}", &range);
-        let range = self.0.range::<LengthFinder>(range);
+        let range = self.tree.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
         }
 
+        self.has_style = true;
         let range = range.unwrap();
         debug_log::debug_log!("Range={:?}", &range);
-        self.0
+        self.tree
             .update(range.start.cursor..range.end.cursor, &mut |x| {
                 // only leave one value with the greatest lamport if the style is mergeable
                 if let Some(set) = x.styles.get_mut(&style.key) {
@@ -126,35 +133,35 @@ impl StyleRangeMap {
     /// - If both leftStyleSet and rightStyleSet contain style x, it means that the newly inserted text is within the style range, so the StyleSet should include x.
     pub fn insert(&mut self, pos: usize, len: usize) -> &Styles {
         if pos == 0 {
-            self.0.prepend(Elem {
+            self.tree.prepend(Elem {
                 len,
                 styles: Default::default(),
             });
             return &EMPTY_STYLES;
         }
 
-        if pos as isize == *self.0.root_cache() {
-            self.0.push(Elem {
+        if pos as isize == *self.tree.root_cache() {
+            self.tree.push(Elem {
                 len,
                 styles: Default::default(),
             });
             return &EMPTY_STYLES;
         }
 
-        let right = self.0.query::<LengthFinder>(&pos).unwrap().cursor;
-        let left = self.0.query::<LengthFinder>(&(pos - 1)).unwrap().cursor;
+        let right = self.tree.query::<LengthFinder>(&pos).unwrap().cursor;
+        let left = self.tree.query::<LengthFinder>(&(pos - 1)).unwrap().cursor;
         if left.leaf == right.leaf {
             // left and right are in the same element, we can increase the length of the element directly
-            self.0.update_leaf(left.leaf, |x| {
+            self.tree.update_leaf(left.leaf, |x| {
                 x.len += len;
-                (true, Some(len as isize), None, None)
+                (true, None, None)
             });
-            return &self.0.get_elem(left.leaf).unwrap().styles;
+            return &self.tree.get_elem(left.leaf).unwrap().styles;
         }
 
         // insert by the intersection of left styles and right styles
-        let mut styles = self.0.get_elem(left.leaf).unwrap().styles.clone();
-        let right_styles = &self.0.get_elem(right.leaf).unwrap().styles;
+        let mut styles = self.tree.get_elem(left.leaf).unwrap().styles.clone();
+        let right_styles = &self.tree.get_elem(right.leaf).unwrap().styles;
         styles.retain(|key, value| {
             if let Some(right_value) = right_styles.get(key) {
                 value.set.retain(|x| right_value.set.contains(x));
@@ -164,20 +171,20 @@ impl StyleRangeMap {
             false
         });
 
-        self.0.insert_by_path(right, Elem { len, styles });
-        return &self.0.get_elem(right.leaf).unwrap().styles;
+        self.tree.insert_by_path(right, Elem { len, styles });
+        return &self.tree.get_elem(right.leaf).unwrap().styles;
     }
 
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
-        let result = self.0.query::<LengthFinder>(&index)?.cursor;
-        self.0.get_elem(result.leaf).map(|x| &x.styles)
+        let result = self.tree.query::<LengthFinder>(&index)?.cursor;
+        self.tree.get_elem(result.leaf).map(|x| &x.styles)
     }
 
     pub fn iter(
         &self,
     ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
         let mut index = 0;
-        self.0.iter().filter_map(move |elem| {
+        self.tree.iter().filter_map(move |elem| {
             let len = elem.len;
             let value = &elem.styles;
             let range = index..index + len;
@@ -194,38 +201,47 @@ impl StyleRangeMap {
         &self,
         start_entity_index: usize,
     ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
-        let start = self.0.query::<LengthFinder>(&start_entity_index).unwrap();
+        let start = self
+            .tree
+            .query::<LengthFinder>(&start_entity_index)
+            .unwrap();
         let mut index = start_entity_index - start.offset();
-        self.0.iter_range(start.cursor()..).filter_map(move |elem| {
-            let len = elem.elem.len;
-            let value = &elem.elem.styles;
-            let range = index.max(start_entity_index)..index + len;
-            index += len;
-            if elem.elem.styles.is_empty() {
-                return None;
-            }
+        self.tree
+            .iter_range(start.cursor()..)
+            .filter_map(move |elem| {
+                let len = elem.elem.len;
+                let value = &elem.elem.styles;
+                let range = index.max(start_entity_index)..index + len;
+                index += len;
+                if elem.elem.styles.is_empty() {
+                    return None;
+                }
 
-            Some((range, value))
-        })
+                Some((range, value))
+            })
     }
 
     pub fn delete(&mut self, range: Range<usize>) {
-        let start = self.0.query::<LengthFinder>(&range.start).unwrap();
-        let end = self.0.query::<LengthFinder>(&range.end).unwrap();
+        let start = self.tree.query::<LengthFinder>(&range.start).unwrap();
+        let end = self.tree.query::<LengthFinder>(&range.end).unwrap();
         if start.cursor.leaf == end.cursor.leaf {
             // delete in the same element
-            self.0.update_leaf(start.cursor.leaf, |mut x| {
+            self.tree.update_leaf(start.cursor.leaf, |mut x| {
                 x.len -= range.len();
-                (true, Some(-(range.len() as isize)), None, None)
+                (true, None, None)
             });
             return;
         }
 
-        self.0.drain(start..end);
+        self.tree.drain(start..end);
     }
 
     pub fn len(&self) -> usize {
-        *self.0.root_cache() as usize
+        *self.tree.root_cache() as usize
+    }
+
+    pub(crate) fn has_style(&self) -> bool {
+        self.has_style
     }
 }
 

@@ -1,5 +1,5 @@
 use generic_btree::LeafIndex;
-use loro_common::{Counter, PeerID, ID};
+use loro_common::{Counter, IdSpan, PeerID, ID};
 
 use crate::VersionVector;
 
@@ -110,6 +110,7 @@ impl Tracker {
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
         for &new_leaf_idx in split {
             let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
+            debug_log::debug_dbg!(&leaf.id_span(), new_leaf_idx);
             self.id_to_cursor
                 .update_insert(leaf.id_span(), new_leaf_idx)
         }
@@ -133,11 +134,14 @@ impl Tracker {
             cur_id = cur_id.inc(span.content.len() as Counter);
         });
 
+        debug_assert_eq!(cur_id.counter - op_id.counter, len as Counter);
         self.update_insert_by_split(&split.arr);
 
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+
+        debug_log::debug_dbg!(&self);
     }
 
     #[inline]
@@ -217,6 +221,8 @@ impl Tracker {
         if !on_diff_status {
             self.current_vv = vv.clone();
         }
+        debug_log::debug_dbg!(&self);
+        debug_log::debug_dbg!(&updates);
         let leaf_indexes = self.rope.update(updates, on_diff_status);
         self.update_insert_by_split(&leaf_indexes);
     }
@@ -228,6 +234,7 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
+        self.rope.diagnose();
         self.rope.get_diff()
     }
 }

@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
 
 use generic_btree::{
-    rle::HasLength, BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
+    rle::{HasLength, Sliceable},
+    BTree, BTreeTrait, Cursor, FindResult, LeafIndex, Query, SplittedLeaves,
 };
 use itertools::Itertools;
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, ID};
@@ -213,12 +214,40 @@ impl CrdtRope {
         len: usize,
         mut notify_deleted_span: impl FnMut(FugueSpan),
     ) -> SplittedLeaves {
+        if len == 0 {
+            return Default::default();
+        }
+
         let start = self.tree.query::<ActiveLenQuery>(&(pos as i32)).unwrap();
+        // avoid pointing to the end of the node
+        let mut start = self.tree.prefer_right(start.cursor).unwrap();
+        let mut elem = self.tree.get_elem_mut(start.leaf).unwrap();
+        while !elem.is_activated() {
+            start = self.tree.next_elem(start).unwrap();
+            elem = self.tree.get_elem_mut(start.leaf).unwrap();
+        }
+        if elem.rle_len() >= start.offset + len {
+            debug_log::debug_log!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
+            let (_, splitted) = self.tree.update_leaf(start.leaf, |elem| {
+                let (a, b) = elem.update_with_split(start.offset..start.offset + len, |elem| {
+                    assert!(elem.is_activated());
+                    debug_assert_eq!(len, elem.rle_len());
+                    notify_deleted_span(*elem);
+                    elem.status.delete_times += 1;
+                });
+
+                (true, a, b)
+            });
+
+            debug_log::debug_dbg!(&splitted);
+            return splitted;
+        }
+
         let end = self
             .tree
             .query::<ActiveLenQuery>(&((pos + len) as i32))
             .unwrap();
-        self.tree.update(start.cursor()..end.cursor(), &mut |elem| {
+        self.tree.update(start..end.cursor(), &mut |elem| {
             if elem.is_activated() {
                 notify_deleted_span(*elem);
                 elem.status.delete_times += 1;
@@ -230,6 +259,10 @@ impl CrdtRope {
                 None
             }
         })
+    }
+
+    pub(crate) fn diagnose(&self) {
+        println!("crdt_rope number of tree nodes = {}", self.tree.node_len());
     }
 
     /// Update the leaf with given `id_span`
@@ -248,7 +281,11 @@ impl CrdtRope {
                 debug_assert_eq!(u.id_span.client_id, elem.id.peer);
                 let start = (u.id_span.ctr_start() - elem.id.counter).max(0);
                 let end = u.id_span.ctr_end() - elem.id.counter;
-                tree_update_info.push((leaf, start as usize..(end as usize).min(elem.rle_len()), u))
+                tree_update_info.push((
+                    leaf,
+                    (start as usize).min(elem.rle_len())..(end as usize).min(elem.rle_len()),
+                    u,
+                ))
             }
         }
 
@@ -469,7 +506,7 @@ impl Query<CrdtRopeTrait> for ActiveLenQuery {
     }
 
     fn confirm_elem(
-        &self,
+        &mut self,
         _: &Self::QueryArg,
         elem: &<CrdtRopeTrait as BTreeTrait>::Elem,
     ) -> (usize, bool) {

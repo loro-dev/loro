@@ -14,12 +14,14 @@ use std::{
 };
 
 use crate::{
-    container::richtext::style_range_map::StyleValue, delta::DeltaValue,
-    utils::utf16::count_utf16_chars, InternalString,
+    container::richtext::{query_by_len::IndexQueryWithEntityIndex, style_range_map::StyleValue},
+    delta::DeltaValue,
+    utils::utf16::count_utf16_chars,
+    InternalString,
 };
 
 // FIXME: Check splice and other things are using unicode index
-use self::query::{EntityQuery, EntityQueryT, EventIndexQuery, UnicodeQuery};
+use self::query::{EntityQuery, EntityQueryT, EventIndexQuery, UnicodeQueryT};
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
@@ -413,6 +415,11 @@ pub(crate) mod query {
     #[cfg(feature = "wasm")]
     pub(crate) type EventIndexQuery = Utf16Query;
 
+    #[cfg(not(feature = "wasm"))]
+    pub(crate) type EventIndexQueryT = UnicodeQueryT;
+    #[cfg(feature = "wasm")]
+    pub(crate) type EventIndexQueryT = Utf16QueryT;
+
     pub(crate) struct UnicodeQueryT;
     pub(crate) type UnicodeQuery = IndexQuery<UnicodeQueryT, RichtextTreeTrait>;
 
@@ -448,6 +455,10 @@ pub(crate) mod query {
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
             }
+        }
+
+        fn get_cache_entity_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.entity_len as usize
         }
     }
 
@@ -488,6 +499,10 @@ pub(crate) mod query {
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
             }
+        }
+
+        fn get_cache_entity_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.entity_len as usize
         }
     }
 
@@ -533,6 +548,10 @@ pub(crate) mod query {
                 }
             }
         }
+
+        fn get_cache_entity_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
+            cache.entity_len as usize
+        }
     }
 }
 
@@ -544,28 +563,7 @@ impl RichtextState {
         }
     }
 
-    /// Insert text at a unicode index. Return the entity index.
-    pub(crate) fn insert(&mut self, pos: usize, text: BytesSlice) -> usize {
-        if self.tree.is_empty() {
-            let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
-            self.style_ranges.insert(0, elem.rle_len());
-            self.tree.push(elem);
-            return 0;
-        }
-
-        let right = self.find_best_insert_pos::<UnicodeQuery>(pos).unwrap();
-        let right = self.tree.prefer_left(right).unwrap_or(right);
-        let entity_index = self.get_entity_index_from_path(right);
-        let insert_pos = right;
-        let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
-        self.style_ranges.insert(entity_index, elem.rle_len());
-        self.tree.insert_by_path(insert_pos, elem);
-        entity_index
-    }
-
-    pub(crate) fn get_entity_index_for_text_insert<
-        Q: Query<RichtextTreeTrait, QueryArg = usize>,
-    >(
+    pub(crate) fn get_entity_index_for_text_insert<Q: QueryByLen<RichtextTreeTrait>>(
         &self,
         pos: usize,
     ) -> usize {
@@ -573,8 +571,7 @@ impl RichtextState {
             return 0;
         }
 
-        let right = self.find_best_insert_pos::<Q>(pos).unwrap();
-        self.get_entity_index_from_path(right)
+        self.find_best_insert_pos::<Q>(pos).1
     }
 
     /// This is used to accept changes from DiffCalculator
@@ -684,7 +681,8 @@ impl RichtextState {
     }
 
     /// Find the best insert position based on algorithm similar to Peritext.
-    /// Returns the right neighbor of the insert pos.
+    /// The result is only different from `query` when there are style anchors around the insert pos.
+    /// Returns the right neighbor of the insert pos and the entity index.
     ///
     /// 1. Insertions occur before tombstones that contain the beginning of new marks.
     /// 2. Insertions occur before tombstones that contain the end of bold-like marks
@@ -694,74 +692,141 @@ impl RichtextState {
     ///
     /// The current method will scan forward to find the last position that satisfies 1 and 2.
     /// Then it scans backward to find the first position that satisfies 3.
-    fn find_best_insert_pos<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
+    fn find_best_insert_pos<Q: QueryByLen<RichtextTreeTrait>>(
         &self,
         pos: usize,
-    ) -> Option<generic_btree::Cursor> {
+    ) -> (Option<generic_btree::Cursor>, usize) {
+        type Query<Q> = IndexQueryWithEntityIndex<Q, RichtextTreeTrait>;
         if self.tree.is_empty() {
-            return None;
+            return (None, 0);
         }
 
         // There are a range of elements may share the same unicode index
         // because style anchors' lengths are zero in unicode index.
 
-        // Find the start of the range
-        let mut iter = if pos == 0 {
-            self.tree.start_cursor()
+        // Find the start and the end of the range, and entity index of left cursor
+        let (left, right, mut entity_index) = if pos == 0 {
+            let left = self.tree.start_cursor();
+            let mut right = left;
+            let mut elem = self.tree.get_elem(right.leaf).unwrap();
+            let entity_index = 0;
+            if matches!(elem, RichtextStateChunk::Text { .. }) {
+                return (Some(right), 0);
+            } else {
+                while Q::get_elem_len(elem) == 0 {
+                    match self.tree.next_elem(right) {
+                        Some(r) => {
+                            right = r;
+                            elem = self.tree.get_elem(right.leaf).unwrap();
+                        }
+                        None => {
+                            right.offset = elem.rle_len();
+                            break;
+                        }
+                    }
+                }
+
+                (left, right, entity_index)
+            }
         } else {
-            let q = self.tree.query::<Q>(&(pos - 1)).unwrap();
-            match self.tree.shift_path_by_one_offset(q.cursor) {
-                Some(x) => x,
+            // The query perfers right when there are empty elements (style anchors)
+            // So the nodes between (pos-1) and pos are all style anchors.
+            let (q, f) = self.tree.query_with_finder_return::<Query<Q>>(&(pos - 1));
+            let q = q.unwrap();
+            let mut entity_index = f.entity_index();
+
+            let elem = self.tree.get_elem(q.leaf()).unwrap();
+            let mut right = q.cursor;
+            right.offset += 1;
+            entity_index += 1;
+            if elem.rle_len() > right.offset {
+                // The cursor is in the middle of a style anchor
+                return (Some(right), entity_index);
+            }
+
+            match self.tree.next_elem(q.cursor) {
                 // If next is None, we know the range is empty, return directly
-                None => return Some(self.tree.end_cursor()),
+                None => return (Some(self.tree.end_cursor()), entity_index),
+                Some(x) => {
+                    assert_eq!(right.offset, elem.rle_len());
+                    right = x;
+                    let mut elem = self.tree.get_elem(right.leaf).unwrap();
+                    if matches!(elem, RichtextStateChunk::Text { .. }) {
+                        return (Some(right), entity_index);
+                    }
+
+                    let left = x;
+                    while matches!(elem, RichtextStateChunk::Style { .. }) {
+                        match self.tree.next_elem(right) {
+                            Some(r) => {
+                                right = r;
+                                elem = self.tree.get_elem(right.leaf).unwrap();
+                            }
+                            None => {
+                                // this is last element
+                                right.offset = 1;
+                                break;
+                            }
+                        }
+                    }
+
+                    (left, right, entity_index)
+                }
             }
         };
 
-        // Find the end of the range
-        let right = self.tree.query::<Q>(&pos).unwrap().cursor;
-        if iter == right {
-            // no style anchor between unicode index (pos-1) and (pos)
-            return Some(iter);
-        }
+        let mut iter = left;
+        debug_log::debug_dbg!(iter, right, entity_index);
 
         // need to scan from left to right
         let mut visited = Vec::new();
         while iter != right {
             let Some(elem) = self.tree.get_elem(iter.leaf) else {
+                debug_log::debug_log!("not found");
                 break;
             };
+
             let (style, anchor_type) = match elem {
                 RichtextStateChunk::Text { .. } => unreachable!(),
                 RichtextStateChunk::Style { style, anchor_type } => (style, *anchor_type),
             };
 
-            visited.push((style, anchor_type, iter));
+            visited.push((style, anchor_type, iter, entity_index));
             if anchor_type == AnchorType::Start {
+                debug_log::debug_log!("case 1");
                 // case 1. should be before this anchor
                 break;
             }
 
             if style.info.prefer_insert_before(anchor_type) {
+                debug_log::debug_log!("case 2");
                 // case 2.
                 break;
             }
 
-            iter = match self.tree.shift_path_by_one_offset(iter) {
+            iter = match self.tree.next_elem(iter) {
                 Some(x) => x,
                 None => self.tree.end_cursor(),
             };
+            entity_index += 1;
         }
 
-        while let Some((style, anchor_type, top_elem)) = visited.pop() {
+        debug_log::debug_dbg!(&visited, iter, entity_index);
+        while let Some((style, anchor_type, top_elem, top_entity_index)) = visited.pop() {
+            debug_log::debug_log!("1");
             if !style.info.prefer_insert_before(anchor_type) {
+                debug_log::debug_log!("3 {:?}", &style);
                 // case 3.
                 break;
             }
 
+            debug_log::debug_log!("2");
             iter = top_elem;
+            entity_index = top_entity_index;
         }
 
-        Some(iter)
+        debug_log::debug_dbg!(iter, entity_index);
+        (Some(iter), entity_index)
     }
 
     fn get_entity_index_from_path(&self, right: generic_btree::Cursor) -> usize {
@@ -778,59 +843,6 @@ impl RichtextState {
             }
         });
         entity_index
-    }
-
-    /// Delete a range of text at the given unicode position.
-    ///
-    /// Delete a range of text. (The style anchors included in the range are not deleted.)
-    pub(crate) fn delete(&mut self, pos: usize, len: usize) -> Vec<Range<usize>> {
-        if self.tree.is_empty() {
-            return Vec::new();
-        }
-
-        let mut style_anchors: Vec<RichtextStateChunk> = Vec::new();
-        let mut removed_entity_ranges: Vec<Range<usize>> = Vec::new();
-        let q = self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor;
-        let mut entity_index = self.get_entity_index_from_path(q);
-        let mut deleted = 0;
-        // TODO: Delete style anchors whose inner text content is empty
-
-        for span in self.tree.drain_by_query::<UnicodeQuery>(pos..pos + len) {
-            match span {
-                RichtextStateChunk::Style { .. } => {
-                    entity_index += 1;
-                    style_anchors.push(span.clone());
-                }
-                RichtextStateChunk::Text {
-                    unicode_len,
-                    text: _,
-                } => {
-                    self.style_ranges.delete(
-                        entity_index - deleted..entity_index - deleted + unicode_len as usize,
-                    );
-                    deleted += unicode_len as usize;
-                    if let Some(last) = removed_entity_ranges.last_mut() {
-                        if last.end == entity_index {
-                            last.end += unicode_len as usize;
-                        } else {
-                            removed_entity_ranges
-                                .push(entity_index..(entity_index + unicode_len as usize));
-                        }
-                    } else {
-                        removed_entity_ranges
-                            .push(entity_index..(entity_index + unicode_len as usize));
-                    }
-
-                    entity_index += unicode_len as usize;
-                }
-            }
-        }
-
-        let q = self.tree.query::<UnicodeQuery>(&pos);
-        self.tree
-            .insert_many_by_cursor(q.map(|x| x.cursor), style_anchors);
-
-        removed_entity_ranges
     }
 
     pub(crate) fn get_text_entity_ranges<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
@@ -942,19 +954,16 @@ impl RichtextState {
             panic!("Cannot mark an empty tree");
         }
 
-        let end_pos = self
-            .find_best_insert_pos::<UnicodeQuery>(range.end)
-            .unwrap();
-        let end_entity_index = self.get_entity_index_from_path(end_pos);
+        let (end_pos, end_entity_index) = self.find_best_insert_pos::<UnicodeQueryT>(range.end);
+        let end_pos = end_pos.unwrap();
         self.tree.insert_by_path(
             end_pos,
             RichtextStateChunk::from_style(style.clone(), AnchorType::End),
         );
 
-        let start_pos = self
-            .find_best_insert_pos::<UnicodeQuery>(range.start)
-            .unwrap();
-        let start_entity_index = self.get_entity_index_from_path(start_pos);
+        let (start_pos, start_entity_index) =
+            self.find_best_insert_pos::<UnicodeQueryT>(range.start);
+        let start_pos = start_pos.unwrap();
         self.tree.insert_by_path(
             start_pos,
             RichtextStateChunk::from_style(style.clone(), AnchorType::Start),
@@ -1189,11 +1198,6 @@ impl RichtextState {
     pub fn len_entity(&self) -> usize {
         self.tree.root_cache().entity_len as usize
     }
-
-    #[inline(always)]
-    pub(crate) fn push(&mut self, elem: RichtextStateChunk) {
-        self.tree.push(elem);
-    }
 }
 
 #[cfg(test)]
@@ -1215,7 +1219,35 @@ mod test {
         fn insert(&mut self, pos: usize, text: &str) {
             let start = self.bytes.len();
             self.bytes.push_str(text);
-            self.state.insert(pos, self.bytes.slice(start..));
+            {
+                let state = &mut self.state;
+                let text = self.bytes.slice(start..);
+                if state.tree.is_empty() {
+                    let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
+                    state.style_ranges.insert(0, elem.rle_len());
+                    state.tree.push(elem);
+                } else {
+                    debug_log::debug_dbg!(&state.tree);
+                    let (right, entity_index) = state.find_best_insert_pos::<UnicodeQueryT>(pos);
+                    debug_log::debug_log!(
+                        "insert pos: {}, right: {:?}, entity_index: {}",
+                        pos,
+                        right,
+                        entity_index
+                    );
+                    let right = state
+                        .tree
+                        .prefer_left(right.unwrap())
+                        .unwrap_or(right.unwrap());
+                    let insert_pos = right;
+                    let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
+                    state.style_ranges.insert(entity_index, elem.rle_len());
+                    state.tree.insert_by_path(insert_pos, elem);
+
+                    debug_log::debug_dbg!(&state.tree);
+                    debug_log::debug_dbg!(&state.style_ranges);
+                }
+            };
         }
     }
 

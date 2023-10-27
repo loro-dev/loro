@@ -25,7 +25,7 @@ impl IdToCursor {
         let list = self.map.entry(id.peer).or_default();
         if let Some(last) = list.last_mut() {
             let last_end = last.counter + last.cursor.rle_len() as Counter;
-            assert!(last_end <= id.counter);
+            debug_assert!(last_end <= id.counter, "id:{}, {:#?}", id, &self);
             if last_end == id.counter
                 && last.cursor.can_merge(&cursor)
                 && last.cursor.rle_len() < MAX_FRAGMENT_LEN
@@ -45,19 +45,30 @@ impl IdToCursor {
     ///
     /// id_span should be within the same `Cursor` and should be a `Insert`
     pub fn update_insert(&mut self, id_span: IdSpan, new_leaf: LeafIndex) {
+        debug_assert!(!id_span.is_reversed());
         let list = self.map.get_mut(&id_span.client_id).unwrap();
-        let index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
+        let last = list.last().unwrap();
+        debug_assert!(last.counter + last.cursor.rle_len() as Counter > id_span.counter.max());
+        let mut index = match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
             Ok(index) => index,
             Err(index) => index.saturating_sub(1),
         };
 
-        let fragment = &mut list[index];
+        let mut start_counter = id_span.counter.start;
+        while start_counter < id_span.counter.end
+            && index < list.len()
+            && start_counter < list[index].counter_end()
+        {
+            let fragment = &mut list[index];
+            let from = (start_counter - fragment.counter) as usize;
+            let to =
+                ((id_span.counter.end - fragment.counter) as usize).min(fragment.cursor.rle_len());
+            fragment.cursor.update_insert(from, to, new_leaf);
+            start_counter += (to - from) as Counter;
+            index += 1;
+        }
 
-        fragment.cursor.set_insert(
-            (id_span.counter.start - fragment.counter) as usize,
-            (id_span.counter.end - fragment.counter) as usize,
-            new_leaf,
-        )
+        assert_eq!(start_counter, id_span.counter.end);
     }
 
     // FIXME: delete id span can be reversed
@@ -106,8 +117,12 @@ impl IdToCursor {
                         leaf: elem.leaf,
                         id_span: IdSpan::new(
                             iter_id_span.client_id,
-                            start_counter.max(iter_id_span.counter.start),
-                            end_counter.min(iter_id_span.counter.end),
+                            start_counter
+                                .max(iter_id_span.counter.start)
+                                .min(iter_id_span.counter.end),
+                            end_counter
+                                .max(iter_id_span.counter.start)
+                                .min(iter_id_span.counter.end),
                         ),
                     });
                 }
@@ -175,6 +190,12 @@ impl Ord for Fragment {
     }
 }
 
+impl Fragment {
+    fn counter_end(&self) -> Counter {
+        self.counter + self.cursor.rle_len() as Counter
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum IterCursor {
     Insert { leaf: LeafIndex, id_span: IdSpan },
@@ -212,30 +233,64 @@ impl Cursor {
         Self::Delete(id_span)
     }
 
-    fn set_insert(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
+    fn update_insert(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
+        debug_log::debug_log!(
+            "set_insert: from={}, to={}, new_leaf={:?}",
+            from,
+            to,
+            &new_leaf
+        );
+
+        assert!(from <= to);
+        assert!(to <= self.rle_len());
         match self {
             Self::Insert { set, len } => {
+                // TODO: PERF can be speed up
                 let mut index = 0;
-                let mut pos = usize::MAX;
-                for (i, insert) in set.iter_mut().enumerate() {
-                    if index + insert.len as usize > from {
-                        pos = i;
-                        insert.len -= (to - from) as u32;
-                        break;
+                let mut new_set = SmallVec::new();
+                for insert in set.iter() {
+                    if index + insert.len as usize <= from || index >= to {
+                        new_set.push(*insert);
+                        index += insert.len as usize;
+                    } else {
+                        let elem_end = index + insert.len as usize;
+                        if index < from {
+                            new_set.push(Insert {
+                                leaf: insert.leaf,
+                                len: (from - index) as u32,
+                            });
+                            index = from;
+                        }
+
+                        if elem_end > to {
+                            new_set.push(Insert {
+                                leaf: new_leaf,
+                                len: (to - index) as u32,
+                            });
+                            new_set.push(Insert {
+                                leaf: insert.leaf,
+                                len: (elem_end - to) as u32,
+                            });
+                        } else {
+                            new_set.push(Insert {
+                                leaf: new_leaf,
+                                len: (elem_end - index) as u32,
+                            });
+                        }
+
+                        index = elem_end;
                     }
-                    index += insert.len as usize;
                 }
 
-                set.insert(
-                    pos + 1,
-                    Insert {
-                        leaf: new_leaf,
-                        len: (to - from) as u32,
-                    },
+                *set = new_set;
+                debug_assert_eq!(
+                    *len,
+                    set.iter().map(|x| x.len as usize).sum::<usize>() as u32
                 );
             }
             _ => unreachable!(),
         }
+        debug_log::debug_dbg!(&self);
     }
 
     fn get_insert(&self, pos: usize) -> Option<LeafIndex> {
@@ -296,5 +351,15 @@ impl Mergeable for Cursor {
 
     fn merge_left(&mut self, _: &Self) {
         unreachable!();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_id_to_cursor() {
+        let mut map = IdToCursor::default();
     }
 }
