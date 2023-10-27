@@ -27,7 +27,7 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
-    state: LazyLoad<RichtextStateLoader, InnerState>,
+    pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
 }

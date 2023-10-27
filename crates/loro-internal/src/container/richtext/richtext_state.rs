@@ -591,9 +591,10 @@ impl RichtextState {
     ) -> (usize, &Styles) {
         debug_assert!(
             entity_index <= self.len_entity(),
-            "entity_index={} len={}",
+            "entity_index={} len={} self={:#?}",
             entity_index,
-            self.len_entity()
+            self.len_entity(),
+            &self
         );
 
         match self.tree.query::<EntityQuery>(&entity_index) {

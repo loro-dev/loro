@@ -7,6 +7,7 @@ use crate::{
     },
     delta::MapValue,
     op::ListSlice,
+    state::RichtextState,
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
@@ -178,6 +179,18 @@ impl TextHandler {
                 } else {
                     state.as_richtext_state_mut().unwrap().len_unicode()
                 }
+            })
+    }
+
+    pub fn with_state(&self, f: impl FnOnce(&RichtextState)) {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let state = state.as_richtext_state().unwrap();
+                f(state);
             })
     }
 
