@@ -365,10 +365,16 @@ fn check_eq(site_a: &mut LoroDoc, site_b: &mut LoroDoc) {
             );
         }
 
+        text_a.with_state(|s| {
+            dbg!(&s.state);
+        });
+        text_b.with_state(|s| {
+            dbg!(&s.state);
+        });
         assert_eq!(
             value_a,
             value_b,
-            "Richtext Style not equal. peer{}={:?}, peer{}={:?}",
+            "Richtext Style not equal. peer{}={:?}, peer{}={:?}, \n",
             site_a.peer_id(),
             value_a,
             site_b.peer_id(),
@@ -1934,6 +1940,118 @@ mod test {
                 },
             ],
         )
+    }
+
+    #[test]
+    fn fuzz_5() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 13877,
+                    pos: 0,
+                    site: 0,
+                },
+                Del {
+                    pos: 3,
+                    len: 4,
+                    site: 0,
+                },
+                Del {
+                    pos: 2,
+                    len: 1,
+                    site: 0,
+                },
+                Ins {
+                    content: 12850,
+                    pos: 0,
+                    site: 1,
+                },
+                Ins {
+                    content: 52487,
+                    pos: 0,
+                    site: 4,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn fuzz_6() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 0,
+                    pos: 16384000,
+                    site: 0,
+                },
+                Mark {
+                    pos: 4503599627370752,
+                    len: 14829735428355981312,
+                    site: 0,
+                    style_key: 0,
+                },
+                Ins {
+                    content: 10624,
+                    pos: 1182309699815473152,
+                    site: 0,
+                },
+                Ins {
+                    content: 52685,
+                    pos: 3474262130214096333,
+                    site: 128,
+                },
+                Mark {
+                    pos: 3607102274975328360,
+                    len: 7812629349709198644,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+                Mark {
+                    pos: 7812738666512280684,
+                    len: 7812738666512280684,
+                    site: 108,
+                    style_key: 108,
+                },
+            ],
+        );
     }
 
     #[test]

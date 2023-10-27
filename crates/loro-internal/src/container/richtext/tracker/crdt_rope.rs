@@ -191,6 +191,7 @@ impl CrdtRope {
                 }
 
                 if !scanning {
+                    debug_log::debug_log!("B");
                     insert_pos = Cursor {
                         leaf: *other_leaf,
                         offset: other_elem.rle_len(),
@@ -219,7 +220,7 @@ impl CrdtRope {
 
         let start = self
             .tree
-            .query::<ActiveLenQueryPerferRight>(&(pos as i32))
+            .query::<ActiveLenQueryPreferRight>(&(pos as i32))
             .unwrap();
         // avoid pointing to the end of the node
         let start = start.cursor;
@@ -522,11 +523,11 @@ impl Query<CrdtRopeTrait> for ActiveLenQueryPreferLeft {
 /// If there are zero length spans (deleted, or spans from future) at the
 /// active index, the query will return the position of the first non-zero length
 /// content after them.
-struct ActiveLenQueryPerferRight {
+struct ActiveLenQueryPreferRight {
     left: i32,
 }
 
-impl Query<CrdtRopeTrait> for ActiveLenQueryPerferRight {
+impl Query<CrdtRopeTrait> for ActiveLenQueryPreferRight {
     type QueryArg = i32;
 
     fn init(target: &Self::QueryArg) -> Self {
