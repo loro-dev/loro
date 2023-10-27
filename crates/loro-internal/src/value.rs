@@ -12,26 +12,23 @@ pub use loro_common::LoroValue;
 use loro_common::{ContainerType, TreeID};
 
 pub trait ToJson {
+    fn to_json_value(&self) -> serde_json::Value;
     fn to_json(&self) -> String;
     fn to_json_pretty(&self) -> String;
     fn from_json(s: &str) -> Self;
 }
 
 impl ToJson for LoroValue {
+    fn to_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
+
     fn to_json(&self) -> String {
-        #[cfg(feature = "json")]
-        let ans = serde_json::to_string(self).unwrap();
-        #[cfg(not(feature = "json"))]
-        let ans = String::new();
-        ans
+        serde_json::to_string(self).unwrap()
     }
 
     fn to_json_pretty(&self) -> String {
-        #[cfg(feature = "json")]
-        let ans = serde_json::to_string_pretty(self).unwrap();
-        #[cfg(not(feature = "json"))]
-        let ans = String::new();
-        ans
+        serde_json::to_string_pretty(self).unwrap()
     }
 
     #[allow(unused)]
@@ -71,8 +68,8 @@ impl ApplyDiff for LoroValue {
                                 index += len;
                             }
                             DeltaItem::Insert { value, .. } => {
-                                s.insert_str(index, value);
-                                index += value.len();
+                                s.insert_str(index, value.as_str());
+                                index += value.len_bytes();
                             }
                             DeltaItem::Delete { len, .. } => {
                                 s.drain(index..index + len);
@@ -109,54 +106,35 @@ impl ApplyDiff for LoroValue {
             LoroValue::Map(map) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
                 if !is_tree {
-                    for item in diff.iter() {
-                        match item {
-                            Diff::Map(diff) => {
-                                let map = Arc::make_mut(map);
-                                for v in diff.added.iter() {
-                                    map.insert(v.0.to_string(), unresolved_to_collection(v.1));
-                                }
-                                for (k, _) in diff.deleted.iter() {
-                                    // map.remove(v.as_ref());
-                                    map.insert(k.to_string(), LoroValue::Null);
-                                }
-                                for (key, value) in diff.updated.iter() {
-                                    map.insert(
-                                        key.to_string(),
-                                        unresolved_to_collection(&value.new),
-                                    );
-                                }
-                            }
-                            Diff::NewMap(diff) => {
-                                let map = Arc::make_mut(map);
-                                for (key, value) in diff.updated.iter() {
-                                    match &value.value {
-                                        Some(value) => {
-                                            map.insert(
-                                                key.to_string(),
-                                                unresolved_to_collection(value),
-                                            );
-                                        }
-                                        None => {
-                                            map.remove(&key.to_string());
-                                        }
+                for item in diff.iter() {
+                    match item {
+                        Diff::NewMap(diff) => {
+                            let map = Arc::make_mut(map);
+                            for (key, value) in diff.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        map.insert(
+                                            key.to_string(),
+                                            unresolved_to_collection(value),
+                                        );
+                                    }
+                                    None => {
+                                        map.remove(&key.to_string());
                                     }
                                 }
                             }
-                            _ => unreachable!(),
                         }
+                        _ => unreachable!(),
                     }
-                } else {
+                }
+            }else {
                     // TODO: perf
                     let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
                     let diff_forest = forest.apply_diffs(diff);
                     *map = diff_forest.to_value().into_map().unwrap()
-                }
-            }
+                }}
             _ => unreachable!(),
         }
-
-        debug_dbg!(&self);
     }
 
     fn apply(&mut self, path: &Path, diff: &[Diff]) {
@@ -167,10 +145,7 @@ impl ApplyDiff for LoroValue {
         let hint = match diff[0] {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
-            Diff::Map(_) => TypeHint::Map,
             Diff::NewMap(_) => TypeHint::Map,
-            Diff::SeqRaw(_) => TypeHint::Text,
-            Diff::SeqRawUtf16(_) => TypeHint::Text,
             Diff::Tree(_) => TypeHint::Tree,
         };
         let value = {
@@ -356,17 +331,12 @@ pub mod wasm {
                     )
                     .unwrap();
                     // set diff as array
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &text.into()).unwrap();
-                }
-                Diff::Map(map) => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("map"),
+                        &JsValue::from_str("diff"),
+                        &serde_wasm_bindgen::to_value(&text).unwrap(),
                     )
                     .unwrap();
-
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &map.into()).unwrap();
                 }
                 Diff::NewMap(map) => {
                     js_sys::Reflect::set(
@@ -377,38 +347,6 @@ pub mod wasm {
                     .unwrap();
 
                     js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map.into()).unwrap();
-                }
-                Diff::SeqRaw(text) => {
-                    // set type as "text"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("seq_raw"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&text).unwrap(),
-                    )
-                    .unwrap();
-                }
-                Diff::SeqRawUtf16(text) => {
-                    // set type as "text"
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("seq_raw_utf16"),
-                    )
-                    .unwrap();
-                    // set diff as array
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&text).unwrap(),
-                    )
-                    .unwrap();
                 }
             };
 

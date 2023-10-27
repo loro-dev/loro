@@ -36,6 +36,7 @@ pub mod fuzz;
 mod span;
 #[cfg(test)]
 pub mod tests;
+mod utils;
 
 pub mod delta;
 pub mod event;

@@ -169,18 +169,18 @@ mod run {
             });
         });
 
-        b.bench_function("B4 utf16", |b| {
-            b.iter(|| {
-                let loro = LoroDoc::new();
-                let text = loro.get_text("text");
-                let mut txn = loro.txn().unwrap();
+        // b.bench_function("B4 utf16", |b| {
+        //     b.iter(|| {
+        //         let loro = LoroDoc::new();
+        //         let text = loro.get_text("text");
+        //         let mut txn = loro.txn().unwrap();
 
-                for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete_utf16(&mut txn, *pos, *del).unwrap();
-                    text.insert_utf16(&mut txn, *pos, ins).unwrap();
-                }
-            })
-        });
+        //         for TextAction { pos, ins, del } in actions.iter() {
+        //             text.delete_utf16(&mut txn, *pos, *del).unwrap();
+        //             text.insert_utf16(&mut txn, *pos, ins).unwrap();
+        //         }
+        //     })
+        // });
 
         b.bench_function("B4_Per100_Txn", |b| {
             b.iter(|| {
@@ -286,6 +286,68 @@ mod run {
                         .unwrap();
                     loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
                 }
+            })
+        });
+
+        let b = b.sample_size(10);
+        b.bench_function("DecodeUpdates B4Parallel", |b| {
+            let loro = LoroDoc::default();
+            let loro_b = LoroDoc::default();
+            let text = loro.get_text("text");
+            let text2 = loro_b.get_text("text");
+            for TextAction { pos, ins, del } in actions.iter() {
+                let pos = *pos;
+                let del = *del;
+                {
+                    let mut txn = loro.txn().unwrap();
+                    text.delete(&mut txn, pos, del).unwrap();
+                    text.insert(&mut txn, pos, ins).unwrap();
+                }
+
+                {
+                    let mut txn = loro_b.txn().unwrap();
+                    text2.delete(&mut txn, pos, del).unwrap();
+                    text2.insert(&mut txn, pos, ins).unwrap();
+                }
+                loro_b
+                    .import(&loro.export_from(&loro_b.oplog_vv()))
+                    .unwrap();
+                loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
+            }
+            let data = loro.export_from(&Default::default());
+            b.iter(|| {
+                let loro = LoroDoc::default();
+                loro.import(&data).unwrap();
+            })
+        });
+        b.bench_function("DecodeSnapshot B4Parallel", |b| {
+            let loro = LoroDoc::default();
+            let loro_b = LoroDoc::default();
+            let text = loro.get_text("text");
+            let text2 = loro_b.get_text("text");
+            for TextAction { pos, ins, del } in actions.iter() {
+                let pos = *pos;
+                let del = *del;
+                {
+                    let mut txn = loro.txn().unwrap();
+                    text.delete(&mut txn, pos, del).unwrap();
+                    text.insert(&mut txn, pos, ins).unwrap();
+                }
+
+                {
+                    let mut txn = loro_b.txn().unwrap();
+                    text2.delete(&mut txn, pos, del).unwrap();
+                    text2.insert(&mut txn, pos, ins).unwrap();
+                }
+                loro_b
+                    .import(&loro.export_from(&loro_b.oplog_vv()))
+                    .unwrap();
+                loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
+            }
+            let data = loro.export_snapshot();
+            b.iter(|| {
+                let loro = LoroDoc::default();
+                loro.import(&data).unwrap();
             })
         });
     }

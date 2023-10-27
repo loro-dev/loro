@@ -34,6 +34,8 @@ pub enum LoroError {
     UsedOpID { id: ID },
     #[error("Movable Tree Error")]
     TreeError(#[from] LoroTreeError),
+    #[error("Invalid argument ({0})")]
+    ArgErr(Box<str>),
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

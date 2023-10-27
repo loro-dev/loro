@@ -12,6 +12,7 @@ use crate::{
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     handler::TreeHandler,
+    handler::TextHandler,
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -25,7 +26,7 @@ use super::{
     snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
     state::DocState,
     txn::Transaction,
-    ListHandler, MapHandler, TextHandler,
+    ListHandler, MapHandler,
 };
 
 /// `LoroApp` serves as the library's primary entry point.
@@ -253,6 +254,7 @@ impl LoroDoc {
                     let app = LoroDoc::new();
                     decode_app_snapshot(&app, &input[1..], false)?;
                     let oplog = self.oplog.lock().unwrap();
+                    // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
                     drop(oplog);
                     return self.import_with(&updates, origin);

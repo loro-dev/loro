@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::LoroValue;
+use crate::{op::ListSlice, LoroValue};
 
 #[cfg(proptest)]
 pub const PROPTEST_FACTOR_10: usize = 10;
@@ -16,7 +16,7 @@ pub const PROPTEST_FACTOR_1: usize = 0;
 fn size_of() {
     use crate::change::Change;
     use crate::{
-        container::{map::MapSet, text::text_content::ListSlice, ContainerID},
+        container::{map::MapSet, ContainerID},
         id::ID,
         op::{Op, RawOpContent},
         span::IdSpan,

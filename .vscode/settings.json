@@ -17,12 +17,14 @@
     "RUSTFLAGS",
     "smstring",
     "thiserror",
+    "tinyvec",
     "txns",
     "UNEXIST",
+    "unbold",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {
-    "RUST_BACKTRACE": "full",
+    "RUST_BACKTRACE": "1",
     "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": ["test_utils"],
@@ -44,5 +46,8 @@
   },
   "excalidraw.theme": "dark",
   "deno.enable": true,
-  "cortex-debug.variableUseNaturalFormat": true
+  "cortex-debug.variableUseNaturalFormat": true,
+  "[markdown]": {
+    "editor.defaultFormatter": "darkriszty.markdown-table-prettify"
+  }
 }

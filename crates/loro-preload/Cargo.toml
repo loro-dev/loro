@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 serde = {version="1", features=["derive"]}
-serde_columnar = "0.2.5"
+serde_columnar = { version = "0.3.2" }
 loro-common = {path="../loro-common"}
 bytes = "1.4.0"

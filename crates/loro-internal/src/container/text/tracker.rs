@@ -6,7 +6,7 @@ use crate::{
     container::{list::list_op::InnerListOp, text::tracker::yata_impl::YataImpl},
     delta::Delta,
     id::{Counter, ID},
-    op::{InnerContent, RichOp},
+    op::{InnerContent, ListSlice, RichOp, SliceRanges},
     span::{HasId, HasIdSpan, IdSpan},
     VersionVector,
 };
@@ -21,7 +21,6 @@ use self::{
     y_span::{Status, StatusChange, YSpan, YSpanTreeTrait},
 };
 
-use super::text_content::{ListSlice, SliceRanges};
 mod content_map;
 mod cursor_map;
 mod effects_iter;
@@ -410,6 +409,7 @@ impl Tracker {
                 self.id_to_cursor
                     .set_small_range((id).into(), cursor_map::Marker::Delete(Box::new(spans)));
             }
+            _ => unreachable!(),
         }
     }
 

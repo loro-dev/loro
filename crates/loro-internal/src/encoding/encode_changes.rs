@@ -8,7 +8,6 @@ use serde_columnar::{columnar, iter_from_bytes, to_vec};
 
 use crate::{
     change::{Change, Lamport, Timestamp},
-    container::text::text_content::ListSlice,
     container::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
@@ -17,7 +16,7 @@ use crate::{
     },
     encoding::RemoteClientChanges,
     id::{Counter, PeerID, ID},
-    op::{RawOpContent, RemoteOp},
+    op::{ListSlice, RawOpContent, RemoteOp},
     oplog::OpLog,
     span::HasId,
     version::Frontiers,
@@ -218,9 +217,17 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                                 } => LoroValue::String(Arc::new(str.to_string())),
                             }),
                         ),
-                        ListOp::Delete(span) => {
-                            (span.pos as usize, Some(LoroValue::I32(span.len as i32)))
-                        }
+                        ListOp::Delete(span) => (
+                            span.pos as usize,
+                            Some(LoroValue::I32(span.signed_len as i32)),
+                        ),
+                        ListOp::StyleStart {
+                            start,
+                            end,
+                            key,
+                            info,
+                        } => todo!("impl style encode"),
+                        ListOp::StyleEnd => todo!("impl style encode"),
                     },
                 };
                 op_len += 1;
@@ -340,7 +347,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                         let list_op = match value {
                             LoroValue::I32(len) => ListOp::Delete(DeleteSpan {
                                 pos: pos as isize,
-                                len: len as isize,
+                                signed_len: len as isize,
                             }),
                             _ => {
                                 let slice = match value {
@@ -358,6 +365,7 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                         };
                         RawOpContent::List(list_op)
                     }
+                    ContainerType::Text => unimplemented!(),
                 };
                 let remote_op = RemoteOp {
                     container: container_id,

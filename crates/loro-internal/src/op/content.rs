@@ -56,6 +56,18 @@ impl<'a> RawOpContent<'a> {
                     pos: *pos,
                 }),
                 ListOp::Delete(x) => RawOpContent::List(ListOp::Delete(*x)),
+                ListOp::StyleStart {
+                    start,
+                    end,
+                    key,
+                    info,
+                } => RawOpContent::List(ListOp::StyleStart {
+                    start: *start,
+                    end: *end,
+                    key: key.clone(),
+                    info: *info,
+                }),
+                ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),
             },
             Self::Tree(arg0) => RawOpContent::Tree(*arg0),
         }
@@ -209,7 +221,10 @@ mod test {
     #[test]
     fn fix_fields_order() {
         let remote_content = vec![
-            RawOpContent::List(ListOp::Delete(DeleteSpan { pos: 0, len: 1 })),
+            RawOpContent::List(ListOp::Delete(DeleteSpan {
+                pos: 0,
+                signed_len: 1,
+            })),
             RawOpContent::Map(MapSet {
                 key: "a".to_string().into(),
                 value: Some("b".to_string().into()),

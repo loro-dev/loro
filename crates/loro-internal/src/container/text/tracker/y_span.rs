@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
 use crate::{
-    container::text::text_content::SliceRange,
     id::Counter,
+    op::SliceRange,
     span::{HasCounter, HasCounterSpan, IdSpan},
     ID,
 };

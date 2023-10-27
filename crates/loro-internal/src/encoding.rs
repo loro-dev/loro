@@ -25,7 +25,10 @@ pub(crate) use encode_updates::encode_oplog_updates;
 
 pub(crate) const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
 // TODO: Test this threshold
+#[cfg(not(test))]
 pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 512;
+#[cfg(test)]
+pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 16;
 pub(crate) const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
 pub(crate) const ENCODE_SCHEMA_VERSION: u8 = 0;
 

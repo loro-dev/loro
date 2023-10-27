@@ -130,7 +130,9 @@ impl OpLog {
         latest_vv: &mut VersionVector,
     ) {
         while let Some(id) = id_stack.pop() {
-            let Some(pending_changes) = self.pending_changes.changes.remove(&id) else{continue;};
+            let Some(pending_changes) = self.pending_changes.changes.remove(&id) else {
+                continue;
+            };
             for pending_change in pending_changes {
                 match remote_change_apply_state(latest_vv, &pending_change) {
                     ChangeApplyState::CanApplyDirectly => {
@@ -203,8 +205,16 @@ impl OpLog {
 pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
     let mut ops = RleVec::new();
     for op in change.ops {
+        let mut lamport = change.lamport;
         for content in op.contents.into_iter() {
-            let op = converter.convert_single_op(&op.container, op.counter, content);
+            let op = converter.convert_single_op(
+                &op.container,
+                change.id.peer,
+                op.counter,
+                lamport,
+                content,
+            );
+            lamport += op.atom_len() as Lamport;
             ops.push(op);
         }
     }
