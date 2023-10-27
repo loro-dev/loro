@@ -258,6 +258,7 @@ impl Mergeable for FugueSpan {
 
     fn merge_left(&mut self, left: &Self) {
         self.id = left.id;
+        self.origin_left = left.origin_left;
         self.content.merge_left(&left.content);
     }
 }
