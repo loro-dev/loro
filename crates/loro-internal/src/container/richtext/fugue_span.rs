@@ -243,8 +243,11 @@ impl Mergeable for FugueSpan {
         self.id.peer == rhs.id.peer
             && self.status == rhs.status
             && self.diff_status == rhs.diff_status
-            && Some(self.id) == rhs.origin_left
             && self.id.counter + self.content.len() as Counter == rhs.id.counter
+            && rhs.origin_left.is_some()
+            && rhs.origin_left.unwrap().peer == self.id.peer
+            && rhs.origin_left.unwrap().counter
+                == self.id.counter + self.content.len() as Counter - 1
             && self.origin_right == rhs.origin_right
             && self.content.can_merge(&rhs.content)
     }
