@@ -54,8 +54,7 @@ impl CrdtRope {
         }
 
         let pos = pos as i32;
-        let start = self.tree.query::<ActiveLenQuery>(&pos).unwrap();
-        debug_log::debug_dbg!(start);
+        let start = self.tree.query::<ActiveLenQueryPreferLeft>(&pos).unwrap();
 
         let (parent_right_leaf, in_between) = {
             // calculate origin_left and origin_right
@@ -218,14 +217,13 @@ impl CrdtRope {
             return Default::default();
         }
 
-        let start = self.tree.query::<ActiveLenQuery>(&(pos as i32)).unwrap();
+        let start = self
+            .tree
+            .query::<ActiveLenQueryPerferRight>(&(pos as i32))
+            .unwrap();
         // avoid pointing to the end of the node
-        let mut start = self.tree.prefer_right(start.cursor).unwrap();
-        let mut elem = self.tree.get_elem_mut(start.leaf).unwrap();
-        while !elem.is_activated() {
-            start = self.tree.next_elem(start).unwrap();
-            elem = self.tree.get_elem_mut(start.leaf).unwrap();
-        }
+        let start = start.cursor;
+        let elem = self.tree.get_elem_mut(start.leaf).unwrap();
         if elem.rle_len() >= start.offset + len {
             debug_log::debug_log!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
             let (_, splitted) = self.tree.update_leaf(start.leaf, |elem| {
@@ -245,7 +243,7 @@ impl CrdtRope {
 
         let end = self
             .tree
-            .query::<ActiveLenQuery>(&((pos + len) as i32))
+            .query::<ActiveLenQueryPreferLeft>(&((pos + len) as i32))
             .unwrap();
         self.tree.update(start..end.cursor(), &mut |elem| {
             if elem.is_activated() {
@@ -461,21 +459,21 @@ impl BTreeTrait for CrdtRopeTrait {
 
 /// Query for start position, prefer left.
 ///
-/// If there are zero length spans (deleted, or spans from future) before the
+/// If there are zero length spans (deleted, or spans from future) at the
 /// active index, the query will return the position of the first non-zero length
-/// content.
+/// content before them.
 ///
 /// NOTE: it may points to the end of a leaf node (with offset = rle_len) while the next leaf node is available.
-struct ActiveLenQuery {
+struct ActiveLenQueryPreferLeft {
     left: i32,
 }
 
-impl Query<CrdtRopeTrait> for ActiveLenQuery {
+impl Query<CrdtRopeTrait> for ActiveLenQueryPreferLeft {
     type QueryArg = i32;
 
     fn init(target: &Self::QueryArg) -> Self {
         debug_assert!(*target >= 0);
-        ActiveLenQuery { left: *target }
+        ActiveLenQueryPreferLeft { left: *target }
     }
 
     fn find_node(
@@ -515,6 +513,63 @@ impl Query<CrdtRopeTrait> for ActiveLenQuery {
         } else {
             // prefer left on zero length spans
             (0, self.left == 0)
+        }
+    }
+}
+
+/// Query for start position, prefer right
+///
+/// If there are zero length spans (deleted, or spans from future) at the
+/// active index, the query will return the position of the first non-zero length
+/// content after them.
+struct ActiveLenQueryPerferRight {
+    left: i32,
+}
+
+impl Query<CrdtRopeTrait> for ActiveLenQueryPerferRight {
+    type QueryArg = i32;
+
+    fn init(target: &Self::QueryArg) -> Self {
+        debug_assert!(*target >= 0);
+        Self { left: *target }
+    }
+
+    fn find_node(
+        &mut self,
+        _: &Self::QueryArg,
+        child_caches: &[generic_btree::Child<CrdtRopeTrait>],
+    ) -> generic_btree::FindResult {
+        let mut left = self.left;
+        for (i, child) in child_caches.iter().enumerate() {
+            let cache = &child.cache;
+            if left < cache.len {
+                // Prefer left. So if both `cache.len` and `left` equal zero, return here.
+                self.left = left;
+                return generic_btree::FindResult::new_found(i, left as usize);
+            }
+
+            left -= cache.len;
+        }
+
+        if let Some(last) = child_caches.last() {
+            left += last.cache.len;
+            self.left = left;
+            FindResult::new_missing(child_caches.len() - 1, left as usize)
+        } else {
+            // TODO: this should be impossible
+            unreachable!()
+        }
+    }
+
+    fn confirm_elem(
+        &mut self,
+        _: &Self::QueryArg,
+        elem: &<CrdtRopeTrait as BTreeTrait>::Elem,
+    ) -> (usize, bool) {
+        if elem.is_activated() {
+            (self.left as usize, (self.left as usize) < elem.rle_len())
+        } else {
+            (self.left as usize, self.left == 0)
         }
     }
 }

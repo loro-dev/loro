@@ -246,26 +246,48 @@ impl Cursor {
         match self {
             Self::Insert { set, len } => {
                 // TODO: PERF can be speed up
-                let mut index = 0;
+                let mut cur_scan_index: usize = 0;
                 let mut new_set = SmallVec::new();
+                let mut new_leaf_inserted = false;
                 for insert in set.iter() {
-                    if index + insert.len as usize <= from || index >= to {
-                        new_set.push(*insert);
-                        index += insert.len as usize;
-                    } else {
-                        let elem_end = index + insert.len as usize;
-                        if index < from {
+                    if new_leaf_inserted {
+                        let end = cur_scan_index + insert.len as usize;
+                        if end <= to {
+                            cur_scan_index = end;
+                            continue;
+                        }
+
+                        if cur_scan_index >= to {
+                            new_set.push(*insert);
+                        } else {
                             new_set.push(Insert {
                                 leaf: insert.leaf,
-                                len: (from - index) as u32,
+                                len: (end - to) as u32,
                             });
-                            index = from;
+                        }
+
+                        cur_scan_index = end;
+                        continue;
+                    }
+
+                    if cur_scan_index + insert.len as usize <= from {
+                        new_set.push(*insert);
+                        cur_scan_index += insert.len as usize;
+                    } else {
+                        debug_assert!(!new_leaf_inserted);
+                        let elem_end = cur_scan_index + insert.len as usize;
+                        if cur_scan_index < from {
+                            new_set.push(Insert {
+                                leaf: insert.leaf,
+                                len: (from - cur_scan_index) as u32,
+                            });
+                            cur_scan_index = from;
                         }
 
                         if elem_end > to {
                             new_set.push(Insert {
                                 leaf: new_leaf,
-                                len: (to - index) as u32,
+                                len: (to - cur_scan_index) as u32,
                             });
                             new_set.push(Insert {
                                 leaf: insert.leaf,
@@ -274,11 +296,12 @@ impl Cursor {
                         } else {
                             new_set.push(Insert {
                                 leaf: new_leaf,
-                                len: (elem_end - index) as u32,
+                                len: (to - cur_scan_index) as u32,
                             });
                         }
 
-                        index = elem_end;
+                        new_leaf_inserted = true;
+                        cur_scan_index = elem_end;
                     }
                 }
 

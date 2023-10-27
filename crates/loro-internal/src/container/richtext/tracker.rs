@@ -234,7 +234,6 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
-        self.rope.diagnose();
         self.rope.get_diff()
     }
 }
