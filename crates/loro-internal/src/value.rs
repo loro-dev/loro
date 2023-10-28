@@ -191,8 +191,9 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, StyleMeta},
         event::{Diff, Index},
+        utils::string_slice::StringSlice,
         LoroValue,
     };
 
@@ -276,12 +277,8 @@ pub mod wasm {
                     )
                     .unwrap();
                     // set diff as array
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("diff"),
-                        &serde_wasm_bindgen::to_value(&text).unwrap(),
-                    )
-                    .unwrap();
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &JsValue::from(text))
+                        .unwrap();
                 }
                 Diff::NewMap(map) => {
                     js_sys::Reflect::set(
@@ -378,8 +375,8 @@ pub mod wasm {
         }
     }
 
-    impl From<Delta<String>> for JsValue {
-        fn from(value: Delta<String>) -> Self {
+    impl From<Delta<StringSlice, StyleMeta>> for JsValue {
+        fn from(value: Delta<StringSlice, StyleMeta>) -> Self {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.iter().enumerate() {
                 arr.set(i as u32, JsValue::from(v.clone()));
@@ -389,53 +386,66 @@ pub mod wasm {
         }
     }
 
-    impl From<DeltaItem<String, ()>> for JsValue {
-        fn from(value: DeltaItem<String, ()>) -> Self {
+    impl From<DeltaItem<StringSlice, StyleMeta>> for JsValue {
+        fn from(value: DeltaItem<StringSlice, StyleMeta>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len, meta: _ } => {
+                DeltaItem::Retain { len, meta } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
                         &JsValue::from_str("retain"),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("len"),
                         &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
+                    if !meta.vec.is_empty() {
+                        js_sys::Reflect::set(
+                            &obj,
+                            &JsValue::from_str("attributes"),
+                            &JsValue::from(meta),
+                        )
+                        .unwrap();
+                    }
                 }
-                DeltaItem::Insert { value, .. } => {
+                DeltaItem::Insert { value, meta } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
                         &JsValue::from_str("insert"),
-                    )
-                    .unwrap();
-
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("value"),
                         &JsValue::from_str(value.as_str()),
                     )
                     .unwrap();
+                    if !meta.vec.is_empty() {
+                        js_sys::Reflect::set(
+                            &obj,
+                            &JsValue::from_str("attributes"),
+                            &JsValue::from(meta),
+                        )
+                        .unwrap();
+                    }
                 }
                 DeltaItem::Delete { len, meta: _ } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
                         &JsValue::from_str("delete"),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("len"),
                         &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
                 }
+            }
+
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<StyleMeta> for JsValue {
+        fn from(value: StyleMeta) -> Self {
+            let obj = Object::new();
+            for style in value.vec {
+                js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str(&style.key),
+                    &JsValue::from(style.data),
+                )
+                .unwrap();
             }
 
             obj.into_js_result().unwrap()
@@ -449,25 +459,12 @@ pub mod wasm {
                 DeltaItem::Retain { len, .. } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
                         &JsValue::from_str("retain"),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("len"),
                         &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
                 }
                 DeltaItem::Insert { value, .. } => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("insert"),
-                    )
-                    .unwrap();
-
                     let arr = Array::new_with_length(value.len() as u32);
                     for (i, v) in value.into_iter().enumerate() {
                         arr.set(i as u32, convert(v));
@@ -475,7 +472,7 @@ pub mod wasm {
 
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("value"),
+                        &JsValue::from_str("insert"),
                         &arr.into_js_result().unwrap(),
                     )
                     .unwrap();
@@ -483,13 +480,7 @@ pub mod wasm {
                 DeltaItem::Delete { len, .. } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("type"),
                         &JsValue::from_str("delete"),
-                    )
-                    .unwrap();
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("len"),
                         &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
