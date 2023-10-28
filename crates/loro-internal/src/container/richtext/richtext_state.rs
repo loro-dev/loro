@@ -686,6 +686,10 @@ mod cursor_cache {
             }
 
             for c in self.cache.iter().rev() {
+                if c.pos_type != pos_type {
+                    continue;
+                }
+
                 let elem = tree.get_elem(c.cursor.leaf).unwrap();
                 if pos >= c.pos - c.cursor.offset && pos < c.pos - c.cursor.offset + elem.rle_len()
                 {
