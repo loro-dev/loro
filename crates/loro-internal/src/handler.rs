@@ -3,9 +3,8 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
-        text::text_content::ListSlice,
-        tree::tree_op::TreeOp,
         richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
     },
     delta::MapValue,
     op::ListSlice,
@@ -13,7 +12,9 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroResult,LoroError, LoroTreeError, LoroValue, TreeID};
+use loro_common::{
+    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
+};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -747,7 +748,7 @@ impl TreeHandler {
                 target: tree_id,
                 parent: None,
             }),
-            None,
+            EventHint::Tree((tree_id, None).into()),
             &self.state,
         )?;
         Ok(tree_id)
@@ -760,7 +761,7 @@ impl TreeHandler {
                 target,
                 parent: TreeID::delete_root(),
             }),
-            None,
+            EventHint::Tree((target, TreeID::delete_root()).into()),
             &self.state,
         )
     }
@@ -776,7 +777,7 @@ impl TreeHandler {
                 target: tree_id,
                 parent: Some(parent),
             }),
-            None,
+            EventHint::Tree((tree_id, Some(parent)).into()),
             &self.state,
         )?;
         Ok(tree_id)
@@ -789,7 +790,7 @@ impl TreeHandler {
                 target,
                 parent: None,
             }),
-            None,
+            EventHint::Tree((target, None).into()),
             &self.state,
         )
     }
@@ -801,7 +802,7 @@ impl TreeHandler {
                 target,
                 parent: Some(parent),
             }),
-            None,
+            EventHint::Tree((target, Some(parent)).into()),
             &self.state,
         )
     }
@@ -916,19 +917,6 @@ impl TreeHandler {
                 a.max_counter()
             })
     }
-
-    #[cfg(feature = "test_utils")]
-    pub fn create_with_id(&self, txn: &mut Transaction, tree_id: TreeID) -> LoroResult<()> {
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target: tree_id,
-                parent: None,
-            }),
-            None,
-            &self.state,
-        )
-    }
 }
 
 #[cfg(test)]
@@ -940,7 +928,6 @@ mod test {
     use crate::version::Frontiers;
     use crate::ToJson;
     use loro_common::ID;
-    use crate::{loro::LoroDoc, ToJson};
 
     #[test]
     fn test() {

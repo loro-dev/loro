@@ -1,15 +1,12 @@
-use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use rle::Mergable;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::richtext::richtext_state::{unicode_to_utf8_index, RichtextStateChunk},
-    delta::{Delta, DeltaValue, MapDelta, MapDiff, StyleMeta,TreeDelta},
+    container::richtext::richtext_state::RichtextStateChunk,
+    delta::{Delta, MapDelta, StyleMeta, TreeDelta},
     op::SliceRanges,
     utils::string_slice::StringSlice,
-    text::text_content::SliceRanges,
     InternalString, LoroValue,
 };
 
@@ -156,6 +153,7 @@ pub enum InternalDiff {
     /// This always uses entity indexes.
     RichtextRaw(Delta<RichtextStateChunk>),
     Map(MapDelta),
+    Tree(TreeDelta),
 }
 
 /// Diff is the diff between two versions of a container.

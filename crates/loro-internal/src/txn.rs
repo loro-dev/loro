@@ -4,32 +4,24 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use debug_log::debug_dbg;
-use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
-use loro_common::{ContainerType, LoroResult};
-use rle::{HasLength, RleVec};
-use smallvec::smallvec;
-
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{
-        idx::ContainerIdx,
-        list::list_op::InnerListOp,
-        richtext::{richtext_state::RichtextStateChunk, AnchorType, Style, StyleOp},
-        IntoContainerId,
-    },
-    delta::{Delta, MapValue, TreeDelta},
+    container::{idx::ContainerIdx, richtext::Style, IntoContainerId},
+    delta::{Delta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
-    handler::TreeHandler,
     handler::TextHandler,
+    handler::TreeHandler,
     id::{Counter, PeerID, ID},
-    op::{Op, RawOp, RawOpContent, SliceRanges},
+    op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
-    utils::string_slice::StringSlice,
     version::Frontiers,
     InternalString, LoroError, LoroValue,
 };
+use debug_log::debug_dbg;
+use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
+use loro_common::{ContainerType, LoroResult, TreeID};
+use rle::{HasLength, RleVec};
 
 use super::{
     arena::SharedArena,
@@ -89,6 +81,7 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
+    Tree(TreeDiff),
     None,
 }
 
@@ -390,11 +383,11 @@ fn change_to_diff(
                         },
                     ))
                 }
+                EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
                 EventHint::None => {
                     // do nothing
                     break 'outer;
                 }
-                // TODO: Tree
             };
 
             ans.push(TxnContainerDiff {

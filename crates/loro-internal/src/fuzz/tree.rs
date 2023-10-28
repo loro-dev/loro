@@ -104,35 +104,35 @@ impl Actor {
         }));
 
         let text = Arc::clone(&actor.text_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("text", ContainerType::Text),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut text = text.lock().unwrap();
-                match &event.container.diff {
-                    Diff::Text(delta) => {
-                        let mut index = 0;
-                        for item in delta.iter() {
-                            match item {
-                                DeltaItem::Retain { len, meta: _ } => {
-                                    index += len;
-                                }
-                                DeltaItem::Insert { value, meta: _ } => {
-                                    text.insert_str(index, value);
-                                    index += value.len();
-                                }
-                                DeltaItem::Delete { len, .. } => {
-                                    text.drain(index..index + *len);
-                                }
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }),
-        );
+        // actor.loro.subscribe(
+        //     &ContainerID::new_root("text", ContainerType::Text),
+        //     Arc::new(move |event| {
+        //         if event.from_children {
+        //             return;
+        //         }
+        //         let mut text = text.lock().unwrap();
+        //         match &event.container.diff {
+        //             Diff::Text(delta) => {
+        //                 let mut index = 0;
+        //                 for item in delta.iter() {
+        //                     match item {
+        //                         DeltaItem::Retain { len, meta: _ } => {
+        //                             index += len;
+        //                         }
+        //                         DeltaItem::Insert { value, meta: _ } => {
+        //                             text.insert_str(index, value);
+        //                             index += value.len();
+        //                         }
+        //                         DeltaItem::Delete { len, .. } => {
+        //                             text.drain(index..index + *len);
+        //                         }
+        //                     }
+        //                 }
+        //             }
+        //             _ => unreachable!(),
+        //         }
+        //     }),
+        // );
 
         let tree = Arc::clone(&actor.tree_tracker);
         actor.loro.subscribe(

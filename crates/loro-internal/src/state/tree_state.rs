@@ -8,6 +8,7 @@ use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
 
 use crate::delta::{TreeDelta, TreeDiff};
+use crate::event::InternalDiff;
 use crate::DocState;
 use crate::{
     arena::SharedArena,
@@ -193,8 +194,12 @@ impl TreeState {
 }
 
 impl ContainerState for TreeState {
-    fn apply_diff(&mut self, diff: &mut Diff, _arena: &SharedArena) -> LoroResult<()> {
-        if let Diff::Tree(tree) = diff {
+    fn apply_diff_and_convert(
+        &mut self,
+        diff: crate::event::InternalDiff,
+        _arena: &SharedArena,
+    ) -> Diff {
+        if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
             for diff in tree.diff.iter() {
                 let target = diff.target;
@@ -214,20 +219,43 @@ impl ContainerState for TreeState {
                 }
             }
         }
-        Ok(())
+        Diff::Tree(diff.into_tree().unwrap())
     }
 
-    fn apply_op(&mut self, op: RawOp, _arena: &SharedArena) -> LoroResult<()> {
-        match op.content {
+    fn apply_diff(&mut self, diff: crate::event::InternalDiff, _arena: &SharedArena) {
+        if let InternalDiff::Tree(tree) = &diff {
+            // assert never cause cycle move
+            for diff in tree.diff.iter() {
+                let target = diff.target;
+                let parent = match diff.action {
+                    TreeDiffItem::CreateOrRestore => None,
+                    TreeDiffItem::Move(parent) => Some(parent),
+                    TreeDiffItem::Delete => TreeID::delete_root(),
+                    TreeDiffItem::UnCreate => {
+                        // delete it from state
+                        self.trees.remove(&target);
+                        continue;
+                    }
+                };
+                let old_parent = self.trees.insert(target, parent);
+                if Some(parent) != old_parent {
+                    self.update_deleted_cache(target, parent, old_parent);
+                }
+            }
+        }
+    }
+
+    fn apply_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op, _arena: &SharedArena) {
+        match raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp { target, parent, .. } = tree;
-                self.mov(target, parent)
+                self.mov(target, parent).unwrap()
             }
             _ => unreachable!(),
         }
     }
 
-    fn to_diff(&self) -> Diff {
+    fn to_diff(&mut self) -> Diff {
         let mut diffs = vec![];
         // TODO: perf
         let forest = Forest::from_tree_state(&self.trees);
@@ -288,7 +316,7 @@ impl ContainerState for TreeState {
 
     // TODO: whether the node in deleted exists in the current version
     // when checkout to a past version, deleted may have some nodes from the future.
-    fn get_value(&self) -> LoroValue {
+    fn get_value(&mut self) -> LoroValue {
         let forest = Forest::from_tree_state(&self.trees);
         forest.to_value()
     }
@@ -641,7 +669,7 @@ impl TreeNode {
 }
 
 // convert map container to LoroValue
-pub(crate) fn get_meta_value(nodes: &mut LoroValue, state: &DocState) {
+pub(crate) fn get_meta_value(nodes: &mut LoroValue, state: &mut DocState) {
     for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
         let meta = map.get_mut("meta").unwrap();

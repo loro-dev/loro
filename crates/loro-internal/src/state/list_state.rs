@@ -12,17 +12,12 @@ use crate::{
     op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
-use debug_log::debug_dbg;
 use fxhash::FxHashMap;
 use generic_btree::{
     iter,
     rle::{HasLength, Mergeable, Sliceable},
-    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, SplittedLeaves,
-    UseLengthFinder,
+    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::LoroResult;
-
-use super::ContainerState;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 

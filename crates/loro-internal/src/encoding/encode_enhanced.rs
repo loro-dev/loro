@@ -246,7 +246,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             });
                         let (is_none, parent_idx) = if let Some(parent) = parent {
                             if TreeID::is_deleted_root(Some(parent)) {
-                                (false, 0)
+                                (Kind::Insert, 0)
                             } else {
                                 let parent_peer_idx = *peer_id_to_idx.get(&parent.peer).unwrap();
                                 let parent_encoding = TreeIDEncoding {
@@ -258,10 +258,10 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                                         tree_ids.push(parent_encoding);
                                         tree_ids.len()
                                     });
-                                (false, parent_idx)
+                                (Kind::Insert, parent_idx)
                             }
                         } else {
-                            (true, 0)
+                            (Kind::Delete, 0)
                         };
                         (target_idx, is_none, parent_idx as isize)
                     }

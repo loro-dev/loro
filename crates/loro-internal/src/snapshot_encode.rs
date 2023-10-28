@@ -15,7 +15,7 @@ use crate::{
     change::{Change, Timestamp},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, map::InnerMapSet,
-        richtext::TextStyleInfoFlag,tree::tree_op::TreeOp,
+        richtext::TextStyleInfoFlag, tree::tree_op::TreeOp,
     },
     delta::MapValue,
     id::{Counter, PeerID},
@@ -306,14 +306,14 @@ pub fn decode_state<'b>(
             loro_preload::EncodedContainerState::Tree(tree_data) => {
                 let mut tree = TreeState::new();
                 for (target, parent) in tree_data {
-                    let (peer, counter) = state_arena.tree_ids[*target - 1];
+                    let (peer, counter) = state_arena.tree_ids[target - 1];
                     let target_peer = common.peer_ids[peer as usize];
                     let target = TreeID {
                         peer: target_peer,
                         counter,
                     };
 
-                    let parent = if *parent == Some(0) {
+                    let parent = if parent == Some(0) {
                         TreeID::delete_root()
                     } else {
                         parent.map(|p| {
@@ -569,6 +569,7 @@ impl EncodedSnapshotOp {
                 Self {
                     container,
                     prop: target,
+                    prop2: 0,
                     len: 0,
                     is_del,
                     value: parent.unwrap_or(0) as isize,
@@ -642,7 +643,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
         idx
     };
 
-    let mut record_peer = |peer: PeerID, peer_lookup: &mut FxHashMap<u64, usize>| {
+    let mut record_peer = |peer: PeerID| {
         if let Some(idx) = peer_lookup.get(&peer) {
             return *idx as u32;
         }
@@ -672,13 +673,13 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                 let v = tree
                     .iter()
                     .map(|(target, parent)| {
-                        let peer_idx = record_peer(target.peer, &mut peer_lookup);
+                        let peer_idx = record_peer(target.peer);
                         let t = record_tree_id(*target, peer_idx);
                         let p = if TreeID::is_deleted_root(*parent) {
                             Some(0)
                         } else {
                             parent.map(|p| {
-                                let peer_idx = record_peer(p.peer, &mut peer_lookup);
+                                let peer_idx = record_peer(p.peer);
                                 record_tree_id(p, peer_idx)
                             })
                         };
@@ -703,7 +704,7 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                             } else {
                                 0
                             },
-                            peer: record_peer(value.lamport.1, &mut peer_lookup),
+                            peer: record_peer(value.lamport.1),
                             counter: value.counter as u32,
                             lamport: value.lamport(),
                         }
@@ -750,7 +751,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         mut key_lookup,
         mut value_lookup,
         mut peer_lookup,
-        tree_id_lookup,
+        mut tree_id_lookup,
         app_state,
     } = state_ref;
     if common.container_ids.is_empty() {
@@ -759,7 +760,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     // need to rebuild bytes from ops, because arena.text may contain garbage
     let mut extra_keys = Vec::new();
     let mut extra_values = Vec::new();
-    let extra_tree_ids = Vec::new();
+    let mut extra_tree_ids = Vec::new();
 
     let mut record_key = |key: &InternalString| {
         if let Some(idx) = key_lookup.get(key) {
@@ -795,6 +796,19 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         peers.len() as u32 - 1
     };
 
+    let mut record_tree_id = |tree_id: TreeID, peer_lookup: &mut FxHashMap<u64, usize>| {
+        let peer_idx = *peer_lookup.get(&tree_id.peer).unwrap() as u32;
+        if let Some(idx) = tree_id_lookup.get(&(peer_idx, tree_id.counter)) {
+            return *idx;
+        }
+        let idx = extra_tree_ids.len() + arena.tree_ids.len();
+        extra_tree_ids.push((peer_idx, tree_id.counter));
+        tree_id_lookup
+            .entry((peer_idx, tree_id.counter))
+            .or_insert_with(|| idx);
+        idx
+    };
+
     let mut styles = Vec::new();
     // Add all changes
     let mut changes: Vec<&Change> = Vec::with_capacity(oplog.len_changes());
@@ -816,19 +830,11 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         for op in change.ops.iter() {
             match &op.content {
                 InnerContent::Tree(TreeOp { target, parent }) => {
-                    let target = (
-                        *peer_lookup.get(&target.peer).unwrap() as u32,
-                        target.counter,
-                    );
-                    let target_idx = *tree_id_lookup.get(&target).unwrap();
-
+                    let target_idx = record_tree_id(*target, &mut peer_lookup);
                     let parent_idx = if TreeID::is_deleted_root(*parent) {
                         Some(0)
                     } else {
-                        parent.map(|p| {
-                            let p = (*peer_lookup.get(&p.peer).unwrap() as u32, p.counter);
-                            *tree_id_lookup.get(&p).unwrap()
-                        })
+                        parent.map(|p| record_tree_id(p, &mut peer_lookup))
                     };
                     encoded_ops.push(EncodedSnapshotOp::from(
                         SnapshotOp::Tree {

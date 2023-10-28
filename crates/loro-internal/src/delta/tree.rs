@@ -8,14 +8,14 @@ pub struct TreeDelta {
 }
 
 /// The semantic action in movable tree.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TreeDiff {
     pub target: TreeID,
     pub action: TreeDiffItem,
 }
 
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeDiffItem {
     CreateOrRestore,
     Move(TreeID),
@@ -45,5 +45,10 @@ impl TreeDelta {
     // TODO: cannot handle this for now
     pub(crate) fn compose(&self, _x: TreeDelta) -> TreeDelta {
         unimplemented!("tree compose")
+    }
+
+    pub(crate) fn push(mut self, diff: TreeDiff) -> Self {
+        self.diff.push(diff);
+        self
     }
 }

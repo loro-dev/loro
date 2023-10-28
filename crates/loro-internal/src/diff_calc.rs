@@ -16,13 +16,11 @@ use crate::{
             RichtextChunkValue, RichtextTracker, StyleOp,
         },
         text::tracker::Tracker,
+        tree::tree_op::TreeOp,
     },
+    dag::DagUtils,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
-    container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    dag::DagUtils,
-    delta::{MapDelta, MapValue},
-    event::Diff,
     id::Counter,
     op::RichOp,
     span::{HasId, HasLamport},
@@ -497,6 +495,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
+            crate::op::InnerContent::Tree(_) => unreachable!(),
         }
     }
 
@@ -596,7 +595,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-    ) -> Diff {
+    ) -> InternalDiff {
         debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
@@ -624,6 +623,6 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         );
         debug_log::debug_log!("\ndiff {:?}", diff);
 
-        Diff::Tree(diff)
+        InternalDiff::Tree(diff)
     }
 }

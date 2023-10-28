@@ -305,6 +305,9 @@ impl Actor {
             ContainerType::Text => {
                 // TODO richtext
             }
+            ContainerType::Tree => {
+                // TODO tree
+            }
         }
     }
 }
@@ -2360,7 +2363,6 @@ mod failed_tests {
             ],
         )
     }
-
 
     use super::ContainerType as C;
     #[test]
