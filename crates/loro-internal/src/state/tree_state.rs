@@ -222,34 +222,16 @@ impl ContainerState for TreeState {
         Diff::Tree(diff.into_tree().unwrap())
     }
 
-    fn apply_diff(&mut self, diff: crate::event::InternalDiff, _arena: &SharedArena) {
-        if let InternalDiff::Tree(tree) = &diff {
-            // assert never cause cycle move
-            for diff in tree.diff.iter() {
-                let target = diff.target;
-                let parent = match diff.action {
-                    TreeDiffItem::CreateOrRestore => None,
-                    TreeDiffItem::Move(parent) => Some(parent),
-                    TreeDiffItem::Delete => TreeID::delete_root(),
-                    TreeDiffItem::UnCreate => {
-                        // delete it from state
-                        self.trees.remove(&target);
-                        continue;
-                    }
-                };
-                let old_parent = self.trees.insert(target, parent);
-                if Some(parent) != old_parent {
-                    self.update_deleted_cache(target, parent, old_parent);
-                }
-            }
-        }
-    }
-
-    fn apply_op(&mut self, raw_op: &RawOp, _op: &crate::op::Op, _arena: &SharedArena) {
+    fn apply_op(
+        &mut self,
+        raw_op: &RawOp,
+        _op: &crate::op::Op,
+        _arena: &SharedArena,
+    ) -> LoroResult<()> {
         match raw_op.content {
             crate::op::RawOpContent::Tree(tree) => {
                 let TreeOp { target, parent, .. } = tree;
-                self.mov(target, parent).unwrap()
+                self.mov(target, parent)
             }
             _ => unreachable!(),
         }

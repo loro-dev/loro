@@ -103,37 +103,6 @@ impl Actor {
             );
         }));
 
-        let text = Arc::clone(&actor.text_tracker);
-        // actor.loro.subscribe(
-        //     &ContainerID::new_root("text", ContainerType::Text),
-        //     Arc::new(move |event| {
-        //         if event.from_children {
-        //             return;
-        //         }
-        //         let mut text = text.lock().unwrap();
-        //         match &event.container.diff {
-        //             Diff::Text(delta) => {
-        //                 let mut index = 0;
-        //                 for item in delta.iter() {
-        //                     match item {
-        //                         DeltaItem::Retain { len, meta: _ } => {
-        //                             index += len;
-        //                         }
-        //                         DeltaItem::Insert { value, meta: _ } => {
-        //                             text.insert_str(index, value);
-        //                             index += value.len();
-        //                         }
-        //                         DeltaItem::Delete { len, .. } => {
-        //                             text.drain(index..index + *len);
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //             _ => unreachable!(),
-        //         }
-        //     }),
-        // );
-
         let tree = Arc::clone(&actor.tree_tracker);
         actor.loro.subscribe(
             &ContainerID::new_root("tree", ContainerType::Tree),
@@ -164,63 +133,6 @@ impl Actor {
             }),
         );
 
-        let map = Arc::clone(&actor.map_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("map", ContainerType::Map),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut map = map.lock().unwrap();
-                if let Diff::NewMap(map_diff) = &event.container.diff {
-                    for (key, value) in map_diff.updated.iter() {
-                        match &value.value {
-                            Some(value) => {
-                                map.insert(key.to_string(), value.clone());
-                            }
-                            None => {
-                                map.remove(&key.to_string());
-                            }
-                        }
-                    }
-                } else {
-                    debug_dbg!(&event.container);
-                    unreachable!()
-                }
-            }),
-        );
-
-        let list = Arc::clone(&actor.list_tracker);
-        actor.loro.subscribe(
-            &ContainerID::new_root("list", ContainerType::List),
-            Arc::new(move |event| {
-                if event.from_children {
-                    return;
-                }
-                let mut list = list.lock().unwrap();
-                if let Diff::List(delta) = &event.container.diff {
-                    let mut index = 0;
-                    for item in delta.iter() {
-                        match item {
-                            DeltaItem::Retain { len, meta: _ } => {
-                                index += len;
-                            }
-                            DeltaItem::Insert { value, meta: _ } => {
-                                for v in value {
-                                    list.insert(index, v.clone());
-                                    index += 1;
-                                }
-                            }
-                            DeltaItem::Delete { len, .. } => {
-                                list.drain(index..index + *len);
-                            }
-                        }
-                    }
-                } else {
-                    unreachable!()
-                }
-            }),
-        );
         actor
             .text_containers
             .push(actor.loro.txn().unwrap().get_text("text"));

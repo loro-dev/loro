@@ -18,6 +18,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
+use loro_common::LoroResult;
 
 type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
@@ -368,7 +369,7 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
         match &op.content {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::Tree(_) => unreachable!(),
@@ -405,6 +406,7 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
+        Ok(())
     }
 
     #[doc = " Start a transaction"]

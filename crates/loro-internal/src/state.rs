@@ -57,7 +57,7 @@ pub trait ContainerState: Clone {
         self.apply_diff_and_convert(diff, arena);
     }
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena);
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&mut self) -> Diff;
 
@@ -281,7 +281,7 @@ impl DocState {
         }
 
         // TODO: make apply_op return a result
-        state.apply_op(raw_op, op, &self.arena);
+        state.apply_op(raw_op, op, &self.arena)?;
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
-use loro_common::{Counter, LoroValue, PeerID, ID};
+use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
 use crate::{
@@ -307,7 +307,7 @@ impl ContainerState for RichtextState {
         }
     }
 
-    fn apply_op(&mut self, r_op: &RawOp, op: &Op, arena: &SharedArena) {
+    fn apply_op(&mut self, r_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()> {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice, pos } => {
@@ -359,6 +359,7 @@ impl ContainerState for RichtextState {
             },
             _ => unreachable!(),
         }
+        Ok(())
     }
 
     fn to_diff(&mut self) -> Diff {
