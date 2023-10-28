@@ -18,6 +18,8 @@ fn main() {
             text.delete(&mut txn, *pos, *del).unwrap();
             text.insert(&mut txn, *pos, ins).unwrap();
         }
+
+        text.diagnose();
     }
 
     println!("time: {:?}", start.elapsed());

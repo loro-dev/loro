@@ -194,6 +194,12 @@ impl TextHandler {
             })
     }
 
+    pub fn diagnose(&self) {
+        self.with_state(|s| {
+            s.diagnose();
+        })
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index

@@ -55,6 +55,13 @@ impl RichtextState {
             LazyLoad::Dst(d) => d.is_emtpy(),
         }
     }
+
+    pub(crate) fn diagnose(&self) {
+        match &self.state {
+            LazyLoad::Src(_) => {}
+            LazyLoad::Dst(d) => d.diagnose(),
+        }
+    }
 }
 
 impl Clone for RichtextState {
@@ -308,17 +315,7 @@ impl ContainerState for RichtextState {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice, pos } => {
-                    self.state.get_mut().insert_at_entity_index(
-                        *pos,
-                        arena.slice_by_unicode(slice.0.start as usize..slice.0.end as usize),
-                    );
-
-                    if self.in_txn {
-                        self.undo_stack.push(UndoItem::Insert {
-                            index: *pos as u32,
-                            len: slice.0.end - slice.0.start,
-                        })
-                    }
+                    unreachable!()
                 }
                 list_op::InnerListOp::InsertText {
                     slice,

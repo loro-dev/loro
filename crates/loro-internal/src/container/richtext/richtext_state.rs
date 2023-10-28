@@ -2,7 +2,7 @@ use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
-    BTree, BTreeTrait, Cursor, Query,
+    BTree, BTreeTrait, Cursor,
 };
 use loro_common::LoroValue;
 use serde::{ser::SerializeStruct, Serialize};
@@ -331,6 +331,22 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usiz
     None
 }
 
+fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
+    match kind {
+        PosType::Bytes => todo!(),
+        PosType::Unicode => Some(pos),
+        PosType::Utf16 => utf16_to_unicode_index(s, pos),
+        PosType::Entity => Some(pos),
+        PosType::Event => {
+            if cfg!(feature = "wasm") {
+                utf16_to_unicode_index(s, pos)
+            } else {
+                Some(pos)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
@@ -345,6 +361,16 @@ impl PosCache {
             self.utf16_len
         } else {
             self.unicode_len
+        }
+    }
+
+    fn get_len(&self, pos_type: PosType) -> i32 {
+        match pos_type {
+            PosType::Bytes => self.bytes,
+            PosType::Unicode => self.unicode_len,
+            PosType::Utf16 => self.utf16_len,
+            PosType::Entity => self.entity_len,
+            PosType::Event => self.event_len(),
         }
     }
 }
@@ -610,16 +636,19 @@ mod query {
 }
 
 mod cursor_cache {
-    use std::collections::VecDeque;
+    use std::{collections::VecDeque, sync::atomic::AtomicUsize};
 
-    use super::{PosType, RichtextTreeTrait};
-    use generic_btree::{rle::HasLength, BTree, Cursor};
+    use super::{
+        pos_to_unicode_index, unicode_to_utf16_index, PosType, RichtextStateChunk,
+        RichtextTreeTrait,
+    };
+    use generic_btree::{rle::HasLength, BTree, BTreeTrait, Cursor, LeafIndex};
 
     #[derive(Debug, Clone)]
     struct CursorCacheItem {
         pos: usize,
         pos_type: PosType,
-        cursor: Cursor,
+        leaf: LeafIndex,
     }
 
     #[derive(Debug, Clone)]
@@ -627,52 +656,102 @@ mod cursor_cache {
         pos: usize,
         pos_type: PosType,
         entity_index: usize,
+        leaf: LeafIndex,
     }
 
     #[derive(Debug, Clone, Default)]
     pub(super) struct CursorCache {
-        cache: VecDeque<CursorCacheItem>,
-        entity: VecDeque<EntityIndexCacheItem>,
+        cursor: Option<CursorCacheItem>,
+        entity: Option<EntityIndexCacheItem>,
     }
 
-    const CAP: usize = 4;
+    static CACHE_HIT: AtomicUsize = AtomicUsize::new(0);
+    static CACHE_MISS: AtomicUsize = AtomicUsize::new(0);
 
     impl CursorCache {
-        pub fn new() -> Self {
-            Self {
-                cache: VecDeque::with_capacity(CAP),
-                entity: VecDeque::with_capacity(CAP),
-            }
-        }
-
         // TODO: some of the invalidation can be changed into shifting pos
         pub fn invalidate(&mut self) {
-            self.cache.clear();
-            self.entity.clear();
+            self.cursor.take();
+            self.entity.take();
         }
 
-        pub fn record_cursor(&mut self, pos: usize, kind: PosType, cursor: Cursor) {
-            if self.cache.len() == CAP {
-                self.cache.pop_front();
+        pub fn invalidate_entity_cache_after(&mut self, entity_index: usize) {
+            if let Some(c) = self.entity.as_mut() {
+                if entity_index < c.entity_index {
+                    self.entity = None;
+                }
             }
-
-            self.cache.push_back(CursorCacheItem {
-                pos,
-                pos_type: kind,
-                cursor,
-            });
         }
 
-        pub fn record_entity_index(&mut self, pos: usize, kind: PosType, entity_index: usize) {
-            if self.entity.len() == CAP {
-                self.entity.pop_front();
+        pub fn record_cursor(
+            &mut self,
+            pos: usize,
+            kind: PosType,
+            cursor: Cursor,
+            tree: &BTree<RichtextTreeTrait>,
+        ) {
+            match kind {
+                PosType::Unicode | PosType::Entity => {
+                    self.cursor = Some(CursorCacheItem {
+                        pos: pos - cursor.offset,
+                        pos_type: kind,
+                        leaf: cursor.leaf,
+                    });
+                }
+                PosType::Utf16 => todo!(),
+                PosType::Event => todo!(),
+                PosType::Bytes => todo!(),
             }
+        }
 
-            self.entity.push_back(EntityIndexCacheItem {
-                pos,
-                pos_type: kind,
-                entity_index,
-            });
+        pub fn record_entity_index(
+            &mut self,
+            pos: usize,
+            kind: PosType,
+            entity_index: usize,
+            cursor: Cursor,
+            tree: &BTree<RichtextTreeTrait>,
+        ) {
+            match kind {
+                PosType::Bytes => todo!(),
+                PosType::Unicode | PosType::Entity => {
+                    self.entity = Some(EntityIndexCacheItem {
+                        pos: pos - cursor.offset,
+                        pos_type: kind,
+                        entity_index: entity_index - cursor.offset,
+                        leaf: cursor.leaf,
+                    });
+                }
+                PosType::Event if cfg!(not(feature = "wasm")) => {
+                    self.entity = Some(EntityIndexCacheItem {
+                        pos: pos - cursor.offset,
+                        pos_type: kind,
+                        entity_index: entity_index - cursor.offset,
+                        leaf: cursor.leaf,
+                    });
+                }
+                _ => {
+                    // utf16
+                    if cursor.offset == 0 {
+                        self.entity = Some(EntityIndexCacheItem {
+                            pos,
+                            pos_type: kind,
+                            entity_index,
+                            leaf: cursor.leaf,
+                        });
+                    } else {
+                        let elem = tree.get_elem(cursor.leaf).unwrap();
+                        let Some(s) = elem.as_str() else { return };
+                        let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
+                        self.entity = Some(EntityIndexCacheItem {
+                            pos: pos - utf16offset,
+                            pos_type: kind,
+                            entity_index: entity_index - cursor.offset,
+                            leaf: cursor.leaf,
+                        });
+                    }
+                }
+            }
         }
 
         pub fn get_cursor(
@@ -681,26 +760,32 @@ mod cursor_cache {
             pos_type: PosType,
             tree: &BTree<RichtextTreeTrait>,
         ) -> Option<Cursor> {
-            if self.cache.is_empty() {
-                return None;
-            }
-
-            for c in self.cache.iter().rev() {
+            for c in self.cursor.iter() {
                 if c.pos_type != pos_type {
                     continue;
                 }
 
-                let elem = tree.get_elem(c.cursor.leaf).unwrap();
-                if pos >= c.pos - c.cursor.offset && pos < c.pos - c.cursor.offset + elem.rle_len()
-                {
-                    // println!("HIT");
+                let elem = tree.get_elem(c.leaf).unwrap();
+                let Some(s) = elem.as_str() else { continue };
+                if pos < c.pos {
+                    continue;
+                }
+
+                let offset = pos - c.pos;
+                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
+                    continue;
+                };
+
+                if offset <= elem.rle_len() {
+                    cache_hit();
                     return Some(Cursor {
-                        leaf: c.cursor.leaf,
-                        offset: pos + c.cursor.offset - c.pos,
+                        leaf: c.leaf,
+                        offset,
                     });
                 }
             }
 
+            cache_miss();
             None
         }
 
@@ -709,18 +794,66 @@ mod cursor_cache {
             pos: usize,
             pos_type: PosType,
             tree: &BTree<RichtextTreeTrait>,
+            has_style: bool,
         ) -> Option<usize> {
-            if self.entity.is_empty() {
+            if has_style {
                 return None;
             }
 
-            for c in self.entity.iter().rev() {
-                if c.pos == pos && c.pos_type == pos_type {
-                    return Some(c.entity_index);
+            for c in self.entity.iter() {
+                if c.pos_type != pos_type {
+                    continue;
                 }
+                if pos < c.pos {
+                    continue;
+                }
+
+                let offset = pos - c.pos;
+                let leaf = tree.get_leaf(c.leaf.into());
+                let Some(s) = leaf.elem().as_str() else {
+                    return None;
+                };
+
+                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
+                    continue;
+                };
+
+                if offset < leaf.elem().rle_len() {
+                    cache_hit();
+                    return Some(offset + c.entity_index);
+                }
+
+                cache_hit();
+                return Some(offset + c.entity_index);
             }
 
+            cache_miss();
             None
+        }
+
+        pub fn diagnose() {
+            let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
+            let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
+            println!(
+                "hit: {}, miss: {}, hit rate: {}",
+                hit,
+                miss,
+                hit as f64 / (hit + miss) as f64
+            );
+        }
+    }
+
+    fn cache_hit() {
+        #[cfg(debug_assertions)]
+        {
+            CACHE_HIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn cache_miss() {
+        #[cfg(debug_assertions)]
+        {
+            CACHE_MISS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -743,10 +876,18 @@ impl RichtextState {
             return 0;
         }
 
-        if let Some(pos) = self
-            .cursor_cache
-            .get_entity_index(pos, pos_type, &self.tree)
-        {
+        if let Some(pos) = self.cursor_cache.get_entity_index(
+            pos,
+            pos_type,
+            &self.tree,
+            self.style_ranges.has_style(),
+        ) {
+            debug_assert!(
+                pos <= self.len_entity(),
+                "tree:{:#?}\ncache:{:#?}",
+                &self.tree,
+                &self.cursor_cache
+            );
             return pos;
         }
 
@@ -759,11 +900,13 @@ impl RichtextState {
             PosType::Event => self.find_best_insert_pos::<EventIndexQueryT>(pos),
         };
 
-        self.cursor_cache
-            .record_entity_index(pos, pos_type, entity_index);
         if let Some(c) = c {
             self.cursor_cache
-                .record_cursor(entity_index, PosType::Entity, c);
+                .record_cursor(entity_index, PosType::Entity, c, &self.tree);
+            if !self.style_ranges.has_style() {
+                self.cursor_cache
+                    .record_entity_index(pos, pos_type, entity_index, c, &self.tree);
+            }
         }
 
         entity_index
@@ -778,19 +921,33 @@ impl RichtextState {
             self.cursor_cache
                 .get_cursor(entity_index, PosType::Entity, &self.tree)
         {
-            leaf = self.tree.insert_by_path(cursor, elem).0;
+            let p = self.tree.prefer_left(cursor).unwrap_or(cursor);
+            leaf = self.tree.insert_by_path(p, elem).0;
         } else {
-            leaf = self.tree.insert::<EntityQuery>(&entity_index, elem).0;
+            leaf = {
+                let q = &entity_index;
+                match self.tree.query::<EntityQuery>(q) {
+                    Some(result) => {
+                        let p = self
+                            .tree
+                            .prefer_left(result.cursor)
+                            .unwrap_or(result.cursor);
+                        self.tree.insert_by_path(p, elem).0
+                    }
+                    None => self.tree.push(elem),
+                }
+            };
         }
 
-        self.cursor_cache.invalidate();
         self.cursor_cache
-            .record_cursor(entity_index, PosType::Entity, leaf);
+            .invalidate_entity_cache_after(entity_index);
+        self.cursor_cache
+            .record_cursor(entity_index, PosType::Entity, leaf, &self.tree);
     }
 
     /// This is used to accept changes from DiffCalculator.
     ///
-    /// Return event index
+    /// Return (event_index, styles)
     pub(crate) fn insert_elem_at_entity_index(
         &mut self,
         entity_index: usize,
@@ -827,14 +984,14 @@ impl RichtextState {
                 let styles = self.style_ranges.insert(entity_index, elem.rle_len());
                 let cursor = self.tree.insert_by_path(cursor, elem).0;
                 self.cursor_cache
-                    .record_cursor(entity_index, PosType::Entity, cursor);
+                    .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
                 (event_index, styles)
             }
             None => {
                 let styles = self.style_ranges.insert(entity_index, elem.rle_len());
                 let cursor = self.tree.push(elem);
                 self.cursor_cache
-                    .record_cursor(entity_index, PosType::Entity, cursor);
+                    .record_cursor(entity_index, PosType::Entity, cursor, &self.tree);
                 (0, styles)
             }
         }
@@ -1012,7 +1169,6 @@ impl RichtextState {
         let mut visited = Vec::new();
         while iter != right {
             let Some(elem) = self.tree.get_elem(iter.leaf) else {
-                debug_log::debug_log!("not found");
                 break;
             };
 
@@ -1023,13 +1179,11 @@ impl RichtextState {
 
             visited.push((style, anchor_type, iter, entity_index));
             if anchor_type == AnchorType::Start {
-                debug_log::debug_log!("case 1");
                 // case 1. should be before this anchor
                 break;
             }
 
             if style.info.prefer_insert_before(anchor_type) {
-                debug_log::debug_log!("case 2");
                 // case 2.
                 break;
             }
@@ -1042,19 +1196,15 @@ impl RichtextState {
         }
 
         while let Some((style, anchor_type, top_elem, top_entity_index)) = visited.pop() {
-            debug_log::debug_log!("1");
             if !style.info.prefer_insert_before(anchor_type) {
-                debug_log::debug_log!("3 {:?}", &style);
                 // case 3.
                 break;
             }
 
-            debug_log::debug_log!("2");
             iter = top_elem;
             entity_index = top_entity_index;
         }
 
-        debug_log::debug_dbg!(iter, entity_index);
         (Some(iter), entity_index)
     }
 
@@ -1537,6 +1687,16 @@ impl RichtextState {
     pub fn len_entity(&self) -> usize {
         self.tree.root_cache().entity_len as usize
     }
+
+    pub fn diagnose(&self) {
+        CursorCache::diagnose();
+        println!(
+            "rope_nodes: {}, style_nodes: {}, text_len: {}",
+            self.tree.node_len(),
+            self.style_ranges.tree.node_len(),
+            self.tree.root_cache().bytes
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1561,31 +1721,8 @@ mod test {
             {
                 let state = &mut self.state;
                 let text = self.bytes.slice(start..);
-                if state.tree.is_empty() {
-                    let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
-                    state.style_ranges.insert(0, elem.rle_len());
-                    state.tree.push(elem);
-                } else {
-                    debug_log::debug_dbg!(&state.tree);
-                    let (right, entity_index) = state.find_best_insert_pos::<UnicodeQueryT>(pos);
-                    debug_log::debug_log!(
-                        "insert pos: {}, right: {:?}, entity_index: {}",
-                        pos,
-                        right,
-                        entity_index
-                    );
-                    let right = state
-                        .tree
-                        .prefer_left(right.unwrap())
-                        .unwrap_or(right.unwrap());
-                    let insert_pos = right;
-                    let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
-                    state.style_ranges.insert(entity_index, elem.rle_len());
-                    state.tree.insert_by_path(insert_pos, elem);
-
-                    debug_log::debug_dbg!(&state.tree);
-                    debug_log::debug_dbg!(&state.style_ranges);
-                }
+                let entity_index = state.get_entity_index_for_text_insert(pos, PosType::Unicode);
+                state.insert_at_entity_index(entity_index, text);
             };
         }
 
@@ -1734,6 +1871,18 @@ mod test {
     }
 
     #[test]
+    fn insert_cache_hit() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "H");
+        wrapper.insert(1, "H");
+        dbg!(&wrapper);
+        wrapper.insert(2, "e");
+        dbg!(&wrapper);
+        wrapper.insert(3, "k");
+        wrapper.state.diagnose();
+    }
+
+    #[test]
     fn bold_should_expand() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
@@ -1812,6 +1961,7 @@ mod test {
         wrapper.insert(0, "Hello");
         wrapper.state.mark(0..5, bold(0));
         wrapper.insert(5, " World!");
+        dbg!(&wrapper.state);
         assert_eq!(
             wrapper.state.to_vec(),
             vec![RichtextSpan {
