@@ -6,16 +6,19 @@ use loro_internal::LoroDoc;
 
 fn main() {
     let actions = bench_utils::get_automerge_actions();
+    let start = std::time::Instant::now();
     for _ in 0..10 {
         let loro = LoroDoc::default();
         let text = loro.get_text("text");
-        loro.subscribe_deep(Arc::new(move |event| {
-            black_box(event);
-        }));
+        // loro.subscribe_deep(Arc::new(move |event| {
+        //     black_box(event);
+        // }));
         for TextAction { pos, ins, del } in actions.iter() {
             let mut txn = loro.txn().unwrap();
             text.delete(&mut txn, *pos, *del).unwrap();
             text.insert(&mut txn, *pos, ins).unwrap();
         }
     }
+
+    println!("time: {:?}", start.elapsed());
 }

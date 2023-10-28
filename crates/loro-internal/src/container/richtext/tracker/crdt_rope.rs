@@ -45,7 +45,7 @@ impl CrdtRope {
     ) -> InsertResult {
         if self.tree.is_empty() {
             assert_eq!(pos, 0);
-            let leaf = self.tree.push(content);
+            let leaf = self.tree.push(content).leaf;
             return InsertResult {
                 content,
                 leaf,
@@ -200,10 +200,10 @@ impl CrdtRope {
             }
         }
 
-        let (leaf, splitted) = self.tree.insert_by_path(insert_pos, content);
+        let (cursor, splitted) = self.tree.insert_by_path(insert_pos, content);
         InsertResult {
             content,
-            leaf,
+            leaf: cursor.leaf,
             splitted,
         }
     }

@@ -10,8 +10,8 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            query::{EventIndexQuery, EventIndexQueryT},
-            AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
+            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
+            TextStyleInfoFlag,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
@@ -181,16 +181,15 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, start, end) = self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(entity_index, *len);
-                    for span in content {
-                        self.undo_stack.push(UndoItem::Delete {
-                            index: entity_index as u32,
-                            content: span,
-                        })
-                    }
+                    let (start, end) =
+                        self.state
+                            .get_mut()
+                            .drain_by_entity_index(entity_index, *len, |span| {
+                                self.undo_stack.push(UndoItem::Delete {
+                                    index: entity_index as u32,
+                                    content: span,
+                                })
+                            });
                     if start > event_index {
                         for (len, styles) in self
                             .state
@@ -292,16 +291,14 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, _start, _end) = self
-                        .state
+                    self.state
                         .get_mut()
-                        .drain_by_entity_index(entity_index, *len);
-                    for span in content {
-                        self.undo_stack.push(UndoItem::Delete {
-                            index: entity_index as u32,
-                            content: span,
-                        })
-                    }
+                        .drain_by_entity_index(entity_index, *len, |span| {
+                            self.undo_stack.push(UndoItem::Delete {
+                                index: entity_index as u32,
+                                content: span,
+                            })
+                        });
                 }
             }
         }
@@ -324,19 +321,18 @@ impl ContainerState for RichtextState {
                     }
                 }
                 list_op::InnerListOp::Delete(del) => {
-                    for span in self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(del.start() as usize, rle::HasLength::atom_len(&del))
-                        .0
-                    {
-                        if self.in_txn {
-                            self.undo_stack.push(UndoItem::Delete {
-                                index: del.start() as u32,
-                                content: span,
-                            })
-                        }
-                    }
+                    self.state.get_mut().drain_by_entity_index(
+                        del.start() as usize,
+                        rle::HasLength::atom_len(&del),
+                        |span| {
+                            if self.in_txn {
+                                self.undo_stack.push(UndoItem::Delete {
+                                    index: del.start() as u32,
+                                    content: span,
+                                })
+                            }
+                        },
+                    );
                 }
                 list_op::InnerListOp::StyleStart {
                     start,
@@ -398,10 +394,11 @@ impl RichtextState {
         while let Some(item) = self.undo_stack.pop() {
             match item {
                 UndoItem::Insert { index, len } => {
-                    let _ = self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(index as usize, len as usize);
+                    self.state.get_mut().drain_by_entity_index(
+                        index as usize,
+                        len as usize,
+                        |_| {},
+                    );
                 }
                 UndoItem::Delete { index, content } => {
                     match content {
@@ -446,7 +443,7 @@ impl RichtextState {
     pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert::<EventIndexQueryT>(pos)
+            .get_entity_index_for_text_insert(pos, PosType::Event)
     }
 
     #[inline(always)]
@@ -457,7 +454,7 @@ impl RichtextState {
     ) -> Vec<Range<usize>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges::<EventIndexQuery>(pos, len)
+            .get_text_entity_ranges(pos, len, PosType::Event)
     }
 
     #[inline(always)]

@@ -178,7 +178,7 @@ impl ListState {
 
             if value.is_container() {
                 self.child_container_to_leaf
-                    .insert(value.into_container().unwrap(), idx);
+                    .insert(value.into_container().unwrap(), idx.leaf);
             }
             return;
         }
@@ -189,7 +189,7 @@ impl ListState {
 
         if value.is_container() {
             self.child_container_to_leaf
-                .insert(value.into_container().unwrap(), leaf);
+                .insert(value.into_container().unwrap(), leaf.leaf);
         }
 
         for leaf in data.arr {

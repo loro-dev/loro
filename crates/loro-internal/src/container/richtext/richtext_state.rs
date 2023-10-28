@@ -14,14 +14,23 @@ use std::{
 };
 
 use crate::{
-    container::richtext::{query_by_len::IndexQueryWithEntityIndex, style_range_map::StyleValue},
+    container::richtext::{
+        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
+        style_range_map::StyleValue,
+    },
     delta::DeltaValue,
     utils::utf16::count_utf16_chars,
     InternalString,
 };
 
 // FIXME: Check splice and other things are using unicode index
-use self::query::{EntityQuery, EntityQueryT, EventIndexQuery, UnicodeQueryT};
+use self::{
+    cursor_cache::CursorCache,
+    query::{
+        EntityQuery, EntityQueryT, EventIndexQuery, EventIndexQueryT, UnicodeQuery, UnicodeQueryT,
+        Utf16Query, Utf16QueryT,
+    },
+};
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
@@ -29,10 +38,13 @@ use super::{
     AnchorType, RichtextSpan, Style, StyleOp,
 };
 
+pub(crate) use query::PosType;
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
     style_ranges: StyleRangeMap,
+    cursor_cache: CursorCache,
 }
 
 impl Display for RichtextState {
@@ -142,7 +154,7 @@ impl RichtextStateChunk {
 impl HasLength for RichtextStateChunk {
     fn rle_len(&self) -> usize {
         match self {
-            RichtextStateChunk::Text { unicode_len, text } => *unicode_len as usize,
+            RichtextStateChunk::Text { unicode_len, .. } => *unicode_len as usize,
             RichtextStateChunk::Style { .. } => 1,
         }
     }
@@ -262,7 +274,30 @@ pub(crate) fn unicode_to_utf8_index(s: &str, unicode_index: usize) -> Option<usi
     None
 }
 
+pub(crate) fn unicode_to_utf16_index(s: &str, unicode_index: usize) -> Option<usize> {
+    if unicode_index == 0 {
+        return Some(0);
+    }
+
+    let mut current_unicode_index = 0;
+    let mut current_utf16_index = 0;
+    for c in s.chars() {
+        let len = c.len_utf16();
+        current_unicode_index += 1;
+        current_utf16_index += len;
+        if current_unicode_index == unicode_index {
+            return Some(current_utf16_index);
+        }
+    }
+
+    None
+}
+
 pub(crate) fn utf16_to_utf8_index(s: &str, utf16_index: usize) -> Option<usize> {
+    if utf16_index == 0 {
+        return Some(0);
+    }
+
     let mut current_utf16_index = 0;
     for (byte_index, c) in s.char_indices() {
         let len = c.len_utf16();
@@ -297,14 +332,24 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usiz
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Cache {
-    unicode_len: i32,
-    bytes: i32,
-    utf16_len: i32,
-    entity_len: i32,
+pub(crate) struct PosCache {
+    pub(super) unicode_len: i32,
+    pub(super) bytes: i32,
+    pub(super) utf16_len: i32,
+    pub(super) entity_len: i32,
 }
 
-impl AddAssign for Cache {
+impl PosCache {
+    pub(crate) fn event_len(&self) -> i32 {
+        if cfg!(feature = "wasm") {
+            self.utf16_len
+        } else {
+            self.unicode_len
+        }
+    }
+}
+
+impl AddAssign for PosCache {
     fn add_assign(&mut self, rhs: Self) {
         self.unicode_len += rhs.unicode_len;
         self.bytes += rhs.bytes;
@@ -313,7 +358,7 @@ impl AddAssign for Cache {
     }
 }
 
-impl Add for Cache {
+impl Add for PosCache {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -326,7 +371,7 @@ impl Add for Cache {
     }
 }
 
-impl Sub for Cache {
+impl Sub for PosCache {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -344,15 +389,15 @@ pub(crate) struct RichtextTreeTrait;
 impl BTreeTrait for RichtextTreeTrait {
     type Elem = RichtextStateChunk;
 
-    type Cache = Cache;
+    type Cache = PosCache;
 
-    type CacheDiff = Cache;
+    type CacheDiff = PosCache;
 
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
     ) -> Self::CacheDiff {
-        let mut new_cache = Cache::default();
+        let mut new_cache = PosCache::default();
         for child in caches {
             new_cache += child.cache;
         }
@@ -375,13 +420,13 @@ impl BTreeTrait for RichtextTreeTrait {
     #[inline]
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
-            RichtextStateChunk::Text { unicode_len, text } => Cache {
+            RichtextStateChunk::Text { unicode_len, text } => PosCache {
                 bytes: text.len() as i32,
                 unicode_len: *unicode_len,
                 utf16_len: count_utf16_chars(text) as i32,
                 entity_len: *unicode_len,
             },
-            RichtextStateChunk::Style { .. } => Cache {
+            RichtextStateChunk::Style { .. } => PosCache {
                 bytes: 0,
                 unicode_len: 0,
                 utf16_len: 0,
@@ -397,7 +442,7 @@ impl BTreeTrait for RichtextTreeTrait {
 
     #[inline(always)]
     fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
-        Cache {
+        PosCache {
             bytes: cache_lhs.bytes - cache_rhs.bytes,
             unicode_len: cache_lhs.unicode_len - cache_rhs.unicode_len,
             utf16_len: cache_lhs.utf16_len - cache_rhs.utf16_len,
@@ -407,21 +452,30 @@ impl BTreeTrait for RichtextTreeTrait {
 }
 
 // This query implementation will prefer right element when both left element and right element are valid.
-pub(crate) mod query {
+mod query {
     use super::*;
 
-    #[cfg(not(feature = "wasm"))]
-    pub(crate) type EventIndexQuery = UnicodeQuery;
-    #[cfg(feature = "wasm")]
-    pub(crate) type EventIndexQuery = Utf16Query;
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum PosType {
+        Bytes,
+        Unicode,
+        Utf16,
+        Entity,
+        Event,
+    }
 
     #[cfg(not(feature = "wasm"))]
-    pub(crate) type EventIndexQueryT = UnicodeQueryT;
+    pub(super) type EventIndexQuery = UnicodeQuery;
     #[cfg(feature = "wasm")]
-    pub(crate) type EventIndexQueryT = Utf16QueryT;
+    pub(super) type EventIndexQuery = Utf16Query;
 
-    pub(crate) struct UnicodeQueryT;
-    pub(crate) type UnicodeQuery = IndexQuery<UnicodeQueryT, RichtextTreeTrait>;
+    #[cfg(not(feature = "wasm"))]
+    pub(super) type EventIndexQueryT = UnicodeQueryT;
+    #[cfg(feature = "wasm")]
+    pub(super) type EventIndexQueryT = Utf16QueryT;
+
+    pub(super) struct UnicodeQueryT;
+    pub(super) type UnicodeQuery = IndexQuery<UnicodeQueryT, RichtextTreeTrait>;
 
     impl QueryByLen<RichtextTreeTrait> for UnicodeQueryT {
         fn get_cache_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
@@ -555,30 +609,179 @@ pub(crate) mod query {
     }
 }
 
+mod cursor_cache {
+    use std::collections::VecDeque;
+
+    use super::{PosType, RichtextTreeTrait};
+    use generic_btree::{rle::HasLength, BTree, Cursor};
+
+    #[derive(Debug, Clone)]
+    struct CursorCacheItem {
+        pos: usize,
+        pos_type: PosType,
+        cursor: Cursor,
+    }
+
+    #[derive(Debug, Clone)]
+    struct EntityIndexCacheItem {
+        pos: usize,
+        pos_type: PosType,
+        entity_index: usize,
+    }
+
+    #[derive(Debug, Clone, Default)]
+    pub(super) struct CursorCache {
+        cache: VecDeque<CursorCacheItem>,
+        entity: VecDeque<EntityIndexCacheItem>,
+    }
+
+    const CAP: usize = 4;
+
+    impl CursorCache {
+        pub fn new() -> Self {
+            Self {
+                cache: VecDeque::with_capacity(CAP),
+                entity: VecDeque::with_capacity(CAP),
+            }
+        }
+
+        // TODO: some of the invalidation can be changed into shifting pos
+        pub fn invalidate(&mut self) {
+            self.cache.clear();
+            self.entity.clear();
+        }
+
+        pub fn record_cursor(&mut self, pos: usize, kind: PosType, cursor: Cursor) {
+            if self.cache.len() == CAP {
+                self.cache.pop_front();
+            }
+
+            self.cache.push_back(CursorCacheItem {
+                pos,
+                pos_type: kind,
+                cursor,
+            });
+        }
+
+        pub fn record_entity_index(&mut self, pos: usize, kind: PosType, entity_index: usize) {
+            if self.entity.len() == CAP {
+                self.entity.pop_front();
+            }
+
+            self.entity.push_back(EntityIndexCacheItem {
+                pos,
+                pos_type: kind,
+                entity_index,
+            });
+        }
+
+        pub fn get_cursor(
+            &self,
+            pos: usize,
+            pos_type: PosType,
+            tree: &BTree<RichtextTreeTrait>,
+        ) -> Option<Cursor> {
+            if self.cache.is_empty() {
+                return None;
+            }
+
+            for c in self.cache.iter().rev() {
+                let elem = tree.get_elem(c.cursor.leaf).unwrap();
+                if pos >= c.pos - c.cursor.offset && pos < c.pos - c.cursor.offset + elem.rle_len()
+                {
+                    // println!("HIT");
+                    return Some(Cursor {
+                        leaf: c.cursor.leaf,
+                        offset: pos + c.cursor.offset - c.pos,
+                    });
+                }
+            }
+
+            None
+        }
+
+        pub fn get_entity_index(
+            &self,
+            pos: usize,
+            pos_type: PosType,
+            tree: &BTree<RichtextTreeTrait>,
+        ) -> Option<usize> {
+            if self.entity.is_empty() {
+                return None;
+            }
+
+            for c in self.entity.iter().rev() {
+                if c.pos == pos && c.pos_type == pos_type {
+                    return Some(c.entity_index);
+                }
+            }
+
+            None
+        }
+    }
+}
+
 impl RichtextState {
     pub(crate) fn from_chunks<I: Iterator<Item = impl Into<RichtextStateChunk>>>(i: I) -> Self {
         Self {
             tree: i.collect(),
             style_ranges: Default::default(),
+            cursor_cache: Default::default(),
         }
     }
 
-    pub(crate) fn get_entity_index_for_text_insert<Q: QueryByLen<RichtextTreeTrait>>(
-        &self,
+    pub(crate) fn get_entity_index_for_text_insert(
+        &mut self,
         pos: usize,
+        pos_type: PosType,
     ) -> usize {
         if self.tree.is_empty() {
             return 0;
         }
 
-        self.find_best_insert_pos::<Q>(pos).1
+        if let Some(pos) = self
+            .cursor_cache
+            .get_entity_index(pos, pos_type, &self.tree)
+        {
+            return pos;
+        }
+
+        // TODO: use cache
+        let (c, entity_index) = match pos_type {
+            PosType::Bytes => todo!(),
+            PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
+            PosType::Utf16 => self.find_best_insert_pos::<Utf16QueryT>(pos),
+            PosType::Entity => self.find_best_insert_pos::<EntityQueryT>(pos),
+            PosType::Event => self.find_best_insert_pos::<EventIndexQueryT>(pos),
+        };
+
+        self.cursor_cache
+            .record_entity_index(pos, pos_type, entity_index);
+        if let Some(c) = c {
+            self.cursor_cache
+                .record_cursor(entity_index, PosType::Entity, c);
+        }
+
+        entity_index
     }
 
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
         let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
         self.style_ranges.insert(entity_index, elem.rle_len());
-        self.tree.insert::<EntityQuery>(&entity_index, elem);
+        let leaf;
+        if let Some(cursor) =
+            self.cursor_cache
+                .get_cursor(entity_index, PosType::Entity, &self.tree)
+        {
+            leaf = self.tree.insert_by_path(cursor, elem).0;
+        } else {
+            leaf = self.tree.insert::<EntityQuery>(&entity_index, elem).0;
+        }
+
+        self.cursor_cache.invalidate();
+        self.cursor_cache
+            .record_cursor(entity_index, PosType::Entity, leaf);
     }
 
     /// This is used to accept changes from DiffCalculator.
@@ -597,16 +800,37 @@ impl RichtextState {
             &self
         );
 
-        match self.tree.query::<EntityQuery>(&entity_index) {
+        let cursor;
+        let event_index;
+        if let Some(cached_cursor) =
+            self.cursor_cache
+                .get_cursor(entity_index, PosType::Entity, &self.tree)
+        {
+            cursor = Some(cached_cursor);
+            // PERF: how can we avoid this convert
+            event_index = self.cursor_to_event_index(cached_cursor);
+        } else {
+            let (c, f) = self
+                .tree
+                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
+            cursor = c.map(|x| x.cursor);
+            event_index = f.event_index;
+        }
+
+        self.cursor_cache.invalidate();
+        match cursor {
             Some(cursor) => {
-                let ans = self.cursor_to_event_index(cursor.cursor);
                 let styles = self.style_ranges.insert(entity_index, elem.rle_len());
-                self.tree.insert_by_path(cursor.cursor, elem);
-                (ans, styles)
+                let cursor = self.tree.insert_by_path(cursor, elem).0;
+                self.cursor_cache
+                    .record_cursor(entity_index, PosType::Entity, cursor);
+                (event_index, styles)
             }
             None => {
                 let styles = self.style_ranges.insert(entity_index, elem.rle_len());
-                self.tree.push(elem);
+                let cursor = self.tree.push(elem);
+                self.cursor_cache
+                    .record_cursor(entity_index, PosType::Entity, cursor);
                 (0, styles)
             }
         }
@@ -616,6 +840,8 @@ impl RichtextState {
     ///
     /// - If feature="wasm", index is utf16 index,
     /// - If feature!="wasm", index is unicode index,
+    ///
+    // PERF: this is slow
     pub(crate) fn cursor_to_event_index(&self, cursor: Cursor) -> usize {
         if cfg!(feature = "wasm") {
             let mut ans = 0;
@@ -636,7 +862,7 @@ impl RichtextState {
                                 unicode_len: _,
                                 text,
                             } => {
-                                ans += utf16_to_unicode_index(
+                                ans += unicode_to_utf16_index(
                                     // SAFETY: we're sure that the text is valid utf8
                                     unsafe { std::str::from_utf8_unchecked(text) },
                                     offset,
@@ -777,7 +1003,6 @@ impl RichtextState {
         };
 
         let mut iter = left;
-        debug_log::debug_dbg!(iter, right, entity_index);
 
         // need to scan from left to right
         let mut visited = Vec::new();
@@ -812,7 +1037,6 @@ impl RichtextState {
             entity_index += 1;
         }
 
-        debug_log::debug_dbg!(&visited, iter, entity_index);
         while let Some((style, anchor_type, top_elem, top_entity_index)) = visited.pop() {
             debug_log::debug_log!("1");
             if !style.info.prefer_insert_before(anchor_type) {
@@ -846,10 +1070,11 @@ impl RichtextState {
         entity_index
     }
 
-    pub(crate) fn get_text_entity_ranges<Q: Query<RichtextTreeTrait, QueryArg = usize>>(
+    pub(crate) fn get_text_entity_ranges(
         &self,
         pos: usize,
         len: usize,
+        pos_type: PosType,
     ) -> Vec<Range<usize>> {
         if self.tree.is_empty() {
             return Vec::new();
@@ -860,8 +1085,31 @@ impl RichtextState {
         }
 
         let mut ans: Vec<Range<usize>> = Vec::new();
-        let start = self.tree.query::<Q>(&pos).unwrap().cursor;
-        let end = self.tree.query::<Q>(&(pos + len)).unwrap().cursor;
+        let (start, end) = match pos_type {
+            PosType::Bytes => todo!(),
+            PosType::Unicode => (
+                self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor,
+                self.tree
+                    .query::<UnicodeQuery>(&(pos + len))
+                    .unwrap()
+                    .cursor,
+            ),
+            PosType::Utf16 => (
+                self.tree.query::<Utf16Query>(&pos).unwrap().cursor,
+                self.tree.query::<Utf16Query>(&(pos + len)).unwrap().cursor,
+            ),
+            PosType::Entity => (
+                self.tree.query::<EntityQuery>(&pos).unwrap().cursor,
+                self.tree.query::<EntityQuery>(&(pos + len)).unwrap().cursor,
+            ),
+            PosType::Event => (
+                self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
+                self.tree
+                    .query::<EventIndexQuery>(&(pos + len))
+                    .unwrap()
+                    .cursor,
+            ),
+        };
         // TODO: assert end cursor is valid
         let mut entity_index = self.get_entity_index_from_path(start);
         for span in self.tree.iter_range(start..end) {
@@ -900,7 +1148,8 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> (impl Iterator<Item = RichtextStateChunk> + '_, usize, usize) {
+        mut f: impl FnMut(RichtextStateChunk),
+    ) -> (usize, usize) {
         assert!(
             pos + len <= self.len_entity(),
             "pos: {}, len: {}, self.len(): {}",
@@ -908,18 +1157,111 @@ impl RichtextState {
             len,
             self.len_entity()
         );
+        // PERF: may use cache to speed up
+        self.cursor_cache.invalidate();
         // FIXME: need to check whether style is removed when its anchors are removed
         self.style_ranges.delete(pos..pos + len);
         let range = pos..pos + len;
-        let start = self.tree.query::<EntityQuery>(&range.start);
-        let end = self.tree.query::<EntityQuery>(&range.end);
-        let start_event_index = self.cursor_to_event_index(start.unwrap().cursor);
-        let end_event_index = self.cursor_to_event_index(end.unwrap().cursor);
-        (
-            generic_btree::iter::Drain::new(&mut self.tree, start, end),
-            start_event_index,
-            end_event_index,
-        )
+        let (start, start_f) = self
+            .tree
+            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.start);
+        let start_cursor = start.unwrap().cursor();
+        let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
+        if elem.rle_len() >= start_cursor.offset + len {
+            // drop in place
+            let mut event_len = 0;
+            self.tree.update_leaf(start_cursor.leaf, |elem| match elem {
+                RichtextStateChunk::Text { unicode_len, text } => {
+                    // SAFETY: we're sure this is a valid utf8 string
+                    let s = unsafe { std::str::from_utf8_unchecked(text.as_ref()) };
+                    let mut start_byte = 0;
+                    let mut end_byte = text.len();
+                    if cfg!(feature = "wasm") {
+                        event_len = len;
+                        let start_unicode_index = start_cursor.offset;
+                        let end_unicode_index = start_cursor.offset + len;
+                        let mut current_utf8_index = 0;
+                        for (current_unicode_index, c) in s.chars().enumerate() {
+                            if current_unicode_index == start_unicode_index {
+                                start_byte = current_utf8_index;
+                            }
+
+                            if current_unicode_index == end_unicode_index {
+                                end_byte = current_utf8_index;
+                                break;
+                            }
+
+                            current_utf8_index += c.len_utf8();
+                        }
+                    } else {
+                        event_len = 'e: {
+                            let start_unicode_index = start_cursor.offset;
+                            let end_unicode_index = start_cursor.offset + len;
+                            let mut start_utf16_index = 0;
+                            let mut current_utf16_index = 0;
+                            let mut current_utf8_index = 0;
+                            for (current_unicode_index, c) in s.chars().enumerate() {
+                                if current_unicode_index == start_unicode_index {
+                                    start_utf16_index = current_utf16_index;
+                                    start_byte = current_utf8_index;
+                                }
+
+                                if current_unicode_index == end_unicode_index {
+                                    end_byte = current_utf8_index;
+                                    break 'e current_utf16_index - start_utf16_index;
+                                }
+
+                                current_utf16_index += c.len_utf16();
+                                current_utf8_index += c.len_utf8();
+                            }
+
+                            current_utf16_index - start_utf16_index
+                        }
+                    }
+
+                    *unicode_len -= len as i32;
+                    let next = match (start_byte == 0, end_byte == text.len()) {
+                        (true, true) => {
+                            *text = BytesSlice::empty();
+                            None
+                        }
+                        (true, false) => {
+                            *text = text.slice_clone(end_byte..);
+                            None
+                        }
+                        (false, true) => {
+                            *text = text.slice_clone(..start_byte);
+                            None
+                        }
+                        (false, false) => {
+                            let next = text.slice_clone(end_byte..);
+                            let next = RichtextStateChunk::new_text(next);
+                            *unicode_len -= next.rle_len() as i32;
+                            *text = text.slice_clone(..start_byte);
+                            Some(next)
+                        }
+                    };
+
+                    (true, next, None)
+                }
+                RichtextStateChunk::Style { .. } => {
+                    *elem = RichtextStateChunk::Text {
+                        unicode_len: 0,
+                        text: BytesSlice::empty(),
+                    };
+
+                    (true, None, None)
+                }
+            });
+            return (start_f.event_index, start_f.event_index + event_len);
+        }
+        let (end, end_f) = self
+            .tree
+            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
+        for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
+            f(iter)
+        }
+        (start_f.event_index, end_f.event_index)
     }
 
     #[allow(unused)]
@@ -950,11 +1292,12 @@ impl RichtextState {
     /// Mark a range of text with a style.
     ///
     /// Return the corresponding entity index ranges.
-    pub(crate) fn mark(&mut self, range: Range<usize>, style: Arc<StyleOp>) -> Range<usize> {
+    fn mark(&mut self, range: Range<usize>, style: Arc<StyleOp>) -> Range<usize> {
         if self.tree.is_empty() {
             panic!("Cannot mark an empty tree");
         }
 
+        self.cursor_cache.invalidate();
         let (end_pos, end_entity_index) = self.find_best_insert_pos::<UnicodeQueryT>(range.end);
         let end_pos = end_pos.unwrap();
         self.tree.insert_by_path(
@@ -1108,7 +1451,6 @@ impl RichtextState {
 
                 entity_index += *unicode_len as usize;
                 Some(RichtextSpan {
-                    // SAFETY: We know for sure text is valid utf8
                     text: text.clone().into(),
                     styles,
                 })
@@ -1250,6 +1592,16 @@ mod test {
                 }
             };
         }
+
+        fn delete(&mut self, pos: usize, len: usize) {
+            let ranges = self
+                .state
+                .get_text_entity_ranges(pos, len, PosType::Unicode);
+            for range in ranges {
+                self.state
+                    .drain_by_entity_index(range.start, range.end - range.start, |_| {});
+            }
+        }
     }
 
     fn bold(n: isize) -> Arc<StyleOp> {
@@ -1335,6 +1687,54 @@ mod test {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn delete_text() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello World!");
+        wrapper.delete(0, 5);
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![RichtextSpan {
+                text: " World!".into(),
+                styles: vec![]
+            }]
+        );
+
+        wrapper.delete(1, 1);
+        dbg!(&wrapper.state);
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: " ".into(),
+                    styles: vec![]
+                },
+                RichtextSpan {
+                    text: "orld!".into(),
+                    styles: vec![]
+                }
+            ]
+        );
+
+        wrapper.delete(5, 1);
+        assert_eq!(
+            wrapper.state.to_vec(),
+            vec![
+                RichtextSpan {
+                    text: " ".into(),
+                    styles: vec![]
+                },
+                RichtextSpan {
+                    text: "orld".into(),
+                    styles: vec![]
+                }
+            ]
+        );
+
+        wrapper.delete(0, 5);
+        assert_eq!(wrapper.state.to_vec(), vec![]);
     }
 
     #[test]
@@ -1626,11 +2026,11 @@ mod test {
         wrapper.insert(0, "Hello World!");
         wrapper.state.mark(0..5, bold(0));
         let mut count = 0;
-        for span in wrapper.state.drain_by_entity_index(0, 7).0 {
+        wrapper.state.drain_by_entity_index(0, 7, |span| {
             if matches!(span, RichtextStateChunk::Style { .. }) {
                 count += 1;
             }
-        }
+        });
 
         assert_eq!(count, 2);
         assert_eq!(

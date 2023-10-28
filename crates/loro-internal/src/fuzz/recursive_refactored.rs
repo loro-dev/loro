@@ -17,7 +17,10 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::{idx::ContainerIdx, richtext::richtext_state::unicode_to_utf8_index},
+    container::{
+        idx::ContainerIdx,
+        richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
+    },
     handler::TextHandler,
     loro::LoroDoc,
     value::ToJson,
@@ -111,7 +114,11 @@ impl Actor {
                                     index += len;
                                 }
                                 DeltaItem::Insert { value, meta: _ } => {
-                                    let utf8_index = unicode_to_utf8_index(&text, index).unwrap();
+                                    let utf8_index = if cfg!(feature = "wasm") {
+                                        utf16_to_utf8_index(&text, index).unwrap()
+                                    } else {
+                                        unicode_to_utf8_index(&text, index).unwrap()
+                                    };
                                     text.insert_str(utf8_index, value.as_str());
                                     index += value.len_unicode();
                                 }
@@ -2360,7 +2367,6 @@ mod failed_tests {
             ],
         )
     }
-
 
     use super::ContainerType as C;
     #[test]

@@ -1,5 +1,5 @@
 use generic_btree::LeafIndex;
-use loro_common::{Counter, IdSpan, PeerID, ID};
+use loro_common::{Counter, PeerID, ID};
 
 use crate::VersionVector;
 
@@ -48,7 +48,7 @@ impl Tracker {
         });
         this.id_to_cursor.push(
             ID::new(UNKNOWN_PEER_ID, 0),
-            id_to_cursor::Cursor::new_insert(result, u32::MAX as usize / 4),
+            id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
         this
     }

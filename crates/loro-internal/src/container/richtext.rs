@@ -23,7 +23,7 @@ use loro_common::{Counter, LoroValue, PeerID};
 use std::fmt::Debug;
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
-pub(crate) use richtext_state::{query, RichtextState};
+pub(crate) use richtext_state::RichtextState;
 pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 
 /// This is the data structure that represents a span of rich text.
