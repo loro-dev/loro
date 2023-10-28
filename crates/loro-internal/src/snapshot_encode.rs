@@ -723,6 +723,25 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         }
                         loro_common::ContainerType::Map => unreachable!(),
                     },
+                    InnerListOp::InsertText {
+                        slice,
+                        unicode_len: len,
+                        unicode_start,
+                        pos,
+                    } => match op.container.get_type() {
+                        loro_common::ContainerType::Text => {
+                            encoded_ops.push(EncodedSnapshotOp::from(
+                                SnapshotOp::RichtextInsert {
+                                    pos: *pos as usize,
+                                    start: slice.start(),
+                                    len: *len as usize,
+                                },
+                                op.container.to_index(),
+                            ))
+                        }
+                        loro_common::ContainerType::Map => unreachable!(),
+                        loro_common::ContainerType::List => unreachable!(),
+                    },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::TextOrListDelete {

@@ -347,46 +347,45 @@ fn change_to_diff(
             unreachable!()
         };
         'outer: {
-            let diff: Diff = match hint {
-                EventHint::Mark { start, end, style } => {
-                    Diff::Text(Delta::new().retain(start).retain_with_meta(
-                        end - start,
-                        crate::delta::StyleMeta { vec: vec![style] },
-                    ))
-                }
-                EventHint::InsertText { pos, styles } => {
-                    let range = op.content.as_list().unwrap().as_insert().unwrap().0;
-                    let slice = arena.slice_by_unicode(range.to_range());
-                    Diff::Text(
-                        Delta::new()
-                            .retain(pos)
-                            .insert_with_meta(slice, crate::delta::StyleMeta { vec: styles }),
-                    )
-                }
-                EventHint::DeleteText { pos, len } => {
-                    Diff::Text(Delta::new().retain(pos).delete(len))
-                }
-                EventHint::InsertList { pos, value } => {
-                    Diff::List(Delta::new().retain(pos).insert(vec![value]))
-                }
-                EventHint::DeleteList { pos, len } => {
-                    Diff::List(Delta::new().retain(pos).delete(len))
-                }
-                EventHint::Map { key, value } => {
-                    Diff::NewMap(crate::delta::MapDelta::new().with_entry(
-                        key,
-                        MapValue {
-                            counter: op.counter,
-                            value,
-                            lamport: (lamport, peer),
-                        },
-                    ))
-                }
-                EventHint::None => {
-                    // do nothing
-                    break 'outer;
-                }
-            };
+            let diff: Diff =
+                match hint {
+                    EventHint::Mark { start, end, style } => {
+                        Diff::Text(Delta::new().retain(start).retain_with_meta(
+                            end - start,
+                            crate::delta::StyleMeta { vec: vec![style] },
+                        ))
+                    }
+                    EventHint::InsertText { pos, styles } => {
+                        let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
+                        Diff::Text(Delta::new().retain(pos).insert_with_meta(
+                            slice.clone(),
+                            crate::delta::StyleMeta { vec: styles },
+                        ))
+                    }
+                    EventHint::DeleteText { pos, len } => {
+                        Diff::Text(Delta::new().retain(pos).delete(len))
+                    }
+                    EventHint::InsertList { pos, value } => {
+                        Diff::List(Delta::new().retain(pos).insert(vec![value]))
+                    }
+                    EventHint::DeleteList { pos, len } => {
+                        Diff::List(Delta::new().retain(pos).delete(len))
+                    }
+                    EventHint::Map { key, value } => {
+                        Diff::NewMap(crate::delta::MapDelta::new().with_entry(
+                            key,
+                            MapValue {
+                                counter: op.counter,
+                                value,
+                                lamport: (lamport, peer),
+                            },
+                        ))
+                    }
+                    EventHint::None => {
+                        // do nothing
+                        break 'outer;
+                    }
+                };
 
             ans.push(TxnContainerDiff {
                 idx: op.container,

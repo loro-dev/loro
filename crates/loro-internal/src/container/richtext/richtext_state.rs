@@ -19,7 +19,7 @@ use crate::{
         style_range_map::StyleValue,
     },
     delta::DeltaValue,
-    utils::utf16::count_utf16_chars,
+    utils::{string_slice::unicode_range_to_byte_range, utf16::count_utf16_chars},
     InternalString,
 };
 
@@ -1182,21 +1182,13 @@ impl RichtextState {
                     let mut end_byte = text.len();
                     if cfg!(feature = "wasm") {
                         event_len = len;
-                        let start_unicode_index = start_cursor.offset;
-                        let end_unicode_index = start_cursor.offset + len;
-                        let mut current_utf8_index = 0;
-                        for (current_unicode_index, c) in s.chars().enumerate() {
-                            if current_unicode_index == start_unicode_index {
-                                start_byte = current_utf8_index;
-                            }
-
-                            if current_unicode_index == end_unicode_index {
-                                end_byte = current_utf8_index;
-                                break;
-                            }
-
-                            current_utf8_index += c.len_utf8();
-                        }
+                        let (s, e) = unicode_range_to_byte_range(
+                            text,
+                            start_cursor.offset,
+                            start_cursor.offset + len,
+                        );
+                        start_byte = s;
+                        end_byte = e;
                     } else {
                         event_len = 'e: {
                             let start_unicode_index = start_cursor.offset;

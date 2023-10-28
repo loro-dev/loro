@@ -446,8 +446,20 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
                         op.id_start(),
-                        *pos,
+                        *pos as usize,
                         RichtextChunk::new_text(slice.0.clone()),
+                    );
+                }
+                crate::container::list::list_op::InnerListOp::InsertText {
+                    slice,
+                    unicode_start,
+                    unicode_len: len,
+                    pos,
+                } => {
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos as usize,
+                        RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
                     );
                 }
                 crate::container::list::list_op::InnerListOp::Delete(del) => {

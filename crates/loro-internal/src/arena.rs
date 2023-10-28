@@ -197,10 +197,18 @@ impl SharedArena {
         lock.get(id.to_index() as usize).cloned()
     }
 
-    /// return utf16 len
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
         let mut text_lock = self.inner.str.lock().unwrap();
         _alloc_str(&mut text_lock, str)
+    }
+
+    /// return slice and unicode index
+    pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, usize) {
+        let mut text_lock = self.inner.str.lock().unwrap();
+        let start = text_lock.len_bytes();
+        let unicode_start = text_lock.len_unicode();
+        text_lock.alloc(str);
+        (text_lock.slice_bytes(start..), unicode_start)
     }
 
     /// alloc str without extra info
@@ -364,17 +372,16 @@ impl SharedArena {
                             }),
                         }
                     }
-                    ListSlice::RawStr {
-                        str,
-                        unicode_len: _,
-                    } => {
-                        let slice = self.alloc_str(&str);
+                    ListSlice::RawStr { str, unicode_len } => {
+                        let (slice, start) = self.alloc_str_with_slice(&str);
                         Op {
                             counter,
                             container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(slice.start as u32..slice.end as u32),
-                                pos,
+                            content: crate::op::InnerContent::List(InnerListOp::InsertText {
+                                slice,
+                                unicode_start: start as u32,
+                                unicode_len: unicode_len as u32,
+                                pos: pos as u32,
                             }),
                         }
                     }

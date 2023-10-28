@@ -320,6 +320,23 @@ impl ContainerState for RichtextState {
                         })
                     }
                 }
+                list_op::InnerListOp::InsertText {
+                    slice,
+                    unicode_len: len,
+                    unicode_start: _,
+                    pos,
+                } => {
+                    self.state
+                        .get_mut()
+                        .insert_at_entity_index(*pos as usize, slice.clone());
+
+                    if self.in_txn {
+                        self.undo_stack.push(UndoItem::Insert {
+                            index: *pos,
+                            len: *len,
+                        })
+                    }
+                }
                 list_op::InnerListOp::Delete(del) => {
                     self.state.get_mut().drain_by_entity_index(
                         del.start() as usize,
