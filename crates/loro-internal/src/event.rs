@@ -156,6 +156,41 @@ pub enum InternalDiff {
     Tree(TreeDelta),
 }
 
+impl DiffVariant {
+    pub fn compose(self, other: Self) -> Result<Self, Self> {
+        match (self, other) {
+            (DiffVariant::Internal(a), DiffVariant::Internal(b)) => {
+                Ok(DiffVariant::Internal(a.compose(b)?))
+            }
+            (DiffVariant::External(a), DiffVariant::External(b)) => {
+                Ok(DiffVariant::External(a.compose(b)?))
+            }
+            (a, _) => Err(a),
+        }
+    }
+}
+
+impl From<Diff> for DiffVariant {
+    fn from(diff: Diff) -> Self {
+        DiffVariant::External(diff)
+    }
+}
+
+impl From<InternalDiff> for DiffVariant {
+    fn from(diff: InternalDiff) -> Self {
+        DiffVariant::Internal(diff)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, EnumAsInner, Serialize)]
+pub enum InternalDiff {
+    SeqRaw(Delta<SliceRanges>),
+    /// This always uses entity indexes.
+    RichtextRaw(Delta<RichtextStateChunk>),
+    Map(MapDelta),
+}
+
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
 ///
@@ -176,6 +211,7 @@ pub enum Diff {
     Tree(TreeDelta),
 }
 
+
 impl InternalDiff {
     pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
         // PERF: avoid clone
@@ -187,6 +223,7 @@ impl InternalDiff {
                 Ok(InternalDiff::RichtextRaw(a.compose(b)))
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
+            (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }

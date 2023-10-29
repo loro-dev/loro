@@ -16,6 +16,7 @@ pub(super) struct CrdtRope {
 }
 
 pub(super) struct InsertResult {
+    #[allow(unused)]
     pub content: FugueSpan,
     pub leaf: LeafIndex,
     pub splitted: SplittedLeaves,
@@ -27,6 +28,7 @@ impl CrdtRope {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.tree.root_cache().len as usize
     }
@@ -45,7 +47,7 @@ impl CrdtRope {
     ) -> InsertResult {
         if self.tree.is_empty() {
             assert_eq!(pos, 0);
-            let leaf = self.tree.push(content);
+            let leaf = self.tree.push(content).leaf;
             return InsertResult {
                 content,
                 leaf,
@@ -200,10 +202,10 @@ impl CrdtRope {
             }
         }
 
-        let (leaf, splitted) = self.tree.insert_by_path(insert_pos, content);
+        let (cursor, splitted) = self.tree.insert_by_path(insert_pos, content);
         InsertResult {
             content,
-            leaf,
+            leaf: cursor.leaf,
             splitted,
         }
     }
@@ -260,6 +262,7 @@ impl CrdtRope {
         })
     }
 
+    #[allow(unused)]
     pub(crate) fn diagnose(&self) {
         println!("crdt_rope number of tree nodes = {}", self.tree.node_len());
     }
@@ -587,6 +590,7 @@ pub(super) struct LeafUpdate {
 }
 
 impl LeafUpdate {
+    #[allow(unused)]
     fn apply_to(&self, s: &mut Status) {
         s.delete_times += self.delete_times_diff;
         if let Some(f) = self.set_future {
@@ -612,6 +616,7 @@ mod test {
         )
     }
 
+    #[allow(unused)]
     fn unknown_span(id: u32, len: usize) -> FugueSpan {
         FugueSpan::new(
             ID::new(id as PeerID, 0 as Counter),

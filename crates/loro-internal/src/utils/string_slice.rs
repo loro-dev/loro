@@ -71,12 +71,8 @@ impl StringSlice {
         match &self.bytes {
             // SAFETY: `bytes` is always valid utf8
             Variant::BytesSlice(s) => unsafe { std::str::from_utf8_unchecked(s) },
-            Variant::Owned(s) => &s,
+            Variant::Owned(s) => s,
         }
-    }
-
-    pub fn to_string(&self) -> String {
-        self.as_str().to_string()
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -99,6 +95,12 @@ impl StringSlice {
 
     pub fn is_empty(&self) -> bool {
         self.bytes().is_empty()
+    }
+}
+
+impl std::fmt::Display for StringSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -171,4 +173,28 @@ impl DeltaValue for StringSlice {
             count_unicode_chars(self.bytes())
         }
     }
+}
+
+pub fn unicode_range_to_byte_range(bytes: &[u8], start: usize, end: usize) -> (usize, usize) {
+    debug_assert!(start <= end);
+    let s = std::str::from_utf8(bytes).unwrap();
+    let start_unicode_index = start;
+    let end_unicode_index = end;
+    let mut current_utf8_index = 0;
+    let mut start_byte = 0;
+    let mut end_byte = bytes.len();
+    for (current_unicode_index, c) in s.chars().enumerate() {
+        if current_unicode_index == start_unicode_index {
+            start_byte = current_utf8_index;
+        }
+
+        if current_unicode_index == end_unicode_index {
+            end_byte = current_utf8_index;
+            break;
+        }
+
+        current_utf8_index += c.len_utf8();
+    }
+
+    (start_byte, end_byte)
 }

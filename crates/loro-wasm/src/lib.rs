@@ -570,8 +570,8 @@ impl LoroMap {
         let container = match type_ {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
-            ContainerType::Text => LoroList(c.into_list().unwrap()).into(),
             ContainerType::Tree => LoroTree(c.into_tree().unwrap()).into(),
+            ContainerType::Text => LoroText(c.into_text().unwrap()).into(),
         };
         Ok(container)
     }

@@ -29,12 +29,12 @@ arref = "0.1.0"
 debug-log = { version = "0.1.4", features = [] }
 serde_columnar = { version = "0.3.2" }
 tracing = { version = "0.1.37" }
-append-only-bytes = { version = "0.1.11", features = ["u32_range"] }
+append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 itertools = "0.11.0"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
-generic-btree = { path = "../../../generic-btree" }
+generic-btree = { version = "0.8.0" }
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
 zerovec = { version = "0.9.4", features = ["serde", "derive"] }
@@ -61,6 +61,7 @@ doctest = false
 bench = false
 
 [features]
+default = []
 compress = ["serde_columnar/compress"]
 # "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
@@ -81,8 +82,4 @@ harness = false
 
 [[bench]]
 name = "pending"
-harness = false
-
-[[bench]]
-name = "tree"
 harness = false

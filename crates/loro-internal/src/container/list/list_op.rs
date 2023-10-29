@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     container::richtext::TextStyleInfoFlag,
     op::{ListSlice, SliceRange},
+    utils::string_slice::unicode_range_to_byte_range,
     InternalString,
 };
 
@@ -36,6 +38,12 @@ pub enum InnerListOp {
     Insert {
         slice: SliceRange,
         pos: usize,
+    },
+    InsertText {
+        slice: BytesSlice,
+        unicode_start: u32,
+        unicode_len: u32,
+        pos: u32,
     },
     Delete(DeleteSpan),
     /// StyleStart and StyleEnd must be paired.
@@ -297,45 +305,76 @@ impl<'a> Sliceable for ListOp<'a> {
 }
 
 impl Mergable for InnerListOp {
-    fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
+    fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        match self {
-            InnerListOp::Insert { pos, slice, .. } => match _other {
+        match (self, other) {
+            (
+                InnerListOp::Insert { pos, slice, .. },
                 InnerListOp::Insert {
                     pos: other_pos,
                     slice: other_slice,
                     ..
-                } => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
-                _ => false,
-            },
-            &InnerListOp::Delete(span) => match _other {
-                InnerListOp::Delete(other_span) => span.is_mergable(other_span, &()),
-                _ => false,
-            },
-            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => false,
+                },
+            ) => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
+            (InnerListOp::Delete(span), InnerListOp::Delete(other_span)) => {
+                span.is_mergable(other_span, &())
+            }
+            (
+                InnerListOp::InsertText {
+                    unicode_start,
+                    slice,
+                    pos,
+                    unicode_len: len,
+                },
+                InnerListOp::InsertText {
+                    slice: other_slice,
+                    pos: other_pos,
+                    unicode_start: other_unicode_start,
+                    unicode_len: _,
+                },
+            ) => {
+                pos + len == *other_pos
+                    && slice.can_merge(other_slice)
+                    && unicode_start + len == *other_unicode_start
+            }
+            _ => false,
         }
     }
 
-    fn merge(&mut self, _other: &Self, _conf: &())
+    fn merge(&mut self, other: &Self, _conf: &())
     where
         Self: Sized,
     {
-        match self {
-            InnerListOp::Insert { slice, .. } => match _other {
+        match (self, other) {
+            (
+                InnerListOp::Insert { slice, .. },
                 InnerListOp::Insert {
                     slice: other_slice, ..
-                } => {
-                    slice.merge(other_slice, &());
-                }
-                _ => unreachable!(),
-            },
-            InnerListOp::Delete(span) => match _other {
-                InnerListOp::Delete(other_span) => span.merge(other_span, &()),
-                _ => unreachable!(),
-            },
-            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => unreachable!(),
+                },
+            ) => {
+                slice.merge(other_slice, &());
+            }
+            (InnerListOp::Delete(span), InnerListOp::Delete(other_span)) => {
+                span.merge(other_span, &())
+            }
+            (
+                InnerListOp::InsertText {
+                    slice,
+                    unicode_len: len,
+                    ..
+                },
+                InnerListOp::InsertText {
+                    slice: other_slice,
+                    unicode_len: other_len,
+                    ..
+                },
+            ) => {
+                slice.merge(other_slice, &());
+                *len += *other_len;
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -344,6 +383,9 @@ impl HasLength for InnerListOp {
     fn content_len(&self) -> usize {
         match self {
             InnerListOp::Insert { slice, .. } => slice.content_len(),
+            InnerListOp::InsertText {
+                unicode_len: len, ..
+            } => *len as usize,
             InnerListOp::Delete(span) => span.atom_len(),
             InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => 1,
         }
@@ -357,8 +399,21 @@ impl Sliceable for InnerListOp {
                 slice: slice.slice(from, to),
                 pos: *pos + from,
             },
+            InnerListOp::InsertText {
+                slice,
+                unicode_start,
+                unicode_len: _,
+                pos,
+            } => InnerListOp::InsertText {
+                slice: {
+                    let (a, b) = unicode_range_to_byte_range(slice, from, to);
+                    slice.slice(a, b)
+                },
+                unicode_start: *unicode_start + from as u32,
+                unicode_len: (to - from) as u32,
+                pos: *pos + from as u32,
+            },
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
-            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => self.clone(),
         }
     }
 }

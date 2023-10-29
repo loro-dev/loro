@@ -38,6 +38,7 @@ fn import_with_many_actors() {
     // drop(profiler);
 }
 
+#[allow(unused)]
 fn with_100k_actors_then_action() {
     let store = LoroDoc::default();
     for i in 0..100_000 {

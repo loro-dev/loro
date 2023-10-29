@@ -19,7 +19,6 @@
     "thiserror",
     "tinyvec",
     "txns",
-    "UNEXIST",
     "unbold",
     "yspan"
   ],

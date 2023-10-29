@@ -1,7 +1,4 @@
-use std::{
-    ops::RangeBounds,
-    sync::{Arc, Mutex},
-};
+use std::{ops::RangeBounds, sync::Arc};
 
 use super::ContainerState;
 use crate::{
@@ -12,15 +9,13 @@ use crate::{
     op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
+
 use fxhash::FxHashMap;
 use generic_btree::{
     iter,
     rle::{HasLength, Mergeable, Sliceable},
-    ArenaIndex, BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
+    BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::LoroResult;
-
-type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
 #[derive(Debug)]
 pub struct ListState {
@@ -67,21 +62,21 @@ impl Sliceable for Elem {
         self.clone()
     }
 
-    fn split(&mut self, pos: usize) -> Self {
+    fn split(&mut self, _pos: usize) -> Self {
         unreachable!()
     }
 }
 
 impl Mergeable for Elem {
-    fn can_merge(&self, rhs: &Self) -> bool {
+    fn can_merge(&self, _rhs: &Self) -> bool {
         false
     }
 
-    fn merge_right(&mut self, rhs: &Self) {
+    fn merge_right(&mut self, _rhs: &Self) {
         unreachable!()
     }
 
-    fn merge_left(&mut self, left: &Self) {
+    fn merge_left(&mut self, _left: &Self) {
         unreachable!()
     }
 }
@@ -120,7 +115,7 @@ impl BTreeTrait for ListImpl {
     }
 
     #[inline(always)]
-    fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
+    fn get_elem_cache(_elem: &Self::Elem) -> Self::Cache {
         1
     }
 
@@ -177,7 +172,7 @@ impl ListState {
 
             if value.is_container() {
                 self.child_container_to_leaf
-                    .insert(value.into_container().unwrap(), idx);
+                    .insert(value.into_container().unwrap(), idx.leaf);
             }
             return;
         }
@@ -188,7 +183,7 @@ impl ListState {
 
         if value.is_container() {
             self.child_container_to_leaf
-                .insert(value.into_container().unwrap(), leaf);
+                .insert(value.into_container().unwrap(), leaf.leaf);
         }
 
         for leaf in data.arr {
@@ -282,10 +277,11 @@ impl ListState {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn check(&self) {
         for value in self.iter() {
             if let LoroValue::Container(c) = value {
-                self.get_child_index(&c).unwrap();
+                self.get_child_index(c).unwrap();
             }
         }
     }
@@ -369,10 +365,9 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
         match &op.content {
             RawOpContent::Map(_) => unreachable!(),
-            RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
@@ -406,7 +401,6 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
-        Ok(())
     }
 
     #[doc = " Start a transaction"]

@@ -12,17 +12,17 @@ pub fn draw(c: &mut Criterion) {
         let mut loro = LoroDoc::new();
         b.iter(|| {
             loro = LoroDoc::new();
-            let paths = loro.get_list("all_paths");
-            let texts = loro.get_list("all_texts");
+            let _paths = loro.get_list("all_paths");
+            let _texts = loro.get_list("all_texts");
             for action in data.as_ref().unwrap().iter() {
                 match action {
-                    DrawAction::DrawPath { points, color } => {}
+                    DrawAction::DrawPath { points: _, color: _ } => {}
                     DrawAction::Text {
-                        id,
-                        text,
-                        pos,
-                        width,
-                        height,
+                        id: _,
+                        text: _,
+                        pos: _,
+                        width: _,
+                        height: _,
                     } => todo!(),
                 }
             }

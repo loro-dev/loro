@@ -4,9 +4,20 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+use debug_log::debug_dbg;
+use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
+use loro_common::{ContainerType, LoroResult};
+use rle::{HasLength, RleVec};
+
+
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, richtext::Style, IntoContainerId},
+    container::{
+        idx::ContainerIdx,
+        richtext::{Style},
+        IntoContainerId,
+    },
     delta::{Delta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
     handler::TextHandler,
@@ -17,16 +28,11 @@ use crate::{
     version::Frontiers,
     InternalString, LoroError, LoroValue,
 };
-use debug_log::debug_dbg;
-use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
-use loro_common::{ContainerType, LoroResult, TreeID};
-use rle::{HasLength, RleVec};
 
 use super::{
     arena::SharedArena,
     event::{InternalContainerDiff, InternalDocDiff},
-    handler::{ListHandler, MapHandler},
+    handler::{ListHandler, MapHandler, TextHandler},
     oplog::OpLog,
     state::{DocState, State},
 };
@@ -140,7 +146,7 @@ impl Transaction {
         self.timestamp = Some(time);
     }
 
-    pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
+    pub fn set_on_commit(&mut self, f: OnCommitFn) {
         self.on_commit = Some(f);
     }
 
@@ -204,17 +210,10 @@ impl Transaction {
 
         state.commit_txn(
             Frontiers::from_id(last_id),
-            diff.map(|arr| InternalDocDiff {
+            diff.map(|x| InternalDocDiff {
                 local: true,
                 origin: self.origin.clone(),
-                diff: Cow::Owned(
-                    arr.into_iter()
-                        .map(|x| InternalContainerDiff {
-                            idx: x.idx,
-                            diff: x.diff.into(),
-                        })
-                        .collect(),
-                ),
+                diff: Cow::Owned(x),
                 new_version: Cow::Borrowed(oplog.frontiers()),
             }),
         );
@@ -230,7 +229,8 @@ impl Transaction {
         &mut self,
         container: ContainerIdx,
         content: RawOpContent,
-        event: EventHint,
+        // we need extra hint to reduce calculation for utf16 text op
+        hint: Option<EventHint>,
         // check whther context and txn are refering to the same state context
         state_ref: &Weak<Mutex<DocState>>,
     ) -> LoroResult<()> {
@@ -242,7 +242,7 @@ impl Transaction {
         }
 
         let len = content.content_len();
-        let raw_op = RawOp {
+        let op = RawOp {
             id: ID {
                 peer: self.peer,
                 counter: self.next_counter,
@@ -253,14 +253,20 @@ impl Transaction {
         };
 
         let mut state = self.state.lock().unwrap();
-        let op = self.arena.convert_raw_op(&raw_op);
-        state.apply_local_op(&raw_op, &op)?;
+        state.apply_local_op(op.clone())?;
         drop(state);
-        self.event_hints.insert(raw_op.id.counter, event);
-        self.local_ops.push(op);
+        if let Some(hint) = hint {
+            self.event_hints.insert(op.id.counter, hint);
+        }
+        self.push_local_op_to_log(&op);
         self.next_counter += len as Counter;
         self.next_lamport += len as Lamport;
         Ok(())
+    }
+
+    fn push_local_op_to_log(&mut self, op: &RawOp) {
+        let op = self.arena.convert_raw_op(op);
+        self.local_ops.push(op);
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -282,13 +288,6 @@ impl Transaction {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
-    }
-
-    /// id can be a str, ContainerID, or ContainerIdRaw.
-    /// if it's str it will use Root container, which will not be None
-    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
@@ -327,16 +326,10 @@ impl Drop for Transaction {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct TxnContainerDiff {
-    pub(crate) idx: ContainerIdx,
-    pub(crate) diff: Diff,
-}
-
 // PERF: could be compacter
 fn change_to_diff(
     change: &Change,
-    arena: &SharedArena,
+    _arena: &SharedArena,
     mut event_hints: FxHashMap<Counter, EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
@@ -348,7 +341,8 @@ fn change_to_diff(
             unreachable!()
         };
         'outer: {
-            let diff: Diff = match hint {
+            let diff: Diff =
+                match hint {
                 EventHint::Mark { start, end, style } => {
                     Diff::Text(Delta::new().retain(start).retain_with_meta(
                         end - start,
@@ -356,13 +350,11 @@ fn change_to_diff(
                     ))
                 }
                 EventHint::InsertText { pos, styles } => {
-                    let range = op.content.as_list().unwrap().as_insert().unwrap().0;
-                    let slice = arena.slice_by_unicode(range.to_range());
-                    Diff::Text(
-                        Delta::new()
-                            .retain(pos)
-                            .insert_with_meta(slice, crate::delta::StyleMeta { vec: styles }),
-                    )
+                    let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
+                    Diff::Text(Delta::new().retain(pos).insert_with_meta(
+                        slice.clone(),
+                        crate::delta::StyleMeta { vec: styles },
+                    ))
                 }
                 EventHint::DeleteText { pos, len } => {
                     Diff::Text(Delta::new().retain(pos).delete(len))

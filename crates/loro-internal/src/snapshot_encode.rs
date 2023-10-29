@@ -1,13 +1,12 @@
-use std::{borrow::Cow, ops::Deref};
+use std::borrow::Cow;
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerType, HasLamport, TreeID, ID};
+use loro_common::{ContainerType, HasLamport, ID};
 use loro_preload::{
     CommonArena, EncodedAppState, EncodedContainerState, FinalPhase, MapEntry, TempArena,
 };
 use rle::{HasLength, RleVec};
-use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, to_vec};
 use smallvec::smallvec;
 
@@ -30,20 +29,21 @@ use super::{
     arena::SharedArena,
     loro::LoroDoc,
     oplog::OpLog,
-    state::{DocState, ListState, MapState, State},
+    state::{DocState, ListState, MapState, State, TextState},
 };
 
 pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
-    let state = app.app_state().lock().unwrap();
-    let pre_encoded_state = preprocess_app_state(&state);
+    let pre_encoded_state = preprocess_app_state(&app.app_state().lock().unwrap());
     let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
     // f.diagnose_size();
-    f.encode()
+    miniz_oxide::deflate::compress_to_vec(&f.encode(), 6)
 }
 
 pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8], with_state: bool) -> Result<(), LoroError> {
     assert!(app.is_empty());
-    let data = FinalPhase::decode(bytes)?;
+    let bytes = miniz_oxide::inflate::decompress_to_vec(bytes)
+        .map_err(|_| LoroError::DecodeError("".into()))?;
+    let data = FinalPhase::decode(&bytes)?;
     if with_state {
         let mut app_state = app.app_state().lock().unwrap();
         let (state_arena, common) = decode_state(&mut app_state, &data)?;
@@ -65,10 +65,11 @@ pub fn decode_oplog(
     arena: Option<(SharedArena, TempArena, CommonArena)>,
 ) -> Result<(), LoroError> {
     let (arena, state_arena, common) = arena.unwrap_or_else(|| {
-        let arena = SharedArena::default();
-        let state_arena = TempArena::decode_state_arena(data).unwrap();
-        arena.alloc_str_fast(&state_arena.text);
-        (arena, state_arena, CommonArena::decode(data).unwrap())
+        (
+            Default::default(),
+            TempArena::decode_state_arena(data).unwrap(),
+            CommonArena::decode(data).unwrap(),
+        )
     });
     oplog.arena = arena.clone();
     let mut extra_arena = TempArena::decode_additional_arena(data)?;
@@ -77,15 +78,14 @@ pub fn decode_oplog(
     arena.alloc_values(extra_arena.values.into_iter());
     let mut keys = state_arena.keywords;
     keys.append(&mut extra_arena.keywords);
-    let mut tree_ids = state_arena.tree_ids;
-    tree_ids.append(&mut extra_arena.tree_ids);
 
     let oplog_data = OplogEncoded::decode_iter(data)?;
-    let mut style_iter = oplog_data.styles.iter();
+
     let mut changes = Vec::new();
     let mut dep_iter = oplog_data.deps;
     let mut op_iter = oplog_data.ops;
     let mut counters = FxHashMap::default();
+    let mut text_idx = 0;
     for change in oplog_data.changes {
         let peer_idx = change.peer_idx as usize;
         let peer_id = common.peer_ids[peer_idx];
@@ -103,13 +103,12 @@ pub fn decode_oplog(
             let container = common.container_ids[encoded_op.container as usize].clone();
             let container_idx = arena.register_container(&container);
             let op = match container.container_type() {
-                loro_common::ContainerType::List | loro_common::ContainerType::Text => {
-                    let op = match container.container_type() {
-                        ContainerType::List => encoded_op.get_list(),
-                        ContainerType::Text => encoded_op.get_richtext(),
-                        _ => unreachable!(),
+                loro_common::ContainerType::Text | loro_common::ContainerType::List => {
+                    let op = if container.container_type() == ContainerType::List {
+                        encoded_op.get_list()
+                    } else {
+                        encoded_op.get_text()
                     };
-
                     match op {
                         SnapshotOp::ListInsert {
                             value_idx: start,
@@ -134,26 +133,15 @@ pub fn decode_oplog(
                             let info = style.info;
                             Op::new(
                                 id,
-                                InnerContent::List(InnerListOp::StyleStart {
-                                    start: start as u32,
-                                    end: end as u32,
-                                    key,
-                                    info: TextStyleInfoFlag::from_byte(info),
-                                }),
+                                InnerContent::List(InnerListOp::new_insert(
+                                    text_idx..text_idx + (len as u32),
+                                    pos,
+                                )),
                                 container_idx,
-                            )
+                            );
+                            text_idx += len as u32;
+                            op
                         }
-                        SnapshotOp::RichtextStyleEnd => {
-                            Op::new(id, InnerContent::List(InnerListOp::StyleEnd), container_idx)
-                        }
-                        SnapshotOp::RichtextInsert { pos, start, len } => Op::new(
-                            id,
-                            InnerContent::List(InnerListOp::new_insert(
-                                start as u32..start as u32 + (len as u32),
-                                pos,
-                            )),
-                            container_idx,
-                        ),
                     }
                 }
                 loro_common::ContainerType::Map => {
@@ -174,35 +162,6 @@ pub fn decode_oplog(
                                     key: (&*keys[key]).into(),
                                     value,
                                 }),
-                                container_idx,
-                            )
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-                loro_common::ContainerType::Tree => {
-                    let op = encoded_op.get_tree();
-                    match op {
-                        SnapshotOp::Tree { target, parent } => {
-                            let target = {
-                                let (peer, counter) = tree_ids[target - 1];
-                                let peer = common.peer_ids[peer as usize];
-                                TreeID { peer, counter }
-                            };
-                            let parent = {
-                                if parent == Some(0) {
-                                    TreeID::delete_root()
-                                } else {
-                                    parent.map(|p| {
-                                        let (peer, counter) = tree_ids[p - 1];
-                                        let peer = common.peer_ids[peer as usize];
-                                        TreeID { peer, counter }
-                                    })
-                                }
-                            };
-                            Op::new(
-                                id,
-                                InnerContent::Tree(TreeOp { target, parent }),
                                 container_idx,
                             )
                         }
@@ -253,8 +212,8 @@ pub fn decode_state<'b>(
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(data)?;
     let state_arena = TempArena::decode_state_arena(data)?;
-    arena.alloc_str_fast(&state_arena.text);
     let encoded_app_state = EncodedAppState::decode(data)?;
+    let mut text_index = 0;
     let mut container_states =
         FxHashMap::with_capacity_and_hasher(common.container_ids.len(), Default::default());
     // this part should be moved to encode.rs in preload
@@ -262,13 +221,23 @@ pub fn decode_state<'b>(
         .container_ids
         .iter()
         .zip(encoded_app_state.parents.iter())
-        .zip(encoded_app_state.states.into_iter())
+        .zip(encoded_app_state.states.iter())
     {
         let idx = arena.register_container(id);
         let parent_idx =
             (*parent).map(|x| ContainerIdx::from_index_and_type(x, state.container_type()));
         arena.set_parent(idx, parent_idx);
         match state {
+            loro_preload::EncodedContainerState::Text { len } => {
+                let index = text_index;
+                container_states.insert(
+                    idx,
+                    State::TextState(TextState::from_str(
+                        std::str::from_utf8(&state_arena.text[index..index + len]).unwrap(),
+                    )),
+                );
+                text_index += len;
+            }
             loro_preload::EncodedContainerState::Map(map_data) => {
                 let mut map = MapState::new(idx);
                 for entry in map_data.iter() {
@@ -345,14 +314,6 @@ struct OplogEncoded {
     ops: Vec<EncodedSnapshotOp>,
     #[columnar(class = "vec", iter = "DepsEncoding")]
     deps: Vec<DepsEncoding>,
-
-    styles: Vec<StyleInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StyleInfo {
-    key_idx: u32,
-    info: u8,
 }
 
 impl OplogEncoded {
@@ -394,24 +355,19 @@ struct EncodedSnapshotOp {
     /// key index or insert/delete pos
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    /// Richtext: insert range start
-    /// Text: 0
-    /// List: 0
-    /// Map: 0
-    #[columnar(strategy = "DeltaRle")]
-    prop2: usize,
-    /// Richtext: insert len | del len | end position (for style)
-    /// Text: insert len | del len (can be neg)
-    /// List: 0 | del len (can be neg)
-    /// Map: always 0
+    // Text: insert len | del len (can be neg)
+    // List: 0 | del len (can be neg)
+    // Map: always 0
     #[columnar(strategy = "DeltaRle")]
     len: i64,
+    // List: insert 0 | deletion -1
+    // Text: insert 0 | deletion -1
+    // Map: always 0
     #[columnar(strategy = "BoolRle")]
     is_del: bool,
-    /// Richtext: 0 (text) | 1 (style_start) | 2 (style_end)
-    /// Text: 0
-    /// List: 0 | value index
-    /// Map: 0 (deleted) | value index + 1
+    // Text: 0
+    // List: 0 | value index
+    // Map: 0 (deleted) | value index + 1
     #[columnar(strategy = "DeltaRle")]
     value: isize,
 }
@@ -446,25 +402,16 @@ enum SnapshotOp {
 }
 
 impl EncodedSnapshotOp {
-    pub fn get_richtext(&self) -> SnapshotOp {
+    pub fn get_text(&self) -> SnapshotOp {
         if self.is_del {
             SnapshotOp::TextOrListDelete {
                 pos: self.prop,
                 len: self.len as isize,
             }
         } else {
-            match self.value {
-                0 => SnapshotOp::RichtextInsert {
-                    pos: self.prop,
-                    start: self.prop2,
-                    len: self.len as usize,
-                },
-                1 => SnapshotOp::RichtextStyleStart {
-                    start: self.prop,
-                    end: self.len as usize,
-                },
-                2 => SnapshotOp::RichtextStyleEnd,
-                _ => unreachable!(),
+            SnapshotOp::TextInsert {
+                pos: self.prop,
+                len: self.len as usize,
             }
         }
     }
@@ -491,20 +438,6 @@ impl EncodedSnapshotOp {
         }
     }
 
-    pub fn get_tree(&self) -> SnapshotOp {
-        let parent = if self.is_del {
-            Some(0)
-        } else if self.value == 0 {
-            None
-        } else {
-            Some(self.value as usize)
-        };
-        SnapshotOp::Tree {
-            target: self.prop,
-            parent,
-        }
-    }
-
     pub fn from(value: SnapshotOp, container: u32) -> Self {
         match value {
             SnapshotOp::ListInsert {
@@ -513,7 +446,6 @@ impl EncodedSnapshotOp {
             } => Self {
                 container,
                 prop: pos,
-                prop2: 0,
                 len: 0,
                 is_del: false,
                 value: start as isize,
@@ -521,7 +453,6 @@ impl EncodedSnapshotOp {
             SnapshotOp::TextOrListDelete { pos, len } => Self {
                 container,
                 prop: pos,
-                prop2: 0,
                 len: len as i64,
                 is_del: true,
                 value: 0,
@@ -534,47 +465,18 @@ impl EncodedSnapshotOp {
                 Self {
                     container,
                     prop: key,
-                    prop2: 0,
                     len: 0,
                     is_del: false,
                     value,
                 }
             }
-            SnapshotOp::RichtextStyleStart { start, end } => Self {
-                container,
-                prop: start,
-                prop2: 0,
-                len: end as i64,
-                is_del: false,
-                value: 1,
-            },
-            SnapshotOp::RichtextStyleEnd => Self {
-                container,
-                prop: 0,
-                prop2: 0,
-                len: 0,
-                is_del: false,
-                value: 2,
-            },
-            SnapshotOp::RichtextInsert { pos, start, len } => Self {
+            SnapshotOp::TextInsert { pos, len } => Self {
                 container,
                 prop: pos,
-                prop2: start,
                 len: len as i64,
                 is_del: false,
                 value: 0,
             },
-            SnapshotOp::Tree { target, parent } => {
-                let is_del = parent.unwrap_or(1) == 0;
-                Self {
-                    container,
-                    prop: target,
-                    prop2: 0,
-                    len: 0,
-                    is_del,
-                    value: parent.unwrap_or(0) as isize,
-                }
-            }
         }
     }
 }
@@ -589,7 +491,7 @@ struct DepsEncoding {
 }
 
 #[derive(Default)]
-struct PreEncodedState<'a> {
+struct PreEncodedState {
     common: CommonArena<'static>,
     arena: TempArena<'static>,
     key_lookup: FxHashMap<InternalString, usize>,
@@ -653,43 +555,10 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
         peers.len() as u32 - 1
     };
 
-    let mut record_tree_id = |tree_id: TreeID, peer: u32| {
-        let tree_id = (peer, tree_id.counter);
-        if let Some(idx) = tree_id_lookup.get(&tree_id) {
-            return *idx;
-        }
-
-        tree_ids.push(tree_id);
-        // the idx 0 is the delete root
-        tree_id_lookup
-            .entry(tree_id)
-            .or_insert_with(|| tree_ids.len());
-        tree_ids.len()
-    };
-
     for (_, state) in app_state.states.iter() {
         match state {
-            State::TreeState(tree) => {
-                let v = tree
-                    .iter()
-                    .map(|(target, parent)| {
-                        let peer_idx = record_peer(target.peer);
-                        let t = record_tree_id(*target, peer_idx);
-                        let p = if TreeID::is_deleted_root(*parent) {
-                            Some(0)
-                        } else {
-                            parent.map(|p| {
-                                let peer_idx = record_peer(p.peer);
-                                record_tree_id(p, peer_idx)
-                            })
-                        };
-                        (t, p)
-                    })
-                    .collect::<Vec<_>>();
-                encoded.states.push(EncodedContainerState::Tree(v))
-            }
             State::ListState(list) => {
-                let v = list.iter().map(&mut record_value).collect();
+                let v = list.iter().map(|value| record_value(value)).collect();
                 encoded.states.push(EncodedContainerState::List(v))
             }
             State::MapState(map) => {
@@ -712,9 +581,13 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
                     .collect();
                 encoded.states.push(EncodedContainerState::Map(v))
             }
-            State::RichtextState(text) => {
-                let result = text.encode_snapshot(&mut record_peer, &mut record_key);
-                encoded.states.push(EncodedContainerState::Richtext(result));
+            State::TextState(text) => {
+                for span in text.iter() {
+                    bytes.extend_from_slice(span.as_bytes());
+                }
+                encoded
+                    .states
+                    .push(EncodedContainerState::Text { len: text.len() })
             }
         }
     }
@@ -725,20 +598,20 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
     };
 
     let arena = TempArena {
+        text: bytes.into(),
+        keywords,
         values,
         keywords,
         text: app_state.arena.slice_by_unicode(..).deref().to_vec().into(),
         tree_ids,
     };
 
-    // debug_log::debug_dbg!(&encoded);
     PreEncodedState {
         common,
         arena,
         key_lookup,
         value_lookup,
         peer_lookup,
-        tree_id_lookup,
         app_state: encoded,
     }
 }
@@ -751,16 +624,15 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         mut key_lookup,
         mut value_lookup,
         mut peer_lookup,
-        mut tree_id_lookup,
         app_state,
     } = state_ref;
     if common.container_ids.is_empty() {
         common.container_ids = oplog.arena.export_containers();
     }
     // need to rebuild bytes from ops, because arena.text may contain garbage
+    let mut bytes = Vec::with_capacity(arena.text.len());
     let mut extra_keys = Vec::new();
     let mut extra_values = Vec::new();
-    let mut extra_tree_ids = Vec::new();
 
     let mut record_key = |key: &InternalString| {
         if let Some(idx) = key_lookup.get(key) {
@@ -787,10 +659,11 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     let Cow::Owned(mut peers) = std::mem::take(&mut common.peer_ids) else {
         unreachable!()
     };
-    let mut record_peer = |peer: PeerID, peer_lookup: &mut FxHashMap<u64, usize>| {
+    let mut record_peer = |peer: PeerID| {
         if let Some(idx) = peer_lookup.get(&peer) {
             return *idx as u32;
         }
+
         peers.push(peer);
         peer_lookup.entry(peer).or_insert_with(|| peers.len() - 1);
         peers.len() as u32 - 1
@@ -825,27 +698,25 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         Vec::with_capacity(changes.iter().map(|x| x.ops.len()).sum());
     let mut deps = Vec::with_capacity(changes.iter().map(|x| x.deps.len()).sum());
     for change in changes {
-        let peer_idx = record_peer(change.id.peer, &mut peer_lookup);
+        let peer_idx = record_peer(change.id.peer);
         let op_index_start = encoded_ops.len();
         for op in change.ops.iter() {
             match &op.content {
-                InnerContent::Tree(TreeOp { target, parent }) => {
-                    let target_idx = record_tree_id(*target, &mut peer_lookup);
-                    let parent_idx = if TreeID::is_deleted_root(*parent) {
-                        Some(0)
-                    } else {
-                        parent.map(|p| record_tree_id(p, &mut peer_lookup))
-                    };
-                    encoded_ops.push(EncodedSnapshotOp::from(
-                        SnapshotOp::Tree {
-                            target: target_idx,
-                            parent: parent_idx,
-                        },
-                        op.container.to_index(),
-                    ));
-                }
                 InnerContent::List(list) => match list {
                     InnerListOp::Insert { slice, pos } => match op.container.get_type() {
+                        loro_common::ContainerType::Text => {
+                            let range = slice.0.start as usize..slice.0.end as usize;
+                            let mut pos = *pos;
+                            oplog.arena.with_text_slice(range, |slice| {
+                                encoded_ops.push(record_str(
+                                    slice.as_bytes(),
+                                    pos,
+                                    op.container.to_index(),
+                                ));
+
+                                pos += slice.chars().count();
+                            })
+                        }
                         loro_common::ContainerType::List => {
                             let values = oplog
                                 .arena
@@ -863,49 +734,14 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                                 pos += 1;
                             }
                         }
-                        loro_common::ContainerType::Text => {
-                            encoded_ops.push(EncodedSnapshotOp::from(
-                                SnapshotOp::RichtextInsert {
-                                    pos: *pos,
-                                    start: slice.0.start as usize,
-                                    len: slice.0.len(),
-                                },
-                                op.container.to_index(),
-                            ))
-                        }
                         loro_common::ContainerType::Map => unreachable!(),
-                        loro_common::ContainerType::Tree => unreachable!(),
                     },
                     InnerListOp::Delete(del) => {
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::TextOrListDelete {
                                 pos: del.pos as usize,
-                                len: del.signed_len,
+                                len: del.len,
                             },
-                            op.container.to_index(),
-                        ));
-                    }
-                    InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        info,
-                    } => {
-                        encoded_ops.push(EncodedSnapshotOp::from(
-                            SnapshotOp::RichtextStyleStart {
-                                start: *start as usize,
-                                end: *end as usize,
-                            },
-                            op.container.to_index(),
-                        ));
-                        styles.push(StyleInfo {
-                            key_idx: record_key(key) as u32,
-                            info: info.to_byte(),
-                        })
-                    }
-                    InnerListOp::StyleEnd => {
-                        encoded_ops.push(EncodedSnapshotOp::from(
-                            SnapshotOp::RichtextStyleEnd,
                             op.container.to_index(),
                         ));
                     }
@@ -935,7 +771,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
             if dep.peer == change.id.peer {
                 dep_on_self = true;
             } else {
-                let peer_idx = record_peer(dep.peer, &mut peer_lookup);
+                let peer_idx = record_peer(dep.peer);
                 deps.push(DepsEncoding {
                     peer_idx,
                     counter: dep.counter,
@@ -958,9 +794,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         changes: encoded_changes,
         ops: encoded_ops,
         deps,
-        styles,
     };
-
     // println!("OplogEncoded:");
     // println!("changes {}", oplog_encoded.changes.len());
     // println!("ops {}", oplog_encoded.ops.len());
@@ -972,15 +806,15 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
         state_arena: Cow::Owned(arena.encode()),
         oplog_extra_arena: Cow::Owned(
             TempArena {
-                text: Cow::Borrowed(&[]),
+                text: Cow::Borrowed(&bytes),
                 keywords: extra_keys,
                 values: extra_values,
-                tree_ids: extra_tree_ids,
             }
             .encode(),
         ),
         oplog: Cow::Owned(oplog_encoded.encode()),
     };
+
     ans
 }
 
@@ -1044,23 +878,5 @@ mod test {
             .unwrap()
             .to_string();
         assert_eq!("he llo", &actual);
-    }
-
-    #[test]
-    fn tree_encode_decode() {
-        let a = LoroDoc::default();
-        let b = LoroDoc::default();
-        let tree_a = a.get_tree("tree");
-        let tree_b = b.get_tree("tree");
-        let id1 = a.with_txn(|txn| tree_a.create(txn)).unwrap();
-        let id2 = a.with_txn(|txn| tree_a.create_and_mov(txn, id1)).unwrap();
-        let bytes = a.export_snapshot();
-        b.import(&bytes).unwrap();
-        assert_eq!(a.get_deep_value(), b.get_deep_value());
-        let _id3 = b.with_txn(|txn| tree_b.create_and_mov(txn, id1)).unwrap();
-        b.with_txn(|txn| tree_b.delete(txn, id2)).unwrap();
-        let bytes = b.export_snapshot();
-        a.import(&bytes).unwrap();
-        assert_eq!(a.get_deep_value(), b.get_deep_value());
     }
 }

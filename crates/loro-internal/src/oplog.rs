@@ -429,6 +429,25 @@ impl OpLog {
                     loro_common::ContainerType::Map => unreachable!(),
                     loro_common::ContainerType::Tree => unreachable!(),
                 },
+                list_op::InnerListOp::InsertText {
+                    slice,
+                    unicode_len: len,
+                    unicode_start: _,
+                    pos,
+                } => match container.container_type() {
+                    loro_common::ContainerType::Text => {
+                        contents.push(RawOpContent::List(list_op::ListOp::Insert {
+                            slice: ListSlice::RawStr {
+                                unicode_len: *len as usize,
+                                str: Cow::Owned(std::str::from_utf8(slice).unwrap().to_owned()),
+                            },
+                            pos: *pos as usize,
+                        }));
+                    }
+                    loro_common::ContainerType::List | loro_common::ContainerType::Map => {
+                        unreachable!()
+                    }
+                },
                 list_op::InnerListOp::Delete(del) => {
                     contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
                 }
@@ -448,7 +467,9 @@ impl OpLog {
                 }
             },
             crate::op::InnerContent::Map(map) => {
-                let value = map.value.and_then(|v| self.arena.get_value(v as usize));
+                let value = map
+                    .value
+                    .and_then(|v| self.arena.get_value(v as usize));
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
                     value,

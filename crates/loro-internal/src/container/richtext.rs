@@ -14,7 +14,6 @@ mod fugue_span;
 mod query_by_len;
 pub(crate) mod richtext_state;
 mod style_range_map;
-mod tinyvec;
 mod tracker;
 
 use crate::{change::Lamport, utils::string_slice::StringSlice, InternalString};
@@ -23,7 +22,7 @@ use loro_common::{Counter, LoroValue, PeerID};
 use std::fmt::Debug;
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
-pub(crate) use richtext_state::{query, RichtextState};
+pub(crate) use richtext_state::RichtextState;
 pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 
 /// This is the data structure that represents a span of rich text.
@@ -278,7 +277,6 @@ impl TextStyleInfoFlag {
 
 #[cfg(test)]
 mod test {
-    use super::*;
 
     #[test]
     fn test() {}

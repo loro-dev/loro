@@ -8,7 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    delta::{Delta, DeltaItem},
+    delta::Delta,
     event::{Diff, DiffVariant, Index},
     event::{InternalContainerDiff, InternalDiff},
     fx_map,
@@ -105,9 +105,8 @@ impl State {
         Self::MapState(MapState::new(idx))
     }
 
-    #[allow(unused)]
-    pub fn new_richtext(idx: ContainerIdx) -> Self {
-        Self::RichtextState(RichtextState::new(idx))
+    pub fn new_text() -> Self {
+        Self::TextState(TextState::default())
     }
 }
 
@@ -226,18 +225,14 @@ impl DocState {
         self.peer
     }
 
-    /// It's expected that diff only contains [`InternalDiff`]
     pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
 
         self.pre_txn(diff.origin.clone(), diff.local);
-        let Cow::Owned(inner) = &mut diff.diff else {
-            unreachable!()
-        };
+        let Cow::Owned(inner) = &mut diff.diff else {unreachable!()};
         for diff in inner.iter_mut() {
-            let is_recording = self.is_recording();
             let state = self
                 .states
                 .entry(diff.idx)
@@ -248,18 +243,7 @@ impl DocState {
                 self.changed_idx_in_txn.insert(diff.idx);
             }
 
-            let internal_diff = std::mem::replace(
-                &mut diff.diff,
-                DiffVariant::External(Diff::List(Delta::default())),
-            );
-
-            if is_recording {
-                let external_diff = state
-                    .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena);
-                diff.diff = external_diff.into();
-            } else {
-                state.apply_diff(internal_diff.into_internal().unwrap(), &self.arena);
-            }
+            state.apply_diff(&mut diff.diff, &self.arena);
         }
 
         self.frontiers = (*diff.new_version).to_owned();
@@ -269,7 +253,7 @@ impl DocState {
         }
     }
 
-    pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+    pub fn apply_local_op(&mut self, op: RawOp) -> LoroResult<()> {
         let state = self
             .states
             .entry(op.container)
@@ -323,9 +307,9 @@ impl DocState {
         self.states.get(&idx)
     }
 
-    pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
+    pub(crate) fn get_value_by_idx(&self, container_idx: ContainerIdx) -> LoroValue {
         self.states
-            .get_mut(&container_idx)
+            .get(&container_idx)
             .map(|x| x.get_value())
             .unwrap_or_else(|| container_idx.get_type().default_value())
     }
@@ -350,20 +334,20 @@ impl DocState {
                 self.arena.set_parent(child_idx, Some(*idx));
             }
         }
+
         if self.is_recording() {
-            let diff = self
-                .states
-                .iter_mut()
-                .map(|(&idx, state)| InternalContainerDiff {
-                    idx,
-                    diff: state.to_diff().into(),
-                })
-                .collect();
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 local: false,
-                diff,
-                new_version: Cow::Borrowed(&frontiers),
+                diff: self
+                    .states
+                    .iter()
+                    .map(|(&idx, state)| InternalContainerDiff {
+                        idx,
+                        diff: state.to_diff(),
+                    })
+                    .collect(),
+                new_version: Cow::Owned(frontiers.clone()),
             });
         }
 
@@ -372,10 +356,7 @@ impl DocState {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(
-        &mut self,
-        id: I,
-    ) -> Option<&mut richtext_state::RichtextState> {
+    pub fn get_text<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&text_state::TextState> {
         let id: ContainerIdRaw = id.into();
         let idx = match id {
             ContainerIdRaw::Root { name } => Some(self.arena.register_container(
@@ -392,8 +373,8 @@ impl DocState {
         let idx = idx.unwrap();
         self.states
             .entry(idx)
-            .or_insert_with(|| State::new_richtext(idx))
-            .as_richtext_state_mut()
+            .or_insert_with(State::new_text)
+            .as_text_state()
     }
 
     #[inline(always)]
@@ -409,19 +390,6 @@ impl DocState {
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn with_state_mut<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
-    where
-        F: FnOnce(&mut State) -> R,
-    {
-        let state = self.states.get_mut(&idx);
-        if let Some(state) = state {
-            f(state)
-        } else {
-            f(&mut create_state(idx))
-        }
-    }
-
     pub(super) fn is_in_txn(&self) -> bool {
         self.in_txn
     }
@@ -430,7 +398,7 @@ impl DocState {
         !self.in_txn && self.states.is_empty() && self.arena.is_empty()
     }
 
-    pub fn get_deep_value(&mut self) -> LoroValue {
+    pub fn get_deep_value(&self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
@@ -448,7 +416,7 @@ impl DocState {
         LoroValue::Map(Arc::new(ans))
     }
 
-    pub fn get_deep_value_with_id(&mut self) -> LoroValue {
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
@@ -470,12 +438,12 @@ impl DocState {
     }
 
     pub(crate) fn get_container_deep_value_with_id(
-        &mut self,
+        &self,
         container: ContainerIdx,
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(state) = self.states.get_mut(&container) else {
+        let Some(state) = self.states.get(&container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
@@ -535,8 +503,8 @@ impl DocState {
         }
     }
 
-    pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(state) = self.states.get_mut(&container) else {
+    pub fn get_container_deep_value(&self, container: ContainerIdx) -> LoroValue {
+        let Some(state) = self.states.get(&container) else {
             return container.get_type().default_value();
         };
         let value = state.get_value();
@@ -560,28 +528,21 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if container.get_type() == ContainerType::Tree {
-                    // get tree's meta
-                    for nodes in Arc::make_mut(&mut map).values_mut() {
-                        get_meta_value(nodes, self);
-                    }
-                    LoroValue::Map(map)
-                } else {
-                    if map.iter().all(|x| !x.1.is_container()) {
-                        return LoroValue::Map(map);
-                    }
-
-                    let map_mut = Arc::make_mut(&mut map);
-                    for (_key, value) in map_mut.iter_mut() {
-                        if value.is_container() {
-                            let container = value.as_container().unwrap();
-                            let container_idx = self.arena.register_container(container);
-                            let new_value = self.get_container_deep_value(container_idx);
-                            *value = new_value;
-                        }
-                    }
-                    LoroValue::Map(map)
+                if map.iter().all(|x| !x.1.is_container()) {
+                    return LoroValue::Map(map);
                 }
+
+                let map_mut = Arc::make_mut(&mut map);
+                for (_key, value) in map_mut.iter_mut() {
+                    if value.is_container() {
+                        let container = value.as_container().unwrap();
+                        let container_idx = self.arena.register_container(container);
+                        let new_value = self.get_container_deep_value(container_idx);
+                        *value = new_value;
+                    }
+                }
+
+                LoroValue::Map(map)
             }
             _ => value,
         }
@@ -600,24 +561,20 @@ impl DocState {
         let local = diffs[0].local;
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
-            for container_diff in diff.diff.into_owned() {
+            for mut container_diff in diff.diff.into_owned() {
+                self.convert_raw(&mut container_diff.diff, container_diff.idx);
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
                         containers.insert(container_diff.idx, (container_diff.diff, path));
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        debug_log::debug_log!(
-                            "⚠️ WARNING: ignore because cannot find path {:#?}",
-                            &container_diff
-                        );
+                        debug_log::debug_log!("ignore because cannot find path {:#?}", &container_diff);
                     }
                     continue;
                 };
 
-                // TODO: PERF avoid this clone
-                *last_container_diff = last_container_diff
-                    .clone()
+                *last_container_diff = take(last_container_diff)
                     .compose(container_diff.diff)
                     .unwrap();
             }
@@ -630,7 +587,7 @@ impl DocState {
                 ContainerDiff {
                     id,
                     idx,
-                    diff: diff.into_external().unwrap(),
+                    diff,
                     path,
                 }
             })
@@ -650,12 +607,10 @@ impl DocState {
 
     // the container may be override, so it may return None
     fn get_path(&self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
-        debug_log::group!("GET PATH {:?}", idx);
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
                 let prop = parent_state.get_child_index(&id)?;
@@ -670,13 +625,87 @@ impl DocState {
         }
 
         ans.reverse();
-        debug_log::group_end!();
         Some(ans)
+    }
+
+    /// convert seq raw to text/list
+    pub(crate) fn convert_raw(&self, diff: &mut Diff, idx: ContainerIdx) {
+        let seq = match diff {
+            Diff::SeqRaw(seq) => seq,
+            Diff::SeqRawUtf16(seq) => seq,
+            _ => return,
+        };
+
+        match idx.get_type() {
+            ContainerType::Text => {
+                let mut ans: Delta<String> = Delta::new();
+                let mut index = 0;
+                for span in seq.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { len, .. } => {
+                            ans.push(DeltaItem::Retain {
+                                len: *len,
+                                meta: (),
+                            });
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Insert { value, .. } => {
+                            let len = value.0.iter().fold(0, |acc, cur| acc + cur.0.len());
+                            let mut s = String::with_capacity(len);
+                            for slice in value.0.iter() {
+                                self.arena.with_text_slice(
+                                    slice.0.start as usize..slice.0.end as usize,
+                                    |slice| {
+                                        s.push_str(slice);
+                                    },
+                                )
+                            }
+                            ans.push(DeltaItem::Insert { value: s, meta: () });
+                            index += len;
+                        }
+                        crate::delta::DeltaItem::Delete { len, .. } => {
+                            ans.push(DeltaItem::Delete {
+                                len: *len,
+                                meta: (),
+                            });
+                        }
+                    }
+                }
+
+                *diff = Diff::Text(ans);
+            }
+            ContainerType::List => {
+                let mut list: Delta<Vec<LoroValue>> = Delta::new();
+
+                for span in seq.iter() {
+                    match span {
+                        DeltaItem::Retain { len, .. } => {
+                            list = list.retain(*len);
+                        }
+                        DeltaItem::Insert { value, .. } => {
+                            let mut arr = Vec::new();
+                            for slice in value.0.iter() {
+                                let values = self
+                                    .arena
+                                    .get_values(slice.0.start as usize..slice.0.end as usize);
+                                arr.extend_from_slice(&values);
+                            }
+
+                            list = list.insert(arr)
+                        }
+                        DeltaItem::Delete { len, .. } => list = list.delete(*len),
+                    }
+                }
+                *diff = Diff::List(list);
+            }
+            ContainerType::Map => unreachable!(),
+        }
     }
 }
 
 pub fn create_state(idx: ContainerIdx) -> State {
     match idx.get_type() {
+        ContainerType::Text => State::TextState(TextState::new()),
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
         ContainerType::Text => State::RichtextState(RichtextState::new(idx)),

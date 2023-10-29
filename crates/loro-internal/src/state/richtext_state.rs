@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
-use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{Counter, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
 use crate::{
@@ -10,8 +10,8 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            query::{EventIndexQuery, EventIndexQueryT},
-            AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
+            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
+            TextStyleInfoFlag,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
@@ -27,7 +27,7 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
-    pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
+    pub(crate) state: Box<LazyLoad<RichtextStateLoader, InnerState>>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
 }
@@ -37,22 +37,29 @@ impl RichtextState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            state: LazyLoad::new_dst(Default::default()),
+            state: Box::new(LazyLoad::new_dst(Default::default())),
             in_txn: false,
             undo_stack: Default::default(),
         }
     }
 
     #[inline]
-    pub fn to_string(&mut self) -> String {
+    pub fn as_string(&mut self) -> String {
         self.state.get_mut().to_string()
     }
 
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
             LazyLoad::Dst(d) => d.is_emtpy(),
+        }
+    }
+
+    pub(crate) fn diagnose(&self) {
+        match &*self.state {
+            LazyLoad::Src(_) => {}
+            LazyLoad::Dst(d) => d.diagnose(),
         }
     }
 }
@@ -181,16 +188,15 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, start, end) = self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(entity_index, *len);
-                    for span in content {
-                        self.undo_stack.push(UndoItem::Delete {
-                            index: entity_index as u32,
-                            content: span,
-                        })
-                    }
+                    let (start, end) =
+                        self.state
+                            .get_mut()
+                            .drain_by_entity_index(entity_index, *len, |span| {
+                                self.undo_stack.push(UndoItem::Delete {
+                                    index: entity_index as u32,
+                                    content: span,
+                                })
+                            });
                     if start > event_index {
                         for (len, styles) in self
                             .state
@@ -292,51 +298,55 @@ impl ContainerState for RichtextState {
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
-                    let (content, _start, _end) = self
-                        .state
+                    self.state
                         .get_mut()
-                        .drain_by_entity_index(entity_index, *len);
-                    for span in content {
-                        self.undo_stack.push(UndoItem::Delete {
-                            index: entity_index as u32,
-                            content: span,
-                        })
-                    }
+                        .drain_by_entity_index(entity_index, *len, |span| {
+                            self.undo_stack.push(UndoItem::Delete {
+                                index: entity_index as u32,
+                                content: span,
+                            })
+                        });
                 }
             }
         }
     }
 
-    fn apply_op(&mut self, r_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()> {
+    fn apply_op(&mut self, r_op: &RawOp, op: &Op, _arena: &SharedArena) {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
-                list_op::InnerListOp::Insert { slice, pos } => {
-                    self.state.get_mut().insert_at_entity_index(
-                        *pos,
-                        arena.slice_by_unicode(slice.0.start as usize..slice.0.end as usize),
-                    );
+                list_op::InnerListOp::Insert { slice: _, pos: _ } => {
+                    unreachable!()
+                }
+                list_op::InnerListOp::InsertText {
+                    slice,
+                    unicode_len: len,
+                    unicode_start: _,
+                    pos,
+                } => {
+                    self.state
+                        .get_mut()
+                        .insert_at_entity_index(*pos as usize, slice.clone());
 
                     if self.in_txn {
                         self.undo_stack.push(UndoItem::Insert {
-                            index: *pos as u32,
-                            len: slice.0.end - slice.0.start,
+                            index: *pos,
+                            len: *len,
                         })
                     }
                 }
                 list_op::InnerListOp::Delete(del) => {
-                    for span in self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(del.start() as usize, rle::HasLength::atom_len(&del))
-                        .0
-                    {
-                        if self.in_txn {
-                            self.undo_stack.push(UndoItem::Delete {
-                                index: del.start() as u32,
-                                content: span,
-                            })
-                        }
-                    }
+                    self.state.get_mut().drain_by_entity_index(
+                        del.start() as usize,
+                        rle::HasLength::atom_len(&del),
+                        |span| {
+                            if self.in_txn {
+                                self.undo_stack.push(UndoItem::Delete {
+                                    index: del.start() as u32,
+                                    content: span,
+                                })
+                            }
+                        },
+                    );
                 }
                 list_op::InnerListOp::StyleStart {
                     start,
@@ -359,7 +369,6 @@ impl ContainerState for RichtextState {
             },
             _ => unreachable!(),
         }
-        Ok(())
     }
 
     fn to_diff(&mut self) -> Diff {
@@ -399,10 +408,11 @@ impl RichtextState {
         while let Some(item) = self.undo_stack.pop() {
             match item {
                 UndoItem::Insert { index, len } => {
-                    let _ = self
-                        .state
-                        .get_mut()
-                        .drain_by_entity_index(index as usize, len as usize);
+                    self.state.get_mut().drain_by_entity_index(
+                        index as usize,
+                        len as usize,
+                        |_| {},
+                    );
                 }
                 UndoItem::Delete { index, content } => {
                     match content {
@@ -432,7 +442,7 @@ impl RichtextState {
 
     #[inline(always)]
     pub fn len_entity(&self) -> usize {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => s.entity_index,
             LazyLoad::Dst(d) => d.len_entity(),
         }
@@ -447,7 +457,7 @@ impl RichtextState {
     pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert::<EventIndexQueryT>(pos)
+            .get_entity_index_for_text_insert(pos, PosType::Event)
     }
 
     #[inline(always)]
@@ -458,7 +468,7 @@ impl RichtextState {
     ) -> Vec<Range<usize>> {
         self.state
             .get_mut()
-            .get_text_entity_ranges::<EventIndexQuery>(pos, len)
+            .get_text_entity_ranges(pos, len, PosType::Event)
     }
 
     #[inline(always)]
@@ -478,7 +488,7 @@ impl RichtextState {
 
     #[inline(always)]
     pub(crate) fn iter_chunk(&self) -> Box<dyn Iterator<Item = &RichtextStateChunk> + '_> {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => Box::new(s.elements.iter()),
             LazyLoad::Dst(s) => Box::new(s.iter_chunk()),
         }
@@ -535,7 +545,7 @@ impl RichtextState {
             is_text = !is_text;
         }
 
-        self.state = LazyLoad::new(loader);
+        self.state = Box::new(LazyLoad::new(loader));
     }
 
     pub(crate) fn encode_snapshot(

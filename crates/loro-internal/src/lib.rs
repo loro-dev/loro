@@ -57,4 +57,4 @@ pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
 
-pub(crate) use container::text;
+

@@ -611,9 +611,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                 ),
                             }),
                             Kind::TextAnchorEnd => RawOpContent::List(ListOp::StyleEnd),
-                            _ => {
-                                unreachable!()
-                            }
                         }
                     }
                 };

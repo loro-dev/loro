@@ -423,14 +423,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 #[derive(Debug, Default)]
 struct RichtextDiffCalculator {
     start_vv: VersionVector,
-    tracker: RichtextTracker,
+    tracker: Box<RichtextTracker>,
     styles: Vec<StyleOp>,
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = RichtextTracker::new_with_unknown();
+            self.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.styles.clear();
             self.start_vv = vv.clone();
         }
@@ -455,6 +455,18 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         op.id_start(),
                         *pos,
                         RichtextChunk::new_text(slice.0.clone()),
+                    );
+                }
+                crate::container::list::list_op::InnerListOp::InsertText {
+                    slice: _,
+                    unicode_start,
+                    unicode_len: len,
+                    pos,
+                } => {
+                    self.tracker.insert(
+                        op.id_start(),
+                        *pos as usize,
+                        RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
                     );
                 }
                 crate::container::list::list_op::InnerListOp::Delete(del) => {
@@ -495,7 +507,6 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
-            crate::op::InnerContent::Tree(_) => unreachable!(),
         }
     }
 
@@ -540,89 +551,5 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         // debug_log::debug_dbg!(&delta, from, to);
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
-    }
-}
-
-#[derive(Debug, Default)]
-struct TreeDiffCalculator;
-
-impl TreeDiffCalculator {
-    fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
-        frontiers
-            .iter()
-            .map(|id| oplog.get_min_lamport_at(*id))
-            .min()
-            .unwrap_or(0)
-    }
-
-    fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
-        frontiers
-            .iter()
-            .map(|id| oplog.get_max_lamport_at(*id))
-            .max()
-            .unwrap_or(Lamport::MAX)
-    }
-}
-
-impl DiffCalculatorTrait for TreeDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
-
-    fn apply_change(
-        &mut self,
-        oplog: &OpLog,
-        op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
-    ) {
-        let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
-        let node = MoveLamportAndID {
-            lamport: op.lamport(),
-            id: ID {
-                peer: op.client_id(),
-                counter: op.id_start().counter,
-            },
-            target: *target,
-            parent: *parent,
-            effected: true,
-        };
-        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        tree_cache.add_node(node);
-    }
-
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
-
-    fn calculate_diff(
-        &mut self,
-        oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
-    ) -> InternalDiff {
-        debug_log::debug_log!("from {:?} to {:?}", from, to);
-        let mut merged_vv = from.clone();
-        merged_vv.merge(to);
-        let from_frontiers = from.to_frontiers(&oplog.dag);
-        let to_frontiers = to.to_frontiers(&oplog.dag);
-        let common_ancestors = oplog
-            .dag
-            .find_common_ancestor(&from_frontiers, &to_frontiers);
-        let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-        let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        debug_log::debug_log!("lca vv {:?}", lca_vv);
-
-        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
-        let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
-        let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
-        let from_min_lamport = self.get_min_lamport_by_frontiers(&from_frontiers, oplog);
-        let from_max_lamport = self.get_max_lamport_by_frontiers(&from_frontiers, oplog);
-        let diff = tree_cache.diff(
-            from,
-            to,
-            &lca_vv,
-            to_max_lamport,
-            lca_min_lamport,
-            (from_min_lamport, from_max_lamport),
-        );
-        debug_log::debug_log!("\ndiff {:?}", diff);
-
-        InternalDiff::Tree(diff)
     }
 }

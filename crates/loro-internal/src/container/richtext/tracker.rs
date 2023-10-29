@@ -1,5 +1,5 @@
 use generic_btree::LeafIndex;
-use loro_common::{Counter, IdSpan, PeerID, ID};
+use loro_common::{Counter, PeerID, ID};
 
 use crate::VersionVector;
 
@@ -48,11 +48,12 @@ impl Tracker {
         });
         this.id_to_cursor.push(
             ID::new(UNKNOWN_PEER_ID, 0),
-            id_to_cursor::Cursor::new_insert(result, u32::MAX as usize / 4),
+            id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
         this
     }
 
+    #[allow(unused)]
     fn new() -> Self {
         Self {
             rope: CrdtRope::new(),
@@ -65,11 +66,6 @@ impl Tracker {
     #[inline]
     pub fn all_vv(&self) -> &VersionVector {
         &self.applied_vv
-    }
-
-    #[inline]
-    pub fn current_vv(&self) -> &VersionVector {
-        &self.current_vv
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
@@ -281,9 +277,9 @@ mod test {
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
         assert_eq!(v.len(), 2);
-        assert_eq!(v[0].is_activated(), false);
+        assert!(!v[0].is_activated());
         assert_eq!(v[0].rle_len(), 4);
-        assert_eq!(v[1].is_activated(), true);
+        assert!(v[1].is_activated());
         assert_eq!(v[1].rle_len(), 6);
     }
 
@@ -295,9 +291,9 @@ mod test {
         t.checkout(&vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
         assert_eq!(v.len(), 2);
-        assert_eq!(v[0].is_activated(), true);
+        assert!(v[0].is_activated());
         assert_eq!(v[0].rle_len(), 6);
-        assert_eq!(v[1].is_activated(), false);
+        assert!(!v[1].is_activated());
         assert_eq!(v[1].rle_len(), 4);
     }
 }

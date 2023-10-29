@@ -65,7 +65,7 @@ impl OpLog {
                     .pending_changes
                     .changes
                     .entry(miss_dep)
-                    .or_insert_with(SmallVec::new)
+                    .or_default()
                     .push(local_change),
             }
         }
@@ -86,7 +86,7 @@ impl OpLog {
                     .pending_changes
                     .changes
                     .entry(miss_dep)
-                    .or_insert_with(SmallVec::new)
+                    .or_default()
                     .push(local_change),
                 _ => unreachable!(),
             }
@@ -145,7 +145,7 @@ impl OpLog {
                         .pending_changes
                         .changes
                         .entry(miss_dep)
-                        .or_insert_with(SmallVec::new)
+                        .or_default()
                         .push(pending_change),
                 }
             }

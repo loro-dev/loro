@@ -132,6 +132,10 @@ impl StyleRangeMap {
     ///   The newly inserted text is before the start anchor of x, so the StyleSet of the new text should not include this style.
     /// - If both leftStyleSet and rightStyleSet contain style x, it means that the newly inserted text is within the style range, so the StyleSet should include x.
     pub fn insert(&mut self, pos: usize, len: usize) -> &Styles {
+        if !self.has_style {
+            return &EMPTY_STYLES;
+        }
+
         if pos == 0 {
             self.tree.prepend(Elem {
                 len,
@@ -175,7 +179,12 @@ impl StyleRangeMap {
         return &self.tree.get_elem(right.leaf).unwrap().styles;
     }
 
+    #[allow(unused)]
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
+        if !self.has_style {
+            return None;
+        }
+
         let result = self.tree.query::<LengthFinder>(&index)?.cursor;
         self.tree.get_elem(result.leaf).map(|x| &x.styles)
     }
@@ -222,11 +231,15 @@ impl StyleRangeMap {
     }
 
     pub fn delete(&mut self, range: Range<usize>) {
+        if !self.has_style {
+            return;
+        }
+
         let start = self.tree.query::<LengthFinder>(&range.start).unwrap();
         let end = self.tree.query::<LengthFinder>(&range.end).unwrap();
         if start.cursor.leaf == end.cursor.leaf {
             // delete in the same element
-            self.tree.update_leaf(start.cursor.leaf, |mut x| {
+            self.tree.update_leaf(start.cursor.leaf, |x| {
                 x.len -= range.len();
                 (true, None, None)
             });
@@ -236,6 +249,7 @@ impl StyleRangeMap {
         self.tree.drain(start..end);
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         *self.tree.root_cache() as usize
     }

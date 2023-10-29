@@ -1,4 +1,4 @@
-use std::ops::{Bound, Deref, RangeBounds};
+use std::ops::{Bound, RangeBounds};
 
 use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 
@@ -6,7 +6,7 @@ use crate::container::richtext::richtext_state::unicode_to_utf8_index;
 const INDEX_INTERVAL: u32 = 128;
 
 #[derive(Default)]
-pub struct StrArena {
+pub(crate) struct StrArena {
     bytes: AppendOnlyBytes,
     unicode_indexes: Vec<Index>,
     len: Index,
@@ -20,19 +20,6 @@ struct Index {
 }
 
 impl StrArena {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            bytes: AppendOnlyBytes::new(),
-            unicode_indexes: Vec::new(),
-            len: Index {
-                bytes: 0,
-                utf16: 0,
-                unicode: 0,
-            },
-        }
-    }
-
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len.bytes == 0
@@ -120,7 +107,7 @@ impl StrArena {
             Bound::Included(&i) => {
                 unicode_to_byte_index(&self.unicode_indexes, i as u32, &self.bytes)
             }
-            Bound::Excluded(&i) => unreachable!(),
+            Bound::Excluded(&_i) => unreachable!(),
             Bound::Unbounded => 0,
         };
 
@@ -155,18 +142,20 @@ fn unicode_to_byte_index(index: &[Index], unicode_index: u32, bytes: &AppendOnly
     }
 
     // SAFETY: we know that the index must be valid, because we record and calculate the valid index
-    let s = unsafe { std::str::from_utf8_unchecked(&bytes.deref()[index.bytes as usize..]) };
+    let s = unsafe { std::str::from_utf8_unchecked(&bytes[index.bytes as usize..]) };
     unicode_to_utf8_index(s, (unicode_index - index.unicode) as usize).unwrap()
         + index.bytes as usize
 }
 
 #[cfg(test)]
 mod test {
+    use std::ops::Deref;
+
     use super::*;
 
     #[test]
     fn test() {
-        let mut arena = StrArena::new();
+        let mut arena = StrArena::default();
         arena.alloc("Hello");
         let slice = arena.slice_by_unicode(0..5);
         assert_eq!(slice.deref(), b"Hello");
@@ -177,7 +166,7 @@ mod test {
 
     #[test]
     fn parse_unicode_correctly() {
-        let mut arena = StrArena::new();
+        let mut arena = StrArena::default();
         arena.alloc("Hello");
         arena.alloc("World");
         arena.alloc("你好");
@@ -200,7 +189,7 @@ mod test {
 
     #[test]
     fn slice_long_unicode_correctly() {
-        let mut arena = StrArena::new();
+        let mut arena = StrArena::default();
         let src = "一二34567八九零";
         for s in std::iter::repeat(src).take(100) {
             arena.alloc(s);
