@@ -414,6 +414,7 @@ impl Sliceable for InnerListOp {
                 pos: *pos + from as u32,
             },
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
+            InnerListOp::StyleStart { .. } | InnerListOp::StyleEnd { .. } => self.clone(),
         }
     }
 }

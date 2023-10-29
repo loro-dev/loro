@@ -17,17 +17,6 @@ fn import() {
 }
 
 #[test]
-#[ignore]
-fn import_history() {
-    let doc = LoroDoc::new();
-    doc.import(include_bytes!("./history_compressed_rle_updates.dat"))
-        .unwrap();
-    let doc2 = LoroDoc::new();
-    doc2.import(include_bytes!("./history_snapshot.dat"))
-        .unwrap();
-}
-
-#[test]
 fn test_timestamp() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");

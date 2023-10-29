@@ -16,6 +16,7 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
+use loro_common::LoroResult;
 
 #[derive(Debug)]
 pub struct ListState {
@@ -365,9 +366,10 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) -> LoroResult<()> {
         match &op.content {
             RawOpContent::Map(_) => unreachable!(),
+            RawOpContent::Tree(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
                     ListSlice::RawData(list) => match list {
@@ -401,6 +403,7 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
+        Ok(())
     }
 
     #[doc = " Start a transaction"]

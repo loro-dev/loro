@@ -7,8 +7,8 @@ use std::{
 
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
-use loro_common::PeerID;
 use loro_common::ContainerType;
+use loro_common::PeerID;
 
 use crate::{
     change::Lamport,
@@ -436,6 +436,11 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
+            },
+            crate::op::RawOpContent::Tree(tree) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Tree(tree),
             },
         }
     }
