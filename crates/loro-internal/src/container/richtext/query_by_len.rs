@@ -5,7 +5,7 @@ use generic_btree::{BTreeTrait, FindResult, Query};
 use crate::utils::utf16::count_utf16_chars;
 
 use super::richtext_state::{
-    unicode_to_utf16_index, unicode_to_utf8_index, RichtextStateChunk, RichtextTreeTrait,
+    unicode_to_utf16_index, RichtextStateChunk, RichtextTreeTrait,
 };
 
 /// An easy way to implement [Query] by using key index
@@ -88,7 +88,7 @@ impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQuery<T, B> {
 
     fn confirm_elem(
         &mut self,
-        q: &Self::QueryArg,
+        _q: &Self::QueryArg,
         elem: &<B as BTreeTrait>::Elem,
     ) -> (usize, bool) {
         T::get_offset_and_found(self.left, elem)
@@ -129,7 +129,7 @@ impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQueryWithEntityIndex<T, 
 
     fn confirm_elem(
         &mut self,
-        q: &Self::QueryArg,
+        _q: &Self::QueryArg,
         elem: &<B as BTreeTrait>::Elem,
     ) -> (usize, bool) {
         let (offset, found) = T::get_offset_and_found(self.left, elem);
@@ -172,7 +172,7 @@ impl Query<RichtextTreeTrait> for EntityIndexQueryWithEventIndex {
         FindResult::new_missing(child_caches.len() - 1, last_left)
     }
 
-    fn confirm_elem(&mut self, q: &Self::QueryArg, elem: &RichtextStateChunk) -> (usize, bool) {
+    fn confirm_elem(&mut self, _q: &Self::QueryArg, elem: &RichtextStateChunk) -> (usize, bool) {
         let left = self.left;
         match elem {
             RichtextStateChunk::Text { unicode_len, text } => {

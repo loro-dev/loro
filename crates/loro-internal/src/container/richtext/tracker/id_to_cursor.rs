@@ -229,6 +229,7 @@ impl Cursor {
         }
     }
 
+    #[allow(unused)]
     pub fn new_delete(id_span: IdSpan) -> Self {
         Self::Delete(id_span)
     }
@@ -322,7 +323,7 @@ impl Cursor {
         }
 
         match self {
-            Cursor::Insert { set, len } => {
+            Cursor::Insert { set, len: _ } => {
                 let mut index = 0;
                 for insert in set.iter() {
                     if index + insert.len as usize > pos {
@@ -383,6 +384,6 @@ mod test {
 
     #[test]
     fn test_id_to_cursor() {
-        let mut map = IdToCursor::default();
+        let _map = IdToCursor::default();
     }
 }

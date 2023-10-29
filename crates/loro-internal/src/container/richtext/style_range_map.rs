@@ -179,6 +179,7 @@ impl StyleRangeMap {
         return &self.tree.get_elem(right.leaf).unwrap().styles;
     }
 
+    #[allow(unused)]
     pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
         if !self.has_style {
             return None;
@@ -238,7 +239,7 @@ impl StyleRangeMap {
         let end = self.tree.query::<LengthFinder>(&range.end).unwrap();
         if start.cursor.leaf == end.cursor.leaf {
             // delete in the same element
-            self.tree.update_leaf(start.cursor.leaf, |mut x| {
+            self.tree.update_leaf(start.cursor.leaf, |x| {
                 x.len -= range.len();
                 (true, None, None)
             });
@@ -248,6 +249,7 @@ impl StyleRangeMap {
         self.tree.drain(start..end);
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         *self.tree.root_cache() as usize
     }

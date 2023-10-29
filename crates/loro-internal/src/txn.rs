@@ -9,23 +9,21 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use loro_common::{ContainerType, LoroResult};
 use rle::{HasLength, RleVec};
-use smallvec::smallvec;
+
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
     container::{
         idx::ContainerIdx,
-        list::list_op::InnerListOp,
-        richtext::{richtext_state::RichtextStateChunk, AnchorType, Style, StyleOp},
+        richtext::{Style},
         IntoContainerId,
     },
     delta::{Delta, MapValue},
     event::Diff,
     handler::TextHandler,
     id::{Counter, PeerID, ID},
-    op::{Op, RawOp, RawOpContent, SliceRanges},
+    op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
-    utils::string_slice::StringSlice,
     version::Frontiers,
     InternalString, LoroError, LoroValue,
 };
@@ -335,7 +333,7 @@ pub(crate) struct TxnContainerDiff {
 // PERF: could be compacter
 fn change_to_diff(
     change: &Change,
-    arena: &SharedArena,
+    _arena: &SharedArena,
     mut event_hints: FxHashMap<Counter, EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());

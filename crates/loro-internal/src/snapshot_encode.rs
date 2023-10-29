@@ -726,7 +726,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                     InnerListOp::InsertText {
                         slice,
                         unicode_len: len,
-                        unicode_start,
+                        unicode_start: _,
                         pos,
                     } => match op.container.get_type() {
                         loro_common::ContainerType::Text => {
@@ -887,7 +887,7 @@ mod test {
             .unwrap()
             .get_text("id")
             .unwrap()
-            .to_string();
+            .as_string();
         assert_eq!("hello", &actual);
         debug_dbg!(&app2.oplog().lock().unwrap());
 
@@ -908,7 +908,7 @@ mod test {
             .unwrap()
             .get_text("id")
             .unwrap()
-            .to_string();
+            .as_string();
         assert_eq!("he llo", &actual);
     }
 }

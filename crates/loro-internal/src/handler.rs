@@ -828,7 +828,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold".into(), TextStyleInfoFlag::BOLD)
+            .mark(&mut txn, 0, 5, "bold", TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 

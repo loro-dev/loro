@@ -1,12 +1,12 @@
-use append_only_bytes::BytesSlice;
+
 use enum_as_inner::EnumAsInner;
-use rle::Mergable;
+
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::richtext::richtext_state::{unicode_to_utf8_index, RichtextStateChunk},
-    delta::{Delta, DeltaValue, MapDelta, MapDiff, StyleMeta},
+    container::richtext::richtext_state::{RichtextStateChunk},
+    delta::{Delta, MapDelta, StyleMeta},
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString, LoroValue,

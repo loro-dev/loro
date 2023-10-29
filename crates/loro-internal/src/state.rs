@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::take, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -8,7 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    delta::{Delta, DeltaItem},
+    delta::Delta,
     event::{Diff, DiffVariant, Index},
     event::{InternalContainerDiff, InternalDiff},
     fx_map,

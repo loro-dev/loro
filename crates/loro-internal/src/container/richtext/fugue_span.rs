@@ -264,6 +264,7 @@ impl Mergeable for FugueSpan {
 }
 
 impl FugueSpan {
+    #[allow(unused)]
     pub fn new(id: ID, content: RichtextChunk) -> Self {
         Self {
             id,

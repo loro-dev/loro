@@ -416,14 +416,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 #[derive(Debug, Default)]
 struct RichtextDiffCalculator {
     start_vv: VersionVector,
-    tracker: RichtextTracker,
+    tracker: Box<RichtextTracker>,
     styles: Vec<StyleOp>,
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(&mut self, _oplog: &super::oplog::OpLog, vv: &crate::VersionVector) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = RichtextTracker::new_with_unknown();
+            self.tracker = Box::new(RichtextTracker::new_with_unknown());
             self.styles.clear();
             self.start_vv = vv.clone();
         }
@@ -446,12 +446,12 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
                         op.id_start(),
-                        *pos as usize,
+                        *pos,
                         RichtextChunk::new_text(slice.0.clone()),
                     );
                 }
                 crate::container::list::list_op::InnerListOp::InsertText {
-                    slice,
+                    slice: _,
                     unicode_start,
                     unicode_len: len,
                     pos,

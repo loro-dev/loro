@@ -1,7 +1,7 @@
-use std::sync::Arc;
+
 
 use bench_utils::TextAction;
-use criterion::black_box;
+
 use loro_internal::LoroDoc;
 
 fn main() {

@@ -392,7 +392,7 @@ impl OpLog {
                 list_op::InnerListOp::InsertText {
                     slice,
                     unicode_len: len,
-                    unicode_start,
+                    unicode_start: _,
                     pos,
                 } => match container.container_type() {
                     loro_common::ContainerType::Text => {
@@ -429,8 +429,7 @@ impl OpLog {
             crate::op::InnerContent::Map(map) => {
                 let value = map
                     .value
-                    .map(|v| self.arena.get_value(v as usize))
-                    .flatten();
+                    .and_then(|v| self.arena.get_value(v as usize));
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
                     value,

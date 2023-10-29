@@ -64,9 +64,9 @@ impl<'a> OpConverter<'a> {
     pub fn convert_single_op(
         &mut self,
         id: &ContainerID,
-        peer: PeerID,
+        _peer: PeerID,
         counter: Counter,
-        lamport: Lamport,
+        _lamport: Lamport,
         content: RawOpContent,
     ) -> Op {
         let container = 'out: {
@@ -345,9 +345,9 @@ impl SharedArena {
     fn inner_convert_op(
         &self,
         content: RawOpContent<'_>,
-        peer: PeerID,
+        _peer: PeerID,
         counter: i32,
-        lamport: Lamport,
+        _lamport: Lamport,
         container: ContainerIdx,
     ) -> Op {
         match content {

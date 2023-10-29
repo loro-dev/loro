@@ -27,7 +27,7 @@ use super::ContainerState;
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
-    pub(crate) state: LazyLoad<RichtextStateLoader, InnerState>,
+    pub(crate) state: Box<LazyLoad<RichtextStateLoader, InnerState>>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
 }
@@ -37,27 +37,27 @@ impl RichtextState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            state: LazyLoad::new_dst(Default::default()),
+            state: Box::new(LazyLoad::new_dst(Default::default())),
             in_txn: false,
             undo_stack: Default::default(),
         }
     }
 
     #[inline]
-    pub fn to_string(&mut self) -> String {
+    pub fn as_string(&mut self) -> String {
         self.state.get_mut().to_string()
     }
 
     #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
             LazyLoad::Dst(d) => d.is_emtpy(),
         }
     }
 
     pub(crate) fn diagnose(&self) {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(_) => {}
             LazyLoad::Dst(d) => d.diagnose(),
         }
@@ -311,10 +311,10 @@ impl ContainerState for RichtextState {
         }
     }
 
-    fn apply_op(&mut self, r_op: &RawOp, op: &Op, arena: &SharedArena) {
+    fn apply_op(&mut self, r_op: &RawOp, op: &Op, _arena: &SharedArena) {
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
-                list_op::InnerListOp::Insert { slice, pos } => {
+                list_op::InnerListOp::Insert { slice: _, pos: _ } => {
                     unreachable!()
                 }
                 list_op::InnerListOp::InsertText {
@@ -442,7 +442,7 @@ impl RichtextState {
 
     #[inline(always)]
     pub fn len_entity(&self) -> usize {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => s.entity_index,
             LazyLoad::Dst(d) => d.len_entity(),
         }
@@ -488,7 +488,7 @@ impl RichtextState {
 
     #[inline(always)]
     pub(crate) fn iter_chunk(&self) -> Box<dyn Iterator<Item = &RichtextStateChunk> + '_> {
-        match &self.state {
+        match &*self.state {
             LazyLoad::Src(s) => Box::new(s.elements.iter()),
             LazyLoad::Dst(s) => Box::new(s.iter_chunk()),
         }
@@ -545,7 +545,7 @@ impl RichtextState {
             is_text = !is_text;
         }
 
-        self.state = LazyLoad::new(loader);
+        self.state = Box::new(LazyLoad::new(loader));
     }
 
     pub(crate) fn encode_snapshot(

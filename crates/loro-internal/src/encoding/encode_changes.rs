@@ -181,10 +181,10 @@ pub(super) fn encode_oplog_changes(oplog: &OpLog, vv: &VersionVector) -> Vec<u8>
                             Some(LoroValue::I32(span.signed_len as i32)),
                         ),
                         ListOp::StyleStart {
-                            start,
-                            end,
-                            key,
-                            info,
+                            start: _,
+                            end: _,
+                            key: _,
+                            info: _,
                         } => todo!("impl style encode"),
                         ListOp::StyleEnd => todo!("impl style encode"),
                     },
@@ -299,7 +299,6 @@ pub(super) fn decode_changes_to_inner_format_oplog(
                         };
                         RawOpContent::List(list_op)
                     }
-                    ContainerType::Text => unimplemented!(),
                 };
                 let remote_op = RemoteOp {
                     container: container_id,

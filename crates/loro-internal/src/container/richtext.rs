@@ -14,7 +14,6 @@ mod fugue_span;
 mod query_by_len;
 pub(crate) mod richtext_state;
 mod style_range_map;
-mod tinyvec;
 mod tracker;
 
 use crate::{change::Lamport, utils::string_slice::StringSlice, InternalString};
@@ -278,7 +277,6 @@ impl TextStyleInfoFlag {
 
 #[cfg(test)]
 mod test {
-    use super::*;
 
     #[test]
     fn test() {}

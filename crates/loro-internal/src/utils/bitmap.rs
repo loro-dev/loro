@@ -38,6 +38,7 @@ impl BitMap {
         self.vec
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.len
     }

@@ -364,6 +364,7 @@ impl PosCache {
         }
     }
 
+    #[allow(unused)]
     fn get_len(&self, pos_type: PosType) -> i32 {
         match pos_type {
             PosType::Bytes => self.bytes,
@@ -483,8 +484,11 @@ mod query {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum PosType {
+        #[allow(unused)]
         Bytes,
+        #[allow(unused)]
         Unicode,
+        #[allow(unused)]
         Utf16,
         Entity,
         Event,
@@ -636,13 +640,10 @@ mod query {
 }
 
 mod cursor_cache {
-    use std::{collections::VecDeque, sync::atomic::AtomicUsize};
+    use std::sync::atomic::AtomicUsize;
 
-    use super::{
-        pos_to_unicode_index, unicode_to_utf16_index, PosType, RichtextStateChunk,
-        RichtextTreeTrait,
-    };
-    use generic_btree::{rle::HasLength, BTree, BTreeTrait, Cursor, LeafIndex};
+    use super::{pos_to_unicode_index, unicode_to_utf16_index, PosType, RichtextTreeTrait};
+    use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
 
     #[derive(Debug, Clone)]
     struct CursorCacheItem {
@@ -688,7 +689,7 @@ mod cursor_cache {
             pos: usize,
             kind: PosType,
             cursor: Cursor,
-            tree: &BTree<RichtextTreeTrait>,
+            _tree: &BTree<RichtextTreeTrait>,
         ) {
             match kind {
                 PosType::Unicode | PosType::Entity => {
@@ -1435,41 +1436,6 @@ impl RichtextState {
             .annotate(range.start..range.end + 2, style);
     }
 
-    /// Mark a range of text with a style.
-    ///
-    /// Return the corresponding entity index ranges.
-    fn mark(&mut self, range: Range<usize>, style: Arc<StyleOp>) -> Range<usize> {
-        if self.tree.is_empty() {
-            panic!("Cannot mark an empty tree");
-        }
-
-        self.cursor_cache.invalidate();
-        let (end_pos, end_entity_index) = self.find_best_insert_pos::<UnicodeQueryT>(range.end);
-        let end_pos = end_pos.unwrap();
-        self.tree.insert_by_path(
-            end_pos,
-            RichtextStateChunk::from_style(style.clone(), AnchorType::End),
-        );
-
-        let (start_pos, start_entity_index) =
-            self.find_best_insert_pos::<UnicodeQueryT>(range.start);
-        let start_pos = start_pos.unwrap();
-        self.tree.insert_by_path(
-            start_pos,
-            RichtextStateChunk::from_style(style.clone(), AnchorType::Start),
-        );
-
-        self.style_ranges.insert(end_entity_index, 1);
-        self.style_ranges.insert(start_entity_index, 1);
-        // end_entity_index + 2, because
-        // 1. We inserted a start anchor before end_entity_index, so we need to +1
-        // 2. We need to include the end anchor in the range, so we need to +1
-        self.style_ranges
-            .annotate(start_entity_index..end_entity_index + 2, style);
-
-        start_entity_index..end_entity_index
-    }
-
     // FIXME: tests (unstable)
     /// iter item is (event_length, styles)
     pub fn iter_styles_in_event_index_range(
@@ -1652,6 +1618,7 @@ impl RichtextState {
         LoroValue::List(Arc::new(ans))
     }
 
+    #[allow(unused)]
     pub fn to_vec(&self) -> Vec<RichtextSpan> {
         self.iter().collect()
     }
@@ -1735,6 +1702,16 @@ mod test {
                     .drain_by_entity_index(range.start, range.end - range.start, |_| {});
             }
         }
+
+        fn mark(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+            let start = self
+                .state
+                .get_entity_index_for_text_insert(range.start, PosType::Unicode);
+            let end = self
+                .state
+                .get_entity_index_for_text_insert(range.end, PosType::Unicode);
+            self.state.mark_with_entity_index(start..end, style);
+        }
     }
 
     fn bold(n: isize) -> Arc<StyleOp> {
@@ -1765,7 +1742,7 @@ mod test {
     fn test() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..5, bold(0));
+        wrapper.mark(0..5, bold(0));
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
@@ -1782,7 +1759,7 @@ mod test {
                 }
             ]
         );
-        wrapper.state.mark(2..7, link(1));
+        wrapper.mark(2..7, link(1));
         dbg!(&wrapper.state);
         assert_eq!(
             wrapper.state.to_vec(),
@@ -1886,7 +1863,7 @@ mod test {
     fn bold_should_expand() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..5, bold(0));
+        wrapper.mark(0..5, bold(0));
         wrapper.insert(5, " Test");
         assert_eq!(
             wrapper.state.to_vec(),
@@ -1917,7 +1894,7 @@ mod test {
     fn link_should_not_expand() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..5, link(0));
+        wrapper.mark(0..5, link(0));
         wrapper.insert(5, " Test");
         assert_eq!(
             wrapper.state.to_vec(),
@@ -1959,7 +1936,7 @@ mod test {
     fn continuous_text_insert_should_be_merged_and_have_bold() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello");
-        wrapper.state.mark(0..5, bold(0));
+        wrapper.mark(0..5, bold(0));
         wrapper.insert(5, " World!");
         dbg!(&wrapper.state);
         assert_eq!(
@@ -1978,7 +1955,7 @@ mod test {
     fn continuous_text_insert_should_not_be_merged_when_prev_is_link() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello");
-        wrapper.state.mark(0..5, link(0));
+        wrapper.mark(0..5, link(0));
         wrapper.insert(5, " World!");
         assert_eq!(
             wrapper.state.to_vec(),
@@ -2002,8 +1979,8 @@ mod test {
     fn delete_bold() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..12, bold(0));
-        wrapper.state.mark(5..12, unbold(1));
+        wrapper.mark(0..12, bold(0));
+        wrapper.mark(5..12, unbold(1));
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
@@ -2079,8 +2056,8 @@ mod test {
     fn bold_and_link_at_the_same_place() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello");
-        wrapper.state.mark(0..5, link(0));
-        wrapper.state.mark(0..5, bold(1));
+        wrapper.mark(0..5, link(0));
+        wrapper.mark(0..5, bold(1));
         wrapper.insert(5, "A");
 
         assert_eq!(
@@ -2114,8 +2091,8 @@ mod test {
     fn comments() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..5, comment(0));
-        wrapper.state.mark(1..6, comment(1));
+        wrapper.mark(0..5, comment(0));
+        wrapper.mark(1..6, comment(1));
         assert_eq!(
             wrapper.state.to_vec(),
             vec![
@@ -2170,7 +2147,7 @@ mod test {
     fn remove_style_anchors_should_also_delete_style() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
-        wrapper.state.mark(0..5, bold(0));
+        wrapper.mark(0..5, bold(0));
         let mut count = 0;
         wrapper.state.drain_by_entity_index(0, 7, |span| {
             if matches!(span, RichtextStateChunk::Style { .. }) {

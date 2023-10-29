@@ -71,12 +71,8 @@ impl StringSlice {
         match &self.bytes {
             // SAFETY: `bytes` is always valid utf8
             Variant::BytesSlice(s) => unsafe { std::str::from_utf8_unchecked(s) },
-            Variant::Owned(s) => &s,
+            Variant::Owned(s) => s,
         }
-    }
-
-    pub fn to_string(&self) -> String {
-        self.as_str().to_string()
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -99,6 +95,12 @@ impl StringSlice {
 
     pub fn is_empty(&self) -> bool {
         self.bytes().is_empty()
+    }
+}
+
+impl std::fmt::Display for StringSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
