@@ -13,7 +13,7 @@ struct IdHeapItem {
 
 impl PartialOrd for IdHeapItem {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.lamport.cmp(&other.lamport).reverse())
+        Some(self.cmp(other))
     }
 }
 

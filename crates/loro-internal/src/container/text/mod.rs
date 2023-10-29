@@ -1,3 +1,3 @@
-pub mod text_content;
+// TODO: remove this module
+#![allow(dead_code)]
 pub mod tracker;
-pub(crate) mod utf16;

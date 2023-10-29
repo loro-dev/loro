@@ -6,4 +6,4 @@ target
 dhat-heap.json
 .DS_Store
 node_modules/
-.idea
+.idea/

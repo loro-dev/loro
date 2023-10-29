@@ -4,7 +4,7 @@
     "build": "cargo build",
     // to debug a single test use
     // RUST_BACKTRACE=full DEBUG=* cargo test --package loro-internal --lib --features test_utils --features wasm -- fuzz::recursive::failed_tests::unknown --exact --nocapture &> debug.log
-    "test": "RUST_BACKTRACE=full cargo nextest run --features=test_utils",
+    "test": "cargo nextest run --features=test_utils",
     "test-all": "deno task test & deno task quick-fuzz & deno task test-wasm",
     "test-wasm": "cd crates/loro-wasm && deno task dev && cd ../../loro-js && pnpm i && pnpm run test",
     "check": "cargo clippy --all-features",

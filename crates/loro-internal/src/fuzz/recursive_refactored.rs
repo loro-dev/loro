@@ -17,8 +17,15 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, loro::LoroDoc, value::ToJson, version::Frontiers, ApplyDiff,
-    ListHandler, MapHandler, TextHandler,
+    container::{
+        idx::ContainerIdx,
+        richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
+    },
+    handler::TextHandler,
+    loro::LoroDoc,
+    value::ToJson,
+    version::Frontiers,
+    ApplyDiff, ListHandler, MapHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -82,7 +89,7 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            debug_dbg!(&event);
+            // debug_log::debug_dbg!(&event);
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
@@ -96,6 +103,7 @@ impl Actor {
                 if event.from_children {
                     return;
                 }
+
                 let mut text = text.lock().unwrap();
                 match &event.container.diff {
                     Diff::Text(delta) => {
@@ -106,8 +114,13 @@ impl Actor {
                                     index += len;
                                 }
                                 DeltaItem::Insert { value, meta: _ } => {
-                                    text.insert_str(index, value);
-                                    index += value.len();
+                                    let utf8_index = if cfg!(feature = "wasm") {
+                                        utf16_to_utf8_index(&text, index).unwrap()
+                                    } else {
+                                        unicode_to_utf8_index(&text, index).unwrap()
+                                    };
+                                    text.insert_str(utf8_index, value.as_str());
+                                    index += value.len_unicode();
                                 }
                                 DeltaItem::Delete { len, .. } => {
                                     text.drain(index..index + *len);
@@ -296,6 +309,9 @@ impl Actor {
             ContainerType::List => self
                 .list_containers
                 .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Text => {
+                // TODO richtext
+            }
         }
     }
 }
@@ -1028,6 +1044,111 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_3() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(0),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(2),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(3),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(4),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(5),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(6),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(7),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(8),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(9),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(10),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(11),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(12),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(13),
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(14),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(15),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn notify_causal_order_check() {
         test_multi_sites(
             5,
@@ -1275,14 +1396,14 @@ mod failed_tests {
                     site: 4,
                     container_idx: 0,
                     pos: 0,
-                    value: 39064,
+                    value: 39061,
                     is_del: false,
                 },
                 Text {
                     site: 2,
                     container_idx: 0,
                     pos: 0,
-                    value: 39064,
+                    value: 39062,
                     is_del: false,
                 },
                 SyncAll,
@@ -1290,7 +1411,7 @@ mod failed_tests {
                     site: 2,
                     container_idx: 0,
                     pos: 5,
-                    value: 39064,
+                    value: 39063,
                     is_del: false,
                 },
             ],
@@ -1714,6 +1835,59 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_4() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 1,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1634495596),
+                },
+                SyncAll,
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn merge_err() {
         test_multi_sites(
             5,
@@ -1737,14 +1911,466 @@ mod failed_tests {
         )
     }
 
+    #[test]
+    fn unknown_fuzz_err() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 167,
+                    container_idx: 163,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 144,
+                    container_idx: 7,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                SyncAll,
+                Text {
+                    site: 126,
+                    container_idx: 13,
+                    pos: 122,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 6,
+                    container_idx: 191,
+                    pos: 249,
+                    value: 255,
+                    is_del: true,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 126,
+                    pos: 126,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 126,
+                    pos: 246,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 126,
+                    container_idx: 92,
+                    pos: 126,
+                    value: 65406,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_5() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 4,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 32502,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 7,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 255,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 12414,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 22,
+                    value: 1,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 21,
+                    value: 14,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 37265,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 63102,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 22,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 21,
+                    value: 14,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 5,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 22,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 21,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 65503,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32304,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 31,
+                    value: 10113,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 14,
+                    value: 17,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 32401,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 9,
+                    value: 32502,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 34,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 20,
+                    value: 31,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 7,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 7,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 19,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 7,
+                    value: 32407,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 63015,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 31,
+                    value: 7,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 29,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 12,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 30,
+                    value: 65535,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 23,
+                    value: 16,
+                    is_del: true,
+                },
+                List {
+                    site: 3,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(8949861),
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34695,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 18,
+                    value: 32502,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 40,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 26,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 12,
+                    value: 12543,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 19,
+                    value: 63015,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 17,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 29,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 30,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 11,
+                    value: 31,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 24,
+                    is_del: true,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 5,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 32382,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
     use super::ContainerType as C;
     #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
-    }
-
-    #[ctor::ctor]
-    fn init_color_backtrace() {
-        color_backtrace::install();
     }
 }

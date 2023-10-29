@@ -65,7 +65,8 @@ pub mod idx {
 
 pub mod list;
 pub mod map;
-pub mod text;
+pub mod richtext;
+pub(crate) mod text;
 
 use idx::ContainerIdx;
 

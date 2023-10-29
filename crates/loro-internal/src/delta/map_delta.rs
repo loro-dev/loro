@@ -29,6 +29,19 @@ impl MapDelta {
         }
         MapDelta { updated }
     }
+
+    #[inline]
+    pub fn new() -> Self {
+        MapDelta {
+            updated: FxHashMap::default(),
+        }
+    }
+
+    #[inline]
+    pub fn with_entry(mut self, key: InternalString, map_value: MapValue) -> Self {
+        self.updated.insert(key, map_value);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +81,7 @@ impl Eq for MapValue {}
 
 impl PartialOrd for MapValue {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.lamport.partial_cmp(&other.lamport)
+        Some(self.cmp(other))
     }
 }
 

@@ -166,3 +166,13 @@ pub fn get_sys_timestamp() -> Timestamp {
 
     now() as Timestamp
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn size_of_change() {
+        let size = std::mem::size_of::<Change>();
+        println!("{}", size);
+    }
+}

@@ -5,7 +5,7 @@ use rle::{
     HasLength, RleTree, RleVecWithLen,
 };
 
-use crate::{container::text::text_content::SliceRange, id::ID, span::IdSpan};
+use crate::{id::ID, op::SliceRange, span::IdSpan};
 
 use super::y_span::{YSpan, YSpanTreeTrait};
 

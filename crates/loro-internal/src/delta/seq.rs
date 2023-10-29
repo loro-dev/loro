@@ -67,9 +67,9 @@ impl Meta for () {
 }
 
 /// The value of [DeltaItem::Insert]
-pub trait DeltaValue: Debug {
+pub trait DeltaValue: Debug + Sized {
     /// the other will be merged into self
-    fn value_extend(&mut self, other: Self);
+    fn value_extend(&mut self, other: Self) -> Result<(), Self>;
     /// takes the first number of `length` elements
     fn take(&mut self, length: usize) -> Self;
     /// the length of the value
@@ -77,7 +77,7 @@ pub trait DeltaValue: Debug {
 }
 
 impl<V: DeltaValue, M: Debug> DeltaValue for DeltaItem<V, M> {
-    fn value_extend(&mut self, _other: Self) {
+    fn value_extend(&mut self, _other: Self) -> Result<(), Self> {
         unreachable!()
     }
 
@@ -417,12 +417,21 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
             }
             if last_op.meta().is_mergeable(new_op.meta()) {
                 if new_op.is_insert() && last_op.is_insert() {
-                    last_op.meta_mut().merge(new_op.meta());
                     let value = last_op.as_insert_mut().unwrap().0;
-                    value.value_extend(new_op.insert_inner());
-                    // self.vec.push(last_op);
-                    self.vec.insert(index - 1, last_op);
-                    return true;
+                    let meta = new_op.meta().clone();
+                    match value.value_extend(new_op.insert_inner()) {
+                        Ok(_) => {
+                            last_op.meta_mut().merge(&meta);
+                            self.vec.insert(index - 1, last_op);
+                            return true;
+                        }
+                        Err(inner) => {
+                            self.vec.insert(index - 1, last_op);
+                            self.vec
+                                .insert(index, DeltaItem::Insert { value: inner, meta });
+                            return false;
+                        }
+                    }
                 } else if new_op.is_retain() && last_op.is_retain() {
                     *last_op.as_retain_mut().unwrap().0 += new_op.length();
                     last_op.meta_mut().merge(new_op.meta());
@@ -572,8 +581,9 @@ impl<Value: DeltaValue, M: Meta> Default for Delta<Value, M> {
 }
 
 impl<T: Debug> DeltaValue for Vec<T> {
-    fn value_extend(&mut self, other: Self) {
-        self.extend(other)
+    fn value_extend(&mut self, other: Self) -> Result<(), Self> {
+        self.extend(other);
+        Ok(())
     }
 
     fn take(&mut self, length: usize) -> Self {
@@ -588,8 +598,9 @@ impl<T: Debug> DeltaValue for Vec<T> {
 }
 
 impl DeltaValue for String {
-    fn value_extend(&mut self, other: Self) {
-        self.push_str(&other)
+    fn value_extend(&mut self, other: Self) -> Result<(), Self> {
+        self.push_str(&other);
+        Ok(())
     }
 
     fn take(&mut self, length: usize) -> Self {

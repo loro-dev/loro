@@ -11,33 +11,34 @@ rle = { path = "../rle" }
 loro-preload = { path = "../loro-preload" }
 loro-common = { path = "../loro-common" }
 smallvec = { version = "1.8.0", features = ["serde"] }
-postcard = "1.0.2"
+postcard = "1"
 fxhash = "0.2.1"
 serde = { version = "1", features = ["derive"] }
-thiserror = "1.0.31"
+thiserror = "1"
 enum-as-inner = "0.5.1"
 num = "0.4.0"
 crdt-list = { version = "0.4.0" }
 rand = { version = "0.8.5", optional = true }
-arbitrary = { version = "1.1.7", optional = true }
+arbitrary = { version = "1", optional = true }
 tabled = { version = "0.10.0", optional = true }
 wasm-bindgen = { version = "0.2.83", optional = true }
 serde-wasm-bindgen = { version = "0.5.0", optional = true }
 js-sys = { version = "0.3.60", optional = true }
-serde_json = { version = "1.0.87", optional = true }
+serde_json = { version = "1" }
 arref = "0.1.0"
 debug-log = { version = "0.1.4", features = [] }
 serde_columnar = { version = "0.3.2" }
 tracing = { version = "0.1.37" }
-append-only-bytes = { version = "0.1.8", features = ["u32_range"] }
+append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 itertools = "0.11.0"
 enum_dispatch = "0.3.11"
 im = "15.1.0"
 jumprope = { version = "1.1.2", features = ["wchar_conversion"] }
-generic-btree = "0.4.1"
+generic-btree = { version = "0.8.0" }
 miniz_oxide = "0.7.1"
 getrandom = "0.2.10"
 zerovec = { version = "0.9.4", features = ["serde", "derive"] }
+once_cell = "1.18.0"
 
 [dev-dependencies]
 serde_json = "1.0.87"
@@ -64,9 +65,8 @@ default = []
 compress = ["serde_columnar/compress"]
 # "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
-json = ["serde_json"]
 # whether to use list slice instead of raw str in text container
-test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled", "json"]
+test_utils = ["crdt-list/fuzzing", "rand", "arbitrary", "tabled"]
 
 [[bench]]
 name = "text_r"

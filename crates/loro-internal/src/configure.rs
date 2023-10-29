@@ -18,9 +18,22 @@ impl Debug for Configure {
 
 pub struct DefaultRandom;
 
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
+#[cfg(test)]
+static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
+
 impl SecureRandomGenerator for DefaultRandom {
     fn fill_byte(&self, dest: &mut [u8]) {
+        #[cfg(not(test))]
         getrandom::getrandom(dest).unwrap();
+
+        #[cfg(test)]
+        // SAFETY: this is only used in test
+        unsafe {
+            let bytes = TEST_RANDOM.fetch_add(1, std::sync::atomic::Ordering::Release);
+            dest.copy_from_slice(&bytes.to_le_bytes());
+        }
     }
 }
 

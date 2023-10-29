@@ -1,14 +1,15 @@
-use std::{thread::spawn, time::Instant};
+use std::time::Instant;
 
 use loro_internal::{LoroDoc, LoroValue};
 // #[global_allocator]
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    with_100K_actors_then_action();
+    with_100k_actors_then_action();
     // import_with_many_actors();
 }
 
+#[allow(unused)]
 fn import_with_many_actors() {
     let store = LoroDoc::default();
     for i in 0..10000 {
@@ -37,7 +38,8 @@ fn import_with_many_actors() {
     // drop(profiler);
 }
 
-fn with_100K_actors_then_action() {
+#[allow(unused)]
+fn with_100k_actors_then_action() {
     let store = LoroDoc::default();
     for i in 0..100_000 {
         store.set_peer_id(i);

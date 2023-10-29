@@ -2,8 +2,8 @@ use loro_common::IdSpanVector;
 use rle::HasLength;
 
 use crate::{
-    container::text::text_content::SliceRange,
     id::{Counter, ID},
+    op::SliceRange,
     span::{CounterSpan, HasId, HasIdSpan, IdSpan},
 };
 

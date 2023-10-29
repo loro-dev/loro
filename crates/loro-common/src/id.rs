@@ -43,11 +43,7 @@ impl TryFrom<&str> for ID {
 
 impl PartialOrd for ID {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.peer.partial_cmp(&other.peer) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        self.counter.partial_cmp(&other.counter)
+        Some(self.cmp(other))
     }
 }
 

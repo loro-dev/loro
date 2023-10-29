@@ -32,8 +32,12 @@ Loro.prototype.transact = function (cb, origin) {
   });
 };
 
-Loro.prototype.getTypedMap = function (...args) { return this.getMap(...args) };
-Loro.prototype.getTypedList = function (...args) { return this.getList(...args) };
+Loro.prototype.getTypedMap = function (...args) {
+  return this.getMap(...args);
+};
+Loro.prototype.getTypedList = function (...args) {
+  return this.getList(...args);
+};
 LoroList.prototype.getTyped = function (loro, index) {
   const value = this.get(index);
   if (typeof value === "string" && isContainerId(value)) {
@@ -43,8 +47,8 @@ LoroList.prototype.getTyped = function (loro, index) {
   }
 };
 LoroList.prototype.insertTyped = function (...args) {
-  return this.insert(...args)
-}
+  return this.insert(...args);
+};
 LoroMap.prototype.getTyped = function (loro, key) {
   const value = this.get(key);
   if (typeof value === "string" && isContainerId(value)) {
@@ -53,7 +57,9 @@ LoroMap.prototype.getTyped = function (loro, key) {
     return value;
   }
 };
-LoroMap.prototype.setTyped = function (...args) { return this.set(...args) };
+LoroMap.prototype.setTyped = function (...args) {
+  return this.set(...args);
+};
 
 LoroText.prototype.insert = function (txn, pos, text) {
   this.__txn_insert(txn, pos, text);
@@ -91,16 +97,24 @@ export type Value =
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
 export type Path = (number | string)[];
-export type Delta<T> = {
-  type: "insert";
-  value: T;
-} | {
-  type: "delete";
-  len: number;
-} | {
-  type: "retain";
-  len: number;
-};
+export type Delta<T> =
+  | {
+    insert: T;
+    attributes?: { [key in string]: {} },
+    retain?: undefined;
+    delete?: undefined;
+  }
+  | {
+    delete: number;
+    retain?: undefined;
+    insert?: undefined;
+  }
+  | {
+    retain: number;
+    attributes?: { [key in string]: {} },
+    delete?: undefined;
+    insert?: undefined;
+  };
 
 export type ListDiff = {
   type: "list";
@@ -166,39 +180,23 @@ declare module "loro-wasm" {
   }
 
   interface Loro<T extends Record<string, any> = Record<string, any>> {
-    getTypedMap<Key extends (keyof T) & string>(
+    getTypedMap<Key extends keyof T & string>(
       name: Key,
     ): T[Key] extends LoroMap ? T[Key] : never;
-    getTypedList<Key extends (keyof T) & string>(
+    getTypedList<Key extends keyof T & string>(
       name: Key,
     ): T[Key] extends LoroList ? T[Key] : never;
   }
 
   interface LoroList<T extends any[] = any[]> {
-    insertContainer(
-      txn: Transaction,
-      pos: number,
-      container: "Map",
-    ): LoroMap;
-    insertContainer(
-      txn: Transaction,
-      pos: number,
-      container: "List",
-    ): LoroList;
-    insertContainer(
-      txn: Transaction,
-      pos: number,
-      container: "Text",
-    ): LoroText;
-    insertContainer(
-      txn: Transaction,
-      pos: number,
-      container: string,
-    ): never;
+    insertContainer(txn: Transaction, pos: number, container: "Map"): LoroMap;
+    insertContainer(txn: Transaction, pos: number, container: "List"): LoroList;
+    insertContainer(txn: Transaction, pos: number, container: "Text"): LoroText;
+    insertContainer(txn: Transaction, pos: number, container: string): never;
 
     get(index: number): Value;
-    getTyped<Key extends (keyof T) & number>(loro: Loro, index: Key): T[Key];
-    insertTyped<Key extends (keyof T) & number>(
+    getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
+    insertTyped<Key extends keyof T & number>(
       txn: Transaction,
       pos: Key,
       value: T[Key],
@@ -231,12 +229,9 @@ declare module "loro-wasm" {
     ): never;
 
     get(key: string): Value;
-    getTyped<Key extends (keyof T) & string>(
-      txn: Loro,
-      key: Key,
-    ): T[Key];
+    getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(txn: Transaction, key: string, value: Value | Prelim): void;
-    setTyped<Key extends (keyof T) & string>(
+    setTyped<Key extends keyof T & string>(
       txn: Transaction,
       key: Key,
       value: T[Key],

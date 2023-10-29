@@ -1,25 +1,21 @@
-use std::{
-    ops::RangeBounds,
-    sync::{Arc, Mutex},
-};
+use std::{ops::RangeBounds, sync::Arc};
 
+use super::ContainerState;
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, ContainerID},
     delta::Delta,
-    event::{Diff, Index},
-    op::{RawOp, RawOpContent},
+    event::{Diff, Index, InternalDiff},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     LoroValue,
 };
-use debug_log::debug_dbg;
+
 use fxhash::FxHashMap;
 use generic_btree::{
-    ArenaIndex, BTree, BTreeTrait, FindResult, LengthFinder, QueryResult, UseLengthFinder,
+    iter,
+    rle::{HasLength, Mergeable, Sliceable},
+    BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-
-use super::ContainerState;
-
-type ContainerMapping = Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>;
 
 #[derive(Debug)]
 pub struct ListState {
@@ -27,7 +23,7 @@ pub struct ListState {
     list: BTree<ListImpl>,
     in_txn: bool,
     undo_stack: Vec<UndoItem>,
-    child_container_to_leaf: Arc<Mutex<FxHashMap<ContainerID, ArenaIndex>>>,
+    child_container_to_leaf: FxHashMap<ContainerID, LeafIndex>,
 }
 
 impl Clone for ListState {
@@ -48,62 +44,88 @@ enum UndoItem {
     Delete { index: usize, value: LoroValue },
 }
 
+#[derive(Debug, Clone)]
+struct Elem {
+    v: LoroValue,
+}
+
+impl HasLength for Elem {
+    fn rle_len(&self) -> usize {
+        1
+    }
+}
+
+impl Sliceable for Elem {
+    fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 1);
+        self.clone()
+    }
+
+    fn split(&mut self, _pos: usize) -> Self {
+        unreachable!()
+    }
+}
+
+impl Mergeable for Elem {
+    fn can_merge(&self, _rhs: &Self) -> bool {
+        false
+    }
+
+    fn merge_right(&mut self, _rhs: &Self) {
+        unreachable!()
+    }
+
+    fn merge_left(&mut self, _left: &Self) {
+        unreachable!()
+    }
+}
+
 struct ListImpl;
 impl BTreeTrait for ListImpl {
-    type Elem = LoroValue;
+    type Elem = Elem;
 
     type Cache = isize;
 
     type CacheDiff = isize;
 
-    const MAX_LEN: usize = 8;
-
+    #[inline(always)]
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
-        diff: Option<Self::CacheDiff>,
-    ) -> Option<Self::CacheDiff> {
-        match diff {
-            Some(diff) => {
-                *cache += diff;
-                Some(diff)
-            }
-            None => {
-                let mut new_cache = 0;
-                for child in caches {
-                    new_cache += child.cache;
-                }
-
-                let diff = new_cache - *cache;
-                *cache = new_cache;
-                Some(diff)
-            }
-        }
-    }
-
-    fn calc_cache_leaf(
-        cache: &mut Self::Cache,
-        elements: &[Self::Elem],
-        _diff: Option<Self::CacheDiff>,
     ) -> Self::CacheDiff {
-        let diff = elements.len() as isize - *cache;
-        *cache = elements.len() as isize;
+        let mut new_cache = 0;
+        for child in caches {
+            new_cache += child.cache;
+        }
+
+        let diff = new_cache - *cache;
+        *cache = new_cache;
         diff
     }
 
+    #[inline(always)]
+    fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+        *cache += diff;
+    }
+
+    #[inline(always)]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2
     }
 
-    fn insert_batch(
-        elements: &mut generic_btree::HeapVec<Self::Elem>,
-        index: usize,
-        _offset: usize,
-        new_elements: impl IntoIterator<Item = Self::Elem>,
-    ) where
-        Self::Elem: Clone,
-    {
-        elements.splice(index..index, new_elements);
+    #[inline(always)]
+    fn get_elem_cache(_elem: &Self::Elem) -> Self::Cache {
+        1
+    }
+
+    #[inline(always)]
+    fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
+        *cache
+    }
+
+    fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
+        cache_lhs - cache_rhs
     }
 }
 
@@ -111,61 +133,27 @@ impl UseLengthFinder<ListImpl> for ListImpl {
     fn get_len(cache: &isize) -> usize {
         *cache as usize
     }
-
-    fn find_element_by_offset(elements: &[LoroValue], offset: usize) -> generic_btree::FindResult {
-        if offset >= elements.len() {
-            return FindResult::new_missing(elements.len(), offset - elements.len());
-        }
-
-        FindResult::new_found(offset, 0)
-    }
 }
 
+// FIXME: update child_container_to_leaf
 impl ListState {
     pub fn new(idx: ContainerIdx) -> Self {
-        let mut tree = BTree::new();
-        let mapping: ContainerMapping = Arc::new(Mutex::new(Default::default()));
-        let mapping_clone = mapping.clone();
-        tree.set_listener(Some(Box::new(move |event| {
-            if let LoroValue::Container(container_id) = event.elem {
-                let mut mapping = mapping_clone.try_lock().unwrap();
-                if let Some(leaf) = event.target_leaf {
-                    mapping.insert((*container_id).clone(), leaf);
-                } else {
-                    mapping.remove(container_id);
-                }
-                drop(mapping);
-            }
-        })));
-
+        let tree = BTree::new();
         Self {
             idx,
             list: tree,
             in_txn: false,
             undo_stack: Vec::new(),
-            child_container_to_leaf: mapping,
+            child_container_to_leaf: Default::default(),
         }
     }
 
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
-        debug_dbg!(self.get_value());
-        let mapping = self.child_container_to_leaf.lock().unwrap();
-        let leaf = *mapping.get(id)?;
-        drop(mapping);
-        let node = self.list.get_node_safe(leaf)?;
-        let elem_index = node
-            .elements()
-            .iter()
-            .position(|x| x.as_container() == Some(id))?;
+        let leaf = *self.child_container_to_leaf.get(id).unwrap();
+        self.list.get_elem(leaf)?;
         let mut index = 0;
-        self.list.visit_previous_caches(
-            QueryResult {
-                leaf,
-                elem_index: 0,
-                offset: 0,
-                found: true,
-            },
-            |cache| match cache {
+        self.list
+            .visit_previous_caches(Cursor { leaf, offset: 0 }, |cache| match cache {
                 generic_btree::PreviousCache::NodeCache(cache) => {
                     index += *cache;
                 }
@@ -173,21 +161,48 @@ impl ListState {
                     index += 1;
                 }
                 generic_btree::PreviousCache::ThisElemAndOffset { .. } => {}
-            },
-        );
+            });
 
-        Some(index as usize + elem_index)
+        Some(index as usize)
     }
 
     pub fn insert(&mut self, index: usize, value: LoroValue) {
-        self.list.insert::<LengthFinder>(&index, value);
+        if self.list.is_empty() {
+            let idx = self.list.push(Elem { v: value.clone() });
+
+            if value.is_container() {
+                self.child_container_to_leaf
+                    .insert(value.into_container().unwrap(), idx.leaf);
+            }
+            return;
+        }
+
+        let (leaf, data) = self
+            .list
+            .insert::<LengthFinder>(&index, Elem { v: value.clone() });
+
+        if value.is_container() {
+            self.child_container_to_leaf
+                .insert(value.into_container().unwrap(), leaf.leaf);
+        }
+
+        for leaf in data.arr {
+            let v = &self.list.get_elem(leaf).unwrap().v;
+            if v.is_container() {
+                self.child_container_to_leaf
+                    .insert(v.as_container().unwrap().clone(), leaf);
+            }
+        }
+
         if self.in_txn {
             self.undo_stack.push(UndoItem::Insert { index, len: 1 });
         }
     }
 
     pub fn delete(&mut self, index: usize) {
-        let value = self.list.delete::<LengthFinder>(&index).unwrap();
+        let leaf = self.list.query::<LengthFinder>(&index);
+        let elem = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
+        let value = elem.v;
         if self.in_txn {
             self.undo_stack.push(UndoItem::Delete { index, value });
         }
@@ -210,30 +225,35 @@ impl ListState {
         }
 
         if self.in_txn {
-            for value in self.list.drain::<LengthFinder>(start..end) {
+            let self1 = &mut self.list;
+            let q = start..end;
+            let start1 = self1.query::<LengthFinder>(&q.start);
+            let end1 = self1.query::<LengthFinder>(&q.end);
+            for elem in iter::Drain::new(self1, start1, end1) {
                 self.undo_stack.push(UndoItem::Delete {
                     index: start,
-                    value,
+                    value: elem.v,
                 })
             }
         } else {
-            self.list.drain::<LengthFinder>(start..end);
+            let self1 = &mut self.list;
+            let q = start..end;
+            let start1 = self1.query::<LengthFinder>(&q.start);
+            let end1 = self1.query::<LengthFinder>(&q.end);
+            iter::Drain::new(self1, start1, end1);
         }
     }
 
     // PERF: use &[LoroValue]
+    // PERF: batch
     pub fn insert_batch(&mut self, index: usize, values: Vec<LoroValue>) {
-        let q = self.list.query::<LengthFinder>(&index);
-        let old_len = self.len();
-        self.list.insert_many_by_query_result(&q, values);
-        if self.in_txn {
-            let len = self.len() - old_len;
-            self.undo_stack.push(UndoItem::Insert { index, len });
+        for (i, value) in values.into_iter().enumerate() {
+            self.insert(index + i, value);
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
-        self.list.iter()
+        self.list.iter().map(|x| &x.v)
     }
 
     pub fn len(&self) -> usize {
@@ -243,51 +263,74 @@ impl ListState {
     fn to_vec(&self) -> Vec<LoroValue> {
         let mut ans = Vec::with_capacity(self.len());
         for value in self.list.iter() {
-            ans.push(value.clone());
+            ans.push(value.v.clone());
         }
         ans
     }
 
     pub fn get(&self, index: usize) -> Option<&LoroValue> {
-        let result = self.list.query::<LengthFinder>(&index);
+        let result = self.list.query::<LengthFinder>(&index)?;
         if result.found {
-            Some(result.elem(&self.list).unwrap())
+            Some(&result.elem(&self.list).unwrap().v[result.offset()])
         } else {
             None
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn check(&self) {
+        for value in self.iter() {
+            if let LoroValue::Container(c) = value {
+                self.get_child_index(c).unwrap();
+            }
         }
     }
 }
 
 impl ContainerState for ListState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
-        match diff {
-            Diff::List(delta) => {
-                let mut index = 0;
-                for span in delta.iter() {
-                    match span {
-                        crate::delta::DeltaItem::Retain { len, .. } => {
-                            index += len;
-                        }
-                        crate::delta::DeltaItem::Insert { value, .. } => {
-                            let len = value.len();
-                            for value in value.iter() {
-                                if value.is_container() {
-                                    let c = value.as_container().unwrap();
-                                    let idx = arena.register_container(c);
-                                    arena.set_parent(idx, Some(self.idx));
-                                }
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+        let InternalDiff::SeqRaw(delta) = diff else {
+            unreachable!()
+        };
+        let mut ans: Delta<_> = Delta::default();
+        let mut index = 0;
+        for span in delta.iter() {
+            match span {
+                crate::delta::DeltaItem::Retain { len, .. } => {
+                    index += len;
+                    ans = ans.retain(*len);
+                }
+                crate::delta::DeltaItem::Insert { value, .. } => {
+                    let mut arr = Vec::new();
+                    for slices in value.0.iter() {
+                        for i in slices.0.start..slices.0.end {
+                            let value = arena.get_value(i as usize).unwrap();
+                            if value.is_container() {
+                                let c = value.as_container().unwrap();
+                                let idx = arena.register_container(c);
+                                arena.set_parent(idx, Some(self.idx));
                             }
-
-                            self.insert_batch(index, value.clone());
-                            index += len;
-                        }
-                        crate::delta::DeltaItem::Delete { len, .. } => {
-                            self.delete_range(index..index + len)
+                            arr.push(value);
                         }
                     }
+                    ans = ans.insert(arr.clone());
+                    let len = arr.len();
+                    self.insert_batch(index, arr);
+                    index += len;
+                }
+                crate::delta::DeltaItem::Delete { len, .. } => {
+                    self.delete_range(index..index + len);
+                    ans = ans.delete(*len);
                 }
             }
-            Diff::SeqRaw(delta) => {
+        }
+
+        Diff::List(ans)
+    }
+
+    fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
+        match diff {
+            InternalDiff::SeqRaw(delta) => {
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
@@ -308,25 +351,26 @@ impl ContainerState for ListState {
                                 }
                             }
                             let len = arr.len();
+
                             self.insert_batch(index, arr);
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { len, .. } => {
-                            self.delete_range(index..index + len)
+                            self.delete_range(index..index + len);
                         }
                     }
                 }
             }
             _ => unreachable!(),
-        };
+        }
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
-        match op.content {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+        match &op.content {
             RawOpContent::Map(_) => unreachable!(),
             RawOpContent::List(list) => match list {
                 crate::container::list::list_op::ListOp::Insert { slice, pos } => match slice {
-                    crate::container::text::text_content::ListSlice::RawData(list) => match list {
+                    ListSlice::RawData(list) => match list {
                         std::borrow::Cow::Borrowed(list) => {
                             for value in list.iter() {
                                 if value.is_container() {
@@ -335,7 +379,7 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(pos, list.to_vec());
+                            self.insert_batch(*pos, list.to_vec());
                         }
                         std::borrow::Cow::Owned(list) => {
                             for value in list.iter() {
@@ -345,14 +389,16 @@ impl ContainerState for ListState {
                                     arena.set_parent(idx, Some(self.idx));
                                 }
                             }
-                            self.insert_batch(pos, list);
+                            self.insert_batch(*pos, list.clone());
                         }
                     },
                     _ => unreachable!(),
                 },
                 crate::container::list::list_op::ListOp::Delete(del) => {
-                    self.delete_range(del.pos as usize..del.pos as usize + del.len as usize);
+                    self.delete_range(del.pos as usize..del.pos as usize + del.signed_len as usize);
                 }
+                crate::container::list::list_op::ListOp::StyleStart { .. } => unreachable!(),
+                crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
     }
@@ -381,14 +427,14 @@ impl ContainerState for ListState {
         self.in_txn = false;
     }
 
-    fn get_value(&self) -> LoroValue {
+    fn get_value(&mut self) -> LoroValue {
         let ans = self.to_vec();
         LoroValue::List(Arc::new(ans))
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&self) -> Diff {
+    fn to_diff(&mut self) -> Diff {
         Diff::List(Delta::new().insert(self.to_vec()))
     }
 
@@ -398,9 +444,9 @@ impl ContainerState for ListState {
 
     fn get_child_containers(&self) -> Vec<ContainerID> {
         let mut ans = Vec::new();
-        for value in self.list.iter() {
-            if value.is_container() {
-                ans.push(value.as_container().unwrap().clone());
+        for elem in self.list.iter() {
+            if elem.v.is_container() {
+                ans.push(elem.v.as_container().unwrap().clone());
             }
         }
         ans

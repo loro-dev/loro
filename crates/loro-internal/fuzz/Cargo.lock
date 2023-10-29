@@ -22,9 +22,9 @@ checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
 
 [[package]]
 name = "append-only-bytes"
-version = "0.1.8"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd736657a12852ffb42ed309ac3409382d93f76f49ae0ad69fae4ca927e584d9"
+checksum = "ac436601d6bdde674a0d7fb593e829ffe7b3387c351b356dd20e2d40f5bf3ee5"
 
 [[package]]
 name = "arbitrary"
@@ -135,9 +135,9 @@ checksum = "6548a0ad5d2549e111e1f6a11a6c2e2d00ce6a3dafe22948d67c2b443f775e52"
 
 [[package]]
 name = "darling"
-version = "0.14.2"
+version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0dd3cd20dc6b5a876612a6e5accfe7f3dd883db6d07acfbf14c128f61550dfa"
+checksum = "0209d94da627ab5605dcccf08bb18afa5009cfbef48d8a8b7d7bdbc79be25c5e"
 dependencies = [
  "darling_core",
  "darling_macro",
@@ -145,27 +145,27 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.14.2"
+version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a784d2ccaf7c98501746bf0be29b2022ba41fd62a2e622af997a03e9f972859f"
+checksum = "177e3443818124b357d8e76f53be906d60937f0d3a90773a664fa63fa253e621"
 dependencies = [
  "fnv",
  "ident_case",
  "proc-macro2",
  "quote",
  "strsim",
- "syn 1.0.105",
+ "syn 2.0.25",
 ]
 
 [[package]]
 name = "darling_macro"
-version = "0.14.2"
+version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7618812407e9402654622dd402b0a89dff9ba93badd6540781526117b92aab7e"
+checksum = "836a9bbc7ad63342d6d6e7b815ccab164bc77a2d95d84bc3117a8c0d5c98e2d5"
 dependencies = [
  "darling_core",
  "quote",
- "syn 1.0.105",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -244,13 +244,15 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.4.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8f334f35041258df9e9fbd321e6559ff57db4e1bf04bc31ecf05ccb7e615993"
+checksum = "8d4d2c306965f156c02021f38a4f0c979d06ac7ef762fe7e896964e1a946a0aa"
 dependencies = [
  "fxhash",
- "smallvec",
- "thunderdome",
+ "heapless",
+ "itertools",
+ "loro-thunderdome",
+ "proc-macro2",
 ]
 
 [[package]]
@@ -315,9 +317,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
@@ -409,6 +411,7 @@ dependencies = [
  "loro-preload",
  "miniz_oxide",
  "num",
+ "once_cell",
  "postcard",
  "rand",
  "rle",
@@ -441,6 +444,12 @@ dependencies = [
  "serde",
  "serde_columnar",
 ]
+
+[[package]]
+name = "loro-thunderdome"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "miniz_oxide"
@@ -535,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.16.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86f0b0d4bf799edbc74508c1e8bf170ff5f41238e5f8225603ca7caaae2b7860"
+checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
 name = "ouroboros"
@@ -660,9 +669,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.64"
+version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78803b62cbf1f46fde80d7c0e803111524b9877184cfe7c3033659490ac7a7da"
+checksum = "134c189feb4956b20f6f547d2cf727d4c0fe06722b20a0eec87ed445a97f92da"
 dependencies = [
  "unicode-ident",
 ]
@@ -779,9 +788,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.2.5"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f5e09c91d7107faf75e9754748e3cb11fa3414a3761225a3d47c98aad153d40"
+checksum = "98e0e9eb205e8f31604c26118d3f3626b21e3170a243ddfe1b7131b79725b114"
 dependencies = [
  "itertools",
  "postcard",
@@ -792,14 +801,14 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.2.2"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c78a4cb8421e4666b4e71a5a896be4f8db66ba90af88257e1072609dc4f3abbb"
+checksum = "46d50a130ce1b4cf3b1585342ee0bf71e7589845ec23283e85fc875606018520"
 dependencies = [
  "darling",
  "proc-macro2",
  "quote",
- "syn 1.0.105",
+ "syn 2.0.25",
 ]
 
 [[package]]
@@ -967,12 +976,6 @@ dependencies = [
  "quote",
  "syn 2.0.25",
 ]
-
-[[package]]
-name = "thunderdome"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92e170f93360bf9ae6fe3c31116bbf27adb1d054cedd6bc3d7857e34f2d98d0b"
 
 [[package]]
 name = "tracing"

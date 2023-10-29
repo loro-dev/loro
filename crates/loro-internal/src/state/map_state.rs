@@ -7,8 +7,8 @@ use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, map::MapSet},
     delta::MapValue,
-    event::{Diff, Index},
-    op::{RawOp, RawOpContent},
+    event::{Diff, Index, InternalDiff},
+    op::{Op, RawOp, RawOpContent},
     InternalString, LoroValue,
 };
 
@@ -23,26 +23,30 @@ pub struct MapState {
 }
 
 impl ContainerState for MapState {
-    fn apply_diff(&mut self, diff: &mut Diff, arena: &SharedArena) {
-        if let Diff::NewMap(delta) = diff {
-            for (key, value) in delta.updated.iter() {
-                if let Some(LoroValue::Container(c)) = &value.value {
-                    let idx = arena.register_container(c);
-                    arena.set_parent(idx, Some(self.idx));
-                }
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff {
+        let InternalDiff::Map(delta) = diff else {
+            unreachable!()
+        };
 
-                let old = self.map.insert(key.clone(), value.clone());
-                self.store_txn_snapshot(key.clone(), old);
+        for (key, value) in delta.updated.iter() {
+            if let Some(LoroValue::Container(c)) = &value.value {
+                let idx = arena.register_container(c);
+                arena.set_parent(idx, Some(self.idx));
             }
+
+            let old = self.map.insert(key.clone(), value.clone());
+            self.store_txn_snapshot(key.clone(), old);
         }
+
+        Diff::NewMap(delta)
     }
 
-    fn apply_op(&mut self, op: RawOp, arena: &SharedArena) {
-        match op.content {
+    fn apply_op(&mut self, op: &RawOp, _: &Op, arena: &SharedArena) {
+        match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
                 if value.is_none() {
                     self.insert(
-                        key,
+                        key.clone(),
                         MapValue {
                             lamport: (op.lamport, op.id.peer),
                             counter: op.id.counter,
@@ -51,14 +55,14 @@ impl ContainerState for MapState {
                     );
                     return;
                 }
-                let value = value.unwrap();
+                let value = value.clone().unwrap();
                 if value.is_container() {
                     let idx = arena.register_container(value.as_container().unwrap());
                     arena.set_parent(idx, Some(self.idx));
                 }
 
                 self.insert(
-                    key,
+                    key.clone(),
                     MapValue {
                         lamport: (op.lamport, op.id.peer),
                         counter: op.id.counter,
@@ -91,14 +95,14 @@ impl ContainerState for MapState {
         self.in_txn = false;
     }
 
-    fn get_value(&self) -> LoroValue {
+    fn get_value(&mut self) -> LoroValue {
         let ans = self.to_map();
         LoroValue::Map(Arc::new(ans))
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(&self) -> Diff {
+    fn to_diff(&mut self) -> Diff {
         Diff::NewMap(crate::delta::MapDelta {
             updated: self.map.clone(),
         })

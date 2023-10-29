@@ -32,6 +32,8 @@ pub enum LoroError {
     OutOfBound { pos: usize, len: usize },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
+    #[error("Invalid argument ({0})")]
+    ArgErr(Box<str>),
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

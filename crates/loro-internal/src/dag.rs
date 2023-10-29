@@ -255,11 +255,7 @@ impl<'a> HasLamport for OrdIdSpan<'a> {
 
 impl<'a> PartialOrd for OrdIdSpan<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            self.lamport_last()
-                .cmp(&other.lamport_last())
-                .then(self.id_last().cmp(&other.id_last())),
-        )
+        Some(self.cmp(other))
     }
 }
 

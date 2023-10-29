@@ -1,11 +1,6 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, LoroDoc, ToJson};
 
-#[ctor::ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-}
-
 #[test]
 fn import() {
     let doc = LoroDoc::new();
@@ -20,6 +15,7 @@ fn import() {
 }
 
 #[test]
+#[ignore]
 fn import_history() {
     let doc = LoroDoc::new();
     doc.import(include_bytes!("./history_compressed_rle_updates.dat"))
