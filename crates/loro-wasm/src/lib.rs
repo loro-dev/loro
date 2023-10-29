@@ -731,30 +731,11 @@ impl LoroTree {
         Ok(())
     }
 
-    pub fn __txn_insert_meta(
-        &mut self,
-        txn: &mut Transaction,
-        target: JsTreeID,
-        key: &str,
-        value: JsValue,
-    ) -> JsResult<()> {
+    pub fn __txn_get_meta(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<LoroMap> {
         let target: JsValue = target.into();
-        self.0
-            .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
-        Ok(())
-    }
-
-    pub fn __txn_get_meta(
-        &mut self,
-        txn: &mut Transaction,
-        target: JsTreeID,
-        key: &str,
-    ) -> JsResult<JsValue> {
-        let target: JsValue = target.into();
-        let ans = self
-            .0
-            .get_meta(txn.as_mut()?, target.try_into().unwrap(), key)?;
-        Ok(ans.into())
+        let meta = self.0.get_meta(txn.as_mut()?, target.try_into().unwrap())?;
+        // .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
+        Ok(LoroMap(meta))
     }
 
     #[wasm_bindgen(js_name = "id", method, getter)]

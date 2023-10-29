@@ -366,6 +366,19 @@ describe("tree", () => {
     
     assertEquals(tree.parent(childID), id);
   })
+
+  it("meta", ()=>{
+    const id = loro.transact((txn)=>{
+      return tree.create(txn);
+    })
+    const meta = loro.transact((txn)=>{
+      const meta = tree.getMeta(txn, id);
+      meta.set(txn, "a", 123);
+      return meta;
+    })
+    assertEquals(meta.get("a"), 123);
+    
+  })
 })
 
 function one_ms(): Promise<void> {

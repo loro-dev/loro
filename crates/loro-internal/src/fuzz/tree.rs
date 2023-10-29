@@ -551,17 +551,16 @@ impl Actionable for Vec<Actor> {
                     TreeAction::Meta => {
                         let key = parent_peer.to_string();
                         let value = *parent_counter;
-                        container
-                            .insert_meta(
+                        let meta = container
+                            .get_meta(
                                 &mut txn,
                                 TreeID {
                                     peer: *target_peer,
                                     counter: *target_counter,
                                 },
-                                &key,
-                                value.into(),
                             )
                             .unwrap();
+                        meta.insert(&mut txn, &key, value.into()).unwrap();
                     }
                 }
 

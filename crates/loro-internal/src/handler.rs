@@ -813,33 +813,13 @@ impl TreeHandler {
         )
     }
 
-    pub fn insert_meta(
-        &self,
-        txn: &mut Transaction,
-        target: TreeID,
-        key: &str,
-        value: LoroValue,
-    ) -> LoroResult<()> {
+    pub fn get_meta(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<MapHandler> {
         if !self.contains(target) {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
         let map_container_id = self.meta_container_id(target);
         let map = txn.get_map(map_container_id);
-        map.insert(txn, key, value)
-    }
-
-    pub fn get_meta(
-        &self,
-        txn: &mut Transaction,
-        target: TreeID,
-        key: &str,
-    ) -> LoroResult<Option<LoroValue>> {
-        if !self.contains(target) {
-            return Err(LoroTreeError::TreeNodeNotExist(target).into());
-        }
-        let map_container_id = self.meta_container_id(target);
-        let map = txn.get_map(map_container_id);
-        Ok(map.get(key))
+        Ok(map)
     }
 
     pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
@@ -1039,7 +1019,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold".into(), TextStyleInfoFlag::BOLD)
+            .mark(&mut txn, 0, 5, "bold", TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 
@@ -1114,10 +1094,16 @@ mod test {
         loro.set_peer_id(1);
         let tree = loro.get_tree("root");
         let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
-        loro.with_txn(|txn| tree.insert_meta(txn, id, "a", 123.into()))
-            .unwrap();
+        loro.with_txn(|txn| {
+            let meta = tree.get_meta(txn, id)?;
+            meta.insert(txn, "a", 123.into())
+        })
+        .unwrap();
         let meta = loro
-            .with_txn(|txn| tree.get_meta(txn, id, "a").map(|a| a.unwrap()))
+            .with_txn(|txn| {
+                let meta = tree.get_meta(txn, id)?;
+                Ok(meta.get("a").unwrap())
+            })
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
@@ -1137,10 +1123,11 @@ mod test {
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
             let id = tree.create(txn)?;
-            tree.insert_meta(txn, id, "a", 1.into())?;
+            let meta = tree.get_meta(txn, id)?;
+            meta.insert(txn, "a", 1.into())?;
             text.insert(txn, 0, "abc")?;
             let _id2 = tree.create(txn)?;
-            tree.insert_meta(txn, id, "b", 2.into())?;
+            meta.insert(txn, "b", 2.into())?;
             Ok(id)
         })
         .unwrap();
