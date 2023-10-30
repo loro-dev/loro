@@ -265,19 +265,21 @@ impl TextHandler {
                     .get_entity_index_for_text_insert_event_index(pos)
             });
 
+        let unicode_len = s.chars().count();
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawStr {
                     str: Cow::Borrowed(s),
-                    unicode_len: s.chars().count(),
+                    unicode_len,
                 },
                 pos: entity_index,
             }),
             EventHint::InsertText {
-                pos,
+                pos: pos as u32,
                 // FIXME: this is wrong
                 styles: vec![],
+                len: unicode_len as u32,
             },
             &self.state,
         )
@@ -333,7 +335,10 @@ impl TextHandler {
                     signed_len: (range.end - range.start) as isize,
                 })),
                 if is_first {
-                    EventHint::DeleteText { pos, len }
+                    EventHint::DeleteText(DeleteSpan {
+                        pos: pos as isize,
+                        signed_len: len as isize,
+                    })
                 } else {
                     EventHint::None
                 },
@@ -408,8 +413,8 @@ impl TextHandler {
                 info: flag,
             }),
             EventHint::Mark {
-                start,
-                end,
+                start: start as u32,
+                end: end as u32,
                 style: crate::container::richtext::Style {
                     key: key.into(),
                     // FIXME: style meta is incorrect
@@ -541,7 +546,7 @@ impl ListHandler {
                 pos: pos as isize,
                 signed_len: len as isize,
             })),
-            EventHint::DeleteList { pos, len },
+            EventHint::DeleteList(DeleteSpan::new(pos as isize, len as isize)),
             &self.state,
         )
     }

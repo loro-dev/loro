@@ -1,7 +1,7 @@
 use std::{ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
-use generic_btree::rle::HasLength;
+use generic_btree::rle::{HasLength, Mergeable};
 use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
@@ -85,6 +85,49 @@ enum UndoItem {
         index: u32,
         content: RichtextStateChunk,
     },
+}
+
+impl Mergeable for UndoItem {
+    fn can_merge(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (UndoItem::Insert { index, len }, UndoItem::Insert { index: r_index, .. }) => {
+                *index + *len == *r_index
+            }
+            (
+                UndoItem::Delete { index, content },
+                UndoItem::Delete {
+                    index: r_i,
+                    content: r_c,
+                },
+            ) => *r_i + r_c.rle_len() as u32 == *index && r_c.can_merge(content),
+            _ => false,
+        }
+    }
+
+    fn merge_right(&mut self, rhs: &Self) {
+        match (self, rhs) {
+            (UndoItem::Insert { len, .. }, UndoItem::Insert { len: r_len, .. }) => {
+                *len += *r_len;
+            }
+            (
+                UndoItem::Delete { content, index },
+                UndoItem::Delete {
+                    content: r_c,
+                    index: r_i,
+                },
+            ) => {
+                if *r_i + r_c.rle_len() as u32 == *index {
+                    content.merge_right(r_c);
+                    *index = *r_i
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn merge_left(&mut self, _: &Self) {
+        unreachable!()
+    }
 }
 
 impl ContainerState for RichtextState {
@@ -179,22 +222,13 @@ impl ContainerState for RichtextState {
                             }
                         }
                     }
-                    self.undo_stack.push(UndoItem::Insert {
-                        index: entity_index as u32,
-                        len: value.rle_len() as u32,
-                    });
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
                     let (start, end) =
                         self.state
                             .get_mut()
-                            .drain_by_entity_index(entity_index, *len, |span| {
-                                self.undo_stack.push(UndoItem::Delete {
-                                    index: entity_index as u32,
-                                    content: span,
-                                })
-                            });
+                            .drain_by_entity_index(entity_index, *len, |_| {});
                     if start > event_index {
                         for (len, styles) in self
                             .state
@@ -287,21 +321,12 @@ impl ContainerState for RichtextState {
                             }
                         }
                     }
-                    self.undo_stack.push(UndoItem::Insert {
-                        index: entity_index as u32,
-                        len: value.rle_len() as u32,
-                    });
                     entity_index += value.rle_len();
                 }
                 crate::delta::DeltaItem::Delete { len, meta: _ } => {
                     self.state
                         .get_mut()
-                        .drain_by_entity_index(entity_index, *len, |span| {
-                            self.undo_stack.push(UndoItem::Delete {
-                                index: entity_index as u32,
-                                content: span,
-                            })
-                        });
+                        .drain_by_entity_index(entity_index, *len, |_| {});
                 }
             }
         }
@@ -324,7 +349,7 @@ impl ContainerState for RichtextState {
                         .insert_at_entity_index(*pos as usize, slice.clone());
 
                     if self.in_txn {
-                        self.undo_stack.push(UndoItem::Insert {
+                        self.push_undo(UndoItem::Insert {
                             index: *pos,
                             len: *len,
                         })
@@ -336,10 +361,18 @@ impl ContainerState for RichtextState {
                         rle::HasLength::atom_len(&del),
                         |span| {
                             if self.in_txn {
-                                self.undo_stack.push(UndoItem::Delete {
+                                let item = UndoItem::Delete {
                                     index: del.start() as u32,
                                     content: span,
-                                })
+                                };
+                                match self.undo_stack.last_mut() {
+                                    Some(last) if last.can_merge(&item) => {
+                                        last.merge_right(&item);
+                                    }
+                                    _ => {
+                                        self.undo_stack.push(item);
+                                    }
+                                }
                             }
                         },
                     );
@@ -423,6 +456,17 @@ impl RichtextState {
                         .get_mut()
                         .insert_elem_at_entity_index(index as usize, content);
                 }
+            }
+        }
+    }
+
+    fn push_undo(&mut self, item: UndoItem) {
+        match self.undo_stack.last_mut() {
+            Some(last) if last.can_merge(&item) => {
+                last.merge_right(&item);
+            }
+            _ => {
+                self.undo_stack.push(item);
             }
         }
     }

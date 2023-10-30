@@ -6,13 +6,13 @@ use std::{
 
 use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use generic_btree::rle::{HasLength as RleHasLength, Mergeable, Sliceable as GBSliceable};
 use loro_common::{ContainerType, LoroResult};
-use rle::{HasLength, RleVec};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{idx::ContainerIdx, richtext::Style, IntoContainerId},
+    container::{idx::ContainerIdx, list::list_op::DeleteSpan, richtext::Style, IntoContainerId},
     delta::{Delta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
     id::{Counter, PeerID, ID},
@@ -44,7 +44,7 @@ pub struct Transaction {
     oplog: Arc<Mutex<OpLog>>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
-    event_hints: FxHashMap<Counter, EventHint>,
+    event_hints: Vec<EventHint>,
     pub(super) arena: SharedArena,
     finished: bool,
     on_commit: Option<OnCommitFn>,
@@ -54,35 +54,99 @@ pub struct Transaction {
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum EventHint {
     Mark {
-        start: usize,
-        end: usize,
+        start: u32,
+        end: u32,
         style: Style,
     },
     InsertText {
         /// pos is a Unicode index. If wasm, it's a UTF-16 index.
-        pos: usize,
+        pos: u32,
+        len: u32,
         styles: Vec<Style>,
     },
-    DeleteText {
-        /// pos is a Unicode index. If wasm, it's a UTF-16 index.
-        pos: usize,
-        /// len is a Unicode length. If wasm, it's a UTF-16 length.
-        len: usize,
-    },
+    /// pos is a Unicode index. If wasm, it's a UTF-16 index.
+    DeleteText(DeleteSpan),
     InsertList {
         pos: usize,
         value: LoroValue,
     },
-    DeleteList {
-        pos: usize,
-        len: usize,
-    },
+    DeleteList(DeleteSpan),
     Map {
         key: InternalString,
         value: Option<LoroValue>,
     },
     Tree(TreeDiff),
     None,
+}
+
+impl generic_btree::rle::HasLength for EventHint {
+    fn rle_len(&self) -> usize {
+        match self {
+            EventHint::Mark { .. } => 1,
+            EventHint::InsertText { len, .. } => *len as usize,
+            EventHint::DeleteText(d) => d.len(),
+            EventHint::InsertList { .. } => 1,
+            EventHint::DeleteList(d) => d.len(),
+            EventHint::Map { .. } => 1,
+            EventHint::Tree(_) => 1,
+            EventHint::None => 1,
+        }
+    }
+}
+
+impl generic_btree::rle::Mergeable for EventHint {
+    fn can_merge(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (
+                EventHint::InsertText { pos, len, styles },
+                EventHint::InsertText {
+                    pos: r_pos,
+                    styles: r_styles,
+                    ..
+                },
+            ) => *pos + *len == *r_pos && styles == r_styles,
+            (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.is_mergable(r, &()),
+            (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
+            _ => false,
+        }
+    }
+
+    fn merge_right(&mut self, rhs: &Self) {
+        match (self, rhs) {
+            (EventHint::InsertText { len, .. }, EventHint::InsertText { len: r_len, .. }) => {
+                *len += *r_len;
+            }
+            (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.merge(r, &()),
+            (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn merge_left(&mut self, _: &Self) {
+        unreachable!()
+    }
+}
+
+impl generic_btree::rle::Sliceable for EventHint {
+    fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+        match self {
+            EventHint::InsertText {
+                pos,
+                len: _,
+                styles,
+            } => EventHint::InsertText {
+                pos: *pos + range.start as u32,
+                len: range.len() as u32,
+                styles: styles.clone(),
+            },
+            EventHint::DeleteText(d) => EventHint::DeleteText(d.slice(range.start, range.end)),
+            EventHint::DeleteList(d) => EventHint::DeleteList(d.slice(range.start, range.end)),
+            a => {
+                assert_eq!(a.rle_len(), range.len());
+                a.clone()
+            }
+        }
+    }
 }
 
 impl Transaction {
@@ -268,7 +332,15 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);
-        self.event_hints.insert(raw_op.id.counter, event);
+        assert_eq!(event.rle_len(), op.atom_len());
+        match self.event_hints.last_mut() {
+            Some(last) if last.can_merge(&event) => {
+                last.merge_right(&event);
+            }
+            _ => {
+                self.event_hints.push(event);
+            }
+        }
         self.local_ops.push(op);
         self.next_counter += len as Counter;
         self.next_lamport += len as Lamport;
@@ -349,40 +421,58 @@ pub(crate) struct TxnContainerDiff {
 fn change_to_diff(
     change: &Change,
     _arena: &SharedArena,
-    mut event_hints: FxHashMap<Counter, EventHint>,
+    event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
+    let mut event_hint_iter = event_hints.into_iter();
+    let mut o_hint = event_hint_iter.next();
+
     for op in change.ops.iter() {
-        let counter = op.counter;
-        let Some(hint) = event_hints.remove(&counter) else {
+        let Some(hint) = o_hint.as_mut() else {
             unreachable!()
         };
+
+        let hint = match op.atom_len().cmp(&hint.rle_len()) {
+            std::cmp::Ordering::Less => {
+                let ans = hint.slice(..op.atom_len());
+                hint.slice_(op.atom_len()..);
+                ans
+            }
+            std::cmp::Ordering::Equal => match event_hint_iter.next() {
+                Some(n) => o_hint.replace(n).unwrap(),
+                None => o_hint.take().unwrap(),
+            },
+            std::cmp::Ordering::Greater => {
+                unreachable!()
+            }
+        };
+
         'outer: {
             let diff: Diff =
                 match hint {
                     EventHint::Mark { start, end, style } => {
-                        Diff::Text(Delta::new().retain(start).retain_with_meta(
-                            end - start,
+                        Diff::Text(Delta::new().retain(start as usize).retain_with_meta(
+                            (end - start) as usize,
                             crate::delta::StyleMeta { vec: vec![style] },
                         ))
                     }
-                    EventHint::InsertText { pos, styles } => {
+                    EventHint::InsertText { pos, styles, .. } => {
                         let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
-                        Diff::Text(Delta::new().retain(pos).insert_with_meta(
+                        Diff::Text(Delta::new().retain(pos as usize).insert_with_meta(
                             slice.clone(),
                             crate::delta::StyleMeta { vec: styles },
                         ))
                     }
-                    EventHint::DeleteText { pos, len } => {
-                        Diff::Text(Delta::new().retain(pos).delete(len))
+                    EventHint::DeleteText(s) => {
+                        Diff::Text(Delta::new().retain(s.start() as usize).delete(s.len()))
                     }
                     EventHint::InsertList { pos, value } => {
                         Diff::List(Delta::new().retain(pos).insert(vec![value]))
                     }
-                    EventHint::DeleteList { pos, len } => {
-                        Diff::List(Delta::new().retain(pos).delete(len))
+                    EventHint::DeleteList(s) => {
+                        Diff::List(Delta::new().retain(s.start() as usize).delete(s.len()))
                     }
                     EventHint::Map { key, value } => {
                         Diff::NewMap(crate::delta::MapDelta::new().with_entry(
@@ -410,6 +500,5 @@ fn change_to_diff(
         lamport += op.content_len() as Lamport;
     }
 
-    debug_dbg!(&ans);
     ans
 }
