@@ -87,10 +87,7 @@ impl TreeDiffCache {
     // Because importing the local op must not cause circular references, it has been checked.
     pub(crate) fn add_node_uncheck(&mut self, node: MoveLamportAndID) {
         if !self.all_version.includes_id(node.id) {
-            self.cache
-                .entry(node.target)
-                .or_insert_with(Default::default)
-                .insert(node);
+            self.cache.entry(node.target).or_default().insert(node);
             // assert len == 1
             self.current_version.set_last(node.id);
             self.all_version.set_last(node.id);
@@ -178,10 +175,7 @@ impl TreeDiffCache {
             ans = false;
         }
         node.effected = ans;
-        self.cache
-            .entry(node.target)
-            .or_insert_with(Default::default)
-            .insert(node);
+        self.cache.entry(node.target).or_default().insert(node);
         self.current_version.set_last(node.id);
         ans
     }

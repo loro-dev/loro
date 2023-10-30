@@ -1,7 +1,58 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use loro_common::ID;
-use loro_internal::{version::Frontiers, LoroDoc, ToJson};
+use loro_common::{ContainerType, LoroValue, ID};
+use loro_internal::{version::Frontiers, ApplyDiff, LoroDoc, ToJson};
+use serde_json::json;
+
+#[test]
+fn test_checkout() {
+    let mut doc_0 = LoroDoc::new();
+    doc_0.set_peer_id(0);
+    let doc_1 = LoroDoc::new();
+    doc_1.set_peer_id(1);
+
+    let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
+    let root_value = value.clone();
+    doc_0.subscribe_deep(Arc::new(move |event| {
+        let mut root_value = root_value.lock().unwrap();
+        root_value.apply(
+            &event.container.path.iter().map(|x| x.1.clone()).collect(),
+            &[event.container.diff.clone()],
+        );
+    }));
+
+    let map = doc_0.get_map("map");
+    doc_0
+        .with_txn(|txn| {
+            let handler = map.insert_container(txn, "text", ContainerType::Text)?;
+            let text = handler.into_text().unwrap();
+            text.insert(txn, 0, "123")
+        })
+        .unwrap();
+
+    let map = doc_1.get_map("map");
+    doc_1
+        .with_txn(|txn| map.insert(txn, "text", LoroValue::Double(1.0)))
+        .unwrap();
+
+    doc_0
+        .import(&doc_1.export_from(&Default::default()))
+        .unwrap();
+
+    doc_0
+        .checkout(&Frontiers::from(vec![ID::new(0, 2)]))
+        .unwrap();
+
+    assert_eq!(&doc_0.get_deep_value(), &*value.lock().unwrap());
+    assert_eq!(
+        value.lock().unwrap().to_json_value(),
+        json!({
+            "map": {
+                "text": "12"
+            }
+        })
+    );
+}
 
 #[test]
 fn import() {

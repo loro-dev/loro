@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 pub(super) mod tree;
+use itertools::Itertools;
 pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasIdSpan, PeerID, ID};
+use loro_common::{ContainerID, HasIdSpan, LoroValue, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -38,7 +39,10 @@ use super::{event::InternalContainerDiff, oplog::OpLog};
 /// TODO: persist diffCalculator and skip processed version
 #[derive(Debug, Default)]
 pub struct DiffCalculator {
-    calculators: FxHashMap<ContainerIdx, ContainerDiffCalculator>,
+    /// ContainerIdx -> (depth, calculator)
+    ///
+    /// if depth == u16::MAX, we need to calculate it again
+    calculators: FxHashMap<ContainerIdx, (u16, ContainerDiffCalculator)>,
     last_vv: VersionVector,
     has_all: bool,
 }
@@ -124,20 +128,26 @@ impl DiffCalculator {
 
                 let mut visited = FxHashSet::default();
                 for op in change.ops.iter() {
-                    let calculator =
+                    let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
+                    let (_, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
                             match op.container.get_type() {
-                                crate::ContainerType::Text => ContainerDiffCalculator::Richtext(
-                                    RichtextDiffCalculator::default(),
+                                crate::ContainerType::Text => (
+                                    depth,
+                                    ContainerDiffCalculator::Richtext(
+                                        RichtextDiffCalculator::default(),
+                                    ),
                                 ),
-                                crate::ContainerType::Map => {
-                                    ContainerDiffCalculator::Map(MapDiffCalculator::new())
-                                }
-                                crate::ContainerType::List => {
-                                    ContainerDiffCalculator::List(ListDiffCalculator::default())
-                                }
+                                crate::ContainerType::Map => (
+                                    depth,
+                                    ContainerDiffCalculator::Map(MapDiffCalculator::new()),
+                                ),
+                                crate::ContainerType::List => (
+                                    depth,
+                                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
+                                ),
                                 crate::ContainerType::Tree => {
-                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::default())
+                                    (depth, ContainerDiffCalculator::Tree(TreeDiffCalculator))
                                 }
                             }
                         });
@@ -160,7 +170,7 @@ impl DiffCalculator {
                     }
                 }
             }
-            for (_, calculator) in self.calculators.iter_mut() {
+            for (_, (_, calculator)) in self.calculators.iter_mut() {
                 calculator.stop_tracking(oplog, after);
             }
 
@@ -181,25 +191,115 @@ impl DiffCalculator {
                 None
             }
         };
-        let mut diffs = Vec::with_capacity(self.calculators.len());
-        if let Some(set) = affected_set {
+
+        // Because we need to get correct `reset` value that indicates container is created during this round of diff calc,
+        // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
+        let mut new_containers: FxHashSet<ContainerID> = FxHashSet::default();
+        let empty_vv: VersionVector = Default::default();
+        let mut all: Vec<(u16, ContainerIdx)> = if let Some(set) = affected_set {
             // only visit the affected containers
-            for idx in set {
-                let calc = self.calculators.get_mut(&idx).unwrap();
-                diffs.push(InternalContainerDiff {
-                    idx,
-                    diff: calc.calculate_diff(oplog, before, after).into(),
-                });
-            }
+            set.into_iter()
+                .map(|x| {
+                    let (depth, _) = self.calculators.get_mut(&x).unwrap();
+                    (*depth, x)
+                })
+                .collect()
         } else {
-            for (&idx, calculator) in self.calculators.iter_mut() {
-                diffs.push(InternalContainerDiff {
-                    idx,
-                    diff: calculator.calculate_diff(oplog, before, after).into(),
+            self.calculators
+                .iter_mut()
+                .map(|(x, (depth, _))| (*depth, *x))
+                .collect()
+        };
+
+        let mut are_rest_containers_deleted = false;
+        let mut ans = FxHashMap::default();
+        while !all.is_empty() {
+            // sort by depth and lamport, ensure we iterate from top to bottom
+            all.sort_by_key(|x| x.0);
+            debug_log::debug_dbg!(&all);
+            let len = all.len();
+            for (_, idx) in std::mem::take(&mut all) {
+                if ans.contains_key(&idx) {
+                    continue;
+                }
+
+                let (depth, calc) = self.calculators.get_mut(&idx).unwrap();
+                if *depth == u16::MAX && !are_rest_containers_deleted {
+                    if let Some(d) = oplog.arena.get_depth(idx) {
+                        *depth = d;
+                    }
+
+                    all.push((*depth, idx));
+                    continue;
+                }
+
+                let (from, reset) = if new_containers.remove(&oplog.arena.idx_to_id(idx).unwrap()) {
+                    // if the container is new, we need to calculate the diff from the beginning
+                    (&empty_vv, true)
+                } else {
+                    (before, false)
+                };
+
+                let diff = calc.calculate_diff(oplog, from, after, |c| {
+                    new_containers.insert(c.clone());
+                    let child_idx = oplog.arena.register_container(c);
+                    oplog.arena.set_parent(child_idx, Some(idx));
                 });
+                if !diff.is_empty() || reset {
+                    ans.insert(
+                        idx,
+                        InternalContainerDiff {
+                            idx,
+                            reset,
+                            is_container_deleted: are_rest_containers_deleted,
+                            diff: diff.into(),
+                        },
+                    );
+                }
+            }
+
+            debug_log::debug_dbg!(&new_containers);
+            // reset left new_containers
+            while !new_containers.is_empty() {
+                for id in std::mem::take(&mut new_containers) {
+                    let Some(idx) = oplog.arena.id_to_idx(&id) else {
+                        continue;
+                    };
+                    let Some((_, calc)) = self.calculators.get_mut(&idx) else {
+                        continue;
+                    };
+                    let diff = calc.calculate_diff(oplog, &empty_vv, after, |c| {
+                        new_containers.insert(c.clone());
+                        let child_idx = oplog.arena.register_container(c);
+                        oplog.arena.set_parent(child_idx, Some(idx));
+                    });
+                    // this can override the previous diff with `reset = false`
+                    // otherwise, the diff event will be incorrect
+                    ans.insert(
+                        idx,
+                        InternalContainerDiff {
+                            idx,
+                            reset: true,
+                            is_container_deleted: false,
+                            diff: diff.into(),
+                        },
+                    );
+                }
+            }
+
+            if len == all.len() {
+                debug_log::debug_log!("Container might be deleted");
+                debug_log::debug_dbg!(&all);
+                for (_, idx) in all.iter() {
+                    debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
+                }
+                // we still emit the event of deleted container
+                are_rest_containers_deleted = true;
             }
         }
-        diffs
+
+        debug_log::debug_dbg!(&ans);
+        ans.into_iter().map(|x| x.1).collect_vec()
     }
 }
 
@@ -225,6 +325,7 @@ pub trait DiffCalculatorTrait {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
+        on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff;
 }
 
@@ -278,6 +379,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         oplog: &super::oplog::OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
+        mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let mut changed = Vec::new();
         for (k, g) in self.grouped.iter_mut() {
@@ -299,6 +401,10 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             let value = value
                 .map(|v| {
                     let value = v.value.and_then(|v| oplog.arena.get_value(v as usize));
+                    if let Some(LoroValue::Container(c)) = &value {
+                        on_new_container(c);
+                    }
+
                     MapValue {
                         counter: v.counter,
                         value,
@@ -412,11 +518,27 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        _oplog: &OpLog,
+        oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
+        mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        InternalDiff::SeqRaw(self.tracker.diff(from, to))
+        let ans = self.tracker.diff(from, to);
+        // PERF: We may simplify list to avoid these getting
+        for v in ans.iter() {
+            if let crate::delta::DeltaItem::Insert { value, meta: _ } = &v {
+                for range in &value.0 {
+                    for i in range.0.clone() {
+                        let v = oplog.arena.get_value(i as usize);
+                        if let Some(LoroValue::Container(c)) = &v {
+                            on_new_container(c);
+                        }
+                    }
+                }
+            }
+        }
+
+        InternalDiff::SeqRaw(ans)
     }
 }
 
@@ -518,6 +640,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
+        _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         let mut delta = Delta::new();
         for item in self.tracker.diff(from, to) {
@@ -548,6 +671,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 }
             }
         }
+
+        // FIXME: handle new containers when inserting richtext style like comments
 
         // debug_log::debug_dbg!(&delta, from, to);
         // debug_log::debug_dbg!(&self.tracker);
@@ -607,6 +732,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
+        _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
@@ -633,6 +759,8 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             lca_min_lamport,
             (from_min_lamport, from_max_lamport),
         );
+
+        // FIXME: inserting new containers
         debug_log::debug_log!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)

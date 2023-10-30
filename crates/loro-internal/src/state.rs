@@ -253,6 +253,10 @@ impl DocState {
                 DiffVariant::External(Diff::List(Delta::default())),
             );
 
+            if diff.reset {
+                *state = create_state(diff.idx);
+            }
+
             if is_recording {
                 let external_diff = state
                     .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena);
@@ -352,11 +356,14 @@ impl DocState {
         }
 
         if self.is_recording() {
+            debug_log::debug_log!("TODIFF");
             let diff = self
                 .states
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
+                    reset: true,
+                    is_container_deleted: false,
                     diff: state.to_diff().into(),
                 })
                 .collect();
@@ -590,7 +597,7 @@ impl DocState {
 
     // Because we need to calculate path based on [DocState], so we cannot extract
     // the event recorder to a separate module.
-    fn diffs_to_event(&self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
+    fn diffs_to_event(&mut self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
         if diffs.is_empty() {
             panic!("diffs is empty");
         }
@@ -602,6 +609,11 @@ impl DocState {
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
+                if container_diff.is_container_deleted {
+                    // omit event form deleted container
+                    continue;
+                }
+
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
                         containers.insert(container_diff.idx, (container_diff.diff, path));
@@ -609,8 +621,9 @@ impl DocState {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
                         debug_log::debug_log!(
-                            "⚠️ WARNING: ignore because cannot find path {:#?}",
-                            &container_diff
+                            "⚠️ WARNING: ignore because cannot find path {:#?} deep_value {:#?}",
+                            &container_diff,
+                            self.get_deep_value_with_id()
                         );
                     }
                     continue;
@@ -659,7 +672,10 @@ impl DocState {
             debug_log::debug_dbg!(&id);
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.states.get(&parent_idx).unwrap();
-                let prop = parent_state.get_child_index(&id)?;
+                let Some(prop) = parent_state.get_child_index(&id) else {
+                    debug_log::group_end!();
+                    return None;
+                };
                 ans.push((id, prop));
                 idx = parent_idx;
             } else {

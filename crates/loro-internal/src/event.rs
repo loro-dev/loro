@@ -49,6 +49,8 @@ pub struct DocDiff {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
+    pub(crate) reset: bool,
+    pub(crate) is_container_deleted: bool,
     pub(crate) diff: DiffVariant,
 }
 
@@ -177,6 +179,15 @@ pub enum Diff {
 }
 
 impl InternalDiff {
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            InternalDiff::SeqRaw(s) => s.is_empty(),
+            InternalDiff::RichtextRaw(t) => t.is_empty(),
+            InternalDiff::Map(m) => m.updated.is_empty(),
+            InternalDiff::Tree(t) => t.diff.is_empty(),
+        }
+    }
+
     pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {

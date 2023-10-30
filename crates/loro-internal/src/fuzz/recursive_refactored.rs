@@ -703,6 +703,8 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
+            debug_log::debug_dbg!(a_doc.get_deep_value_with_id());
+            debug_log::debug_dbg!(b_doc.get_deep_value_with_id());
             if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
@@ -2685,7 +2687,7 @@ mod failed_tests {
             5,
             &mut [
                 Map {
-                    site: 3,
+                    site: 4,
                     container_idx: 0,
                     key: 8,
                     value: Null,
@@ -2726,202 +2728,6 @@ mod failed_tests {
 
     #[test]
     fn to_minify() {
-        minify_error(
-            5,
-            vec![
-                Map {
-                    site: 8,
-                    container_idx: 8,
-                    key: 8,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 0,
-                    key: 0,
-                    value: Null,
-                },
-                Map {
-                    site: 16,
-                    container_idx: 0,
-                    key: 8,
-                    value: Container(C::Text),
-                },
-                Map {
-                    site: 32,
-                    container_idx: 255,
-                    key: 96,
-                    value: I32(31868),
-                },
-                Map {
-                    site: 124,
-                    container_idx: 0,
-                    key: 49,
-                    value: Null,
-                },
-                Text {
-                    site: 126,
-                    container_idx: 56,
-                    pos: 50,
-                    value: 35201,
-                    is_del: false,
-                },
-                SyncAll,
-                List {
-                    site: 73,
-                    container_idx: 73,
-                    key: 73,
-                    value: I32(823079480),
-                },
-                Map {
-                    site: 124,
-                    container_idx: 0,
-                    key: 92,
-                    value: Null,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 129,
-                    key: 137,
-                    value: I32(2122222732),
-                },
-                Text {
-                    site: 126,
-                    container_idx: 126,
-                    pos: 122,
-                    value: 31354,
-                    is_del: false,
-                },
-                Text {
-                    site: 122,
-                    container_idx: 49,
-                    pos: 92,
-                    value: 1918,
-                    is_del: false,
-                },
-                Text {
-                    site: 126,
-                    container_idx: 56,
-                    pos: 50,
-                    value: 35201,
-                    is_del: false,
-                },
-                SyncAll,
-                List {
-                    site: 73,
-                    container_idx: 73,
-                    key: 73,
-                    value: I32(823079480),
-                },
-                Map {
-                    site: 124,
-                    container_idx: 0,
-                    key: 92,
-                    value: Null,
-                },
-                Map {
-                    site: 124,
-                    container_idx: 0,
-                    key: 49,
-                    value: Null,
-                },
-                Text {
-                    site: 136,
-                    container_idx: 191,
-                    pos: 191,
-                    value: 31805,
-                    is_del: true,
-                },
-                Sync { from: 191, to: 36 },
-                Text {
-                    site: 140,
-                    container_idx: 140,
-                    pos: 140,
-                    value: 32396,
-                    is_del: false,
-                },
-                Text {
-                    site: 5,
-                    container_idx: 124,
-                    pos: 0,
-                    value: 11356,
-                    is_del: false,
-                },
-                Map {
-                    site: 0,
-                    container_idx: 2,
-                    key: 0,
-                    value: I32(-1936946036),
-                },
-                Text {
-                    site: 13,
-                    container_idx: 126,
-                    pos: 126,
-                    value: 32382,
-                    is_del: false,
-                },
-                Text {
-                    site: 122,
-                    container_idx: 122,
-                    pos: 122,
-                    value: 12666,
-                    is_del: false,
-                },
-                SyncAll,
-                Text {
-                    site: 56,
-                    container_idx: 50,
-                    pos: 129,
-                    value: 32393,
-                    is_del: false,
-                },
-                Text {
-                    site: 242,
-                    container_idx: 161,
-                    pos: 73,
-                    value: 18761,
-                    is_del: true,
-                },
-                Text {
-                    site: 56,
-                    container_idx: 50,
-                    pos: 0,
-                    value: 12,
-                    is_del: false,
-                },
-            ],
-            test_multi_sites,
-            normalize,
-        )
+        minify_error(5, vec![], test_multi_sites, normalize)
     }
 }

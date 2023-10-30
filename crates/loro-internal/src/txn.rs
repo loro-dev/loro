@@ -10,14 +10,9 @@ use fxhash::FxHashMap;
 use loro_common::{ContainerType, LoroResult};
 use rle::{HasLength, RleVec};
 
-
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
-    container::{
-        idx::ContainerIdx,
-        richtext::{Style},
-        IntoContainerId,
-    },
+    container::{idx::ContainerIdx, richtext::Style, IntoContainerId},
     delta::{Delta, MapValue, TreeDelta, TreeDiff},
     event::Diff,
     id::{Counter, PeerID, ID},
@@ -30,7 +25,7 @@ use crate::{
 use super::{
     arena::SharedArena,
     event::{InternalContainerDiff, InternalDocDiff},
-    handler::{ListHandler, MapHandler,TreeHandler,TextHandler },
+    handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     oplog::OpLog,
     state::{DocState, State},
 };
@@ -215,6 +210,8 @@ impl Transaction {
                     arr.into_iter()
                         .map(|x| InternalContainerDiff {
                             idx: x.idx,
+                            reset: false,
+                            is_container_deleted: false,
                             diff: x.diff.into(),
                         })
                         .collect(),
@@ -354,44 +351,44 @@ fn change_to_diff(
         'outer: {
             let diff: Diff =
                 match hint {
-                EventHint::Mark { start, end, style } => {
-                    Diff::Text(Delta::new().retain(start).retain_with_meta(
-                        end - start,
-                        crate::delta::StyleMeta { vec: vec![style] },
-                    ))
-                }
-                EventHint::InsertText { pos, styles } => {
-                    let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
-                    Diff::Text(Delta::new().retain(pos).insert_with_meta(
-                        slice.clone(),
-                        crate::delta::StyleMeta { vec: styles },
-                    ))
-                }
-                EventHint::DeleteText { pos, len } => {
-                    Diff::Text(Delta::new().retain(pos).delete(len))
-                }
-                EventHint::InsertList { pos, value } => {
-                    Diff::List(Delta::new().retain(pos).insert(vec![value]))
-                }
-                EventHint::DeleteList { pos, len } => {
-                    Diff::List(Delta::new().retain(pos).delete(len))
-                }
-                EventHint::Map { key, value } => {
-                    Diff::NewMap(crate::delta::MapDelta::new().with_entry(
-                        key,
-                        MapValue {
-                            counter: op.counter,
-                            value,
-                            lamport: (lamport, peer),
-                        },
-                    ))
-                }
-                EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
-                EventHint::None => {
-                    // do nothing
-                    break 'outer;
-                }
-            };
+                    EventHint::Mark { start, end, style } => {
+                        Diff::Text(Delta::new().retain(start).retain_with_meta(
+                            end - start,
+                            crate::delta::StyleMeta { vec: vec![style] },
+                        ))
+                    }
+                    EventHint::InsertText { pos, styles } => {
+                        let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
+                        Diff::Text(Delta::new().retain(pos).insert_with_meta(
+                            slice.clone(),
+                            crate::delta::StyleMeta { vec: styles },
+                        ))
+                    }
+                    EventHint::DeleteText { pos, len } => {
+                        Diff::Text(Delta::new().retain(pos).delete(len))
+                    }
+                    EventHint::InsertList { pos, value } => {
+                        Diff::List(Delta::new().retain(pos).insert(vec![value]))
+                    }
+                    EventHint::DeleteList { pos, len } => {
+                        Diff::List(Delta::new().retain(pos).delete(len))
+                    }
+                    EventHint::Map { key, value } => {
+                        Diff::NewMap(crate::delta::MapDelta::new().with_entry(
+                            key,
+                            MapValue {
+                                counter: op.counter,
+                                value,
+                                lamport: (lamport, peer),
+                            },
+                        ))
+                    }
+                    EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
+                    EventHint::None => {
+                        // do nothing
+                        break 'outer;
+                    }
+                };
 
             ans.push(TxnContainerDiff {
                 idx: op.container,
