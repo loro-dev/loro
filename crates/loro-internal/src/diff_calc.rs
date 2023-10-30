@@ -6,7 +6,7 @@ pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, HasIdSpan, LoroValue, PeerID, ID};
+use loro_common::{ContainerID, ContainerType, HasIdSpan, LoroValue, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -20,7 +20,7 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     dag::DagUtils,
-    delta::{Delta, MapDelta, MapValue},
+    delta::{Delta, MapDelta, MapValue, TreeDiffItem},
     event::InternalDiff,
     id::Counter,
     op::RichOp,
@@ -732,7 +732,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
-        _: impl FnMut(&ContainerID),
+        mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
         debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
@@ -760,7 +760,12 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             (from_min_lamport, from_max_lamport),
         );
 
-        // FIXME: inserting new containers
+        diff.diff.iter().for_each(|d| {
+            if matches!(d.action, TreeDiffItem::Create) {
+                on_new_container(&d.target.associated_meta_container())
+            }
+        });
+
         debug_log::debug_log!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)

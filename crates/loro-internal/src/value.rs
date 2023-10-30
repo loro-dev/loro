@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    delta::DeltaItem,
+    delta::{DeltaItem, TreeValue},
     event::{Diff, Index, Path},
-    state::Forest,
 };
 
-use fxhash::FxHashMap;
+use loro_common::ContainerType;
 pub use loro_common::LoroValue;
-use loro_common::{ContainerType, TreeID};
 
 pub trait ToJson {
     fn to_json_value(&self) -> serde_json::Value;
@@ -79,32 +77,44 @@ impl ApplyDiff for LoroValue {
                 *value = Arc::new(s);
             }
             LoroValue::List(seq) => {
-                let seq = Arc::make_mut(seq);
-                for item in diff.iter() {
-                    let delta = item.as_list().unwrap();
-                    let mut index = 0;
-                    for delta_item in delta.iter() {
-                        match delta_item {
-                            DeltaItem::Retain { len, .. } => {
-                                index += len;
+                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                if !is_tree {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        let delta = item.as_list().unwrap();
+                        let mut index = 0;
+                        for delta_item in delta.iter() {
+                            match delta_item {
+                                DeltaItem::Retain { len, .. } => {
+                                    index += len;
+                                }
+                                DeltaItem::Insert { value, .. } => {
+                                    value.iter().for_each(|v| {
+                                        let value = unresolved_to_collection(v);
+                                        seq.insert(index, value);
+                                        index += 1;
+                                    });
+                                }
+                                DeltaItem::Delete { len, .. } => {
+                                    seq.drain(index..index + len);
+                                }
                             }
-                            DeltaItem::Insert { value, .. } => {
-                                value.iter().for_each(|v| {
-                                    let value = unresolved_to_collection(v);
-                                    seq.insert(index, value);
-                                    index += 1;
-                                });
+                        }
+                    }
+                } else {
+                    let seq = Arc::make_mut(seq);
+                    for item in diff.iter() {
+                        match item {
+                            Diff::Tree(tree) => {
+                                let mut v = TreeValue(seq);
+                                v.apply_diff(tree);
                             }
-                            DeltaItem::Delete { len, .. } => {
-                                seq.drain(index..index + len);
-                            }
+                            _ => unreachable!(),
                         }
                     }
                 }
             }
             LoroValue::Map(map) => {
-                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
-                if !is_tree {
                 for item in diff.iter() {
                     match item {
                         Diff::NewMap(diff) => {
@@ -126,12 +136,7 @@ impl ApplyDiff for LoroValue {
                         _ => unreachable!(),
                     }
                 }
-            }else {
-                    // TODO: perf
-                    let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
-                    let diff_forest = forest.apply_diffs(diff);
-                    *map = diff_forest.to_value().into_map().unwrap()
-                }}
+            }
             _ => unreachable!(),
         }
     }
@@ -166,14 +171,9 @@ impl ApplyDiff for LoroValue {
                         let map = Arc::make_mut(m);
                         value = map.entry(key.to_string()).or_insert_with(|| match hint {
                             TypeHint::Map => LoroValue::Map(Default::default()),
-                            TypeHint::Text => LoroValue::String(Arc::new(String::new())),
+                            TypeHint::Text => LoroValue::String(Default::default()),
                             TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => {
-                                let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
-                                map.insert("roots".to_string(), LoroValue::List(vec![].into()));
-                                map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
-                                map.into()
-                            }
+                            TypeHint::Tree => LoroValue::List(Default::default()),
                         })
                     }
                     Index::Seq(index) => {
@@ -181,7 +181,26 @@ impl ApplyDiff for LoroValue {
                         let list = Arc::make_mut(l);
                         value = list.get_mut(*index).unwrap();
                     }
-                    Index::Node(tree_id) => value = get_meta_from_tree_value(value, *tree_id),
+                    Index::Node(tree_id) => {
+                        let l = value.as_list_mut().unwrap();
+                        let list = Arc::make_mut(l);
+                        let map = list
+                            .iter_mut()
+                            .find(|x| {
+                                let id =
+                                    x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                                id.as_ref() == &tree_id.to_string()
+                            })
+                            .unwrap()
+                            .as_map_mut()
+                            .unwrap();
+                        let map_mut = Arc::make_mut(map);
+                        let meta = map_mut.get_mut("meta").unwrap();
+                        if meta.is_container() {
+                            *meta = ContainerType::Map.default_value();
+                        }
+                        value = meta
+                    }
                 }
             }
             value
@@ -190,36 +209,7 @@ impl ApplyDiff for LoroValue {
     }
 }
 
-fn get_meta_from_tree_value(value: &mut LoroValue, target: TreeID) -> &mut LoroValue {
-    // find the meta of `tree_id`
-    let tree = Arc::make_mut(value.as_map_mut().unwrap());
-    let mut map_value = None;
-    'out: for (_, nodes) in tree.iter_mut() {
-        let mut s = vec![];
-        let roots = nodes.as_list_mut().unwrap();
-        let roots = Arc::make_mut(roots);
-        s.extend(roots);
-        while let Some(root) = s.pop() {
-            let root = Arc::make_mut(root.as_map_mut().unwrap());
-            let this_node =
-                root.get("id").unwrap().as_string().unwrap().as_ref() == &target.to_string();
-            if this_node {
-                let meta = root.get_mut("meta").unwrap();
-                if meta.is_container() {
-                    *meta = ContainerType::Map.default_value();
-                }
-                map_value = Some(meta);
-                break 'out;
-            } else {
-                let children = root.get_mut("children").unwrap().as_list_mut().unwrap();
-                s.extend(Arc::make_mut(children));
-            }
-        }
-    }
-    map_value.unwrap()
-}
-
-fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
+pub(crate) fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
     if let Some(container) = v.as_container() {
         container.container_type().default_value()
     } else {
@@ -235,7 +225,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff,StyleMeta, TreeDelta, TreeDiffItem},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, StyleMeta, TreeDelta, TreeDiffItem},
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
@@ -375,7 +365,26 @@ pub mod wasm {
                     js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
                         .unwrap();
                 }
-                TreeDiffItem::CreateOrRestore => {
+                TreeDiffItem::CreateMove(parent) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("createMove"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
+                        .unwrap();
+                }
+                TreeDiffItem::CreateOrAsRoot => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("createOrAsRoot"),
+                    )
+                    .unwrap();
+                }
+                TreeDiffItem::Create => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),

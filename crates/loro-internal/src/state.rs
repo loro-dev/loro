@@ -551,45 +551,40 @@ impl DocState {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
-                if list.iter().all(|x| !x.is_container()) {
-                    return LoroValue::List(list);
-                }
+                if container.get_type() == ContainerType::Tree {
+                    get_meta_value(Arc::make_mut(&mut list), self);
+                } else {
+                    if list.iter().all(|x| !x.is_container()) {
+                        return LoroValue::List(list);
+                    }
 
-                let list_mut = Arc::make_mut(&mut list);
-                for item in list_mut.iter_mut() {
-                    if item.is_container() {
-                        let container = item.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let value = self.get_container_deep_value(container_idx);
-                        *item = value;
+                    let list_mut = Arc::make_mut(&mut list);
+                    for item in list_mut.iter_mut() {
+                        if item.is_container() {
+                            let container = item.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let value = self.get_container_deep_value(container_idx);
+                            *item = value;
+                        }
                     }
                 }
-
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if container.get_type() == ContainerType::Tree {
-                    // get tree's meta
-                    for nodes in Arc::make_mut(&mut map).values_mut() {
-                        get_meta_value(nodes, self);
-                    }
-                    LoroValue::Map(map)
-                } else {
-                    if map.iter().all(|x| !x.1.is_container()) {
-                        return LoroValue::Map(map);
-                    }
-
-                    let map_mut = Arc::make_mut(&mut map);
-                    for (_key, value) in map_mut.iter_mut() {
-                        if value.is_container() {
-                            let container = value.as_container().unwrap();
-                            let container_idx = self.arena.register_container(container);
-                            let new_value = self.get_container_deep_value(container_idx);
-                            *value = new_value;
-                        }
-                    }
-                    LoroValue::Map(map)
+                if map.iter().all(|x| !x.1.is_container()) {
+                    return LoroValue::Map(map);
                 }
+
+                let map_mut = Arc::make_mut(&mut map);
+                for (_key, value) in map_mut.iter_mut() {
+                    if value.is_container() {
+                        let container = value.as_container().unwrap();
+                        let container_idx = self.arena.register_container(container);
+                        let new_value = self.get_container_deep_value(container_idx);
+                        *value = new_value;
+                    }
+                }
+                LoroValue::Map(map)
             }
             _ => value,
         }

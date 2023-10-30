@@ -17,9 +17,14 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, delta::TreeDiffItem, handler::TreeHandler, loro::LoroDoc,
-    state::Forest, value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler,
-    TextHandler,
+    container::idx::ContainerIdx,
+    delta::TreeValue,
+    event::Index,
+    handler::TreeHandler,
+    loro::LoroDoc,
+    value::{unresolved_to_collection, ToJson},
+    version::Frontiers,
+    ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -61,10 +66,7 @@ struct Actor {
     peer: PeerID,
     loro: LoroDoc,
     value_tracker: Arc<Mutex<LoroValue>>,
-    map_tracker: Arc<Mutex<FxHashMap<String, LoroValue>>>,
-    list_tracker: Arc<Mutex<Vec<LoroValue>>>,
-    text_tracker: Arc<Mutex<String>>,
-    tree_tracker: Arc<Mutex<FxHashMap<TreeID, Option<TreeID>>>>,
+    tree_tracker: Arc<Mutex<Vec<LoroValue>>>,
     map_containers: Vec<MapHandler>,
     list_containers: Vec<ListHandler>,
     text_containers: Vec<TextHandler>,
@@ -76,16 +78,11 @@ impl Actor {
     fn new(id: PeerID) -> Self {
         let app = LoroDoc::new();
         app.set_peer_id(id);
-        let mut default_tree_tracker = FxHashMap::default();
-        default_tree_tracker.insert(TreeID::delete_root().unwrap(), None);
         let mut actor = Actor {
             peer: id,
             loro: app,
             value_tracker: Arc::new(Mutex::new(LoroValue::Map(Default::default()))),
-            map_tracker: Default::default(),
-            list_tracker: Default::default(),
-            text_tracker: Default::default(),
-            tree_tracker: Arc::new(Mutex::new(default_tree_tracker)),
+            tree_tracker: Default::default(),
             map_containers: Default::default(),
             list_containers: Default::default(),
             text_containers: Default::default(),
@@ -108,24 +105,40 @@ impl Actor {
             &ContainerID::new_root("tree", ContainerType::Tree),
             Arc::new(move |event| {
                 if event.from_children {
+                    // meta
+                    let Index::Node(target) = event.container.path.last().unwrap().1 else {
+                        unreachable!()
+                    };
+                    let mut tree = tree.lock().unwrap();
+                    let map = tree
+                        .iter_mut()
+                        .find(|x| {
+                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                            id.as_ref() == &target.to_string()
+                        })
+                        .unwrap();
+                    let map = Arc::make_mut(map.as_map_mut().unwrap());
+                    let meta = map.get_mut("meta").unwrap();
+                    let meta = Arc::make_mut(meta.as_map_mut().unwrap());
+                    if let Diff::NewMap(update) = &event.container.diff {
+                        for (key, value) in update.updated.iter() {
+                            match &value.value {
+                                Some(value) => {
+                                    meta.insert(key.to_string(), unresolved_to_collection(value));
+                                }
+                                None => {
+                                    meta.remove(&key.to_string());
+                                }
+                            }
+                        }
+                    }
+
                     return;
                 }
                 let mut tree = tree.lock().unwrap();
                 if let Diff::Tree(tree_delta) = &event.container.diff {
-                    for diff in tree_delta.diff.iter() {
-                        let target = diff.target;
-                        match diff.action {
-                            TreeDiffItem::CreateOrRestore => {
-                                tree.insert(target, None);
-                            }
-                            TreeDiffItem::Move(parent) => {
-                                tree.insert(target, Some(parent));
-                            }
-                            TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
-                                tree.insert(target, TreeID::delete_root());
-                            }
-                        }
-                    }
+                    let mut v = TreeValue(&mut tree);
+                    v.apply_diff(tree_delta);
                 } else {
                     debug_dbg!(&event.container);
                     unreachable!()
@@ -150,7 +163,18 @@ impl Actor {
 
     fn record_history(&mut self) {
         let f = self.loro.oplog_frontiers();
-        let value = self.loro.get_deep_value();
+        let mut value = self.loro.get_deep_value();
+        Arc::make_mut(
+            Arc::make_mut(value.as_map_mut().unwrap())
+                .get_mut("tree")
+                .unwrap()
+                .as_list_mut()
+                .unwrap(),
+        )
+        .sort_by_key(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap();
+            id.clone().into_string().unwrap()
+        });
         let mut ids: Vec<ID> = f.iter().cloned().collect();
         ids.sort_by_key(|x| x.peer);
         self.history.insert(ids, value);
@@ -581,14 +605,7 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 let is_empty = match v {
                     LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => {
-                        m.is_empty() || {
-                            m.get("roots")
-                                .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                                && m.get("deleted")
-                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                        }
-                    }
+                    LoroValue::Map(m) => m.is_empty(),
                     _ => false,
                 };
                 if is_empty {
@@ -601,20 +618,12 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
                 let is_empty = match v {
                     LoroValue::String(s) => s.is_empty(),
                     LoroValue::List(l) => l.is_empty(),
-                    LoroValue::Map(m) => {
-                        m.is_empty() || {
-                            m.get("roots")
-                                .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                                && m.get("deleted")
-                                    .is_some_and(|x| x.as_list().is_some_and(|l| l.is_empty()))
-                        }
-                    }
+                    LoroValue::Map(m) => m.is_empty(),
                     _ => false,
                 };
                 if is_empty {
                     continue;
                 }
-
                 assert_value_eq(v, a.get(k).unwrap());
             }
         }
@@ -625,35 +634,47 @@ fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
 fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     let a_doc = &mut a_actor.loro;
     let b_doc = &mut b_actor.loro;
-    let a_result = a_doc.get_state_deep_value();
+    let mut a_result = a_doc.get_state_deep_value();
+    let mut b_result = b_doc.get_state_deep_value();
+    let mut a_value = a_actor.value_tracker.lock().unwrap();
+
+    if let Some(tree) = Arc::make_mut(a_result.as_map_mut().unwrap()).get_mut("tree") {
+        Arc::make_mut(tree.as_list_mut().unwrap()).sort_by_key(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap();
+            id.clone().into_string().unwrap()
+        });
+    }
+    if let Some(tree) = Arc::make_mut(b_result.as_map_mut().unwrap()).get_mut("tree") {
+        Arc::make_mut(tree.as_list_mut().unwrap()).sort_by_key(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap();
+            id.clone().into_string().unwrap()
+        });
+    }
+    if let Some(tree) = Arc::make_mut(a_value.as_map_mut().unwrap()).get_mut("tree") {
+        Arc::make_mut(tree.as_list_mut().unwrap()).sort_by_key(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap();
+            id.clone().into_string().unwrap()
+        });
+    }
+
     debug_log::debug_log!("{}", a_result.to_json_pretty());
-    assert_eq!(&a_result, &b_doc.get_state_deep_value());
-    assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
+    assert_eq!(&a_result, &b_result);
+    assert_value_eq(&a_result, &a_value);
 
-    let a = a_doc.get_text("text");
-    let value_a = a.get_value();
-    assert_eq!(
-        &**value_a.as_string().unwrap(),
-        &*a_actor.text_tracker.lock().unwrap(),
-    );
-
-    let a = a_doc.get_map("map");
-    let value_a = a.get_value();
-    assert_eq!(
-        &**value_a.as_map().unwrap(),
-        &*a_actor.map_tracker.lock().unwrap()
-    );
-
-    let a = a_doc.get_list("list");
-    let value_a = a.get_value();
-    assert_eq!(
-        &**value_a.as_list().unwrap(),
-        &*a_actor.list_tracker.lock().unwrap(),
-    );
     let a = a_doc.get_tree("tree");
-    let value_a = a.get_value();
-    let forest = Forest::from_tree_state(&a_actor.tree_tracker.lock().unwrap());
-    assert_eq!(&value_a, &forest.to_value());
+    let mut value_a = a.get_deep_value().into_list().unwrap();
+    let mut tracker_a = a_actor.tree_tracker.lock().unwrap();
+
+    Arc::make_mut(&mut value_a).sort_by_key(|x| {
+        let id = x.as_map().unwrap().get("id").unwrap();
+        id.clone().into_string().unwrap()
+    });
+    tracker_a.sort_by_key(|x| {
+        let id = x.as_map().unwrap().get("id").unwrap();
+        id.clone().into_string().unwrap()
+    });
+
+    assert_eq!(&*value_a, &*tracker_a);
 }
 
 fn check_synced(sites: &mut [Actor]) {
@@ -698,23 +719,19 @@ fn check_history(actor: &mut Actor) {
         // println!("\nfrom {:?} checkout {:?}", actor.loro.oplog_vv(), f);
         // println!("before state {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
-        let actual = actor.loro.get_deep_value();
-        for key in ["tree", "map", "list", "text"] {
-            let hv = v.as_map().unwrap().get(key).unwrap();
-            let av = actual.as_map().unwrap().get(key).unwrap();
-            if key == "tree" {
-                assert_eq!(
-                    hv.as_map().unwrap().get("roots"),
-                    av.as_map().unwrap().get("roots"),
-                    "Version mismatched at {:?}, cnt={}",
-                    f,
-                    c
-                )
-            } else {
-                assert_eq!(hv, av, "Version mismatched at {:?}, cnt={}", f, c);
-            }
-        }
-        // assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
+        let mut actual = actor.loro.get_deep_value();
+        Arc::make_mut(
+            Arc::make_mut(actual.as_map_mut().unwrap())
+                .get_mut("tree")
+                .unwrap()
+                .as_list_mut()
+                .unwrap(),
+        )
+        .sort_by_key(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap();
+            id.clone().into_string().unwrap()
+        });
+        assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
     }
 }
 

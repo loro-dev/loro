@@ -53,9 +53,9 @@ impl TreeState {
     }
 
     pub fn mov(&mut self, target: TreeID, parent: Option<TreeID>) -> Result<(), LoroError> {
-        let Some(parent) = parent else{
+        let Some(parent) = parent else {
             // new root node
-            let old_parent  = self.trees.insert(target, None);
+            let old_parent = self.trees.insert(target, None);
             self.update_deleted_cache(target, None, old_parent);
             if self.in_txn {
                 self.undo_items.push(TreeUndoItem {
@@ -164,6 +164,11 @@ impl TreeState {
 
     fn update_deleted_cache_inner(&mut self, target: TreeID, set_children_deleted: bool) {
         let mut s = self.children(target);
+        if set_children_deleted {
+            self.deleted.insert(target);
+        } else {
+            self.deleted.remove(&target);
+        }
         while let Some(child) = s.pop() {
             if set_children_deleted {
                 self.deleted.insert(child);
@@ -204,8 +209,8 @@ impl ContainerState for TreeState {
             for diff in tree.diff.iter() {
                 let target = diff.target;
                 let parent = match diff.action {
-                    TreeDiffItem::CreateOrRestore => None,
-                    TreeDiffItem::Move(parent) => Some(parent),
+                    TreeDiffItem::Create | TreeDiffItem::CreateOrAsRoot => None,
+                    TreeDiffItem::Move(parent) | TreeDiffItem::CreateMove(parent) => Some(parent),
                     TreeDiffItem::Delete => TreeID::delete_root(),
                     TreeDiffItem::UnCreate => {
                         // delete it from state
@@ -246,7 +251,7 @@ impl ContainerState for TreeState {
             let action = if let Some(parent) = node.parent {
                 TreeDiffItem::Move(parent)
             } else {
-                TreeDiffItem::CreateOrRestore
+                TreeDiffItem::Create
             };
             let diff = TreeDiff {
                 target: node.id,
@@ -296,11 +301,24 @@ impl ContainerState for TreeState {
         self.in_txn = false;
     }
 
-    // TODO: whether the node in deleted exists in the current version
-    // when checkout to a past version, deleted may have some nodes from the future.
     fn get_value(&mut self) -> LoroValue {
-        let forest = Forest::from_tree_state(&self.trees);
-        forest.to_value()
+        let mut ans = vec![];
+        for (target, parent) in self.trees.iter() {
+            if !self.deleted.contains(target) && !TreeID::is_unexist_root(Some(*target)) {
+                let mut t = FxHashMap::default();
+                t.insert("id".to_string(), target.id().to_string().into());
+                let p = parent
+                    .map(|p| p.to_string().into())
+                    .unwrap_or(LoroValue::Null);
+                t.insert("parent".to_string(), p);
+                t.insert(
+                    "meta".to_string(),
+                    target.associated_meta_container().into(),
+                );
+                ans.push(t.into());
+            }
+        }
+        ans.into()
     }
 
     /// Get the index of the child container
@@ -315,7 +333,7 @@ impl ContainerState for TreeState {
     fn get_child_containers(&self) -> Vec<ContainerID> {
         self.nodes()
             .into_iter()
-            .map(|n| ContainerID::new_normal(n.id(), ContainerType::Map))
+            .map(|n| n.associated_meta_container())
             .collect_vec()
     }
 }
@@ -464,10 +482,7 @@ impl Forest {
                                 TreeNode {
                                     id: *child,
                                     parent: Some(id),
-                                    meta: LoroValue::Container(ContainerID::new_normal(
-                                        child.id(),
-                                        ContainerType::Map,
-                                    )),
+                                    meta: LoroValue::Container(child.associated_meta_container()),
                                     children: vec![],
                                 },
                             ));
@@ -525,21 +540,16 @@ impl Forest {
                     ContainerType::Map.default_value()
                 };
                 match diff.action {
-                    TreeDiffItem::CreateOrRestore => {
+                    TreeDiffItem::Create | TreeDiffItem::CreateOrAsRoot => {
                         state.insert(target, (None, meta));
                     }
-                    TreeDiffItem::Move(parent) => {
+                    TreeDiffItem::Move(parent) | TreeDiffItem::CreateMove(parent) => {
                         state.insert(target, (Some(parent), meta));
                     }
                     TreeDiffItem::Delete => {
                         state.insert(target, (TreeID::delete_root(), meta));
                     }
                     TreeDiffItem::UnCreate => {
-                        // If fuzz test, un exist node move to delete,
-                        // Because it is necessary to record the meta created by these nodes before.
-                        #[cfg(feature = "test_utils")]
-                        state.insert(target, (TreeID::delete_root(), meta));
-                        #[cfg(not(feature = "test_utils"))]
                         state.remove(&target);
                     }
                 }
@@ -651,14 +661,13 @@ impl TreeNode {
 }
 
 // convert map container to LoroValue
-pub(crate) fn get_meta_value(nodes: &mut LoroValue, state: &mut DocState) {
-    for node in Arc::make_mut(nodes.as_list_mut().unwrap()).iter_mut() {
+#[allow(clippy::ptr_arg)]
+pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
+    for node in nodes.iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.id_to_idx(id).unwrap());
-        let children = map.get_mut("children").unwrap();
-        get_meta_value(children, state)
     }
 }
 

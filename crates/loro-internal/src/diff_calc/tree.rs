@@ -7,7 +7,11 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{CounterSpan, IdSpan, TreeID, ID};
 
-use crate::{change::Lamport, delta::TreeDelta, VersionVector};
+use crate::{
+    change::Lamport,
+    delta::{TreeDelta, TreeDiff},
+    VersionVector,
+};
 
 /// All information of an operation for diff calculating of movable tree.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
@@ -135,7 +139,8 @@ impl TreeDiffCache {
         let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
         for (op, old_parent) in revert_ops.iter().sorted().rev() {
             if op.effected {
-                diff.push((op.target, *old_parent).into());
+                let this_diff = TreeDiff::new(op.target, *old_parent, op.parent);
+                diff.push(this_diff);
             }
         }
         debug_log::debug_log!("revert diff:");
@@ -145,11 +150,12 @@ impl TreeDiffCache {
         let apply_ops = self.forward(to, to_max_lamport);
         debug_log::debug_log!("apply ops {:?}", apply_ops);
         for op in apply_ops.into_iter() {
+            let old_parent = self.get_parent(op.target);
             let effected = self.apply(op);
             if effected {
                 debug_log::debug_log!("    target {:?} to {:?}", op.target, op.parent);
-
-                diff.push((op.target, op.parent).into())
+                let this_diff = TreeDiff::new(op.target, op.parent, old_parent);
+                diff.push(this_diff)
             }
         }
         debug_log::debug_log!("diff {:?}", diff);
@@ -255,12 +261,15 @@ impl TreeDiffCache {
             return None;
         }
         let mut ans = TreeID::unexist_root();
-        for op in self.cache.get(&tree_id).unwrap().iter().rev() {
-            if op.effected {
-                ans = op.parent;
-                break;
+        if let Some(cache) = self.cache.get(&tree_id) {
+            for op in cache.iter().rev() {
+                if op.effected {
+                    ans = op.parent;
+                    break;
+                }
             }
         }
+
         ans
     }
 

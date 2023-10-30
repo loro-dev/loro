@@ -6,7 +6,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    delta::MapValue,
+    delta::{MapValue, TreeDiff, TreeDiffItem},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
@@ -745,7 +745,7 @@ impl TreeHandler {
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = self.meta_container_id(tree_id);
+        let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
@@ -754,7 +754,10 @@ impl TreeHandler {
                 target: tree_id,
                 parent: None,
             }),
-            EventHint::Tree((tree_id, None).into()),
+            EventHint::Tree(TreeDiff {
+                target: tree_id,
+                action: TreeDiffItem::Create,
+            }),
             &self.state,
         )?;
         Ok(tree_id)
@@ -767,14 +770,17 @@ impl TreeHandler {
                 target,
                 parent: TreeID::delete_root(),
             }),
-            EventHint::Tree((target, TreeID::delete_root()).into()),
+            EventHint::Tree(TreeDiff {
+                target,
+                action: TreeDiffItem::Delete,
+            }),
             &self.state,
         )
     }
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = self.meta_container_id(tree_id);
+        let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
@@ -783,7 +789,10 @@ impl TreeHandler {
                 target: tree_id,
                 parent: Some(parent),
             }),
-            EventHint::Tree((tree_id, Some(parent)).into()),
+            EventHint::Tree(TreeDiff {
+                target: tree_id,
+                action: TreeDiffItem::Move(parent),
+            }),
             &self.state,
         )?;
         Ok(tree_id)
@@ -796,7 +805,10 @@ impl TreeHandler {
                 target,
                 parent: None,
             }),
-            EventHint::Tree((target, None).into()),
+            EventHint::Tree(TreeDiff {
+                target,
+                action: TreeDiffItem::CreateOrAsRoot,
+            }),
             &self.state,
         )
     }
@@ -808,7 +820,10 @@ impl TreeHandler {
                 target,
                 parent: Some(parent),
             }),
-            EventHint::Tree((target, Some(parent)).into()),
+            EventHint::Tree(TreeDiff {
+                target,
+                action: TreeDiffItem::Move(parent),
+            }),
             &self.state,
         )
     }
@@ -817,7 +832,7 @@ impl TreeHandler {
         if !self.contains(target) {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
-        let map_container_id = self.meta_container_id(target);
+        let map_container_id = target.associated_meta_container();
         let map = txn.get_map(map_container_id);
         Ok(map)
     }
@@ -885,10 +900,6 @@ impl TreeHandler {
                 let a = state.as_tree_state().unwrap();
                 a.nodes()
             })
-    }
-
-    fn meta_container_id(&self, target: TreeID) -> ContainerID {
-        ContainerID::new_normal(target.id(), ContainerType::Map)
     }
 
     #[cfg(feature = "test_utils")]
@@ -1107,7 +1118,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}],"deleted":[]}"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1"}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();
