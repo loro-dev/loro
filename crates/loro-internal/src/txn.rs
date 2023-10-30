@@ -74,7 +74,7 @@ pub(super) enum EventHint {
         value: Option<LoroValue>,
     },
     Tree(TreeDiff),
-    None,
+    MarkEnd,
 }
 
 impl generic_btree::rle::HasLength for EventHint {
@@ -87,7 +87,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::DeleteList(d) => d.len(),
             EventHint::Map { .. } => 1,
             EventHint::Tree(_) => 1,
-            EventHint::None => 1,
+            EventHint::MarkEnd => 1,
         }
     }
 }
@@ -335,7 +335,13 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);
-        assert_eq!(event.rle_len(), op.atom_len());
+        debug_assert_eq!(
+            event.rle_len(),
+            op.atom_len(),
+            "event:{:#?} \nop:{:#?}",
+            &event,
+            &op
+        );
         match self.event_hints.last_mut() {
             Some(last) if last.can_merge(&event) => {
                 last.merge_right(&event);
@@ -490,7 +496,7 @@ fn change_to_diff(
                         ))
                     }
                     EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
-                    EventHint::None => {
+                    EventHint::MarkEnd => {
                         // do nothing
                         break 'outer;
                     }
