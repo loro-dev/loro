@@ -150,6 +150,10 @@ impl Transaction {
         self.on_commit = Some(f);
     }
 
+    pub(crate) fn take_on_commit(&mut self) -> Option<OnCommitFn> {
+        self.on_commit.take()
+    }
+
     pub fn abort(mut self) {
         self._abort();
     }

@@ -21,7 +21,6 @@ describe("event", () => {
     const id = text.id;
     text.insert(0, "123");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.target).toEqual(id);
   });
 
@@ -36,7 +35,6 @@ describe("event", () => {
     subMap.set("0", "1");
     loro.commit();
 
-    await Promise.resolve();
     expect(lastEvent?.path).toStrictEqual(["map", "sub"]);
     const list = subMap.insertContainer("list", "List");
     list.insert(0, "2");
@@ -44,7 +42,6 @@ describe("event", () => {
     loro.commit();
     text.insert(0, "3");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.path).toStrictEqual(["map", "sub", "list", 1]);
   });
 
@@ -57,14 +54,12 @@ describe("event", () => {
     const text = loro.getText("t");
     text.insert(0, "3");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "text",
       diff: [{ insert: "3" }],
     } as TextDiff);
     text.insert(1, "12");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "text",
       diff: [{ retain: 1 }, { insert: "12" }],
@@ -80,14 +75,12 @@ describe("event", () => {
     const text = loro.getList("l");
     text.insert(0, "3");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "list",
       diff: [{ insert: ["3"] }],
     } as ListDiff);
     text.insert(1, "12");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "list",
       diff: [{ retain: 1 }, { insert: ["12"] }],
@@ -104,7 +97,6 @@ describe("event", () => {
     map.set("0", "3");
     map.set("1", "2");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "map",
       updated: {
@@ -115,7 +107,6 @@ describe("event", () => {
     map.set("0", "0");
     map.set("1", "1");
     loro.commit();
-    await Promise.resolve();
     expect(lastEvent?.diff).toStrictEqual({
       type: "map",
       updated: {
@@ -144,7 +135,6 @@ describe("event", () => {
       loro.commit();
       text.insert(1, "456");
       loro.commit();
-      await Promise.resolve();
       expect(ran).toBeTruthy();
       // subscribeOnce test
       expect(text.toString()).toEqual("145623");
@@ -167,22 +157,18 @@ describe("event", () => {
 
       const subMap = map.insertContainer("sub", "Map");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(1);
       const text = subMap.insertContainer("k", "Text");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(2);
       text.insert(0, "123");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(3);
 
       // unsubscribe
       loro.unsubscribe(sub);
       text.insert(0, "123");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(3);
     });
 
@@ -196,18 +182,15 @@ describe("event", () => {
 
       const text = list.insertContainer(0, "Text");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(1);
       text.insert(0, "123");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(2);
 
       // unsubscribe
       loro.unsubscribe(sub);
       text.insert(0, "123");
       loro.commit();
-      await Promise.resolve();
       expect(times).toBe(2);
     });
   });
@@ -239,22 +222,18 @@ describe("event", () => {
       });
       text.insert(0, "你好");
       loro.commit();
-      await Promise.resolve();
       expect(text.toString()).toBe(string);
 
       text.insert(1, "世界");
       loro.commit();
-      await Promise.resolve();
       expect(text.toString()).toBe(string);
 
       text.insert(2, "👍");
       loro.commit();
-      await Promise.resolve();
       expect(text.toString()).toBe(string);
 
       text.insert(2, "♪(^∇^*)");
       loro.commit();
-      await Promise.resolve();
       expect(text.toString()).toBe(string);
     });
   });

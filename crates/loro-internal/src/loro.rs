@@ -152,7 +152,7 @@ impl LoroDoc {
 
     pub fn start_auto_commit(&mut self) {
         self.auto_commit = true;
-        let mut self_txn = self.txn.lock().unwrap();
+        let mut self_txn = self.txn.try_lock().unwrap();
         if self_txn.is_some() || self.detached {
             return;
         }
@@ -165,27 +165,30 @@ impl LoroDoc {
     /// This method only has effect when `auto_commit` is true.
     #[inline]
     pub fn commit(&self) {
-        self.commit_with(None, None)
+        self.commit_with(None, None, false)
     }
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
-    pub fn commit_with(&self, origin: Option<InternalString>, timestamp: Option<Timestamp>) {
+    /// If `immediate_renew` is true, a new transaction will be created after the old one is commited
+    pub fn commit_with(
+        &self,
+        origin: Option<InternalString>,
+        timestamp: Option<Timestamp>,
+        immediate_renew: bool,
+    ) {
         if !self.auto_commit {
             return;
         }
 
-        let txn = match self.txn.lock() {
-            Ok(mut txn) => txn.take(),
-            Err(e) => {
-                panic!("failed to lock txn: {}", &e);
-            }
-        };
-
+        let mut txn_guard = self.txn.try_lock().unwrap();
+        let txn = txn_guard.take();
+        drop(txn_guard);
         let Some(mut txn) = txn else {
             return;
         };
 
+        let on_commit = txn.take_on_commit();
         if let Some(origin) = origin {
             txn.set_origin(origin);
         }
@@ -195,11 +198,20 @@ impl LoroDoc {
         }
 
         txn.commit().unwrap();
+        if immediate_renew {
+            let mut txn_guard = self.txn.try_lock().unwrap();
+            assert!(!self.detached);
+            *txn_guard = Some(self.txn().unwrap());
+        }
+
+        if let Some(on_commit) = on_commit {
+            on_commit(&self.state);
+        }
     }
 
     pub fn renew_txn_if_auto_commit(&self) {
         if self.auto_commit && !self.detached {
-            let mut self_txn = self.txn.lock().unwrap();
+            let mut self_txn = self.txn.try_lock().unwrap();
             if self_txn.is_some() {
                 return;
             }
@@ -233,8 +245,9 @@ impl LoroDoc {
 
         let obs = self.observer.clone();
         txn.set_on_commit(Box::new(move |state| {
-            let mut state = state.lock().unwrap();
+            let mut state = state.try_lock().unwrap();
             let events = state.take_events();
+            drop(state);
             for event in events {
                 obs.emit(event);
             }

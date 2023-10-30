@@ -206,6 +206,10 @@ impl DocState {
 
     fn convert_current_batch_diff_into_event(&mut self) {
         let recorder = &mut self.event_recorder;
+        if recorder.diffs.is_empty() {
+            return;
+        }
+
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());

@@ -1054,7 +1054,7 @@ fn with_txn<R>(
     f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
 ) -> LoroResult<R> {
     let mutex = &txn.upgrade().unwrap();
-    let mut txn = mutex.lock().unwrap();
+    let mut txn = mutex.try_lock().unwrap();
     match &mut *txn {
         Some(t) => f(t),
         None => Err(LoroError::AutoCommitNotStarted),

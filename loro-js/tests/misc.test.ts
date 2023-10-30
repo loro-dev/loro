@@ -31,7 +31,6 @@ describe("transaction", () => {
     text.insert(0, "hello world");
     assertEquals(count, 0);
     loro.commit();
-    await one_ms();
     assertEquals(count, 1);
   });
 
@@ -51,7 +50,6 @@ describe("transaction", () => {
     text.insert(0, "hello world");
     assertEquals(count, 0);
     loro.commit("origin");
-    await one_ms();
     assertEquals(count, 1);
   });
 });
@@ -76,16 +74,13 @@ describe("subscribe", () => {
     text.insert(0, "hello world");
     loro.commit();
 
-    await one_ms();
     assertEquals(count, 2);
     text.insert(0, "hello world");
     loro.commit();
-    await one_ms();
     assertEquals(count, 3);
     loro.unsubscribe(sub);
     text.insert(0, "hello world");
     loro.commit();
-    await one_ms();
     assertEquals(count, 3);
   });
 
@@ -101,12 +96,10 @@ describe("subscribe", () => {
     text.insert(0, "hello world");
     loro.commit();
 
-    await one_ms();
     assertEquals(count, 1);
     text.insert(0, "hello world");
     loro.commit();
 
-    await one_ms();
     assertEquals(count, 1);
   });
 
@@ -119,16 +112,13 @@ describe("subscribe", () => {
     });
     text.insert(0, "hello world");
     loro.commit();
-    await one_ms();
     assertEquals(count, 1);
     text.insert(0, "hello world");
     loro.commit();
-    await one_ms();
     assertEquals(count, 2);
     loro.unsubscribe(sub);
     text.insert(0, "hello world");
     loro.commit();
-    await one_ms();
     assertEquals(count, 2);
   });
 });
@@ -158,7 +148,6 @@ describe("sync", () => {
     aText.insert(0, "abc");
     a.commit();
 
-    await one_ms();
     assertEquals(aText.toString(), bText.toString());
   });
 

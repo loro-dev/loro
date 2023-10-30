@@ -173,8 +173,7 @@ impl Loro {
 
     /// Commit the cumulative auto commit transaction.
     pub fn commit(&self, origin: Option<String>) {
-        self.0.commit_with(origin.map(|x| x.into()), None);
-        self.0.renew_txn_if_auto_commit();
+        self.0.commit_with(origin.map(|x| x.into()), None, true);
     }
 
     #[wasm_bindgen(js_name = "getMap")]
@@ -297,7 +296,7 @@ impl Loro {
         self.0
             .subscribe_deep(Arc::new(move |e| {
                 // call_after_micro_task(observer.clone(), e)
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }))
             .into_u32()
     }
@@ -439,7 +438,7 @@ impl LoroText {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
 
@@ -514,7 +513,7 @@ impl LoroMap {
         let id = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
 
@@ -586,7 +585,7 @@ impl LoroList {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
         Ok(ans.into_u32())
@@ -696,7 +695,7 @@ impl LoroTree {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                call_subscriber(observer.clone(), e);
             }),
         );
         Ok(ans.into_u32())
