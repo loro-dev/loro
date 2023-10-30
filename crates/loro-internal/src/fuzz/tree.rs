@@ -110,13 +110,13 @@ impl Actor {
                         unreachable!()
                     };
                     let mut tree = tree.lock().unwrap();
-                    let map = tree
-                        .iter_mut()
-                        .find(|x| {
-                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            id.as_ref() == &target.to_string()
-                        })
-                        .unwrap();
+                    let Some(map) = tree.iter_mut().find(|x| {
+                        let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                        id.as_ref() == &target.to_string()
+                    }) else {
+                        //  maybe delete tree node first
+                        return;
+                    };
                     let map = Arc::make_mut(map.as_map_mut().unwrap());
                     let meta = map.get_mut("meta").unwrap();
                     let meta = Arc::make_mut(meta.as_map_mut().unwrap());
@@ -656,7 +656,6 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
             id.clone().into_string().unwrap()
         });
     }
-
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_result);
     assert_value_eq(&a_result, &a_value);
@@ -1461,6 +1460,96 @@ mod failed_tests {
                     action: TreeAction::Move,
                     target: (10127610951449477248, -1936946036),
                     parent: (10127624197330734220, -2716539),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_meta2() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 68,
+                    container_idx: 68,
+                    action: TreeAction::Move,
+                    target: (4971973958552256511, 1157579844),
+                    parent: (1663823979171038354, 387389207),
+                },
+                Tree {
+                    site: 23,
+                    container_idx: 23,
+                    action: TreeAction::Create,
+                    target: (1663823975275763479, 1513239),
+                    parent: (18446744069802491904, -1157625864),
+                },
+                Tree {
+                    site: 68,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (17457358724263116799, -12257212),
+                    parent: (4941210755937475839, -458940),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_meta3() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 83,
+                    container_idx: 68,
+                    action: TreeAction::Delete,
+                    target: (6144232899428974267, -12303292),
+                    parent: (64457769666740223, 1136376803),
+                },
+                Tree {
+                    site: 83,
+                    container_idx: 126,
+                    action: TreeAction::Create,
+                    target: (4485090715960753726, 1145328467),
+                    parent: (144106391970530482, -134021120),
+                },
+                SyncAll,
+                SyncAll,
+                Tree {
+                    site: 83,
+                    container_idx: 198,
+                    action: TreeAction::Delete,
+                    target: (1374463284756593595, 320017171),
+                    parent: (1374463283923456787, 320017171),
+                },
+                Tree {
+                    site: 19,
+                    container_idx: 19,
+                    action: TreeAction::Create,
+                    target: (1374463286960132883, 320017171),
+                    parent: (1374463283923456787, 320017171),
+                },
+                Tree {
+                    site: 19,
+                    container_idx: 19,
+                    action: TreeAction::Create,
+                    target: (1374463902398747411, 320017171),
+                    parent: (1374463283923456787, 320017171),
+                },
+                Tree {
+                    site: 85,
+                    container_idx: 68,
+                    action: TreeAction::Meta,
+                    target: (48946959133704191, 0),
+                    parent: (4485090716314435584, 1044266558),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Move,
+                    target: (5999845544699159807, 1397969747),
+                    parent: (18446743267408233540, 7602687),
                 },
             ],
         )

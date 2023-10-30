@@ -184,17 +184,14 @@ impl ApplyDiff for LoroValue {
                     Index::Node(tree_id) => {
                         let l = value.as_list_mut().unwrap();
                         let list = Arc::make_mut(l);
-                        let map = list
-                            .iter_mut()
-                            .find(|x| {
-                                let id =
-                                    x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                                id.as_ref() == &tree_id.to_string()
-                            })
-                            .unwrap()
-                            .as_map_mut()
-                            .unwrap();
-                        let map_mut = Arc::make_mut(map);
+                        let Some(map) = list.iter_mut().find(|x| {
+                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                            id.as_ref() == &tree_id.to_string()
+                        }) else {
+                            // delete node first
+                            return;
+                        };
+                        let map_mut = Arc::make_mut(map.as_map_mut().unwrap());
                         let meta = map_mut.get_mut("meta").unwrap();
                         if meta.is_container() {
                             *meta = ContainerType::Map.default_value();

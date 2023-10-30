@@ -761,7 +761,10 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         );
 
         diff.diff.iter().for_each(|d| {
-            if matches!(d.action, TreeDiffItem::Create) {
+            if matches!(
+                d.action,
+                TreeDiffItem::Create | TreeDiffItem::CreateMove(_) | TreeDiffItem::CreateOrAsRoot
+            ) {
                 on_new_container(&d.target.associated_meta_container())
             }
         });

@@ -95,6 +95,12 @@ impl<'a> TreeValue<'a> {
                 }
                 TreeDiffItem::CreateMove(p) => {
                     debug_log::debug_log!("create {:?} move {:?}", target, p);
+                    if !self.is_tree_id_exist(p) {
+                        if self.is_tree_id_exist(target) {
+                            self.delete_target(target)
+                        }
+                        continue;
+                    }
                     let mut t = FxHashMap::default();
                     t.insert("id".to_string(), target.id().to_string().into());
                     t.insert("parent".to_string(), p.to_string().into());
@@ -102,7 +108,7 @@ impl<'a> TreeValue<'a> {
                     self.0.push(t.into());
                 }
                 TreeDiffItem::CreateOrAsRoot => {
-                    debug_log::debug_log!("move {:?} None", target);
+                    debug_log::debug_log!("create or root {:?}", target);
                     if let Some(map) = self.0.iter_mut().find(|x| {
                         let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
                         id.as_ref() == &target.to_string()
@@ -119,7 +125,13 @@ impl<'a> TreeValue<'a> {
                     }
                 }
                 TreeDiffItem::Move(p) => {
-                    debug_log::debug_log!("{:?} move {:?}", target, p);
+                    debug_log::debug_log!("move {:?} to {:?}", target, p);
+                    if !self.is_tree_id_exist(p) {
+                        if self.is_tree_id_exist(target) {
+                            self.delete_target(target)
+                        }
+                        continue;
+                    }
                     let map = self
                         .0
                         .iter_mut()
@@ -135,29 +147,37 @@ impl<'a> TreeValue<'a> {
                 }
                 TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
                     debug_log::debug_log!("delete {:?} ", target);
-                    let mut deleted = FxHashSet::default();
-                    let mut s = vec![target.to_string()];
-                    while let Some(delete) = s.pop() {
-                        deleted.insert(delete.clone());
-                        self.0.retain_mut(|x| {
-                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            !deleted.contains(id.as_ref())
-                        });
-                        for node in self.0.iter() {
-                            let node = node.as_map().unwrap().as_ref();
-                            if let Some(LoroValue::String(parent)) = node.get("parent") {
-                                if parent.as_ref() == &delete {
-                                    s.push(
-                                        (*node.get("id").unwrap().as_string().unwrap().clone())
-                                            .clone(),
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    self.delete_target(target)
                 }
             }
             debug_log::debug_log!("after {:?}\n", self.0);
+        }
+    }
+
+    fn is_tree_id_exist(&self, parent: TreeID) -> bool {
+        self.0.iter().any(|x| {
+            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+            id.as_ref() == &parent.to_string()
+        })
+    }
+
+    fn delete_target(&mut self, target: TreeID) {
+        let mut deleted = FxHashSet::default();
+        let mut s = vec![target.to_string()];
+        while let Some(delete) = s.pop() {
+            deleted.insert(delete.clone());
+            self.0.retain_mut(|x| {
+                let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
+                !deleted.contains(id.as_ref())
+            });
+            for node in self.0.iter() {
+                let node = node.as_map().unwrap().as_ref();
+                if let Some(LoroValue::String(parent)) = node.get("parent") {
+                    if parent.as_ref() == &delete {
+                        s.push((*node.get("id").unwrap().as_string().unwrap().clone()).clone());
+                    }
+                }
+            }
         }
     }
 }

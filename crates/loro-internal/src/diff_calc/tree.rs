@@ -139,6 +139,7 @@ impl TreeDiffCache {
         let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
         for (op, old_parent) in revert_ops.iter().sorted().rev() {
             if op.effected {
+                // TODO: we need to know whether old_parent is deleted
                 let this_diff = TreeDiff::new(op.target, *old_parent, op.parent);
                 diff.push(this_diff);
             }
@@ -154,6 +155,7 @@ impl TreeDiffCache {
             let effected = self.apply(op);
             if effected {
                 debug_log::debug_log!("    target {:?} to {:?}", op.target, op.parent);
+                // TODO: we need to know whether op.parent is deleted
                 let this_diff = TreeDiff::new(op.target, op.parent, old_parent);
                 diff.push(this_diff)
             }
