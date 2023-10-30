@@ -6,11 +6,10 @@ use loro_internal::{
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     id::{Counter, TreeID, ID},
     obs::SubID,
-    txn::Transaction as Txn,
     version::Frontiers,
     ContainerType, DiffEvent, LoroDoc, LoroError, VersionVector,
 };
-use std::{cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, ops::Deref, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 mod prelim;
@@ -20,14 +19,7 @@ mod convert;
 
 #[wasm_bindgen(js_name = setPanicHook)]
 pub fn set_panic_hook() {
-    // When the `console_error_panic_hook` feature is enabled, we can call the
-    // `set_panic_hook` function at least once during initialization, and then
-    // we will get better error messages if our code ever panics.
-    //
-    // For more details see
-    // https://github.com/rustwasm/console_error_panic_hook#readme
-    #[cfg(feature = "console_error_panic_hook")]
-    console_error_panic_hook::set_once();
+    panic::set_hook(Box::new(console_error_panic_hook::hook));
 }
 
 #[wasm_bindgen(js_name = setDebug)]
@@ -149,19 +141,9 @@ fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self(LoroDoc::new())
-    }
-
-    /// Create a new Loro transaction.
-    /// There can be only one transaction at a time.
-    ///
-    /// It's caller's responsibility to call `commit` or `abort` on the transaction.
-    /// Transaction.free() will commit the transaction if it's not committed or aborted.
-    #[wasm_bindgen(js_name = "newTransaction")]
-    pub fn new_transaction(&self, origin: Option<String>) -> Transaction {
-        Transaction(Some(
-            self.0.txn_with_origin(&origin.unwrap_or_default()).unwrap(),
-        ))
+        let mut doc = LoroDoc::new();
+        doc.start_auto_commit();
+        Self(doc)
     }
 
     pub fn attach(&mut self) {
@@ -170,6 +152,11 @@ impl Loro {
 
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.0.checkout(&ids_to_frontiers(frontiers)?)?;
+        Ok(())
+    }
+
+    pub fn checkout_to_latest(&mut self) -> JsResult<()> {
+        self.0.checkout_to_latest();
         Ok(())
     }
 
@@ -182,6 +169,12 @@ impl Loro {
     pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
         let text = self.0.get_text(name);
         Ok(LoroText(text))
+    }
+
+    /// Commit the cumulative auto commit transaction.
+    pub fn commit(&self, origin: Option<String>) {
+        self.0.commit_with(origin.map(|x| x.into()), None);
+        self.0.renew_txn_if_auto_commit();
     }
 
     #[wasm_bindgen(js_name = "getMap")]
@@ -303,7 +296,8 @@ impl Loro {
         let observer = observer::Observer::new(f);
         self.0
             .subscribe_deep(Arc::new(move |e| {
-                call_subscriber(observer.clone(), e);
+                // call_after_micro_task(observer.clone(), e)
+                call_after_micro_task(observer.clone(), e);
             }))
             .into_u32()
     }
@@ -311,24 +305,9 @@ impl Loro {
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
-
-    /// It's the caller's responsibility to commit and free the transaction
-    #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
-    pub fn transaction_with_origin(
-        &self,
-        origin: &JsOrigin,
-        f: js_sys::Function,
-    ) -> JsResult<JsValue> {
-        let origin = origin.as_string().unwrap();
-        debug_log::group!("transaction with origin: {}", origin);
-        let txn = self.0.txn_with_origin(&origin)?;
-        let js_txn = JsValue::from(Transaction(Some(txn)));
-        let ans = f.call1(&JsValue::NULL, &js_txn);
-        debug_log::group_end!();
-        ans
-    }
 }
 
+#[allow(unused)]
 fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
@@ -424,53 +403,17 @@ impl Event {
 }
 
 #[wasm_bindgen]
-pub struct Transaction(Option<Txn>);
-
-#[wasm_bindgen]
-impl Transaction {
-    pub fn commit(&mut self) -> JsResult<()> {
-        if let Some(x) = self.0.take() {
-            x.commit()?;
-        }
-        Ok(())
-    }
-
-    pub fn abort(&mut self) -> JsResult<()> {
-        if let Some(x) = self.0.take() {
-            x.abort();
-        }
-        Ok(())
-    }
-
-    fn as_mut(&mut self) -> JsResult<&mut Txn> {
-        self.0
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("Transaction is aborted"))
-    }
-}
-
-#[wasm_bindgen]
 pub struct LoroText(TextHandler);
 
 #[wasm_bindgen]
 impl LoroText {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        content: &str,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, index, content)?;
+    pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_(index, content)?;
         Ok(())
     }
 
-    pub fn __txn_delete(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        len: usize,
-    ) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, index, len)?;
+    pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_(index, len)?;
         Ok(())
     }
 
@@ -496,7 +439,7 @@ impl LoroText {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_subscriber(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
 
@@ -515,18 +458,14 @@ const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Ma
 
 #[wasm_bindgen]
 impl LoroMap {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        key: &str,
-        value: JsValue,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, key, value.into())?;
+    #[wasm_bindgen(js_name = "set")]
+    pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
+        self.0.insert_(key, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_delete(&mut self, txn: &mut Transaction, key: &str) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, key)?;
+    pub fn delete(&mut self, key: &str) -> JsResult<()> {
+        self.0.delete_(key)?;
         Ok(())
     }
 
@@ -552,20 +491,14 @@ impl LoroMap {
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(
-        &mut self,
-        txn: &mut Transaction,
-        key: &str,
-        container_type: &str,
-    ) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let t = txn.as_mut()?;
-        let c = self.0.insert_container(t, key, type_)?;
+        let c = self.0.insert_container_(key, type_)?;
 
         let container = match type_ {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
@@ -581,7 +514,7 @@ impl LoroMap {
         let id = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_subscriber(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
 
@@ -599,23 +532,13 @@ pub struct LoroList(ListHandler);
 
 #[wasm_bindgen]
 impl LoroList {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        value: JsValue,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, index, value.into())?;
+    pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
+        self.0.insert_(index, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_delete(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        len: usize,
-    ) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, index, len)?;
+    pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_(index, len)?;
         Ok(())
     }
 
@@ -641,20 +564,14 @@ impl LoroList {
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        container: &str,
-    ) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, pos: usize, container: &str) -> JsResult<JsValue> {
         let _type = match container {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let t = txn.as_mut()?;
-        let c = self.0.insert_container(t, pos, _type)?;
+        let c = self.0.insert_container_(pos, _type)?;
         let container = match _type {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
@@ -669,7 +586,7 @@ impl LoroList {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_subscriber(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(ans.into_u32())
@@ -689,51 +606,42 @@ pub struct LoroTree(TreeHandler);
 
 #[wasm_bindgen]
 impl LoroTree {
-    pub fn __txn_create(
-        &mut self,
-        txn: &mut Transaction,
-        parent: Option<JsTreeID>,
-    ) -> JsResult<JsTreeID> {
+    pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
-            self.0
-                .create_and_mov(txn.as_mut()?, parent.try_into().unwrap())?
+            self.0.create_and_mov_(parent.try_into().unwrap())?
         } else {
-            self.0.create(txn.as_mut()?)?
+            self.0.create_()?
         };
         let js_id: JsValue = id.into();
         Ok(js_id.into())
     }
 
-    pub fn __txn_move(
-        &mut self,
-        txn: &mut Transaction,
-        target: JsTreeID,
-        parent: JsTreeID,
-    ) -> JsResult<()> {
+    pub fn mov(&mut self, target: JsTreeID, parent: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).unwrap();
         let parent: JsValue = parent.into();
         let parent = TreeID::try_from(parent).unwrap();
-        self.0.mov(txn.as_mut()?, target, parent)?;
+        self.0.mov_(target, parent)?;
         Ok(())
     }
 
-    pub fn __txn_delete(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+    pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.0.delete(txn.as_mut()?, target.try_into().unwrap())?;
+        self.0.delete_(target.try_into().unwrap())?;
         Ok(())
     }
 
-    pub fn __txn_as_root(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+    pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.0.as_root(txn.as_mut()?, target.try_into().unwrap())?;
+        self.0.as_root_(target.try_into().unwrap())?;
         Ok(())
     }
 
-    pub fn __txn_get_meta(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<LoroMap> {
+    #[wasm_bindgen(js_name = "getMeta")]
+    pub fn get_meta(&mut self, target: JsTreeID) -> JsResult<LoroMap> {
         let target: JsValue = target.into();
-        let meta = self.0.get_meta(txn.as_mut()?, target.try_into().unwrap())?;
+        let meta = self.0.get_meta(target.try_into().unwrap())?;
         // .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
         Ok(LoroMap(meta))
     }
@@ -788,7 +696,7 @@ impl LoroTree {
         let ans = loro.0.subscribe(
             &self.0.id(),
             Arc::new(move |e| {
-                call_subscriber(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(ans.into_u32())

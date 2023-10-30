@@ -301,16 +301,23 @@ trait Actionable {
 
 impl Actor {
     fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
+        let txn = self.loro.get_global_txn();
         match type_ {
-            ContainerType::Text => self
-                .text_containers
-                .push(TextHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Map => self
-                .map_containers
-                .push(MapHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::List => self
-                .list_containers
-                .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Text => self.text_containers.push(TextHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
+            ContainerType::Map => self.map_containers.push(MapHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
+            ContainerType::List => self.list_containers.push(ListHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
             ContainerType::Tree => {
                 // TODO Tree
             }

@@ -19,6 +19,7 @@
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.0.1",
     "@typescript-eslint/parser": "^6.2.0",
+    "@vitest/ui": "^0.34.6",
     "esbuild": "^0.17.12",
     "eslint": "^8.46.0",
     "prettier": "^3.0.0",

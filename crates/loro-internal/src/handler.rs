@@ -22,6 +22,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct TextHandler {
+    txn: Weak<Mutex<Option<Transaction>>>,
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
@@ -34,6 +35,7 @@ impl std::fmt::Debug for TextHandler {
 
 #[derive(Clone)]
 pub struct MapHandler {
+    txn: Weak<Mutex<Option<Transaction>>>,
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
@@ -46,6 +48,7 @@ impl std::fmt::Debug for MapHandler {
 
 #[derive(Clone)]
 pub struct ListHandler {
+    txn: Weak<Mutex<Option<Transaction>>>,
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
@@ -59,6 +62,7 @@ impl std::fmt::Debug for ListHandler {
 ///
 #[derive(Clone)]
 pub struct TreeHandler {
+    txn: Weak<Mutex<Option<Transaction>>>,
     container_idx: ContainerIdx,
     state: Weak<Mutex<DocState>>,
 }
@@ -98,20 +102,29 @@ impl Handler {
 }
 
 impl Handler {
-    fn new(value: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+    fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        value: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
         match value.get_type() {
-            ContainerType::Map => Self::Map(MapHandler::new(value, state)),
-            ContainerType::List => Self::List(ListHandler::new(value, state)),
-            ContainerType::Tree => Self::Tree(TreeHandler::new(value, state)),
-            ContainerType::Text => Self::Text(TextHandler::new(value, state)),
+            ContainerType::Map => Self::Map(MapHandler::new(txn, value, state)),
+            ContainerType::List => Self::List(ListHandler::new(txn, value, state)),
+            ContainerType::Tree => Self::Tree(TreeHandler::new(txn, value, state)),
+            ContainerType::Text => Self::Text(TextHandler::new(txn, value, state)),
         }
     }
 }
 
 impl TextHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+    pub fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        idx: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Text);
         Self {
+            txn,
             container_idx: idx,
             state,
         }
@@ -224,6 +237,16 @@ impl TextHandler {
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn insert_(&self, pos: usize, s: &str) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert(txn, pos, s))
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
     pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
             return Ok(());
@@ -258,6 +281,16 @@ impl TextHandler {
             },
             &self.state,
         )
+    }
+
+    /// `pos` is a Event Index:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn delete_(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete(txn, pos, len))
     }
 
     /// `pos` is a Event Index:
@@ -311,6 +344,22 @@ impl TextHandler {
 
         debug_log::group_end!();
         Ok(())
+    }
+
+    /// `start` and `end` are [Event Index]s:
+    ///
+    /// - if feature="wasm", pos is a UTF-16 index
+    /// - if feature!="wasm", pos is a Unicode index
+    ///
+    /// This method requires auto_commit to be enabled.
+    pub fn mark_(
+        &self,
+        start: usize,
+        end: usize,
+        key: &str,
+        flag: TextStyleInfoFlag,
+    ) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.mark(txn, start, end, key, flag))
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -382,12 +431,21 @@ impl TextHandler {
 }
 
 impl ListHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+    pub fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        idx: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
         assert_eq!(idx.get_type(), ContainerType::List);
         Self {
+            txn,
             container_idx: idx,
             state,
         }
+    }
+
+    pub fn insert_(&self, pos: usize, v: LoroValue) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert(txn, pos, v))
     }
 
     pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) -> LoroResult<()> {
@@ -410,9 +468,32 @@ impl ListHandler {
         )
     }
 
+    pub fn push_(&self, v: LoroValue) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.push(txn, v))
+    }
+
     pub fn push(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
         let pos = self.len();
         self.insert(txn, pos, v)
+    }
+
+    pub fn pop_(&self) -> LoroResult<Option<LoroValue>> {
+        with_txn(&self.txn, |txn| self.pop(txn))
+    }
+
+    pub fn pop(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
+        let len = self.len();
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let v = self.get(len - 1);
+        self.delete(txn, len - 1, 1)?;
+        Ok(v)
+    }
+
+    pub fn insert_container_(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| self.insert_container(txn, pos, c_type))
     }
 
     pub fn insert_container(
@@ -438,7 +519,15 @@ impl ListHandler {
             },
             &self.state,
         )?;
-        Ok(Handler::new(child_idx, self.state.clone()))
+        Ok(Handler::new(
+            self.txn.clone(),
+            child_idx,
+            self.state.clone(),
+        ))
+    }
+
+    pub fn delete_(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete(txn, pos, len))
     }
 
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
@@ -472,7 +561,7 @@ impl ListHandler {
                 .clone()
         });
         let idx = state.arena.register_container(&container_id);
-        Handler::new(idx, self.state.clone())
+        Handler::new(self.txn.clone(), idx, self.state.clone())
     }
 
     pub fn len(&self) -> usize {
@@ -559,12 +648,21 @@ impl ListHandler {
 }
 
 impl MapHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+    pub fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        idx: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Map);
         Self {
+            txn,
             container_idx: idx,
             state,
         }
+    }
+
+    pub fn insert_(&self, key: &str, value: LoroValue) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert(txn, key, value))
     }
 
     pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) -> LoroResult<()> {
@@ -592,6 +690,10 @@ impl MapHandler {
         )
     }
 
+    pub fn insert_container_(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| self.insert_container(txn, key, c_type))
+    }
+
     pub fn insert_container(
         &self,
         txn: &mut Transaction,
@@ -615,7 +717,15 @@ impl MapHandler {
             &self.state,
         )?;
 
-        Ok(Handler::new(child_idx, self.state.clone()))
+        Ok(Handler::new(
+            self.txn.clone(),
+            child_idx,
+            self.state.clone(),
+        ))
+    }
+
+    pub fn delete_(&self, key: &str) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete(txn, key))
     }
 
     pub fn delete(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
@@ -674,7 +784,7 @@ impl MapHandler {
                 .clone()
         });
         let idx = state.arena.register_container(&container_id);
-        Handler::new(idx, self.state.clone())
+        Handler::new(self.txn.clone(), idx, self.state.clone())
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
@@ -735,12 +845,21 @@ impl MapHandler {
 }
 
 impl TreeHandler {
-    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+    pub fn new(
+        txn: Weak<Mutex<Option<Transaction>>>,
+        idx: ContainerIdx,
+        state: Weak<Mutex<DocState>>,
+    ) -> Self {
         assert_eq!(idx.get_type(), ContainerType::Tree);
         Self {
+            txn,
             container_idx: idx,
             state,
         }
+    }
+
+    pub fn create_(&self) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create(txn))
     }
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
@@ -760,6 +879,10 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
+    pub fn delete_(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete(txn, target))
+    }
+
     pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
@@ -770,6 +893,10 @@ impl TreeHandler {
             EventHint::Tree((target, TreeID::delete_root()).into()),
             &self.state,
         )
+    }
+
+    pub fn create_and_mov_(&self, parent: TreeID) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_and_mov(txn, parent))
     }
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
@@ -789,6 +916,10 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
+    pub fn as_root_(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.as_root(txn, target))
+    }
+
     pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
@@ -799,6 +930,10 @@ impl TreeHandler {
             EventHint::Tree((target, None).into()),
             &self.state,
         )
+    }
+
+    pub fn mov_(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.mov(txn, target, parent))
     }
 
     pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
@@ -813,12 +948,20 @@ impl TreeHandler {
         )
     }
 
-    pub fn get_meta(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<MapHandler> {
+    pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         if !self.contains(target) {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
         let map_container_id = self.meta_container_id(target);
-        let map = txn.get_map(map_container_id);
+        let idx = self
+            .state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .register_container(&map_container_id);
+        let map = MapHandler::new(self.txn.clone(), idx, self.state.clone());
         Ok(map)
     }
 
@@ -902,6 +1045,19 @@ impl TreeHandler {
                 let a = state.as_tree_state().unwrap();
                 a.max_counter()
             })
+    }
+}
+
+#[inline(always)]
+fn with_txn<R>(
+    txn: &Weak<Mutex<Option<Transaction>>>,
+    f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
+) -> LoroResult<R> {
+    let mutex = &txn.upgrade().unwrap();
+    let mut txn = mutex.lock().unwrap();
+    match &mut *txn {
+        Some(t) => f(t),
+        None => Err(LoroError::AutoCommitNotStarted),
     }
 }
 
@@ -1095,13 +1251,13 @@ mod test {
         let tree = loro.get_tree("root");
         let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
         loro.with_txn(|txn| {
-            let meta = tree.get_meta(txn, id)?;
+            let meta = tree.get_meta(id)?;
             meta.insert(txn, "a", 123.into())
         })
         .unwrap();
         let meta = loro
-            .with_txn(|txn| {
-                let meta = tree.get_meta(txn, id)?;
+            .with_txn(|_| {
+                let meta = tree.get_meta(id)?;
                 Ok(meta.get("a").unwrap())
             })
             .unwrap();
@@ -1123,7 +1279,7 @@ mod test {
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
             let id = tree.create(txn)?;
-            let meta = tree.get_meta(txn, id)?;
+            let meta = tree.get_meta(id)?;
             meta.insert(txn, "a", 1.into())?;
             text.insert(txn, 0, "abc")?;
             let _id2 = tree.create(txn)?;
