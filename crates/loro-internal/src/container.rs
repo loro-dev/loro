@@ -42,6 +42,7 @@ pub mod idx {
                 0 => ContainerType::Map,
                 1 => ContainerType::List,
                 2 => ContainerType::Text,
+                3 => ContainerType::Tree,
                 _ => unreachable!(),
             }
         }
@@ -56,6 +57,7 @@ pub mod idx {
                 ContainerType::Map => 0,
                 ContainerType::List => 1,
                 ContainerType::Text => 2,
+                ContainerType::Tree => 3,
             } << 28;
 
             Self(prefix | index)
@@ -65,6 +67,7 @@ pub mod idx {
 
 pub mod list;
 pub mod map;
+pub mod tree;
 pub mod richtext;
 pub(crate) mod text;
 

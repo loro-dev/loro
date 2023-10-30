@@ -1,12 +1,10 @@
-
 use enum_as_inner::EnumAsInner;
-
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    container::richtext::richtext_state::{RichtextStateChunk},
-    delta::{Delta, MapDelta, StyleMeta},
+    container::richtext::richtext_state::RichtextStateChunk,
+    delta::{Delta, MapDelta, StyleMeta, TreeDelta},
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString, LoroValue,
@@ -14,7 +12,7 @@ use crate::{
 
 use std::borrow::Cow;
 
-use loro_common::ContainerID;
+use loro_common::{ContainerID, TreeID};
 
 use crate::{container::idx::ContainerIdx, version::Frontiers};
 
@@ -119,6 +117,7 @@ pub type Path = SmallVec<[Index; 4]>;
 pub enum Index {
     Key(InternalString),
     Seq(usize),
+    Node(TreeID),
 }
 
 impl DiffVariant {
@@ -135,6 +134,16 @@ impl DiffVariant {
     }
 }
 
+#[non_exhaustive]
+#[derive(Clone, Debug, EnumAsInner, Serialize)]
+pub enum InternalDiff {
+    SeqRaw(Delta<SliceRanges>),
+    /// This always uses entity indexes.
+    RichtextRaw(Delta<RichtextStateChunk>),
+    Map(MapDelta),
+    Tree(TreeDelta),
+}
+
 impl From<Diff> for DiffVariant {
     fn from(diff: Diff) -> Self {
         DiffVariant::External(diff)
@@ -145,15 +154,6 @@ impl From<InternalDiff> for DiffVariant {
     fn from(diff: InternalDiff) -> Self {
         DiffVariant::Internal(diff)
     }
-}
-
-#[non_exhaustive]
-#[derive(Clone, Debug, EnumAsInner, Serialize)]
-pub enum InternalDiff {
-    SeqRaw(Delta<SliceRanges>),
-    /// This always uses entity indexes.
-    RichtextRaw(Delta<RichtextStateChunk>),
-    Map(MapDelta),
 }
 
 /// Diff is the diff between two versions of a container.
@@ -173,6 +173,7 @@ pub enum Diff {
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),
     NewMap(MapDelta),
+    Tree(TreeDelta),
 }
 
 impl InternalDiff {
@@ -186,6 +187,7 @@ impl InternalDiff {
                 Ok(InternalDiff::RichtextRaw(a.compose(b)))
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
+            (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }
@@ -198,6 +200,8 @@ impl Diff {
             (Diff::List(a), Diff::List(b)) => Ok(Diff::List(a.compose(b))),
             (Diff::Text(a), Diff::Text(b)) => Ok(Diff::Text(a.compose(b))),
             (Diff::NewMap(a), Diff::NewMap(b)) => Ok(Diff::NewMap(a.compose(b))),
+
+            (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }

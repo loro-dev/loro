@@ -6,3 +6,5 @@ mod map_delta;
 pub use map_delta::{MapDelta, MapValue};
 mod text;
 pub use text::StyleMeta;
+mod tree;
+pub use tree::{TreeDelta, TreeDiff, TreeDiffItem};

@@ -2,6 +2,7 @@ export {
   LoroList,
   LoroMap,
   LoroText,
+  LoroTree,
   PrelimList,
   PrelimMap,
   PrelimText,
@@ -13,14 +14,16 @@ import { PrelimText } from "loro-wasm";
 import { PrelimList } from "loro-wasm";
 import {
   ContainerID,
+  TreeID,
   Loro,
   LoroList,
   LoroMap,
   LoroText,
+  LoroTree,
   Transaction,
 } from "loro-wasm";
 
-export type { ContainerID, ContainerType } from "loro-wasm";
+export type { ContainerID, ContainerType, TreeID } from "loro-wasm";
 
 Loro.prototype.transact = function (cb, origin) {
   return this.__raw__transactionWithOrigin(origin || "", (txn: Transaction) => {
@@ -85,11 +88,34 @@ LoroMap.prototype.delete = function (txn, key) {
   this.__txn_delete(txn, key);
 };
 
+LoroTree.prototype.create = function(txn, parent){
+  return this.__txn_create(txn, parent);
+}
+
+
+LoroTree.prototype.move = function(txn, target, parent){
+  this.__txn_move(txn, target, parent)
+}
+
+LoroTree.prototype.asRoot = function(txn, target){
+  this.__txn_as_root(txn, target)
+}
+
+
+LoroTree.prototype.delete = function(txn, target){
+  this.__txn_delete(txn, target)
+}
+
+LoroTree.prototype.getMeta = function(txn, target){
+  return this.__txn_get_meta(txn, target)
+}
+
 export type Value =
   | ContainerID
   | string
   | number
   | null
+  | boolean
   | { [key: string]: Value }
   | Uint8Array
   | Value[];
@@ -131,7 +157,15 @@ export type MapDiff = {
   updated: Record<string, Value | undefined>;
 };
 
-export type Diff = ListDiff | TextDiff | MapDiff;
+export type TreeDiff = {
+  type: "tree";
+  diff: {
+    target: TreeID,
+    action: {type: "create"} | {type: "move", parent: TreeID} | {type: "delete"}
+  }[]
+}
+
+export type Diff = ListDiff | TextDiff | MapDiff| TreeDiff;
 
 export interface LoroEvent {
   local: boolean;
@@ -145,7 +179,7 @@ interface Listener {
   (event: LoroEvent): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
 
 export function isContainerId(s: string): s is ContainerID {
   try {
@@ -169,6 +203,13 @@ export function isContainerId(s: string): s is ContainerID {
   } catch (e) {
     return false;
   }
+}
+
+export interface TreeNode{
+  id: TreeID,
+  parent: TreeID | null,
+  children: TreeNode[]
+  meta: {[key: string]: any}
 }
 
 export { Loro };
@@ -244,5 +285,15 @@ declare module "loro-wasm" {
     insert(txn: Transaction, pos: number, text: string): void;
     delete(txn: Transaction, pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
+  }
+
+  interface LoroTree{
+    create(txn: Transaction, parent: TreeID | undefined): TreeID;
+    delete(txn: Transaction, target: TreeID):void;
+    move(txn: Transaction, target: TreeID, parent: TreeID):void;
+    asRoot(txn: Transaction, target:TreeID):void;
+    getMeta(txn: Transaction, target: TreeID): LoroMap;
+    subscribe(txn: Loro, listener: Listener): number;
+    getDeepValue(): {roots: TreeNode[]};
   }
 }

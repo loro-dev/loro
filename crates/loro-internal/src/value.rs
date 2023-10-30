@@ -3,9 +3,12 @@ use std::sync::Arc;
 use crate::{
     delta::DeltaItem,
     event::{Diff, Index, Path},
+    state::Forest,
 };
 
+use fxhash::FxHashMap;
 pub use loro_common::LoroValue;
+use loro_common::{ContainerType, TreeID};
 
 pub trait ToJson {
     fn to_json_value(&self) -> serde_json::Value;
@@ -42,6 +45,7 @@ enum TypeHint {
     Map,
     Text,
     List,
+    Tree,
 }
 
 pub trait ApplyDiff {
@@ -99,6 +103,8 @@ impl ApplyDiff for LoroValue {
                 }
             }
             LoroValue::Map(map) => {
+                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
+                if !is_tree {
                 for item in diff.iter() {
                     match item {
                         Diff::NewMap(diff) => {
@@ -120,7 +126,12 @@ impl ApplyDiff for LoroValue {
                         _ => unreachable!(),
                     }
                 }
-            }
+            }else {
+                    // TODO: perf
+                    let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
+                    let diff_forest = forest.apply_diffs(diff);
+                    *map = diff_forest.to_value().into_map().unwrap()
+                }}
             _ => unreachable!(),
         }
     }
@@ -134,13 +145,15 @@ impl ApplyDiff for LoroValue {
             Diff::List(_) => TypeHint::List,
             Diff::Text(_) => TypeHint::Text,
             Diff::NewMap(_) => TypeHint::Map,
+            Diff::Tree(_) => TypeHint::Tree,
         };
-        {
+        let value = {
             let mut hints = Vec::with_capacity(path.len());
             for item in path.iter().skip(1) {
                 match item {
                     Index::Key(_) => hints.push(TypeHint::Map),
                     Index::Seq(_) => hints.push(TypeHint::List),
+                    Index::Node(_) => hints.push(TypeHint::Tree),
                 }
             }
 
@@ -155,6 +168,12 @@ impl ApplyDiff for LoroValue {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Arc::new(String::new())),
                             TypeHint::List => LoroValue::List(Default::default()),
+                            TypeHint::Tree => {
+                                let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
+                                map.insert("roots".to_string(), LoroValue::List(vec![].into()));
+                                map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
+                                map.into()
+                            }
                         })
                     }
                     Index::Seq(index) => {
@@ -162,22 +181,47 @@ impl ApplyDiff for LoroValue {
                         let list = Arc::make_mut(l);
                         value = list.get_mut(*index).unwrap();
                     }
+                    Index::Node(tree_id) => value = get_meta_from_tree_value(value, *tree_id),
                 }
             }
-
             value
-        }
-        .apply_diff(diff);
+        };
+        value.apply_diff(diff);
     }
+}
+
+fn get_meta_from_tree_value(value: &mut LoroValue, target: TreeID) -> &mut LoroValue {
+    // find the meta of `tree_id`
+    let tree = Arc::make_mut(value.as_map_mut().unwrap());
+    let mut map_value = None;
+    'out: for (_, nodes) in tree.iter_mut() {
+        let mut s = vec![];
+        let roots = nodes.as_list_mut().unwrap();
+        let roots = Arc::make_mut(roots);
+        s.extend(roots);
+        while let Some(root) = s.pop() {
+            let root = Arc::make_mut(root.as_map_mut().unwrap());
+            let this_node =
+                root.get("id").unwrap().as_string().unwrap().as_ref() == &target.to_string();
+            if this_node {
+                let meta = root.get_mut("meta").unwrap();
+                if meta.is_container() {
+                    *meta = ContainerType::Map.default_value();
+                }
+                map_value = Some(meta);
+                break 'out;
+            } else {
+                let children = root.get_mut("children").unwrap().as_list_mut().unwrap();
+                s.extend(Arc::make_mut(children));
+            }
+        }
+    }
+    map_value.unwrap()
 }
 
 fn unresolved_to_collection(v: &LoroValue) -> LoroValue {
     if let Some(container) = v.as_container() {
-        match container.container_type() {
-            crate::ContainerType::Map => LoroValue::Map(Default::default()),
-            crate::ContainerType::List => LoroValue::List(Default::default()),
-            crate::ContainerType::Text => LoroValue::String(Default::default()),
-        }
+        container.container_type().default_value()
     } else {
         v.clone()
     }
@@ -191,7 +235,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, StyleMeta},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff,StyleMeta, TreeDelta, TreeDiffItem},
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
@@ -202,6 +246,7 @@ pub mod wasm {
             match value {
                 Index::Key(key) => JsValue::from_str(&key),
                 Index::Seq(num) => JsValue::from_f64(num as f64),
+                Index::Node(node) => JsValue::from_str(&node.to_string()),
             }
         }
     }
@@ -248,6 +293,16 @@ pub mod wasm {
             // create a obj
             let obj = Object::new();
             match value {
+                Diff::Tree(tree) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("tree"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
+                }
                 Diff::List(list) => {
                     // set type as "list"
                     js_sys::Reflect::set(
@@ -293,6 +348,53 @@ pub mod wasm {
             };
 
             // convert object to js value
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<TreeDiffItem> for JsValue {
+        fn from(value: TreeDiffItem) -> Self {
+            let obj = Object::new();
+            match value {
+                TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("delete"),
+                    )
+                    .unwrap();
+                }
+                TreeDiffItem::Move(parent) => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("move"),
+                    )
+                    .unwrap();
+
+                    js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
+                        .unwrap();
+                }
+                TreeDiffItem::CreateOrRestore => {
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("create"),
+                    )
+                    .unwrap();
+                }
+            }
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<TreeDelta> for JsValue {
+        fn from(value: TreeDelta) -> Self {
+            let obj = Object::new();
+            for diff in value.diff.into_iter() {
+                js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
+                js_sys::Reflect::set(&obj, &"action".into(), &diff.action.into()).unwrap();
+            }
             obj.into_js_result().unwrap()
         }
     }

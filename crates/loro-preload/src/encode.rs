@@ -135,6 +135,7 @@ pub enum EncodedContainerState<'a> {
     List(Vec<usize>),
     #[serde(borrow)]
     Richtext(EncodedRichtextState<'a>),
+    Tree(Vec<(usize, Option<usize>)>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +191,7 @@ impl<'a> EncodedContainerState<'a> {
         match self {
             EncodedContainerState::Map(_) => loro_common::ContainerType::Map,
             EncodedContainerState::List(_) => loro_common::ContainerType::List,
+            EncodedContainerState::Tree(_) => loro_common::ContainerType::Tree,
             EncodedContainerState::Richtext { .. } => loro_common::ContainerType::Text,
         }
     }
@@ -222,6 +224,7 @@ pub struct TempArena<'a> {
     // PERF: can we use a Cow here?
     pub keywords: Vec<InternalString>,
     pub values: Vec<LoroValue>,
+    pub tree_ids: Vec<(u32, i32)>,
 }
 
 impl<'a> TempArena<'a> {

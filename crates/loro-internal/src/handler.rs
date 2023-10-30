@@ -4,6 +4,7 @@ use crate::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
         richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
     },
     delta::MapValue,
     op::ListSlice,
@@ -11,7 +12,9 @@ use crate::{
     txn::EventHint,
 };
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue};
+use loro_common::{
+    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
+};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -53,11 +56,25 @@ impl std::fmt::Debug for ListHandler {
     }
 }
 
+///
+#[derive(Clone)]
+pub struct TreeHandler {
+    container_idx: ContainerIdx,
+    state: Weak<Mutex<DocState>>,
+}
+
+impl std::fmt::Debug for TreeHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TreeHandler")
+    }
+}
+
 #[derive(Clone, EnumAsInner, Debug)]
 pub enum Handler {
     Text(TextHandler),
     Map(MapHandler),
     List(ListHandler),
+    Tree(TreeHandler),
 }
 
 impl Handler {
@@ -66,6 +83,7 @@ impl Handler {
             Self::Map(x) => x.container_idx,
             Self::List(x) => x.container_idx,
             Self::Text(x) => x.container_idx,
+            Self::Tree(x) => x.container_idx,
         }
     }
 
@@ -74,6 +92,7 @@ impl Handler {
             Self::Map(_) => ContainerType::Map,
             Self::List(_) => ContainerType::List,
             Self::Text(_) => ContainerType::Text,
+            Self::Tree(_) => ContainerType::Tree,
         }
     }
 }
@@ -83,6 +102,7 @@ impl Handler {
         match value.get_type() {
             ContainerType::Map => Self::Map(MapHandler::new(value, state)),
             ContainerType::List => Self::List(ListHandler::new(value, state)),
+            ContainerType::Tree => Self::Tree(TreeHandler::new(value, state)),
             ContainerType::Text => Self::Text(TextHandler::new(value, state)),
         }
     }
@@ -714,6 +734,177 @@ impl MapHandler {
     }
 }
 
+impl TreeHandler {
+    pub fn new(idx: ContainerIdx, state: Weak<Mutex<DocState>>) -> Self {
+        assert_eq!(idx.get_type(), ContainerType::Tree);
+        Self {
+            container_idx: idx,
+            state,
+        }
+    }
+
+    pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
+        let tree_id = TreeID::from_id(txn.next_id());
+        let container_id = self.meta_container_id(tree_id);
+        let child_idx = txn.arena.register_container(&container_id);
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent: None,
+            }),
+            EventHint::Tree((tree_id, None).into()),
+            &self.state,
+        )?;
+        Ok(tree_id)
+    }
+
+    pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: TreeID::delete_root(),
+            }),
+            EventHint::Tree((target, TreeID::delete_root()).into()),
+            &self.state,
+        )
+    }
+
+    pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
+        let tree_id = TreeID::from_id(txn.next_id());
+        let container_id = self.meta_container_id(tree_id);
+        let child_idx = txn.arena.register_container(&container_id);
+        txn.arena.set_parent(child_idx, Some(self.container_idx));
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target: tree_id,
+                parent: Some(parent),
+            }),
+            EventHint::Tree((tree_id, Some(parent)).into()),
+            &self.state,
+        )?;
+        Ok(tree_id)
+    }
+
+    pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: None,
+            }),
+            EventHint::Tree((target, None).into()),
+            &self.state,
+        )
+    }
+
+    pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
+        txn.apply_local_op(
+            self.container_idx,
+            crate::op::RawOpContent::Tree(TreeOp {
+                target,
+                parent: Some(parent),
+            }),
+            EventHint::Tree((target, Some(parent)).into()),
+            &self.state,
+        )
+    }
+
+    pub fn get_meta(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<MapHandler> {
+        if !self.contains(target) {
+            return Err(LoroTreeError::TreeNodeNotExist(target).into());
+        }
+        let map_container_id = self.meta_container_id(target);
+        let map = txn.get_map(map_container_id);
+        Ok(map)
+    }
+
+    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.parent(target)
+            })
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .arena
+            .idx_to_id(self.container_idx)
+            .unwrap()
+    }
+
+    pub fn contains(&self, target: TreeID) -> bool {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.contains(target)
+            })
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_value_by_idx(self.container_idx)
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .get_container_deep_value(self.container_idx)
+    }
+
+    pub fn nodes(&self) -> Vec<TreeID> {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.nodes()
+            })
+    }
+
+    fn meta_container_id(&self, target: TreeID) -> ContainerID {
+        ContainerID::new_normal(target.id(), ContainerType::Map)
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn max_counter(&self) -> i32 {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state(self.container_idx, |state| {
+                let a = state.as_tree_state().unwrap();
+                a.max_counter()
+            })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::ops::Deref;
@@ -895,5 +1086,55 @@ mod test {
                 {"insert": " world"}
             ])
         );
+    }
+
+    #[test]
+    fn tree_meta() {
+        let loro = LoroDoc::new();
+        loro.set_peer_id(1);
+        let tree = loro.get_tree("root");
+        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
+        loro.with_txn(|txn| {
+            let meta = tree.get_meta(txn, id)?;
+            meta.insert(txn, "a", 123.into())
+        })
+        .unwrap();
+        let meta = loro
+            .with_txn(|txn| {
+                let meta = tree.get_meta(txn, id)?;
+                Ok(meta.get("a").unwrap())
+            })
+            .unwrap();
+        assert_eq!(meta, 123.into());
+        assert_eq!(
+            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}],"deleted":[]}"#,
+            tree.get_deep_value().to_json()
+        );
+        let bytes = loro.export_snapshot();
+        let loro2 = LoroDoc::new();
+        loro2.import(&bytes).unwrap();
+    }
+
+    #[test]
+    fn tree_meta_event() {
+        use std::sync::Arc;
+        let loro = LoroDoc::new();
+        let tree = loro.get_tree("root");
+        let text = loro.get_text("text");
+        loro.with_txn(|txn| {
+            let id = tree.create(txn)?;
+            let meta = tree.get_meta(txn, id)?;
+            meta.insert(txn, "a", 1.into())?;
+            text.insert(txn, 0, "abc")?;
+            let _id2 = tree.create(txn)?;
+            meta.insert(txn, "b", 2.into())?;
+            Ok(id)
+        })
+        .unwrap();
+
+        let loro2 = LoroDoc::new();
+        loro2.subscribe_deep(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
+        loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
+        assert_eq!(loro.get_deep_value(), loro2.get_deep_value());
     }
 }

@@ -7,6 +7,7 @@ use std::{
 
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
+use loro_common::ContainerType;
 use loro_common::PeerID;
 
 use crate::{
@@ -154,6 +155,30 @@ impl<'a> OpConverter<'a> {
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
             },
+            crate::op::RawOpContent::Tree(tree) => {
+                // we need create every meta container associated with target TreeID
+                let id = tree.target;
+                let meta_container_id = ContainerID::new_normal(id.id(), ContainerType::Map);
+
+                if self.container_id_to_idx.get(&meta_container_id).is_none() {
+                    let container_idx_to_id = &mut self.container_idx_to_id;
+                    let idx = container_idx_to_id.len();
+                    container_idx_to_id.push(meta_container_id.clone());
+                    let idx = ContainerIdx::from_index_and_type(
+                        idx as u32,
+                        meta_container_id.container_type(),
+                    );
+                    self.container_id_to_idx.insert(meta_container_id, idx);
+                    let parent = &mut self.parents;
+                    parent.insert(idx, Some(container));
+                }
+
+                Op {
+                    container,
+                    counter,
+                    content: crate::op::InnerContent::Tree(tree),
+                }
+            }
         }
     }
 }
@@ -411,6 +436,11 @@ impl SharedArena {
                     container,
                     content: InnerContent::List(InnerListOp::StyleEnd),
                 },
+            },
+            crate::op::RawOpContent::Tree(tree) => Op {
+                counter,
+                container,
+                content: crate::op::InnerContent::Tree(tree),
             },
         }
     }

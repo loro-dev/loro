@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
+use std::sync::Mutex;
 
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec};
@@ -13,6 +14,8 @@ use rle::{HasLength, RleVec};
 use crate::change::{Change, Lamport, Timestamp};
 use crate::container::list::list_op;
 use crate::dag::DagUtils;
+use crate::diff_calc::tree::MoveLamportAndID;
+use crate::diff_calc::TreeDiffCache;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
@@ -46,6 +49,8 @@ pub struct OpLog {
     /// Whether we are importing a batch of changes.
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
+
+    pub(crate) tree_parent_cache: Mutex<TreeDiffCache>,
 }
 
 /// [AppDag] maintains the causal graph of the app.
@@ -78,6 +83,7 @@ impl Clone for OpLog {
             latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
+            tree_parent_cache: Default::default(),
         }
     }
 }
@@ -148,6 +154,7 @@ impl OpLog {
             latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
+            tree_parent_cache: Default::default(),
         }
     }
 
@@ -245,7 +252,26 @@ impl OpLog {
                 }
             }
         }
+        // TODO: update tree cache
+        let mut tree_cache = self.tree_parent_cache.lock().unwrap();
+        for op in change.ops().iter() {
+            if let crate::op::InnerContent::Tree(tree) = op.content {
+                let node = MoveLamportAndID {
+                    lamport: change.lamport,
+                    id: ID {
+                        peer: change.id.peer,
+                        counter: op.counter,
+                    },
+                    target: tree.target,
+                    parent: tree.parent,
+                    effected: true,
+                };
+                tree_cache.add_node_uncheck(node);
+            }
+        }
+
         self.changes.entry(change.id.peer).or_default().push(change);
+
         Ok(())
     }
 
@@ -334,6 +360,19 @@ impl OpLog {
         changes
     }
 
+    pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
+        self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
+    }
+
+    pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
+        self.get_change_at(id)
+            .map(|c| {
+                let change_counter = c.id.counter as u32;
+                c.lamport + c.ops().last().map(|op| op.counter).unwrap_or(0) as u32 - change_counter
+            })
+            .unwrap_or(Lamport::MAX)
+    }
+
     pub fn get_change_at(&self, id: ID) -> Option<&Change> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
             if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
@@ -388,6 +427,7 @@ impl OpLog {
                         }))
                     }
                     loro_common::ContainerType::Map => unreachable!(),
+                    loro_common::ContainerType::Tree => unreachable!(),
                 },
                 list_op::InnerListOp::InsertText {
                     slice,
@@ -404,7 +444,9 @@ impl OpLog {
                             pos: *pos as usize,
                         }));
                     }
-                    loro_common::ContainerType::List | loro_common::ContainerType::Map => {
+                    loro_common::ContainerType::List
+                    | loro_common::ContainerType::Map
+                    | loro_common::ContainerType::Tree => {
                         unreachable!()
                     }
                 },
@@ -427,14 +469,13 @@ impl OpLog {
                 }
             },
             crate::op::InnerContent::Map(map) => {
-                let value = map
-                    .value
-                    .and_then(|v| self.arena.get_value(v as usize));
+                let value = map.value.and_then(|v| self.arena.get_value(v as usize));
                 contents.push(RawOpContent::Map(crate::container::map::MapSet {
                     key: map.key.clone(),
                     value,
                 }))
             }
+            crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
         };
 
         RemoteOp {

@@ -100,6 +100,7 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
         }
         mode => mode,
     };
+
     let encoded = match &mode {
         EncodeMode::Updates => encode_oplog_updates(oplog, vv),
         EncodeMode::RleUpdates => encode_oplog_changes(oplog, vv),

@@ -21,10 +21,12 @@ use crate::{
 mod list_state;
 mod map_state;
 mod richtext_state;
+mod tree_state;
 
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
+pub(crate) use tree_state::{get_meta_value, Forest, TreeState};
 
 use super::{
     arena::SharedArena,
@@ -55,7 +57,7 @@ pub trait ContainerState: Clone {
         self.apply_diff_and_convert(diff, arena);
     }
 
-    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena);
+    fn apply_op(&mut self, raw_op: &RawOp, op: &Op, arena: &SharedArena) -> LoroResult<()>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&mut self) -> Diff;
 
@@ -89,6 +91,7 @@ pub enum State {
     ListState,
     MapState,
     RichtextState,
+    TreeState,
 }
 
 impl State {
@@ -278,7 +281,7 @@ impl DocState {
         }
 
         // TODO: make apply_op return a result
-        state.apply_op(raw_op, op, &self.arena);
+        state.apply_op(raw_op, op, &self.arena)?;
         Ok(())
     }
 
@@ -324,11 +327,7 @@ impl DocState {
         self.states
             .get_mut(&container_idx)
             .map(|x| x.get_value())
-            .unwrap_or_else(|| match container_idx.get_type() {
-                ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
-                ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-                ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
-            })
+            .unwrap_or_else(|| container_idx.get_type().default_value())
     }
 
     /// Set the state of the container with the given container idx.
@@ -562,21 +561,28 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if map.iter().all(|x| !x.1.is_container()) {
-                    return LoroValue::Map(map);
-                }
-
-                let map_mut = Arc::make_mut(&mut map);
-                for (_key, value) in map_mut.iter_mut() {
-                    if value.is_container() {
-                        let container = value.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let new_value = self.get_container_deep_value(container_idx);
-                        *value = new_value;
+                if container.get_type() == ContainerType::Tree {
+                    // get tree's meta
+                    for nodes in Arc::make_mut(&mut map).values_mut() {
+                        get_meta_value(nodes, self);
                     }
-                }
+                    LoroValue::Map(map)
+                } else {
+                    if map.iter().all(|x| !x.1.is_container()) {
+                        return LoroValue::Map(map);
+                    }
 
-                LoroValue::Map(map)
+                    let map_mut = Arc::make_mut(&mut map);
+                    for (_key, value) in map_mut.iter_mut() {
+                        if value.is_container() {
+                            let container = value.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let new_value = self.get_container_deep_value(container_idx);
+                            *value = new_value;
+                        }
+                    }
+                    LoroValue::Map(map)
+                }
             }
             _ => value,
         }
@@ -675,6 +681,7 @@ pub fn create_state(idx: ContainerIdx) -> State {
         ContainerType::Map => State::MapState(MapState::new(idx)),
         ContainerType::List => State::ListState(ListState::new(idx)),
         ContainerType::Text => State::RichtextState(RichtextState::new(idx)),
+        ContainerType::Tree => State::TreeState(TreeState::new()),
     }
 }
 

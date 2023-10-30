@@ -12,6 +12,7 @@ use crate::{
     container::{idx::ContainerIdx, IntoContainerId},
     encoding::{EncodeMode, ENCODE_SCHEMA_VERSION, MAGIC_BYTES},
     handler::TextHandler,
+    handler::TreeHandler,
     id::PeerID,
     version::Frontiers,
     InternalString, LoroError, VersionVector,
@@ -267,8 +268,8 @@ impl LoroDoc {
     }
 
     fn emit_events(&self) {
-        let mut state = self.state.lock().unwrap();
-        for event in state.take_events() {
+        let events = self.state.lock().unwrap().take_events();
+        for event in events {
             self.observer.emit(event);
         }
     }
@@ -315,6 +316,13 @@ impl LoroDoc {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(idx, Arc::downgrade(&self.state))
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
+        let idx = self.get_container_idx(id, ContainerType::Tree);
+        TreeHandler::new(idx, Arc::downgrade(&self.state))
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -433,14 +441,16 @@ impl LoroDoc {
             after,
             Some(frontiers),
         );
-
         state.apply_diff(InternalDocDiff {
             origin: "checkout".into(),
             local: true,
             diff: Cow::Owned(diff),
             new_version: Cow::Owned(frontiers.clone()),
         });
-
+        let events = state.take_events();
+        for event in events {
+            self.observer.emit(event);
+        }
         Ok(())
     }
 

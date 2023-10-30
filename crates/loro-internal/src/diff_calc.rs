@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+pub(super) mod tree;
+pub(super) use tree::TreeDiffCache;
+
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasIdSpan, PeerID, ID};
@@ -13,7 +16,9 @@ use crate::{
             RichtextChunkValue, RichtextTracker, StyleOp,
         },
         text::tracker::Tracker,
+        tree::tree_op::TreeOp,
     },
+    dag::DagUtils,
     delta::{Delta, MapDelta, MapValue},
     event::InternalDiff,
     id::Counter,
@@ -22,6 +27,8 @@ use crate::{
     version::Frontiers,
     InternalString, VersionVector,
 };
+
+use self::tree::MoveLamportAndID;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
 
@@ -72,7 +79,6 @@ impl DiffCalculator {
                 self.last_vv = Default::default();
             }
         }
-
         let affected_set = if !self.has_all {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut after = after;
@@ -130,6 +136,9 @@ impl DiffCalculator {
                                 crate::ContainerType::List => {
                                     ContainerDiffCalculator::List(ListDiffCalculator::default())
                                 }
+                                crate::ContainerType::Tree => {
+                                    ContainerDiffCalculator::Tree(TreeDiffCalculator::default())
+                                }
                             }
                         });
 
@@ -151,7 +160,6 @@ impl DiffCalculator {
                     }
                 }
             }
-
             for (_, calculator) in self.calculators.iter_mut() {
                 calculator.stop_tracking(oplog, after);
             }
@@ -173,7 +181,6 @@ impl DiffCalculator {
                 None
             }
         };
-
         let mut diffs = Vec::with_capacity(self.calculators.len());
         if let Some(set) = affected_set {
             // only visit the affected containers
@@ -192,7 +199,6 @@ impl DiffCalculator {
                 });
             }
         }
-
         diffs
     }
 }
@@ -228,6 +234,7 @@ enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
     List(ListDiffCalculator),
     Richtext(RichtextDiffCalculator),
+    Tree(TreeDiffCalculator),
 }
 
 #[derive(Debug, Default)]
@@ -500,6 +507,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 crate::container::list::list_op::InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(_) => unreachable!(),
+            crate::op::InnerContent::Tree(_) => unreachable!(),
         }
     }
 
@@ -544,5 +552,89 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         // debug_log::debug_dbg!(&delta, from, to);
         // debug_log::debug_dbg!(&self.tracker);
         InternalDiff::RichtextRaw(delta)
+    }
+}
+
+#[derive(Debug, Default)]
+struct TreeDiffCalculator;
+
+impl TreeDiffCalculator {
+    fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
+        frontiers
+            .iter()
+            .map(|id| oplog.get_min_lamport_at(*id))
+            .min()
+            .unwrap_or(0)
+    }
+
+    fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
+        frontiers
+            .iter()
+            .map(|id| oplog.get_max_lamport_at(*id))
+            .max()
+            .unwrap_or(Lamport::MAX)
+    }
+}
+
+impl DiffCalculatorTrait for TreeDiffCalculator {
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+
+    fn apply_change(
+        &mut self,
+        oplog: &OpLog,
+        op: crate::op::RichOp,
+        _vv: Option<&crate::VersionVector>,
+    ) {
+        let TreeOp { target, parent } = op.op().content.as_tree().unwrap();
+        let node = MoveLamportAndID {
+            lamport: op.lamport(),
+            id: ID {
+                peer: op.client_id(),
+                counter: op.id_start().counter,
+            },
+            target: *target,
+            parent: *parent,
+            effected: true,
+        };
+        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
+        tree_cache.add_node(node);
+    }
+
+    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+
+    fn calculate_diff(
+        &mut self,
+        oplog: &OpLog,
+        from: &crate::VersionVector,
+        to: &crate::VersionVector,
+    ) -> InternalDiff {
+        debug_log::debug_log!("from {:?} to {:?}", from, to);
+        let mut merged_vv = from.clone();
+        merged_vv.merge(to);
+        let from_frontiers = from.to_frontiers(&oplog.dag);
+        let to_frontiers = to.to_frontiers(&oplog.dag);
+        let common_ancestors = oplog
+            .dag
+            .find_common_ancestor(&from_frontiers, &to_frontiers);
+        let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
+        debug_log::debug_log!("lca vv {:?}", lca_vv);
+
+        let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
+        let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+        let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
+        let from_min_lamport = self.get_min_lamport_by_frontiers(&from_frontiers, oplog);
+        let from_max_lamport = self.get_max_lamport_by_frontiers(&from_frontiers, oplog);
+        let diff = tree_cache.diff(
+            from,
+            to,
+            &lca_vv,
+            to_max_lamport,
+            lca_min_lamport,
+            (from_min_lamport, from_max_lamport),
+        );
+        debug_log::debug_log!("\ndiff {:?}", diff);
+
+        InternalDiff::Tree(diff)
     }
 }

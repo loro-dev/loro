@@ -1,4 +1,5 @@
 pub mod recursive_refactored;
+pub mod tree;
 
 use crate::{array_mut_ref, container::richtext::TextStyleInfoFlag, loro::LoroDoc};
 use debug_log::debug_log;

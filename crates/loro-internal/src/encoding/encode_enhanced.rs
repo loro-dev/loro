@@ -1,7 +1,7 @@
 // allow impl in zerovec macro
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasCounterSpan, HasLamportSpan};
+use loro_common::{HasCounterSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
@@ -14,6 +14,7 @@ use crate::{
         list::list_op::{DeleteSpan, ListOp},
         map::MapSet,
         richtext::TextStyleInfoFlag,
+        tree::tree_op::TreeOp,
         ContainerID, ContainerType,
     },
     id::{Counter, PeerID, ID},
@@ -69,16 +70,16 @@ struct ChangeEncoding {
 struct OpEncoding {
     #[columnar(strategy = "DeltaRle")]
     container: usize,
-    /// Key index or insert/delete pos
+    /// Key index or insert/delete pos or target tree id index
     #[columnar(strategy = "DeltaRle")]
     prop: usize,
-    /// 0: insert
-    /// 1: delete
+    /// 0: insert or the parent tree id is not none
+    /// 1: delete or the parent tree id is none
     /// 2: text-anchor-start
     /// 3: text-anchor-end
     #[columnar(strategy = "Rle")]
     kind: u8,
-    /// the length of the deletion or insertion
+    /// the length of the deletion or insertion or target tree id index
     #[columnar(strategy = "Rle")]
     insert_del_len: isize,
 }
@@ -113,13 +114,15 @@ impl Kind {
 }
 
 #[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) struct DepsEncoding {
     #[columnar(strategy = "DeltaRle")]
     pub(super) client_idx: PeerIdx,
     #[columnar(strategy = "DeltaRle")]
     pub(super) counter: Counter,
 }
+
+type TreeIDEncoding = DepsEncoding;
 
 impl DepsEncoding {
     pub(super) fn new(client_idx: PeerIdx, counter: Counter) -> Self {
@@ -151,6 +154,8 @@ struct DocEncoding<'a> {
     values: Vec<Option<LoroValue>>,
     clients: Vec<PeerID>,
     keys: Vec<InternalString>,
+    // the index 0 is DELETE_ROOT
+    tree_ids: Vec<TreeIDEncoding>,
 }
 
 pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
@@ -197,6 +202,9 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut key_to_idx = FxHashMap::default();
     let mut deps = Vec::with_capacity(change_num);
     let mut values = Vec::new();
+    // the index 0 is DELETE_ROOT
+    let mut tree_ids = Vec::new();
+    let mut tree_id_to_idx = FxHashMap::default();
     let mut string: String = String::new();
     let mut style_key_idx = Vec::new();
     let mut style_info = Vec::new();
@@ -224,6 +232,39 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
             let op = oplog.local_op_to_remote(op);
             for content in op.contents.into_iter() {
                 let (prop, kind, insert_del_len) = match content {
+                    crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
+                        let target_peer_idx = *peer_id_to_idx.get(&target.peer).unwrap();
+                        let target_encoding = TreeIDEncoding {
+                            client_idx: target_peer_idx,
+                            counter: target.counter,
+                        };
+                        let target_idx =
+                            *tree_id_to_idx.entry(target_encoding).or_insert_with(|| {
+                                tree_ids.push(target_encoding);
+                                // the index 0 is DELETE_ROOT
+                                tree_ids.len()
+                            });
+                        let (is_none, parent_idx) = if let Some(parent) = parent {
+                            if TreeID::is_deleted_root(Some(parent)) {
+                                (Kind::Insert, 0)
+                            } else {
+                                let parent_peer_idx = *peer_id_to_idx.get(&parent.peer).unwrap();
+                                let parent_encoding = TreeIDEncoding {
+                                    client_idx: parent_peer_idx,
+                                    counter: parent.counter,
+                                };
+                                let parent_idx =
+                                    *tree_id_to_idx.entry(parent_encoding).or_insert_with(|| {
+                                        tree_ids.push(parent_encoding);
+                                        tree_ids.len()
+                                    });
+                                (Kind::Insert, parent_idx)
+                            }
+                        } else {
+                            (Kind::Delete, 0)
+                        };
+                        (target_idx, is_none, parent_idx as isize)
+                    }
                     crate::op::RawOpContent::Map(MapSet { key, value }) => {
                         if value.is_some() {
                             values.push(value.clone());
@@ -317,6 +358,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         values,
         style_key: style_key_idx,
         style_info: Cow::Owned(style_info),
+        tree_ids,
     };
 
     to_vec(&encoded).unwrap()
@@ -420,6 +462,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         values,
         style_key,
         style_info,
+        tree_ids,
     } = encoded;
 
     let start_vv: VersionVector = peers
@@ -497,6 +540,26 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 };
                 let container_type = container_id.container_type();
                 let content = match container_type {
+                    ContainerType::Tree => {
+                        let target_encoding = tree_ids[prop - 1];
+                        let target = TreeID {
+                            peer: peers[target_encoding.client_idx as usize],
+                            counter: target_encoding.counter,
+                        };
+                        let parent = if kind == 1 {
+                            None
+                        } else if insert_del_len == 0 {
+                            TreeID::delete_root()
+                        } else {
+                            let parent_encoding = tree_ids[insert_del_len as usize - 1];
+                            let parent = TreeID {
+                                peer: peers[parent_encoding.client_idx as usize],
+                                counter: parent_encoding.counter,
+                            };
+                            Some(parent)
+                        };
+                        RawOpContent::Tree(TreeOp { target, parent })
+                    }
                     ContainerType::Map => {
                         let key = keys[prop].clone();
                         if Kind::from_byte(kind) == Kind::Delete {
