@@ -30,9 +30,10 @@ use super::{
     state::{DocState, State},
 };
 
-pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>)>;
+pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>) + Sync + Send>;
 
 pub struct Transaction {
+    global_txn: Weak<Mutex<Option<Transaction>>>,
     peer: PeerID,
     origin: InternalString,
     start_counter: Counter,
@@ -85,14 +86,19 @@ pub(super) enum EventHint {
 }
 
 impl Transaction {
-    pub fn new(state: Arc<Mutex<DocState>>, oplog: Arc<Mutex<OpLog>>) -> Self {
-        Self::new_with_origin(state, oplog, "".into())
+    pub fn new(
+        state: Arc<Mutex<DocState>>,
+        oplog: Arc<Mutex<OpLog>>,
+        global_txn: Weak<Mutex<Option<Transaction>>>,
+    ) -> Self {
+        Self::new_with_origin(state, oplog, "".into(), global_txn)
     }
 
     pub fn new_with_origin(
         state: Arc<Mutex<DocState>>,
         oplog: Arc<Mutex<OpLog>>,
         origin: InternalString,
+        global_txn: Weak<Mutex<Option<Transaction>>>,
     ) -> Self {
         let mut state_lock = state.lock().unwrap();
         if state_lock.is_in_txn() {
@@ -109,6 +115,7 @@ impl Transaction {
         drop(state_lock);
         drop(oplog_lock);
         Self {
+            global_txn,
             origin: Default::default(),
             peer,
             start_counter: next_counter,
@@ -141,6 +148,10 @@ impl Transaction {
 
     pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
         self.on_commit = Some(f);
+    }
+
+    pub(crate) fn take_on_commit(&mut self) -> Option<OnCommitFn> {
+        self.on_commit.take()
     }
 
     pub fn abort(mut self) {
@@ -268,28 +279,28 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
-        TextHandler::new(idx, Arc::downgrade(&self.state))
+        TextHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
-        ListHandler::new(idx, Arc::downgrade(&self.state))
+        ListHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
-        MapHandler::new(idx, Arc::downgrade(&self.state))
+        MapHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(idx, Arc::downgrade(&self.state))
+        TreeHandler::new(self.global_txn.clone(), idx, Arc::downgrade(&self.state))
     }
 
     fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {

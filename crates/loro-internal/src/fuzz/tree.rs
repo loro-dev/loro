@@ -17,9 +17,8 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx, delta::TreeDiffItem, handler::TreeHandler, loro::LoroDoc,
-    state::Forest, value::ToJson, version::Frontiers, ApplyDiff, ListHandler, MapHandler,
-    TextHandler,
+    delta::TreeDiffItem, handler::TreeHandler, loro::LoroDoc, state::Forest, value::ToJson,
+    version::Frontiers, ApplyDiff, ListHandler, MapHandler, TextHandler,
 };
 
 #[derive(Arbitrary, EnumAsInner, Clone, PartialEq, Eq, Debug)]
@@ -225,26 +224,6 @@ impl Tabled for Action {
 trait Actionable {
     fn apply_action(&mut self, action: &Action);
     fn preprocess(&mut self, action: &mut Action);
-}
-
-impl Actor {
-    #[allow(unused)]
-    fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
-        match type_ {
-            ContainerType::Text => self
-                .text_containers
-                .push(TextHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Map => self
-                .map_containers
-                .push(MapHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::List => self
-                .list_containers
-                .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Tree => self
-                .tree_containers
-                .push(TreeHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-        }
-    }
 }
 
 impl Actionable for Vec<Actor> {
@@ -552,13 +531,10 @@ impl Actionable for Vec<Actor> {
                         let key = parent_peer.to_string();
                         let value = *parent_counter;
                         let meta = container
-                            .get_meta(
-                                &mut txn,
-                                TreeID {
-                                    peer: *target_peer,
-                                    counter: *target_counter,
-                                },
-                            )
+                            .get_meta(TreeID {
+                                peer: *target_peer,
+                                counter: *target_counter,
+                            })
                             .unwrap();
                         meta.insert(&mut txn, &key, value.into()).unwrap();
                     }

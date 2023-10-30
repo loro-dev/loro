@@ -36,6 +36,8 @@ pub enum LoroError {
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
+    #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
+    AutoCommitNotStarted,
     // #[error("the data for key `{0}` is not available")]
     // Redaction(String),
     // #[error("invalid header (expected {expected:?}, found {found:?})")]

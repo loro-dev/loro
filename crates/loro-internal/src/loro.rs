@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
@@ -52,6 +52,8 @@ pub struct LoroDoc {
     arena: SharedArena,
     observer: Arc<Observer>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
+    txn: Arc<Mutex<Option<Transaction>>>,
+    auto_commit: bool,
     detached: bool,
 }
 
@@ -65,8 +67,10 @@ impl LoroDoc {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
             detached: false,
+            auto_commit: false,
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            txn: Arc::new(Mutex::new(None)),
             arena,
         }
     }
@@ -89,9 +93,11 @@ impl LoroDoc {
         Self {
             arena: oplog.arena.clone(),
             observer: Arc::new(obs),
+            auto_commit: false,
             oplog: Arc::new(Mutex::new(oplog)),
             state: Arc::new(Mutex::new(state)),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            txn: Arc::new(Mutex::new(None)),
             detached: false,
         }
     }
@@ -144,6 +150,81 @@ impl LoroDoc {
         Ok(v)
     }
 
+    pub fn start_auto_commit(&mut self) {
+        self.auto_commit = true;
+        let mut self_txn = self.txn.try_lock().unwrap();
+        if self_txn.is_some() || self.detached {
+            return;
+        }
+
+        let txn = self.txn().unwrap();
+        self_txn.replace(txn);
+    }
+
+    /// Commit the cumulative auto commit transaction.
+    /// This method only has effect when `auto_commit` is true.
+    #[inline]
+    pub fn commit(&self) {
+        self.commit_with(None, None, false)
+    }
+
+    /// Commit the cumulative auto commit transaction.
+    /// This method only has effect when `auto_commit` is true.
+    /// If `immediate_renew` is true, a new transaction will be created after the old one is commited
+    pub fn commit_with(
+        &self,
+        origin: Option<InternalString>,
+        timestamp: Option<Timestamp>,
+        immediate_renew: bool,
+    ) {
+        if !self.auto_commit {
+            return;
+        }
+
+        let mut txn_guard = self.txn.try_lock().unwrap();
+        let txn = txn_guard.take();
+        drop(txn_guard);
+        let Some(mut txn) = txn else {
+            return;
+        };
+
+        let on_commit = txn.take_on_commit();
+        if let Some(origin) = origin {
+            txn.set_origin(origin);
+        }
+
+        if let Some(timestamp) = timestamp {
+            txn.set_timestamp(timestamp);
+        }
+
+        txn.commit().unwrap();
+        if immediate_renew {
+            let mut txn_guard = self.txn.try_lock().unwrap();
+            assert!(!self.detached);
+            *txn_guard = Some(self.txn().unwrap());
+        }
+
+        if let Some(on_commit) = on_commit {
+            on_commit(&self.state);
+        }
+    }
+
+    pub fn renew_txn_if_auto_commit(&self) {
+        if self.auto_commit && !self.detached {
+            let mut self_txn = self.txn.try_lock().unwrap();
+            if self_txn.is_some() {
+                return;
+            }
+
+            let txn = self.txn().unwrap();
+            self_txn.replace(txn);
+        }
+    }
+
+    pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
+        Arc::downgrade(&self.txn)
+    }
+
     /// Create a new transaction with specified origin.
     ///
     /// The origin will be propagated to the events.
@@ -155,17 +236,22 @@ impl LoroDoc {
             ));
         }
 
-        let mut txn =
-            Transaction::new_with_origin(self.state.clone(), self.oplog.clone(), origin.into());
-        if self.state.lock().unwrap().is_recording() {
-            let obs = self.observer.clone();
-            txn.set_on_commit(Box::new(move |state| {
-                let events = state.lock().unwrap().take_events();
-                for event in events {
-                    obs.emit(event);
-                }
-            }));
-        }
+        let mut txn = Transaction::new_with_origin(
+            self.state.clone(),
+            self.oplog.clone(),
+            origin.into(),
+            self.get_global_txn(),
+        );
+
+        let obs = self.observer.clone();
+        txn.set_on_commit(Box::new(move |state| {
+            let mut state = state.try_lock().unwrap();
+            let events = state.take_events();
+            drop(state);
+            for event in events {
+                obs.emit(event);
+            }
+        }));
 
         Ok(txn)
     }
@@ -185,7 +271,10 @@ impl LoroDoc {
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.oplog.lock().unwrap().export_from(vv)
+        self.commit();
+        let ans = self.oplog.lock().unwrap().export_from(vv);
+        self.renew_txn_if_auto_commit();
+        ans
     }
 
     #[inline(always)]
@@ -194,11 +283,23 @@ impl LoroDoc {
     }
 
     pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
+        self.commit();
         self.detach();
         self.import(bytes)
     }
 
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+        self.commit();
+        let ans = self._import_with(bytes, origin);
+        self.renew_txn_if_auto_commit();
+        ans
+    }
+
+    fn _import_with(
+        &self,
+        bytes: &[u8],
+        origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
+    ) -> Result<(), LoroError> {
         if bytes.len() <= 6 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
@@ -275,6 +376,7 @@ impl LoroDoc {
     }
 
     pub fn export_snapshot(&self) -> Vec<u8> {
+        self.commit();
         debug_log::group!("export snapshot");
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
@@ -283,6 +385,7 @@ impl LoroDoc {
         ans.push((EncodeMode::Snapshot).to_byte());
         ans.extend(encode_app_snapshot(self));
         debug_log::group_end!();
+        self.renew_txn_if_auto_commit();
         ans
     }
 
@@ -301,28 +404,28 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
-        TextHandler::new(idx, Arc::downgrade(&self.state))
+        TextHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
-        ListHandler::new(idx, Arc::downgrade(&self.state))
+        ListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
-        MapHandler::new(idx, Arc::downgrade(&self.state))
+        MapHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let idx = self.get_container_idx(id, ContainerType::Tree);
-        TreeHandler::new(idx, Arc::downgrade(&self.state))
+        TreeHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -374,6 +477,7 @@ impl LoroDoc {
 
     // PERF: opt
     pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        self.commit();
         let is_detached = self.is_detached();
         self.detach();
         self.oplog.lock().unwrap().batch_importing = true;
@@ -396,6 +500,7 @@ impl LoroDoc {
             self.checkout_to_latest();
         }
 
+        self.renew_txn_if_auto_commit();
         if let Some(err) = err {
             return Err(err);
         }
@@ -417,6 +522,7 @@ impl LoroDoc {
         let f = self.oplog_frontiers();
         self.checkout(&f).unwrap();
         self.detached = false;
+        self.renew_txn_if_auto_commit();
     }
 
     /// Checkout [DocState] to a specific version.
@@ -424,6 +530,7 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
+        self.commit();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         self.detached = true;
