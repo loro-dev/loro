@@ -10,10 +10,10 @@ Loro<br/>
 Sync state easily with CRDTs
 </h1>
 <p align="center">
-  <a aria-label="X" href="https://x.com/loro_dev">
+  <a aria-label="X" href="https://x.com/loro_dev" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Twitter-black?style=for-the-badge&logo=Twitter">
   </a>
-  <a aria-label="Discord-Link" href="https://discord.gg/tUsBSVfqzf">
+  <a aria-label="Discord-Link" href="https://discord.gg/tUsBSVfqzf" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Discord-black?style=for-the-badge&logo=discord">
   </a>
 </p>
