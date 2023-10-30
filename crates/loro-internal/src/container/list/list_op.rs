@@ -190,6 +190,8 @@ impl Mergable for DeleteSpan {
     where
         Self: Sized,
     {
+        // merge continuous deletions:
+        // note that the previous deletions will affect the position of the later deletions
         match (self.bidirectional(), other.bidirectional()) {
             (true, true) => self.pos == other.pos || self.pos == other.pos + 1,
             (true, false) => self.pos == other.prev_pos(),

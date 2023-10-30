@@ -68,6 +68,11 @@ impl CounterSpan {
     }
 
     #[inline(always)]
+    pub fn bidirectional(&self) -> bool {
+        (self.end - self.start).abs() == 1
+    }
+
+    #[inline(always)]
     pub fn direction(&self) -> i32 {
         if self.start < self.end {
             1
@@ -141,6 +146,20 @@ impl CounterSpan {
             self.end = new_end.min(self.start);
         }
     }
+
+    /// if we can merge element on the left, this method return the last atom of it
+    fn prev_pos(&self) -> i32 {
+        if self.start < self.end {
+            self.start - 1
+        } else {
+            self.start + 1
+        }
+    }
+
+    /// if we can merge element on the right, this method return the first atom of it
+    fn next_pos(&self) -> i32 {
+        self.end
+    }
 }
 
 impl HasLength for CounterSpan {
@@ -176,13 +195,32 @@ impl Sliceable for CounterSpan {
 impl Mergable for CounterSpan {
     #[inline]
     fn is_mergable(&self, other: &Self, _: &()) -> bool {
-        // TODO: can use the similar logic as [DeleteSpan] to merge
-        self.end == other.start && self.direction() == other.direction()
+        match (self.bidirectional(), other.bidirectional()) {
+            (true, true) => self.start + 1 == other.start || self.start == other.start + 1,
+            (true, false) => self.start == other.prev_pos(),
+            (false, true) => self.next_pos() == other.start,
+            (false, false) => {
+                self.next_pos() == other.start && self.direction() == other.direction()
+            }
+        }
     }
 
     #[inline]
     fn merge(&mut self, other: &Self, _: &()) {
-        self.end = other.end;
+        match (self.bidirectional(), other.bidirectional()) {
+            (true, true) => {
+                if self.start + 1 == other.start {
+                    self.end = self.start + 2;
+                } else if self.start - 1 == other.start {
+                    self.end = self.start - 2;
+                }
+            }
+            (true, false) => self.end = other.end,
+            (false, true) => self.end = self.end + self.direction(),
+            (false, false) => {
+                self.end = other.end;
+            }
+        }
     }
 }
 
@@ -443,5 +481,48 @@ mod test_id_span {
         let id_span_vec = id_spans!([0, 100, 98], [0, 98, 90], [2, 2, 4], [2, 8, 4]);
         let slice: Vec<IdSpan> = id_span_vec.slice_iter(5, 14).map(|x| x.into()).collect();
         assert_eq!(slice, id_spans!([0, 95, 90], [2, 2, 4], [2, 8, 6]).to_vec());
+    }
+
+    #[test]
+    fn merge() {
+        let mut a = CounterSpan::new(0, 2);
+        let b = CounterSpan::new(2, 1);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(0, 3));
+
+        let mut a = CounterSpan::new(3, 2);
+        let b = CounterSpan::new(2, 1);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(3, 1));
+
+        let mut a = CounterSpan::new(4, 2);
+        let b = CounterSpan::new(2, 3);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(4, 1));
+
+        let mut a = CounterSpan::new(8, 9);
+        let b = CounterSpan::new(9, 8);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(8, 10));
+
+        let mut a = CounterSpan::new(8, 9);
+        let b = CounterSpan::new(10, 11);
+        assert!(!a.is_mergable(&b, &()));
+
+        let mut a = CounterSpan::new(0, 2);
+        let b = CounterSpan::new(2, 4);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(0, 4));
+
+        let mut a = CounterSpan::new(4, 2);
+        let b = CounterSpan::new(2, 0);
+        assert!(a.is_mergable(&b, &()));
+        a.merge(&b, &());
+        assert_eq!(a, CounterSpan::new(4, 0));
     }
 }

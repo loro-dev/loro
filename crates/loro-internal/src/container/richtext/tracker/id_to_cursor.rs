@@ -162,6 +162,23 @@ impl IdToCursor {
             .cursor
             .get_insert((id.counter - list[index].counter) as usize)
     }
+
+    pub fn diagnose(&self) {
+        let fragment_num = self.map.iter().map(|x| x.1.len()).sum::<usize>();
+        let insert_pieces = self
+            .map
+            .iter()
+            .flat_map(|x| x.1.iter())
+            .map(|x| match &x.cursor {
+                Cursor::Insert { set, len } => set.len(),
+                Cursor::Delete(_) => 0,
+            })
+            .sum::<usize>();
+        eprintln!(
+            "fragments:{}, insert_pieces:{}",
+            fragment_num, insert_pieces
+        );
+    }
 }
 
 #[derive(Debug)]
