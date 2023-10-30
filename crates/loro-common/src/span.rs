@@ -216,7 +216,7 @@ impl Mergable for CounterSpan {
                 }
             }
             (true, false) => self.end = other.end,
-            (false, true) => self.end = self.end + self.direction(),
+            (false, true) => self.end += self.direction(),
             (false, false) => {
                 self.end = other.end;
             }
@@ -509,7 +509,7 @@ mod test_id_span {
         a.merge(&b, &());
         assert_eq!(a, CounterSpan::new(8, 10));
 
-        let mut a = CounterSpan::new(8, 9);
+        let a = CounterSpan::new(8, 9);
         let b = CounterSpan::new(10, 11);
         assert!(!a.is_mergable(&b, &()));
 

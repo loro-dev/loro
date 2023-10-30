@@ -465,10 +465,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList {
-                pos,
-                value: v.clone(),
-            },
+            EventHint::InsertList { len: 1 },
             &self.state,
         )
     }
@@ -518,10 +515,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList {
-                pos,
-                value: v.clone(),
-            },
+            EventHint::InsertList { len: 1 },
             &self.state,
         )?;
         Ok(Handler::new(

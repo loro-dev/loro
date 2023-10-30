@@ -4,7 +4,6 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use debug_log::debug_dbg;
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable, Sliceable as GBSliceable};
 use loro_common::{ContainerType, LoroResult};
@@ -67,8 +66,7 @@ pub(super) enum EventHint {
     /// pos is a Unicode index. If wasm, it's a UTF-16 index.
     DeleteText(DeleteSpan),
     InsertList {
-        pos: usize,
-        value: LoroValue,
+        len: u32,
     },
     DeleteList(DeleteSpan),
     Map {
@@ -85,7 +83,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::Mark { .. } => 1,
             EventHint::InsertText { len, .. } => *len as usize,
             EventHint::DeleteText(d) => d.len(),
-            EventHint::InsertList { .. } => 1,
+            EventHint::InsertList { len, .. } => *len as usize,
             EventHint::DeleteList(d) => d.len(),
             EventHint::Map { .. } => 1,
             EventHint::Tree(_) => 1,
@@ -105,6 +103,7 @@ impl generic_btree::rle::Mergeable for EventHint {
                     ..
                 },
             ) => *pos + *len == *r_pos && styles == r_styles,
+            (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => true,
             (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.is_mergable(r, &()),
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
             _ => false,
@@ -116,6 +115,7 @@ impl generic_btree::rle::Mergeable for EventHint {
             (EventHint::InsertText { len, .. }, EventHint::InsertText { len: r_len, .. }) => {
                 *len += *r_len;
             }
+            (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => *len += *r_len,
             (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.merge(r, &()),
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
             _ => unreachable!(),
@@ -141,6 +141,9 @@ impl generic_btree::rle::Sliceable for EventHint {
             },
             EventHint::DeleteText(d) => EventHint::DeleteText(d.slice(range.start, range.end)),
             EventHint::DeleteList(d) => EventHint::DeleteList(d.slice(range.start, range.end)),
+            EventHint::InsertList { len } => EventHint::InsertList {
+                len: range.len() as u32,
+            },
             a => {
                 assert_eq!(a.rle_len(), range.len());
                 a.clone()
@@ -420,7 +423,7 @@ pub(crate) struct TxnContainerDiff {
 // PERF: could be compacter
 fn change_to_diff(
     change: &Change,
-    _arena: &SharedArena,
+    arena: &SharedArena,
     event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
@@ -445,7 +448,7 @@ fn change_to_diff(
                 None => o_hint.take().unwrap(),
             },
             std::cmp::Ordering::Greater => {
-                unreachable!()
+                unreachable!("{:#?}", &op)
             }
         };
 
@@ -468,8 +471,10 @@ fn change_to_diff(
                     EventHint::DeleteText(s) => {
                         Diff::Text(Delta::new().retain(s.start() as usize).delete(s.len()))
                     }
-                    EventHint::InsertList { pos, value } => {
-                        Diff::List(Delta::new().retain(pos).insert(vec![value]))
+                    EventHint::InsertList { .. } => {
+                        let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
+                        let values = arena.get_values(range.to_range());
+                        Diff::List(Delta::new().retain(*pos).insert(values))
                     }
                     EventHint::DeleteList(s) => {
                         Diff::List(Delta::new().retain(s.start() as usize).delete(s.len()))
