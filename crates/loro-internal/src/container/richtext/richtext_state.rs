@@ -1310,7 +1310,7 @@ impl RichtextState {
             "pos: {}, len: {}, self.len(): {}",
             pos,
             len,
-            self.len_entity()
+            self.to_string()
         );
         // PERF: may use cache to speed up
         self.cursor_cache.invalidate();

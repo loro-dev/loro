@@ -150,7 +150,7 @@ impl ListState {
     }
 
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
-        let leaf = *self.child_container_to_leaf.get(id).unwrap();
+        let leaf = *self.child_container_to_leaf.get(id)?;
         self.list.get_elem(leaf)?;
         let mut index = 0;
         self.list

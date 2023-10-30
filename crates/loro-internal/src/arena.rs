@@ -30,6 +30,8 @@ struct InnerSharedArena {
     // The locks should not be exposed outside this file.
     // It might be better to use RwLock in the future
     container_idx_to_id: Mutex<Vec<ContainerID>>,
+    // 0 stands for unknown, 1 stands for root containers
+    depth: Mutex<Vec<u16>>,
     container_id_to_idx: Mutex<FxHashMap<ContainerID, ContainerIdx>>,
     /// The parent of each container.
     parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
@@ -55,6 +57,7 @@ pub struct StrAllocResult {
 pub(crate) struct OpConverter<'a> {
     container_idx_to_id: MutexGuard<'a, Vec<ContainerID>>,
     container_id_to_idx: MutexGuard<'a, FxHashMap<ContainerID, ContainerIdx>>,
+    container_idx_depth: MutexGuard<'a, Vec<u16>>,
     str: MutexGuard<'a, StrArena>,
     values: MutexGuard<'a, Vec<LoroValue>>,
     root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
@@ -83,8 +86,10 @@ impl<'a> OpConverter<'a> {
             if id.is_root() {
                 self.root_c_idx.push(idx);
                 self.parents.insert(idx, None);
+                self.container_idx_depth.push(1);
+            } else {
+                self.container_idx_depth.push(0);
             }
-
             idx
         };
 
@@ -164,6 +169,7 @@ impl<'a> OpConverter<'a> {
                     let container_idx_to_id = &mut self.container_idx_to_id;
                     let idx = container_idx_to_id.len();
                     container_idx_to_id.push(meta_container_id.clone());
+                    self.container_idx_depth.push(0);
                     let idx = ContainerIdx::from_index_and_type(
                         idx as u32,
                         meta_container_id.container_type(),
@@ -198,6 +204,9 @@ impl SharedArena {
         if id.is_root() {
             self.inner.root_c_idx.lock().unwrap().push(idx);
             self.inner.parents.lock().unwrap().insert(idx, None);
+            self.inner.depth.lock().unwrap().push(1);
+        } else {
+            self.inner.depth.lock().unwrap().push(0);
         }
         idx
     }
@@ -220,6 +229,12 @@ impl SharedArena {
     pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
         let lock = self.inner.container_idx_to_id.lock().unwrap();
         lock.get(id.to_index() as usize).cloned()
+    }
+
+    #[inline]
+    pub fn with_idx_to_id<R>(&self, f: impl FnOnce(&Vec<ContainerID>) -> R) -> R {
+        let lock = self.inner.container_idx_to_id.lock().unwrap();
+        f(&lock)
     }
 
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
@@ -261,7 +276,22 @@ impl SharedArena {
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        self.inner.parents.lock().unwrap().insert(child, parent);
+        let parents = &mut self.inner.parents.lock().unwrap();
+        parents.insert(child, parent);
+        let mut depth = self.inner.depth.lock().unwrap();
+
+        match parent {
+            Some(p) => {
+                if let Some(d) = get_depth(p, &mut depth, parents) {
+                    depth[child.to_index() as usize] = d + 1;
+                } else {
+                    depth[child.to_index() as usize] = 0;
+                }
+            }
+            None => {
+                depth[child.to_index() as usize] = 1;
+            }
+        }
     }
 
     pub fn log_hierarchy(&self) {
@@ -339,6 +369,7 @@ impl SharedArena {
         let mut op_converter = OpConverter {
             container_idx_to_id: self.inner.container_idx_to_id.lock().unwrap(),
             container_id_to_idx: self.inner.container_id_to_idx.lock().unwrap(),
+            container_idx_depth: self.inner.depth.lock().unwrap(),
             str: self.inner.str.lock().unwrap(),
             values: self.inner.values.lock().unwrap(),
             root_c_idx: self.inner.root_c_idx.lock().unwrap(),
@@ -479,6 +510,14 @@ impl SharedArena {
     pub fn root_containers(&self) -> Vec<ContainerIdx> {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
+
+    pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<u16> {
+        get_depth(
+            container,
+            &mut self.inner.depth.lock().unwrap(),
+            &self.inner.parents.lock().unwrap(),
+        )
+    }
 }
 
 fn _alloc_values(
@@ -514,4 +553,29 @@ fn _slice_str(range: Range<usize>, s: &mut StrArena) -> String {
     let mut ans = String::with_capacity(range.len());
     ans.push_str(s.slice_str_by_unicode(range));
     ans
+}
+
+fn get_depth(
+    target: ContainerIdx,
+    depth: &mut Vec<u16>,
+    parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+) -> Option<u16> {
+    let mut d = depth[target.to_index() as usize];
+    if d != 0 {
+        return Some(d);
+    }
+
+    let parent = parents.get(&target)?;
+    match parent {
+        Some(p) => {
+            d = get_depth(*p, depth, parents)? + 1;
+            depth[target.to_index() as usize] = d;
+        }
+        None => {
+            depth[target.to_index() as usize] = 1;
+            d = 1;
+        }
+    }
+
+    Some(d)
 }

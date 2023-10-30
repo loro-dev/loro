@@ -89,11 +89,13 @@ impl Actor {
         let root_value = Arc::clone(&actor.value_tracker);
         actor.loro.subscribe_deep(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            // debug_log::debug_dbg!(&event);
+            debug_log::debug_dbg!(&event.container);
+            debug_log::debug_dbg!(&root_value);
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
             );
+            debug_log::debug_dbg!(&root_value);
         }));
 
         let text = Arc::clone(&actor.text_tracker);
@@ -670,6 +672,7 @@ fn check_eq(a_actor: &mut Actor, b_actor: &mut Actor) {
     debug_log::debug_log!("{}", a_result.to_json_pretty());
     assert_eq!(&a_result, &b_doc.get_state_deep_value());
     assert_value_eq(&a_result, &a_actor.value_tracker.lock().unwrap());
+    assert_value_eq(&a_result, &b_actor.value_tracker.lock().unwrap());
 
     let a = a_doc.get_text("text");
     let value_a = a.get_value();
@@ -700,6 +703,8 @@ fn check_synced(sites: &mut [Actor]) {
             let (a, b) = array_mut_ref!(sites, [i, j]);
             let a_doc = &mut a.loro;
             let b_doc = &mut b.loro;
+            debug_log::debug_dbg!(a_doc.get_deep_value_with_id());
+            debug_log::debug_dbg!(b_doc.get_deep_value_with_id());
             if (i + j) % 2 == 0 {
                 debug_log::group!("Updates {} to {}", j, i);
                 a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
@@ -730,11 +735,18 @@ fn check_synced(sites: &mut [Actor]) {
 
 fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
-    for (c, (f, v)) in actor.history.iter().enumerate() {
+    for (_, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
+        debug_log::group!(
+            "Checkout from {:?} to {:?}",
+            &actor.loro.state_frontiers(),
+            &f
+        );
         actor.loro.checkout(&f).unwrap();
         let actual = actor.loro.get_deep_value();
-        assert_eq!(v, &actual, "Version mismatched at {:?}, cnt={}", f, c);
+        assert_value_eq(v, &actual);
+        assert_value_eq(v, &actor.value_tracker.lock().unwrap());
+        debug_log::group_end!();
     }
 }
 
@@ -794,6 +806,7 @@ mod failed_tests {
     use super::test_multi_sites;
     use super::Action;
     use super::Action::*;
+    use super::ContainerType as C;
     use super::FuzzValue::*;
     use arbtest::arbitrary::{self, Unstructured};
 
@@ -960,89 +973,88 @@ mod failed_tests {
         );
     }
 
-    // FIXME: Need to emit events involving child container re-creation
-    // #[test]
-    // fn fuzz_2() {
-    //     test_multi_sites(
-    //         5,
-    //         &mut [
-    //             Map {
-    //                 site: 0,
-    //                 container_idx: 0,
-    //                 key: 0,
-    //                 value: I32(1616928864),
-    //             },
-    //             List {
-    //                 site: 96,
-    //                 container_idx: 96,
-    //                 key: 96,
-    //                 value: I32(1616928864),
-    //             },
-    //             List {
-    //                 site: 96,
-    //                 container_idx: 96,
-    //                 key: 96,
-    //                 value: I32(1616928864),
-    //             },
-    //             List {
-    //                 site: 96,
-    //                 container_idx: 96,
-    //                 key: 96,
-    //                 value: Container(C::Text),
-    //             },
-    //             List {
-    //                 site: 55,
-    //                 container_idx: 55,
-    //                 key: 55,
-    //                 value: Null,
-    //             },
-    //             SyncAll,
-    //             List {
-    //                 site: 55,
-    //                 container_idx: 64,
-    //                 key: 53,
-    //                 value: Null,
-    //             },
-    //             List {
-    //                 site: 56,
-    //                 container_idx: 56,
-    //                 key: 56,
-    //                 value: Container(C::Text),
-    //             },
-    //             List {
-    //                 site: 0,
-    //                 container_idx: 0,
-    //                 key: 0,
-    //                 value: Null,
-    //             },
-    //             List {
-    //                 site: 64,
-    //                 container_idx: 64,
-    //                 key: 64,
-    //                 value: I32(1616928864),
-    //             },
-    //             List {
-    //                 site: 96,
-    //                 container_idx: 96,
-    //                 key: 96,
-    //                 value: I32(1616928864),
-    //             },
-    //             List {
-    //                 site: 96,
-    //                 container_idx: 96,
-    //                 key: 255,
-    //                 value: I32(7),
-    //             },
-    //             Text {
-    //                 site: 97,
-    //                 container_idx: 225,
-    //                 pos: 97,
-    //                 value: 24929,
-    //                 is_del: false,
-    //             },
-    //         ],
-    //     );
-    // }
+    #[test]
+    fn fuzz_2() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 55,
+                    container_idx: 55,
+                    key: 55,
+                    value: Null,
+                },
+                SyncAll,
+                List {
+                    site: 55,
+                    container_idx: 64,
+                    key: 53,
+                    value: Null,
+                },
+                List {
+                    site: 56,
+                    container_idx: 56,
+                    key: 56,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 64,
+                    container_idx: 64,
+                    key: 64,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 255,
+                    value: I32(7),
+                },
+                Text {
+                    site: 97,
+                    container_idx: 225,
+                    pos: 97,
+                    value: 24929,
+                    is_del: false,
+                },
+            ],
+        );
+    }
 
     #[test]
     fn fuzz_3() {
@@ -1545,66 +1557,65 @@ mod failed_tests {
         );
     }
 
-    // FIXME: same as fuzz_2
-    // #[test]
-    // fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
-    //     test_multi_sites(
-    //         5,
-    //         &mut [
-    //             List {
-    //                 site: 1,
-    //                 container_idx: 0,
-    //                 key: 0,
-    //                 value: Container(C::List),
-    //             },
-    //             Map {
-    //                 site: 0,
-    //                 container_idx: 0,
-    //                 key: 2,
-    //                 value: Container(C::List),
-    //             },
-    //             SyncAll,
-    //             Map {
-    //                 site: 0,
-    //                 container_idx: 0,
-    //                 key: 255,
-    //                 value: Container(C::List),
-    //             },
-    //             SyncAll,
-    //             Map {
-    //                 site: 0,
-    //                 container_idx: 0,
-    //                 key: 255,
-    //                 value: Container(C::List),
-    //             },
-    //             List {
-    //                 site: 3,
-    //                 container_idx: 3,
-    //                 key: 0,
-    //                 value: Container(C::List),
-    //             },
-    //             List {
-    //                 site: 1,
-    //                 container_idx: 3,
-    //                 key: 0,
-    //                 value: Container(C::List),
-    //             },
-    //             SyncAll,
-    //             List {
-    //                 site: 0,
-    //                 container_idx: 3,
-    //                 key: 0,
-    //                 value: Container(C::Map),
-    //             },
-    //             List {
-    //                 site: 1,
-    //                 container_idx: 3,
-    //                 key: 1,
-    //                 value: Container(C::Map),
-    //             },
-    //         ],
-    //     )
-    // }
+    #[test]
+    fn cannot_skip_ops_from_deleted_container_due_to_this_case() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 2,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 3,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 0,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 1,
+                    container_idx: 3,
+                    key: 1,
+                    value: Container(C::Map),
+                },
+            ],
+        )
+    }
 
     #[test]
     fn map_apply() {
@@ -2370,7 +2381,351 @@ mod failed_tests {
         )
     }
 
-    use super::ContainerType as C;
+    #[test]
+    fn fuzz_6_reset_children() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 3,
+                    container_idx: 1,
+                    key: 0,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 136,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Text {
+                    site: 1,
+                    container_idx: 5,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_7_checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                Sync { from: 1, to: 4 },
+                List {
+                    site: 4,
+                    container_idx: 1,
+                    key: 0,
+                    value: I32(1566399837),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_8_checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 16639,
+                    is_del: false,
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 245,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::Tree),
+                },
+                Text {
+                    site: 1,
+                    container_idx: 1,
+                    pos: 0,
+                    value: 47288,
+                    is_del: false,
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_9_checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 223,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 213,
+                    container_idx: 85,
+                    key: 85,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 14,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 223,
+                    container_idx: 255,
+                    key: 126,
+                    value: Container(C::Tree),
+                },
+                Text {
+                    site: 255,
+                    container_idx: 255,
+                    pos: 120,
+                    value: 9215,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_10_checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Tree),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-167),
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                Sync { from: 1, to: 0 },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Tree),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 255,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 17,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 255,
+                    value: Null,
+                },
+                List {
+                    site: 2,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 4,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 191,
+                    value: Container(C::List),
+                },
+                SyncAll,
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 17,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 255,
+                    value: Null,
+                },
+                List {
+                    site: 2,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 4,
+                    container_idx: 2,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                SyncAll,
+                Map {
+                    site: 2,
+                    container_idx: 3,
+                    key: 239,
+                    value: I32(-1073741988),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 3,
+                    key: 191,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 1,
+                    container_idx: 1,
+                    key: 0,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 17,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 3,
+                    key: 255,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 0,
+                    container_idx: 3,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 1,
+                    key: 191,
+                    value: Container(C::Text),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_11_checkout() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 4,
+                    container_idx: 0,
+                    key: 8,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 8,
+                    value: Container(C::Text),
+                },
+                SyncAll,
+                Text {
+                    site: 2,
+                    container_idx: 1,
+                    pos: 0,
+                    value: 1918,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 1,
+                    container_idx: 1,
+                    pos: 5,
+                    value: 1,
+                    is_del: true,
+                },
+                Sync { from: 1, to: 2 },
+                Text {
+                    site: 2,
+                    container_idx: 1,
+                    pos: 1,
+                    value: 5,
+                    is_del: true,
+                },
+            ],
+        )
+    }
+
     #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)

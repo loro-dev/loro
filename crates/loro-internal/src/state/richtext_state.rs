@@ -94,8 +94,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        debug_log::group!("apply richtext diff and convert");
-        debug_log::debug_dbg!(&richtext);
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut entity_index = 0;
         let mut event_index = 0;
@@ -240,8 +238,6 @@ impl ContainerState for RichtextState {
             }
         }
 
-        debug_log::debug_dbg!(&ans);
-        debug_log::group_end!();
         Diff::Text(ans)
     }
 
