@@ -34,15 +34,19 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 - **Rich Text with Peritext-like CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of each user's input as much as possible. Details on this will be explored further in an upcoming blog post.
 - **Hierarchical Data with Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving and reorganizing hierarchical data structures.
 
-### Advanced Editing Features
+### Features
 
 - **Preserve Editing History**
   - With Loro, you can track changes effortlessly as it records the editing history with low overhead. 
   - This feature is essential for audit trails, undo/redo functionality, and understanding the evolution of your data over time.
 - **Time Travel Through History**
   - It allows users to compare and merge manually when needed, although CRDTs typically resolve conflicts well.
+- **Shallow Clone**
+  - > This feature is work in progress
+  - CRDTs suffer from ever-growing doc size and memory use as the document grows. Loro enables you to clone a CRDT that prunes the unwanted history.
+  - This work is inspired by [Diamond-types](https://github.com/josephg/diamond-types)
 
-### Other Features
+### Features Provided by CRDTs
 
 - **High Performance**
 - **Decentralized Synchronization**: Loro allows your app's state can be synced via p2p connections.
