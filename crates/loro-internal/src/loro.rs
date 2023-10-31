@@ -83,6 +83,20 @@ impl LoroDoc {
         doc
     }
 
+    pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
+        let doc = Self::new();
+        let (input, mode) = parse_encode_header(bytes)?;
+        match mode {
+            EncodeMode::Snapshot => {
+                decode_app_snapshot(&doc, input, true)?;
+                Ok(doc)
+            }
+            _ => Err(LoroError::DecodeError(
+                "Invalid encode mode".to_string().into(),
+            )),
+        }
+    }
+
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
@@ -340,21 +354,7 @@ impl LoroDoc {
         bytes: &[u8],
         origin: string_cache::Atom<string_cache::EmptyStaticAtomSet>,
     ) -> Result<(), LoroError> {
-        if bytes.len() <= 6 {
-            return Err(LoroError::DecodeError("Invalid bytes".into()));
-        }
-
-        let (magic_bytes, input) = bytes.split_at(4);
-        let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
-        if magic_bytes != MAGIC_BYTES {
-            return Err(LoroError::DecodeError("Invalid header bytes".into()));
-        }
-        let (version, input) = input.split_at(1);
-        if version != [ENCODE_SCHEMA_VERSION] {
-            return Err(LoroError::DecodeError("Invalid version".into()));
-        }
-
-        let mode: EncodeMode = input[0].try_into()?;
+        let (input, mode) = parse_encode_header(bytes)?;
         match mode {
             EncodeMode::Updates | EncodeMode::RleUpdates | EncodeMode::CompressedRleUpdates => {
                 // TODO: need to throw error if state is in transaction
@@ -386,10 +386,10 @@ impl LoroDoc {
             }
             EncodeMode::Snapshot => {
                 if self.can_reset_with_snapshot() {
-                    decode_app_snapshot(self, &input[1..], !self.detached)?;
+                    decode_app_snapshot(self, input, !self.detached)?;
                 } else {
                     let app = LoroDoc::new();
-                    decode_app_snapshot(&app, &input[1..], false)?;
+                    decode_app_snapshot(&app, input, false)?;
                     let oplog = self.oplog.lock().unwrap();
                     // TODO: PERF: the ser and de can be optimized out
                     let updates = app.export_from(oplog.vv());
@@ -627,6 +627,23 @@ impl LoroDoc {
     pub fn merge(&self, other: &Self) -> LoroResult<()> {
         self.import(&other.export_from(&self.oplog_vv()))
     }
+}
+
+fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {
+    if bytes.len() <= 6 {
+        return Err(LoroError::DecodeError("Invalid import data".into()));
+    }
+    let (magic_bytes, input) = bytes.split_at(4);
+    let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
+    if magic_bytes != MAGIC_BYTES {
+        return Err(LoroError::DecodeError("Invalid header bytes".into()));
+    }
+    let (version, input) = input.split_at(1);
+    if version != [ENCODE_SCHEMA_VERSION] {
+        return Err(LoroError::DecodeError("Invalid version".into()));
+    }
+    let mode: EncodeMode = input[0].try_into()?;
+    Ok((&input[1..], mode))
 }
 
 impl Default for LoroDoc {

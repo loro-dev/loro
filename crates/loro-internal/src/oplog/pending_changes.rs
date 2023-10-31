@@ -208,7 +208,7 @@ impl OpLog {
 pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
     let mut ops = RleVec::new();
     for op in change.ops {
-        let mut lamport = change.lamport;
+        let lamport = change.lamport;
         let content = op.content;
         let op = converter.convert_single_op(
             &op.container,
@@ -217,7 +217,6 @@ pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter)
             lamport,
             content,
         );
-        lamport += op.atom_len() as Lamport;
         ops.push(op);
     }
     Change {

@@ -146,6 +146,12 @@ impl Loro {
         Self(doc)
     }
 
+    #[wasm_bindgen(js_name = "fromSnapshot")]
+    pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
+        let doc = LoroDoc::from_snapshot(snapshot)?;
+        Ok(Loro(doc))
+    }
+
     pub fn attach(&mut self) {
         self.0.attach();
     }
