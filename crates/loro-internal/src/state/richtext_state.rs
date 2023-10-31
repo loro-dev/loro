@@ -548,6 +548,10 @@ impl RichtextState {
         arena: &SharedArena,
     ) {
         assert!(self.is_empty());
+        if text_bytes.is_empty() {
+            return;
+        }
+
         let bit_len = is_style_start.len() * 8;
         let is_style_start = BitMap::from_vec(is_style_start, bit_len);
         let mut is_style_start_iter = is_style_start.iter();
@@ -667,7 +671,6 @@ impl From<RichtextStateLoader> for InnerState {
 
 impl RichtextStateLoader {
     pub fn push(&mut self, elem: RichtextStateChunk) {
-        debug_log::debug_dbg!(&elem);
         if let RichtextStateChunk::Style { style, anchor_type } = &elem {
             if *anchor_type == AnchorType::Start {
                 self.start_anchor_pos
@@ -696,7 +699,6 @@ impl RichtextStateLoader {
             state.annotate_style_range(range, style);
         }
 
-        debug_log::debug_dbg!(&state);
         if cfg!(debug_assertions) {
             state.check();
         }

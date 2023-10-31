@@ -360,7 +360,6 @@ impl DocState {
         }
 
         if self.is_recording() {
-            debug_log::debug_log!("TODIFF");
             let diff = self
                 .states
                 .iter_mut()
@@ -439,7 +438,7 @@ impl DocState {
     }
 
     pub fn is_empty(&self) -> bool {
-        !self.in_txn && self.states.is_empty() && self.arena.is_empty()
+        !self.in_txn && self.states.is_empty() && self.arena.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {

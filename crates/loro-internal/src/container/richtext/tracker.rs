@@ -252,7 +252,6 @@ mod test {
         t.checkout(&v);
         assert_eq!(&t.applied_vv, &v);
         assert_eq!(t.rope.len(), 4);
-        dbg!(&t);
     }
 
     #[test]

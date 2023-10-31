@@ -5,14 +5,14 @@ use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 use crate::container::richtext::richtext_state::unicode_to_utf8_index;
 const INDEX_INTERVAL: u32 = 128;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct StrArena {
     bytes: AppendOnlyBytes,
     unicode_indexes: Vec<Index>,
     len: Index,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Index {
     bytes: u32,
     utf16: u32,

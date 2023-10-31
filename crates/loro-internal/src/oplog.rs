@@ -185,7 +185,7 @@ impl OpLog {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.dag.map.is_empty() && self.arena.is_empty()
+        self.dag.map.is_empty() && self.arena.can_import_snapshot()
     }
 
     /// Import a change.

@@ -35,14 +35,14 @@ use crate::{
 
 pub fn encode_app_snapshot(app: &LoroDoc) -> Vec<u8> {
     let state = app.app_state().lock().unwrap();
-    let pre_encoded_state = preprocess_app_state(&state);
+    let pre_encoded_state = encode_app_state(&state);
     let f = encode_oplog(&app.oplog().lock().unwrap(), Some(pre_encoded_state));
     // f.diagnose_size();
     f.encode()
 }
 
 pub fn decode_app_snapshot(app: &LoroDoc, bytes: &[u8], with_state: bool) -> Result<(), LoroError> {
-    assert!(app.is_empty());
+    assert!(app.can_reset_with_snapshot());
     let data = FinalPhase::decode(bytes)?;
     if with_state {
         let mut app_state = app.app_state().lock().unwrap();
@@ -67,11 +67,14 @@ pub fn decode_oplog(
     let (arena, state_arena, common) = arena.unwrap_or_else(|| {
         let arena = SharedArena::default();
         let state_arena = TempArena::decode_state_arena(data).unwrap();
+        debug_assert!(arena.can_import_snapshot());
         arena.alloc_str_fast(&state_arena.text);
         (arena, state_arena, CommonArena::decode(data).unwrap())
     });
     oplog.arena = arena.clone();
     let mut extra_arena = TempArena::decode_additional_arena(data)?;
+    // str and values are allocated directly on the empty arena,
+    // so the indices don't need to be updated
     arena.alloc_str_fast(&extra_arena.text);
     arena.alloc_values(state_arena.values.into_iter());
     arena.alloc_values(extra_arena.values.into_iter());
@@ -253,6 +256,9 @@ pub fn decode_state<'b>(
     let arena = app_state.arena.clone();
     let common = CommonArena::decode(data)?;
     let state_arena = TempArena::decode_state_arena(data)?;
+    // str and values are allocated directly on the empty arena,
+    // so the indices don't need to be updated
+    debug_assert!(arena.can_import_snapshot());
     arena.alloc_str_fast(&state_arena.text);
     let encoded_app_state = EncodedAppState::decode(data)?;
     let mut container_states =
@@ -264,9 +270,10 @@ pub fn decode_state<'b>(
         .zip(encoded_app_state.parents.iter())
         .zip(encoded_app_state.states.into_iter())
     {
+        // We need to register new container, and cannot reuse the container idx. Because arena's containers fields may not be empty.
         let idx = arena.register_container(id);
         let parent_idx =
-            (*parent).map(|x| ContainerIdx::from_index_and_type(x, state.container_type()));
+            (*parent).map(|x| arena.register_container(&common.container_ids[x as usize]));
         arena.set_parent(idx, parent_idx);
         match state {
             loro_preload::EncodedContainerState::Map(map_data) => {
@@ -300,7 +307,7 @@ pub fn decode_state<'b>(
             }
             loro_preload::EncodedContainerState::Richtext(richtext_data) => {
                 let mut richtext = RichtextState::new(idx);
-                richtext.decode_snapshot(richtext_data, &state_arena, &common, &arena);
+                richtext.decode_snapshot(*richtext_data, &state_arena, &common, &arena);
                 container_states.insert(idx, State::RichtextState(richtext));
             }
             loro_preload::EncodedContainerState::Tree(tree_data) => {
@@ -599,7 +606,7 @@ struct PreEncodedState<'a> {
     tree_id_lookup: FxHashMap<(u32, i32), usize>,
 }
 
-fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
+fn encode_app_state(app_state: &DocState) -> PreEncodedState {
     assert!(!app_state.is_in_txn());
     let mut peers = Vec::new();
     let mut peer_lookup = FxHashMap::default();
@@ -667,7 +674,27 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
         tree_ids.len()
     };
 
-    for (_, state) in app_state.states.iter() {
+    let container_ids = app_state.arena.export_containers();
+    for (i, id) in container_ids.iter().enumerate() {
+        let idx = ContainerIdx::from_index_and_type(i as u32, id.container_type());
+        let Some(state) = app_state.states.get(&idx) else {
+            match id.container_type() {
+                loro_common::ContainerType::List => {
+                    encoded.states.push(EncodedContainerState::List(Vec::new()))
+                }
+                loro_common::ContainerType::Map => {
+                    encoded.states.push(EncodedContainerState::Map(Vec::new()))
+                }
+                loro_common::ContainerType::Tree => {
+                    encoded.states.push(EncodedContainerState::Tree(Vec::new()))
+                }
+                loro_common::ContainerType::Text => encoded
+                    .states
+                    .push(EncodedContainerState::Richtext(Default::default())),
+            }
+
+            continue;
+        };
         match state {
             State::TreeState(tree) => {
                 let v = tree
@@ -714,16 +741,17 @@ fn preprocess_app_state(app_state: &DocState) -> PreEncodedState {
             }
             State::RichtextState(text) => {
                 let result = text.encode_snapshot(&mut record_peer, &mut record_key);
-                encoded.states.push(EncodedContainerState::Richtext(result));
+                encoded
+                    .states
+                    .push(EncodedContainerState::Richtext(Box::new(result)));
             }
         }
     }
 
     let common = CommonArena {
         peer_ids: peers.into(),
-        container_ids: app_state.arena.export_containers(),
+        container_ids,
     };
-
     let arena = TempArena {
         values,
         keywords,
