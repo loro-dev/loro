@@ -3814,6 +3814,153 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_13() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 150,
+                    container_idx: 22,
+                    pos: 150,
+                    value: 38550,
+                    is_del: false,
+                },
+                Text {
+                    site: 43,
+                    container_idx: 0,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 120,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 150,
+                    container_idx: 22,
+                    pos: 150,
+                    value: 38550,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 16,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 238,
+                    key: 0,
+                    value: I32(1950809972),
+                },
+                Text {
+                    site: 20,
+                    container_idx: 20,
+                    pos: 20,
+                    value: 5140,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Map {
+                    site: 150,
+                    container_idx: 150,
+                    key: 150,
+                    value: I32(1953789044),
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 116,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }
