@@ -20,6 +20,7 @@
     "tinyvec",
     "txns",
     "unbold",
+    "unexist",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {

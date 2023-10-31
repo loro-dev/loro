@@ -3,13 +3,13 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{CounterSpan, IdSpan, TreeID, ID};
 
 use crate::{
     change::Lamport,
-    delta::{TreeDelta, TreeDiff},
+    delta::{TreeDelta, TreeDiff, TreeDiffItem},
     VersionVector,
 };
 
@@ -42,6 +42,7 @@ impl core::hash::Hash for MoveLamportAndID {
 pub struct TreeDiffCache {
     cache: Cache,
     pending: BTreeSet<MoveLamportAndID>,
+    deleted: FxHashSet<TreeID>,
     all_version: VersionVector,
     current_version: VersionVector,
 }
@@ -91,6 +92,11 @@ impl TreeDiffCache {
     // Because importing the local op must not cause circular references, it has been checked.
     pub(crate) fn add_node_uncheck(&mut self, node: MoveLamportAndID) {
         if !self.all_version.includes_id(node.id) {
+            // TODO: update deleted cache
+            let old_parent = self.get_parent(node.target);
+
+            self.update_deleted_cache(node.target, node.parent, old_parent);
+
             self.cache.entry(node.target).or_default().insert(node);
             // assert len == 1
             self.current_version.set_last(node.id);
@@ -135,15 +141,8 @@ impl TreeDiffCache {
         lca_min_lamport: Lamport,
     ) -> TreeDelta {
         debug_log::group!("tree calc diff");
-        let mut diff = Vec::new();
-        let revert_ops = self.retreat_for_diff(lca, lca_min_lamport);
-        for (op, old_parent) in revert_ops.iter().sorted().rev() {
-            if op.effected {
-                // TODO: we need to know whether old_parent is deleted
-                let this_diff = TreeDiff::new(op.target, *old_parent, op.parent);
-                diff.push(this_diff);
-            }
-        }
+        let mut diff = self.retreat_for_diff(lca, lca_min_lamport);
+
         debug_log::debug_log!("revert diff:");
         for d in diff.iter() {
             debug_log::debug_log!("    {:?}", d);
@@ -152,12 +151,36 @@ impl TreeDiffCache {
         debug_log::debug_log!("apply ops {:?}", apply_ops);
         for op in apply_ops.into_iter() {
             let old_parent = self.get_parent(op.target);
+            let is_parent_deleted = op.parent.is_some_and(|x| self.is_deleted(&x));
+            let is_old_parent_deleted = old_parent.is_some_and(|x| self.is_deleted(&x));
             let effected = self.apply(op);
             if effected {
-                debug_log::debug_log!("    target {:?} to {:?}", op.target, op.parent);
-                // TODO: we need to know whether op.parent is deleted
-                let this_diff = TreeDiff::new(op.target, op.parent, old_parent);
-                diff.push(this_diff)
+                // we need to know whether op.parent is deleted
+                let this_diff = TreeDiff::new(
+                    op.target,
+                    op.parent,
+                    old_parent,
+                    is_parent_deleted,
+                    is_old_parent_deleted,
+                );
+                debug_log::debug_log!("    {:?}", this_diff);
+                diff.push(this_diff);
+                if matches!(
+                    this_diff.action,
+                    TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_)
+                ) {
+                    let mut s = vec![op.target];
+                    while let Some(t) = s.pop() {
+                        let children = self.get_children(t);
+                        children.iter().for_each(|c| {
+                            diff.push(TreeDiff {
+                                target: *c,
+                                action: TreeDiffItem::CreateMove(t),
+                            })
+                        });
+                        s.extend(children);
+                    }
+                }
             }
         }
         debug_log::debug_log!("diff {:?}", diff);
@@ -183,6 +206,8 @@ impl TreeDiffCache {
             ans = false;
         }
         node.effected = ans;
+        let old_parent = self.get_parent(node.target);
+        self.update_deleted_cache(node.target, node.parent, old_parent);
         self.cache.entry(node.target).or_default().insert(node);
         self.current_version.set_last(node.id);
         ans
@@ -223,15 +248,17 @@ impl TreeDiffCache {
             self.current_version.shrink_to_exclude(IdSpan {
                 client_id: op.id.peer,
                 counter: CounterSpan::new(op.id.counter, op.id.counter + 1),
-            })
+            });
+            if op.effected {
+                // update deleted cache
+                let old_parent = self.get_parent(op.target);
+                self.update_deleted_cache(op.target, old_parent, op.parent);
+            }
         }
     }
 
-    fn retreat_for_diff(
-        &mut self,
-        vv: &VersionVector,
-        min_lamport: Lamport,
-    ) -> Vec<(MoveLamportAndID, Option<TreeID>)> {
+    fn retreat_for_diff(&mut self, vv: &VersionVector, min_lamport: Lamport) -> Vec<TreeDiff> {
+        let mut diffs = vec![];
         // remove ops from cache, and then insert to pending
         let mut retreat_ops = Vec::new();
         for (_, ops) in self.cache.iter() {
@@ -240,11 +267,11 @@ impl TreeDiffCache {
                     break;
                 }
                 if !vv.includes_id(op.id) {
-                    retreat_ops.push((*op, None))
+                    retreat_ops.push(*op)
                 }
             }
         }
-        for (op, old_parent) in retreat_ops.iter_mut() {
+        for op in retreat_ops.iter_mut().sorted().rev() {
             self.cache.get_mut(&op.target).unwrap().remove(op);
             self.pending.insert(*op);
             self.current_version.shrink_to_exclude(IdSpan {
@@ -252,9 +279,41 @@ impl TreeDiffCache {
                 counter: CounterSpan::new(op.id.counter, op.id.counter + 1),
             });
             // calc old parent
-            *old_parent = self.get_parent(op.target);
+            let old_parent = self.get_parent(op.target);
+            if op.effected {
+                // we need to know whether old_parent is deleted
+
+                let is_parent_deleted = op.parent.is_some_and(|x| self.is_deleted(&x));
+                let is_old_parent_deleted = old_parent.is_some_and(|x| self.is_deleted(&x));
+                let this_diff = TreeDiff::new(
+                    op.target,
+                    old_parent,
+                    op.parent,
+                    is_old_parent_deleted,
+                    is_parent_deleted,
+                );
+                self.update_deleted_cache(op.target, old_parent, op.parent);
+                diffs.push(this_diff);
+                if matches!(
+                    this_diff.action,
+                    TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_)
+                ) {
+                    let mut s = vec![op.target];
+                    while let Some(t) = s.pop() {
+                        let children = self.get_children(t);
+                        children.iter().for_each(|c| {
+                            diffs.push(TreeDiff {
+                                target: *c,
+                                action: TreeDiffItem::CreateMove(t),
+                            })
+                        });
+                        s.extend(children);
+                    }
+                }
+            }
         }
-        retreat_ops
+
+        diffs
     }
 
     /// get the parent of the first effected op
@@ -291,5 +350,77 @@ impl TreeDiffCache {
                 None => return false,
             }
         }
+    }
+}
+
+pub(crate) trait TreeDeletedSetTrait {
+    fn deleted(&self) -> &FxHashSet<TreeID>;
+    fn deleted_mut(&mut self) -> &mut FxHashSet<TreeID>;
+    fn get_children(&self, target: TreeID) -> Vec<TreeID>;
+    fn get_children_recursively(&self, target: TreeID) -> Vec<TreeID> {
+        let mut ans = vec![];
+        let mut s = vec![target];
+        while let Some(t) = s.pop() {
+            let children = self.get_children(t);
+            ans.extend(children.clone());
+            s.extend(children);
+        }
+        ans
+    }
+    fn is_deleted(&self, target: &TreeID) -> bool {
+        self.deleted().contains(target) || TreeID::is_deleted_root(Some(*target))
+    }
+    fn update_deleted_cache(
+        &mut self,
+        target: TreeID,
+        parent: Option<TreeID>,
+        old_parent: Option<TreeID>,
+    ) {
+        if parent.is_some() && self.is_deleted(&parent.unwrap()) {
+            self.update_deleted_cache_inner(target, true);
+        } else if let Some(old_parent) = old_parent {
+            if self.is_deleted(&old_parent) {
+                self.update_deleted_cache_inner(target, false);
+            }
+        }
+    }
+    fn update_deleted_cache_inner(&mut self, target: TreeID, set_children_deleted: bool) {
+        let mut s = self.get_children(target);
+        if set_children_deleted {
+            self.deleted_mut().insert(target);
+        } else {
+            self.deleted_mut().remove(&target);
+        }
+        while let Some(child) = s.pop() {
+            if set_children_deleted {
+                self.deleted_mut().insert(child);
+            } else {
+                self.deleted_mut().remove(&child);
+            }
+            s.extend(self.get_children(child))
+        }
+    }
+}
+
+impl TreeDeletedSetTrait for TreeDiffCache {
+    fn deleted(&self) -> &FxHashSet<TreeID> {
+        &self.deleted
+    }
+
+    fn deleted_mut(&mut self) -> &mut FxHashSet<TreeID> {
+        &mut self.deleted
+    }
+
+    fn get_children(&self, target: TreeID) -> Vec<TreeID> {
+        let mut ans = vec![];
+        for (tree_id, _) in self.cache.iter() {
+            if tree_id == &target {
+                continue;
+            }
+            if self.get_parent(*tree_id) == Some(target) {
+                ans.push(*tree_id)
+            }
+        }
+        ans
     }
 }

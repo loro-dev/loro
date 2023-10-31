@@ -362,7 +362,7 @@ pub mod wasm {
                     js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
                         .unwrap();
                 }
-                TreeDiffItem::CreateMove(parent) => {
+                TreeDiffItem::CreateMove(parent) | TreeDiffItem::RestoreMove(parent) => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -373,15 +373,15 @@ pub mod wasm {
                     js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
                         .unwrap();
                 }
-                TreeDiffItem::CreateOrAsRoot => {
+                TreeDiffItem::AsRoot => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
-                        &JsValue::from_str("createOrAsRoot"),
+                        &JsValue::from_str("asRoot"),
                     )
                     .unwrap();
                 }
-                TreeDiffItem::Create => {
+                TreeDiffItem::Create | TreeDiffItem::Restore => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),

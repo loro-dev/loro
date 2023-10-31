@@ -3,7 +3,6 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
-use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;

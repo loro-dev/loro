@@ -7,7 +7,6 @@ use std::{
 
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
-use loro_common::ContainerType;
 use loro_common::PeerID;
 
 use crate::{

@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 pub(super) mod tree;
 use itertools::Itertools;
+pub(crate) use tree::TreeDeletedSetTrait;
 pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, ContainerType, HasIdSpan, LoroValue, PeerID, ID};
+use loro_common::{ContainerID, HasIdSpan, LoroValue, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -761,9 +762,11 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         );
 
         diff.diff.iter().for_each(|d| {
+            // the metadata could be modified before, so (re)create a node need emit the map container diffs
             if matches!(
                 d.action,
-                TreeDiffItem::Create | TreeDiffItem::CreateMove(_) | TreeDiffItem::CreateOrAsRoot
+                TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_) // | TreeDiffItem::Create
+                                                                     // | TreeDiffItem::CreateMove(_)
             ) {
                 on_new_container(&d.target.associated_meta_container())
             }

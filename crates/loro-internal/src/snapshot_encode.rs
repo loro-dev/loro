@@ -239,7 +239,7 @@ pub fn decode_oplog(
     for mut change in changes {
         let lamport = oplog.dag.frontiers_to_next_lamport(&change.deps);
         change.lamport = lamport;
-        oplog.import_local_change(change)?;
+        oplog.import_local_change(change, false)?;
     }
     Ok(())
 }

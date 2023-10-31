@@ -1556,6 +1556,135 @@ mod failed_tests {
     }
 
     #[test]
+    fn tree_meta4() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (18446742974197989375, -1),
+                    parent: (12826251736570199838, 520028164),
+                },
+                Tree {
+                    site: 1,
+                    container_idx: 0,
+                    action: TreeAction::Create,
+                    target: (16625775453143040, 1761552105),
+                    parent: (17654109439859425792, -553647873),
+                },
+                Tree {
+                    site: 128,
+                    container_idx: 125,
+                    action: TreeAction::Meta,
+                    target: (18446744073692774400, 1140849151),
+                    parent: (4846791580151137091, -2147418307),
+                },
+                SyncAll,
+                Tree {
+                    site: 67,
+                    container_idx: 67,
+                    action: TreeAction::Meta,
+                    target: (18446742974204248064, 150996991),
+                    parent: (18446505380905958145, 1330592767),
+                },
+                Tree {
+                    site: 17,
+                    container_idx: 59,
+                    action: TreeAction::Meta,
+                    target: (1224980236811632639, 255),
+                    parent: (18446743008557662719, 16777460),
+                },
+                SyncAll,
+                Tree {
+                    site: 104,
+                    container_idx: 104,
+                    action: TreeAction::Move,
+                    target: (65283536480360, -1545651360),
+                    parent: (18446462600351842559, 524287),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 233,
+                    action: TreeAction::Meta,
+                    target: (1229783205210443579, 652804155),
+                    parent: (291370715578367, 65297),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_meta_container() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 146,
+                    container_idx: 68,
+                    action: TreeAction::Meta,
+                    target: (10539624087947575836, -48060),
+                    parent: (4919337068460520959, 1150436607),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Create,
+                    target: (4952757824032145407, 1150476543),
+                    parent: (18446736377124224836, -12303292),
+                },
+                SyncAll,
+                SyncAll,
+                Tree {
+                    site: 68,
+                    container_idx: 68,
+                    action: TreeAction::Meta,
+                    target: (4941087607480665156, -188),
+                    parent: (4952757824032145407, 1150476543),
+                },
+                Tree {
+                    site: 0,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (2089670193885516356, 1145324546),
+                    parent: (18446743267406136388, -513537),
+                },
+                SyncAll,
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (10583739794993119239, 1040139332),
+                    parent: (4919132559297282047, -1840971777),
+                },
+                Tree {
+                    site: 187,
+                    container_idx: 187,
+                    action: TreeAction::Delete,
+                    target: (18444773745600971844, 1145324799),
+                    parent: (4919217516204851199, 486539256),
+                },
+                Tree {
+                    site: 68,
+                    container_idx: 41,
+                    action: TreeAction::Move,
+                    target: (18446537660035301188, -117440513),
+                    parent: (10583739794993119239, -48060),
+                },
+                SyncAll,
+                Tree {
+                    site: 68,
+                    container_idx: 248,
+                    action: TreeAction::Move,
+                    target: (15481123706782866, 1157562368),
+                    parent: (18446537660035301188, -117440513),
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }

@@ -20,34 +20,53 @@ pub struct TreeDiff {
 /// The action of [`TreeDiff`]. It's the same as  [`crate::container::tree::tree_op::TreeOp`], but semantic.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub enum TreeDiffItem {
+    /// First create the node, have not seen it before
     Create,
+    /// Recreate the node, the node has been deleted before
+    Restore,
+    /// Same as move to `None` and the node is exist
+    AsRoot,
+    /// Move the node to the parent, the node is exist
     Move(TreeID),
+    /// First create the node and move it to the parent
     CreateMove(TreeID),
-    CreateOrAsRoot,
+    /// Recreate the node, and move it to the parent
+    RestoreMove(TreeID),
+    /// Delete the node
     Delete,
+    /// For retreating, if the node is only created, not move it to `DELETED_ROOT` but delete it directly
     UnCreate,
 }
 
 impl TreeDiff {
-    pub(crate) fn new(target: TreeID, parent: Option<TreeID>, old_parent: Option<TreeID>) -> Self {
+    pub(crate) fn new(
+        target: TreeID,
+        parent: Option<TreeID>,
+        old_parent: Option<TreeID>,
+        is_parent_deleted: bool,
+        is_old_parent_deleted: bool,
+    ) -> Self {
         let action = match (parent, old_parent) {
             (Some(p), _) => {
-                if TreeID::is_deleted_root(parent) {
+                if is_parent_deleted {
                     TreeDiffItem::Delete
                 } else if TreeID::is_unexist_root(parent) {
                     TreeDiffItem::UnCreate
-                } else if TreeID::is_deleted_root(old_parent) || TreeID::is_unexist_root(old_parent)
-                {
+                } else if TreeID::is_unexist_root(old_parent) {
                     TreeDiffItem::CreateMove(p)
+                } else if is_old_parent_deleted {
+                    TreeDiffItem::RestoreMove(p)
                 } else {
                     TreeDiffItem::Move(p)
                 }
             }
             (None, Some(_)) => {
-                if TreeID::is_deleted_root(old_parent) || TreeID::is_unexist_root(old_parent) {
+                if TreeID::is_unexist_root(old_parent) {
                     TreeDiffItem::Create
+                } else if is_old_parent_deleted {
+                    TreeDiffItem::Restore
                 } else {
-                    TreeDiffItem::CreateOrAsRoot
+                    TreeDiffItem::AsRoot
                 }
             }
             (None, None) => {
@@ -85,7 +104,7 @@ impl<'a> TreeValue<'a> {
             let target = d.target;
             debug_log::debug_log!("before {:?}", self.0);
             match d.action {
-                TreeDiffItem::Create => {
+                TreeDiffItem::Create | TreeDiffItem::Restore => {
                     debug_log::debug_log!("create {:?}", target);
                     let mut t = FxHashMap::default();
                     t.insert("id".to_string(), target.id().to_string().into());
@@ -93,22 +112,16 @@ impl<'a> TreeValue<'a> {
                     t.insert("meta".to_string(), ContainerType::Map.default_value());
                     self.0.push(t.into());
                 }
-                TreeDiffItem::CreateMove(p) => {
+                TreeDiffItem::CreateMove(p) | TreeDiffItem::RestoreMove(p) => {
                     debug_log::debug_log!("create {:?} move {:?}", target, p);
-                    if !self.is_tree_id_exist(p) {
-                        if self.is_tree_id_exist(target) {
-                            self.delete_target(target)
-                        }
-                        continue;
-                    }
                     let mut t = FxHashMap::default();
                     t.insert("id".to_string(), target.id().to_string().into());
                     t.insert("parent".to_string(), p.to_string().into());
                     t.insert("meta".to_string(), ContainerType::Map.default_value());
                     self.0.push(t.into());
                 }
-                TreeDiffItem::CreateOrAsRoot => {
-                    debug_log::debug_log!("create or root {:?}", target);
+                TreeDiffItem::AsRoot => {
+                    debug_log::debug_log!("as root {:?}", target);
                     if let Some(map) = self.0.iter_mut().find(|x| {
                         let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
                         id.as_ref() == &target.to_string()
@@ -117,21 +130,11 @@ impl<'a> TreeValue<'a> {
                         let map_mut = Arc::make_mut(map);
                         map_mut.insert("parent".to_string(), LoroValue::Null);
                     } else {
-                        let mut t = FxHashMap::default();
-                        t.insert("id".to_string(), target.id().to_string().into());
-                        t.insert("parent".to_string(), LoroValue::Null);
-                        t.insert("meta".to_string(), ContainerType::Map.default_value());
-                        self.0.push(t.into());
+                        unreachable!()
                     }
                 }
                 TreeDiffItem::Move(p) => {
                     debug_log::debug_log!("move {:?} to {:?}", target, p);
-                    if !self.is_tree_id_exist(p) {
-                        if self.is_tree_id_exist(target) {
-                            self.delete_target(target)
-                        }
-                        continue;
-                    }
                     let map = self
                         .0
                         .iter_mut()
@@ -152,13 +155,6 @@ impl<'a> TreeValue<'a> {
             }
             debug_log::debug_log!("after {:?}\n", self.0);
         }
-    }
-
-    fn is_tree_id_exist(&self, parent: TreeID) -> bool {
-        self.0.iter().any(|x| {
-            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-            id.as_ref() == &parent.to_string()
-        })
     }
 
     fn delete_target(&mut self, target: TreeID) {

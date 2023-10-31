@@ -807,7 +807,7 @@ impl TreeHandler {
             }),
             EventHint::Tree(TreeDiff {
                 target,
-                action: TreeDiffItem::CreateOrAsRoot,
+                action: TreeDiffItem::AsRoot,
             }),
             &self.state,
         )

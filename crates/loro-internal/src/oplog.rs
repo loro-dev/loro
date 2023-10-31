@@ -196,7 +196,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change, from_txn: bool) -> Result<(), LoroError> {
         self.check_id_is_not_duplicated(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
             return Err(LoroError::DecodeError(
@@ -266,7 +266,11 @@ impl OpLog {
                     parent: tree.parent,
                     effected: true,
                 };
-                tree_cache.add_node_uncheck(node);
+                if from_txn {
+                    tree_cache.add_node_uncheck(node);
+                } else {
+                    tree_cache.add_node(node);
+                }
             }
         }
 

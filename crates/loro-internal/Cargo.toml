@@ -83,3 +83,7 @@ harness = false
 [[bench]]
 name = "pending"
 harness = false
+
+[[bench]]
+name = "tree"
+harness = false
