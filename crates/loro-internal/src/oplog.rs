@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use fxhash::FxHashMap;
 use rle::{HasLength, RleVec};
+use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
@@ -373,8 +374,9 @@ impl OpLog {
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
-            let raw_op = self.local_op_to_remote(op);
-            ops.push(raw_op);
+            for op in self.local_op_to_remote(op) {
+                ops.push(op);
+            }
         }
 
         Change {
@@ -386,9 +388,9 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> RemoteOp<'_> {
+    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> SmallVec<[RemoteOp<'_>; 1]> {
         let container = self.arena.get_container_id(op.container).unwrap();
-        let mut contents = RleVec::new();
+        let mut contents: SmallVec<[_; 1]> = SmallVec::new();
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
@@ -465,11 +467,15 @@ impl OpLog {
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
         };
 
-        RemoteOp {
-            container,
-            contents,
-            counter: op.counter,
+        let mut ans = SmallVec::with_capacity(contents.len());
+        for content in contents {
+            ans.push(RemoteOp {
+                container: container.clone(),
+                content,
+                counter: op.counter,
+            })
         }
+        ans
     }
 
     // Changes are expected to be sorted by counter in each value in the hashmap

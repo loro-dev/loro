@@ -206,17 +206,16 @@ pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter)
     let mut ops = RleVec::new();
     for op in change.ops {
         let mut lamport = change.lamport;
-        for content in op.contents.into_iter() {
-            let op = converter.convert_single_op(
-                &op.container,
-                change.id.peer,
-                op.counter,
-                lamport,
-                content,
-            );
-            lamport += op.atom_len() as Lamport;
-            ops.push(op);
-        }
+        let content = op.content;
+        let op = converter.convert_single_op(
+            &op.container,
+            change.id.peer,
+            op.counter,
+            lamport,
+            content,
+        );
+        lamport += op.atom_len() as Lamport;
+        ops.push(op);
     }
     Change {
         ops,

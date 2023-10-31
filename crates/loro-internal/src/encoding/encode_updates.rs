@@ -37,7 +37,7 @@ struct FirstChangeInfo {
 #[derive(Serialize, Deserialize, Debug)]
 struct EncodedOp {
     pub(crate) container: ContainerID,
-    pub(crate) contents: Vec<RawOpContent<'static>>,
+    pub(crate) content: RawOpContent<'static>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -92,7 +92,7 @@ where
             .iter()
             .map(|op| EncodedOp {
                 container: op.container.clone(),
-                contents: op.contents.iter().map(|x| x.to_static()).collect(),
+                content: op.content.to_static(),
             })
             .collect(),
         deps: first_change.deps.iter().copied().collect(),
@@ -106,7 +106,7 @@ where
                 .iter()
                 .map(|op| EncodedOp {
                     container: op.container.clone(),
-                    contents: op.contents.iter().map(|x| x.to_static()).collect(),
+                    content: op.content.to_static(),
                 })
                 .collect(),
             deps: change.deps.iter().copied().collect(),
@@ -143,11 +143,12 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
 
         let mut ops = RleVec::with_capacity(encoded.ops.len());
         for op in encoded.ops {
-            let len: usize = op.contents.iter().map(|x| x.atom_len()).sum();
+            let len: usize = op.content.atom_len();
+            let content = op.content;
             ops.push(RemoteOp {
                 counter,
                 container: op.container,
-                contents: op.contents.into_iter().collect(),
+                content,
             });
             counter += len as Counter;
         }
