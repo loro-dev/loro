@@ -69,7 +69,7 @@ impl Observer {
         sub_id
     }
 
-    pub fn subscribe_deep(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         let sub_id = self.fetch_add_next_id();
         let mut inner = self.inner.lock().unwrap();
         inner.subscribers.insert(sub_id, callback);
@@ -226,7 +226,7 @@ mod test {
         let loro_cp = loro.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let count_cp = Arc::clone(&count);
-        loro_cp.subscribe_deep(Arc::new(move |_| {
+        loro_cp.subscribe_root(Arc::new(move |_| {
             count_cp.fetch_add(1, Ordering::SeqCst);
             let mut txn = loro.txn().unwrap();
             let text = loro.get_text("id");
@@ -251,7 +251,7 @@ mod test {
         let loro = Arc::new(LoroDoc::new());
         let count = Arc::new(AtomicUsize::new(0));
         let count_cp = Arc::clone(&count);
-        let sub = loro.subscribe_deep(Arc::new(move |_| {
+        let sub = loro.subscribe_root(Arc::new(move |_| {
             count_cp.fetch_add(1, Ordering::SeqCst);
         }));
 

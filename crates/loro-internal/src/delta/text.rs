@@ -12,7 +12,9 @@ impl Meta for StyleMeta {
         self.vec.is_empty()
     }
 
-    fn compose(&mut self, _other: &Self, _type_pair: (super::DeltaType, super::DeltaType)) {}
+    fn compose(&mut self, other: &Self, _type_pair: (super::DeltaType, super::DeltaType)) {
+        self.vec.extend_from_slice(&other.vec)
+    }
 
     fn is_mergeable(&self, other: &Self) -> bool {
         self.vec == other.vec

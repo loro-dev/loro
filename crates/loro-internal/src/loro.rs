@@ -214,9 +214,18 @@ impl LoroDoc {
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
+    ///
+    /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
     #[inline]
-    pub fn commit(&self) {
+    pub fn commit_then_stop(&self) {
         self.commit_with(None, None, false)
+    }
+
+    /// Commit the cumulative auto commit transaction.
+    /// It will start the next one immediately
+    #[inline]
+    pub fn commit_then_renew(&self) {
+        self.commit_with(None, None, true)
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -323,7 +332,7 @@ impl LoroDoc {
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.commit();
+        self.commit_then_stop();
         let ans = self.oplog.lock().unwrap().export_from(vv);
         self.renew_txn_if_auto_commit();
         ans
@@ -336,14 +345,14 @@ impl LoroDoc {
 
     #[inline]
     pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
-        self.commit();
+        self.commit_then_stop();
         self.detach();
         self.import(bytes)
     }
 
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
-        self.commit();
+        self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
         self.renew_txn_if_auto_commit();
         ans
@@ -412,7 +421,7 @@ impl LoroDoc {
     }
 
     pub fn export_snapshot(&self) -> Vec<u8> {
-        self.commit();
+        self.commit_then_stop();
         debug_log::group!("export snapshot");
         let version = ENCODE_SCHEMA_VERSION;
         let mut ans = Vec::from(MAGIC_BYTES);
@@ -500,13 +509,13 @@ impl LoroDoc {
         self.oplog().lock().unwrap().cmp_frontiers(other)
     }
 
-    pub fn subscribe_deep(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         let mut state = self.state.lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
         }
 
-        self.observer.subscribe_deep(callback)
+        self.observer.subscribe_root(callback)
     }
 
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
@@ -525,7 +534,7 @@ impl LoroDoc {
 
     // PERF: opt
     pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
-        self.commit();
+        self.commit_then_stop();
         let is_detached = self.is_detached();
         self.detach();
         self.oplog.lock().unwrap().batch_importing = true;
@@ -580,7 +589,7 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.commit();
+        self.commit_then_stop();
         let oplog = self.oplog.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         self.detached = true;

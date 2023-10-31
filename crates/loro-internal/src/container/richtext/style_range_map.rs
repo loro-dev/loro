@@ -179,14 +179,35 @@ impl StyleRangeMap {
         return &self.tree.get_elem(right.leaf).unwrap().styles;
     }
 
-    #[allow(unused)]
-    pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
-        if !self.has_style {
-            return None;
+    /// Return the style sets beside `index` and get the intersection of them.
+    pub fn get_styles_for_insert(&self, index: usize) -> Vec<Style> {
+        if index == 0 || !self.has_style {
+            return Vec::new();
         }
 
-        let result = self.tree.query::<LengthFinder>(&index)?.cursor;
-        self.tree.get_elem(result.leaf).map(|x| &x.styles)
+        let left = self
+            .tree
+            .query::<LengthFinder>(&(index - 1))
+            .unwrap()
+            .cursor;
+        let right = self.tree.shift_path_by_one_offset(left).unwrap();
+        if left.leaf == right.leaf {
+            let styles = &self.tree.get_elem(left.leaf).unwrap().styles;
+            map_to_styles(styles)
+        } else {
+            let mut styles = self.tree.get_elem(left.leaf).unwrap().styles.clone();
+            let right_styles = &self.tree.get_elem(right.leaf).unwrap().styles;
+            styles.retain(|key, value| {
+                if let Some(right_value) = right_styles.get(key) {
+                    value.set.retain(|x| right_value.set.contains(x));
+                    return !value.set.is_empty();
+                }
+
+                false
+            });
+
+            map_to_styles(&styles)
+        }
     }
 
     pub fn iter(
@@ -329,6 +350,14 @@ impl BTreeTrait for RangeNumMapTrait {
     fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
         *cache_lhs - *cache_rhs
     }
+}
+
+pub(super) fn map_to_styles(style_map: &FxHashMap<InternalString, StyleValue>) -> Vec<Style> {
+    let mut styles = Vec::with_capacity(style_map.len());
+    for style in style_map.iter().flat_map(|(_, values)| values.to_styles()) {
+        styles.push(style);
+    }
+    styles
 }
 
 #[cfg(test)]

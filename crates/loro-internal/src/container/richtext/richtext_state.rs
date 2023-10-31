@@ -14,13 +14,11 @@ use std::{
 };
 
 use crate::{
-    container::richtext::{
-        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
-        style_range_map::StyleValue,
+    container::richtext::query_by_len::{
+        EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
     },
     delta::DeltaValue,
     utils::{string_slice::unicode_range_to_byte_range, utf16::count_utf16_chars},
-    InternalString,
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -34,7 +32,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{StyleRangeMap, Styles, EMPTY_STYLES},
+    style_range_map::{map_to_styles, StyleRangeMap, Styles, EMPTY_STYLES},
     AnchorType, RichtextSpan, Style, StyleOp,
 };
 
@@ -913,6 +911,21 @@ impl RichtextState {
         entity_index
     }
 
+    /// Get the insert text styles at the given entity index if we insert text at that position
+    ///
+    // TODO: PERF we can avoid this calculation by getting it when inserting new text
+    // but that requires a lot of changes
+    pub(crate) fn get_styles_at_entity_index_for_insert(
+        &mut self,
+        entity_index: usize,
+    ) -> Vec<Style> {
+        if !self.style_ranges.has_style() {
+            return vec![];
+        }
+
+        self.style_ranges.get_styles_for_insert(entity_index)
+    }
+
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
         let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
@@ -1531,18 +1544,7 @@ impl RichtextState {
         let mut entity_index = 0;
         let mut style_range_iter = self.style_ranges.iter();
         let mut cur_style_range = style_range_iter.next();
-
-        fn to_styles(
-            (_, style_map): &(Range<usize>, &FxHashMap<InternalString, StyleValue>),
-        ) -> Vec<Style> {
-            let mut styles = Vec::with_capacity(style_map.len());
-            for style in style_map.iter().flat_map(|(_, values)| values.to_styles()) {
-                styles.push(style);
-            }
-            styles
-        }
-
-        let mut cur_styles = cur_style_range.as_ref().map(to_styles);
+        let mut cur_styles = cur_style_range.as_ref().map(|x| map_to_styles(x.1));
 
         self.tree.iter().filter_map(move |x| match x {
             RichtextStateChunk::Text { unicode_len, text } => {
@@ -1557,7 +1559,7 @@ impl RichtextState {
                         break;
                     } else {
                         cur_style_range = style_range_iter.next();
-                        cur_styles = cur_style_range.as_ref().map(to_styles);
+                        cur_styles = cur_style_range.as_ref().map(|x| map_to_styles(x.1));
                     }
                 }
 
@@ -1574,6 +1576,7 @@ impl RichtextState {
         })
     }
 
+    #[inline]
     pub fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
         self.tree.iter()
     }

@@ -10,7 +10,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
+            richtext_state::PosType, AnchorType, RichtextState as InnerState, Style, StyleOp,
             TextStyleInfoFlag,
         },
     },
@@ -137,11 +137,53 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        // PERF: comopse delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut entity_index = 0;
         let mut event_index = 0;
         let mut last_style_index = 0;
-        let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
+        let mut style_starts: FxHashMap<Arc<StyleOp>, (usize, usize)> = FxHashMap::default();
+
+        // insert style chunks first
+        for span in richtext.vec.iter() {
+            match span {
+                DeltaItem::Insert { value, .. } => {
+                    match value {
+                        RichtextStateChunk::Style { style, anchor_type } => {
+                            let (event_index, _) =
+                                self.state.get_mut().insert_elem_at_entity_index(
+                                    entity_index,
+                                    RichtextStateChunk::Style {
+                                        style: style.clone(),
+                                        anchor_type: *anchor_type,
+                                    },
+                                );
+
+                            if *anchor_type == AnchorType::Start {
+                                style_starts.insert(style.clone(), (entity_index, event_index));
+                            } else {
+                                let (start_entity_index, end_entity_index) =
+                                    style_starts.get(style).expect("Style start not found");
+                                // we need to + 1 because we also need to annotate the end anchor
+                                self.state.get_mut().annotate_style_range(
+                                    *start_entity_index..entity_index + 1,
+                                    style.clone(),
+                                );
+                            }
+                        }
+                        RichtextStateChunk::Text { unicode_len, text } => {
+                            entity_index += *unicode_len as usize;
+                        }
+                    }
+                }
+                DeltaItem::Retain { len, .. } => {
+                    entity_index += *len;
+                }
+                DeltaItem::Delete { len, .. } => {}
+            }
+        }
+
+        entity_index = 0;
         for span in richtext.vec.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { len, .. } => {
@@ -194,33 +236,7 @@ impl ContainerState for RichtextState {
                             ans = ans
                                 .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
                         }
-                        RichtextStateChunk::Style { style, anchor_type } => {
-                            match anchor_type {
-                                AnchorType::Start => {}
-                                AnchorType::End => {
-                                    last_style_index = event_index;
-                                }
-                            }
-                            self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Style {
-                                    style: style.clone(),
-                                    anchor_type: *anchor_type,
-                                },
-                            );
-
-                            if *anchor_type == AnchorType::Start {
-                                style_starts.insert(style.clone(), entity_index);
-                            } else {
-                                let start_pos =
-                                    style_starts.get(style).expect("Style start not found");
-                                // we need to + 1 because we also need to annotate the end anchor
-                                self.state.get_mut().annotate_style_range(
-                                    *start_pos..entity_index + 1,
-                                    style.clone(),
-                                );
-                            }
-                        }
+                        RichtextStateChunk::Style { style, anchor_type } => {}
                     }
                     entity_index += value.rle_len();
                 }
@@ -251,24 +267,6 @@ impl ContainerState for RichtextState {
 
                     ans = ans.delete(end - start);
                 }
-            }
-        }
-
-        if last_style_index > event_index {
-            for (len, styles) in self
-                .state
-                .get_mut()
-                .iter_styles_in_event_index_range(event_index..last_style_index)
-            {
-                ans = ans.retain_with_meta(
-                    len,
-                    StyleMeta {
-                        vec: styles
-                            .iter()
-                            .flat_map(|(_, value)| value.to_styles())
-                            .collect(),
-                    },
-                );
             }
         }
 
@@ -494,10 +492,17 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(pos, PosType::Event)
+            .get_entity_index_for_text_insert(event_index, PosType::Event)
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_styles_at_entity_index(&mut self, entity_index: usize) -> Vec<Style> {
+        self.state
+            .get_mut()
+            .get_styles_at_entity_index_for_insert(entity_index)
     }
 
     #[inline(always)]

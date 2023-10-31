@@ -1,8 +1,79 @@
 use std::sync::{Arc, Mutex};
 
 use loro_common::{ContainerID, ContainerType, LoroValue, ID};
-use loro_internal::{version::Frontiers, ApplyDiff, LoroDoc, ToJson};
+use loro_internal::{
+    container::richtext::TextStyleInfoFlag, version::Frontiers, ApplyDiff, LoroDoc, ToJson,
+};
 use serde_json::json;
+
+#[test]
+fn richtext_mark_event() {
+    let a = LoroDoc::new_auto_commit();
+    a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                        {"insert": "He", "attributes": {"bold": true}},
+                        {"insert": "ll", "attributes": {"bold": false}},
+                        {"insert": "o", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text")
+        .mark_(0, 5, "bold", TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.get_text("text")
+        .mark_(2, 4, "bold", TextStyleInfoFlag::BOLD.to_delete())
+        .unwrap();
+    a.commit_then_stop();
+    let b = LoroDoc::new_auto_commit();
+    b.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                        {"insert": "He", "attributes": {"bold": true}},
+                        {"insert": "ll", "attributes": {"bold": false}},
+                        {"insert": "o", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+    b.merge(&a).unwrap();
+}
+
+#[test]
+fn insert_richtext_event() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text")
+        .mark_(0, 5, "bold", TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.commit_then_renew();
+    let text = a.get_text("text");
+    a.subscribe(
+        &text.id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                        {"retain": 5,},
+                        {"insert": " World!", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+
+    text.insert_(5, " World!").unwrap();
+}
 
 #[test]
 fn import_after_init_handlers() {
@@ -41,7 +112,7 @@ fn import_after_init_handlers() {
     b.get_text("text").insert_(0, "text").unwrap();
     b.get_map("map").insert_("m", "map".into()).unwrap();
     a.import(&b.export_snapshot()).unwrap();
-    a.commit();
+    a.commit_then_renew();
 }
 
 #[test]
@@ -90,7 +161,7 @@ fn test_checkout() {
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
-    doc_0.subscribe_deep(Arc::new(move |event| {
+    doc_0.subscribe_root(Arc::new(move |event| {
         let mut root_value = root_value.lock().unwrap();
         root_value.apply(
             &event.container.path.iter().map(|x| x.1.clone()).collect(),
@@ -384,7 +455,7 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let mut doc_a = LoroDoc::new();
-    doc_a.subscribe_deep(Arc::new(|_e| {}));
+    doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
