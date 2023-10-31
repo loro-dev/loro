@@ -6,7 +6,7 @@ use crate::{
 };
 use crate::{delta::DeltaValue, LoroValue};
 use enum_as_inner::EnumAsInner;
-use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::{borrow::Cow, ops::Range};
@@ -28,7 +28,7 @@ pub struct Op {
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
-    pub(crate) contents: RleVec<[RawOpContent<'a>; 1]>,
+    pub(crate) content: RawOpContent<'a>,
 }
 
 /// This is used to propagate messages between inner module.
@@ -78,7 +78,7 @@ impl<'a> RemoteOp<'a> {
         RemoteOp {
             counter: self.counter,
             container: self.container,
-            contents: self.contents.into_iter().map(|c| c.to_static()).collect(),
+            content: self.content.to_static(),
         }
     }
 }
@@ -126,7 +126,7 @@ impl<'a> Mergable for RemoteOp<'a> {
 
 impl<'a> HasLength for RemoteOp<'a> {
     fn content_len(&self) -> usize {
-        self.contents.iter().map(|x| x.atom_len()).sum()
+        self.content.atom_len()
     }
 }
 
@@ -135,7 +135,7 @@ impl<'a> Sliceable for RemoteOp<'a> {
         assert!(to > from);
         RemoteOp {
             counter: (self.counter + from as Counter),
-            contents: self.contents.slice(from, to),
+            content: self.content.slice(from, to),
             container: self.container.clone(),
         }
     }

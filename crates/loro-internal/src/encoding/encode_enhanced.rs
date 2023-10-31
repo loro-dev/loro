@@ -229,8 +229,9 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         for op in change.ops.iter() {
             let container = op.container;
             let container_index = *container_idx2index.get(&container).unwrap();
-            let op = oplog.local_op_to_remote(op);
-            for content in op.contents.into_iter() {
+            let remote_ops = oplog.local_op_to_remote(op);
+            for op in remote_ops {
+                let content = op.content;
                 let (prop, kind, insert_del_len) = match content {
                     crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
                         let target_peer_idx = *peer_id_to_idx.get(&target.peer).unwrap();
@@ -335,7 +336,6 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 })
             }
         }
-
         changes.push(ChangeEncoding {
             peer_idx: client_idx as PeerIdx,
             timestamp: change.timestamp,
@@ -617,7 +617,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 let remote_op = RemoteOp {
                     container: container_id,
                     counter: *counter + delta,
-                    contents: vec![content].into(),
+                    content,
                 };
                 delta += remote_op.content_len() as i32;
                 ops.push(remote_op);
@@ -678,17 +678,16 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             let mut ops = RleVec::new();
             for op in change.ops {
                 let mut lamport = change.lamport;
-                for content in op.contents.into_iter() {
-                    let op = converter.convert_single_op(
-                        &op.container,
-                        change.id.peer,
-                        op.counter,
-                        lamport,
-                        content,
-                    );
-                    lamport += op.atom_len() as Lamport;
-                    ops.push(op);
-                }
+                let content = op.content;
+                let op = converter.convert_single_op(
+                    &op.container,
+                    change.id.peer,
+                    op.counter,
+                    lamport,
+                    content,
+                );
+                lamport += op.atom_len() as Lamport;
+                ops.push(op);
             }
 
             let change = Change {
