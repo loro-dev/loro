@@ -17,7 +17,6 @@ pub use state::DocState;
 pub mod loro;
 pub mod obs;
 pub mod oplog;
-pub mod snapshot_encode;
 mod state;
 pub mod txn;
 
@@ -56,5 +55,3 @@ pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 
 use string_cache::DefaultAtom;
-
-

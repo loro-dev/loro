@@ -163,6 +163,7 @@ impl IdToCursor {
             .get_insert((id.counter - list[index].counter) as usize)
     }
 
+    #[allow(unused)]
     pub fn diagnose(&self) {
         let fragment_num = self.map.iter().map(|x| x.1.len()).sum::<usize>();
         let insert_pieces = self

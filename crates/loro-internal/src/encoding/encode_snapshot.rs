@@ -26,7 +26,7 @@ use crate::{
     InternalString, LoroError, LoroValue,
 };
 
-use super::{
+use crate::{
     arena::SharedArena,
     loro::LoroDoc,
     oplog::OpLog,
