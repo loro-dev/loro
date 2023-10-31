@@ -43,6 +43,8 @@ fn import_after_init_handlers() {
     a.import(&b.export_snapshot()).unwrap();
     a.commit();
 }
+
+#[test]
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert_(0, "0").unwrap();
