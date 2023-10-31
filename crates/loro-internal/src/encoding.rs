@@ -8,6 +8,7 @@ pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
 mod encode_enhanced;
+pub(crate) mod encode_snapshot;
 mod encode_updates;
 
 use rle::HasLength;
@@ -34,8 +35,8 @@ pub(crate) enum EncodeMode {
     Auto = 255,
     Updates = 0,
     Snapshot = 1,
-    RleUpdatesV2 = 2,
-    CompressedRleUpdatesV2 = 3,
+    RleUpdates = 2,
+    CompressedRleUpdates = 3,
 }
 
 impl EncodeMode {
@@ -44,8 +45,8 @@ impl EncodeMode {
             EncodeMode::Auto => 255,
             EncodeMode::Updates => 0,
             EncodeMode::Snapshot => 1,
-            EncodeMode::RleUpdatesV2 => 2,
-            EncodeMode::CompressedRleUpdatesV2 => 3,
+            EncodeMode::RleUpdates => 2,
+            EncodeMode::CompressedRleUpdates => 3,
         }
     }
 }
@@ -57,8 +58,8 @@ impl TryFrom<u8> for EncodeMode {
         match value {
             0 => Ok(EncodeMode::Updates),
             1 => Ok(EncodeMode::Snapshot),
-            2 => Ok(EncodeMode::RleUpdatesV2),
-            3 => Ok(EncodeMode::CompressedRleUpdatesV2),
+            2 => Ok(EncodeMode::RleUpdates),
+            3 => Ok(EncodeMode::CompressedRleUpdates),
             _ => Err(LoroError::DecodeError("Unknown encode mode".into())),
         }
     }
@@ -83,9 +84,9 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
             if update_total_len <= UPDATE_ENCODE_THRESHOLD {
                 EncodeMode::Updates
             } else if update_total_len <= COMPRESS_RLE_THRESHOLD {
-                EncodeMode::RleUpdatesV2
+                EncodeMode::RleUpdates
             } else {
-                EncodeMode::CompressedRleUpdatesV2
+                EncodeMode::CompressedRleUpdates
             }
         }
         mode => mode,
@@ -93,8 +94,8 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
 
     let encoded = match &mode {
         EncodeMode::Updates => encode_oplog_updates(oplog, vv),
-        EncodeMode::RleUpdatesV2 => encode_oplog_v2(oplog, vv),
-        EncodeMode::CompressedRleUpdatesV2 => {
+        EncodeMode::RleUpdates => encode_oplog_v2(oplog, vv),
+        EncodeMode::CompressedRleUpdates => {
             let bytes = encode_oplog_v2(oplog, vv);
             miniz_oxide::deflate::compress_to_vec(&bytes, 7)
         }
@@ -126,8 +127,8 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroEr
     match mode {
         EncodeMode::Updates => decode_oplog_updates(oplog, decoded),
         EncodeMode::Snapshot => unimplemented!(),
-        EncodeMode::RleUpdatesV2 => decode_oplog_v2(oplog, decoded),
-        EncodeMode::CompressedRleUpdatesV2 => miniz_oxide::inflate::decompress_to_vec(decoded)
+        EncodeMode::RleUpdates => decode_oplog_v2(oplog, decoded),
+        EncodeMode::CompressedRleUpdates => miniz_oxide::inflate::decompress_to_vec(decoded)
             .map_err(|_| LoroError::DecodeError("Invalid compressed data".into()))
             .and_then(|bytes| decode_oplog_v2(oplog, &bytes)),
         EncodeMode::Auto => unreachable!(),

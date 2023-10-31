@@ -20,10 +20,10 @@ use crate::{
 
 use super::{
     diff_calc::DiffCalculator,
+    encoding::encode_snapshot::{decode_app_snapshot, encode_app_snapshot},
     event::InternalDocDiff,
     obs::{Observer, SubID, Subscriber},
     oplog::OpLog,
-    snapshot_encode::{decode_app_snapshot, encode_app_snapshot},
     state::DocState,
     txn::Transaction,
     ListHandler, MapHandler,
@@ -327,7 +327,7 @@ impl LoroDoc {
 
         let mode: EncodeMode = input[0].try_into()?;
         match mode {
-            EncodeMode::Updates | EncodeMode::RleUpdatesV2 | EncodeMode::CompressedRleUpdatesV2 => {
+            EncodeMode::Updates | EncodeMode::RleUpdates | EncodeMode::CompressedRleUpdates => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();
