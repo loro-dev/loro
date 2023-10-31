@@ -1,6 +1,9 @@
 use std::fmt::Debug;
 
 use num::{traits::AsPrimitive, FromPrimitive, Integer};
+use smallvec::{Array, SmallVec};
+
+use crate::SearchResult;
 
 pub trait Mergable<Cfg = ()> {
     fn is_mergable(&self, _other: &Self, _conf: &Cfg) -> bool
@@ -106,5 +109,107 @@ impl<T: Clone> Sliceable for Vec<T> {
 impl Sliceable for String {
     fn slice(&self, from: usize, to: usize) -> Self {
         self[from..to].to_string()
+    }
+}
+
+pub trait RlePush<T> {
+    fn push_rle_element(&mut self, element: T);
+}
+
+pub trait RleCollection<T: HasIndex> {
+    fn start(&self) -> <T as HasIndex>::Int;
+    fn end(&self) -> <T as HasIndex>::Int;
+    fn sum_atom_len(&self) -> <T as HasIndex>::Int;
+    fn search_atom_index(&self, index: <T as HasIndex>::Int) -> usize;
+    fn get_by_atom_index(
+        &self,
+        index: <T as HasIndex>::Int,
+    ) -> Option<SearchResult<'_, T, <T as HasIndex>::Int>>;
+}
+
+impl<T: Mergable> RlePush<T> for Vec<T> {
+    fn push_rle_element(&mut self, element: T) {
+        match self.last_mut() {
+            Some(last) if last.is_mergable(&element, &()) => {
+                last.merge(&element, &());
+            }
+            _ => {
+                self.push(element);
+            }
+        }
+    }
+}
+
+impl<T: Mergable + HasIndex + HasLength> RleCollection<T> for Vec<T> {
+    fn search_atom_index(&self, index: <T as HasIndex>::Int) -> usize {
+        let mut start = 0;
+        let mut end = self.len() - 1;
+        while start < end {
+            let mid = (start + end) / 2;
+            match self[mid].get_start_index().cmp(&index) {
+                std::cmp::Ordering::Equal => {
+                    start = mid;
+                    break;
+                }
+                std::cmp::Ordering::Less => {
+                    start = mid + 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    end = mid;
+                }
+            }
+        }
+
+        if index < self[start].get_start_index() {
+            start -= 1;
+        }
+        start
+    }
+
+    fn get_by_atom_index(
+        &self,
+        index: <T as HasIndex>::Int,
+    ) -> Option<SearchResult<'_, T, <T as HasIndex>::Int>> {
+        if index > self.end() {
+            return None;
+        }
+
+        let merged_index = self.search_atom_index(index);
+        let value = &self[merged_index];
+        Some(SearchResult {
+            merged_index,
+            element: value,
+            offset: index - self[merged_index].get_start_index(),
+        })
+    }
+
+    fn start(&self) -> <T as HasIndex>::Int {
+        self.first()
+            .map(|x| x.get_start_index())
+            .unwrap_or_default()
+    }
+
+    fn end(&self) -> <T as HasIndex>::Int {
+        self.last().map(|x| x.get_end_index()).unwrap_or_default()
+    }
+
+    fn sum_atom_len(&self) -> <T as HasIndex>::Int {
+        self.end() - self.start()
+    }
+}
+
+impl<A: Array> RlePush<A::Item> for SmallVec<A>
+where
+    A::Item: Mergable,
+{
+    fn push_rle_element(&mut self, element: A::Item) {
+        match self.last_mut() {
+            Some(last) if last.is_mergable(&element, &()) => {
+                last.merge(&element, &());
+            }
+            _ => {
+                self.push(element);
+            }
+        }
     }
 }

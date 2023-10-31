@@ -1,10 +1,8 @@
 use fxhash::FxHashMap;
 use loro_common::PeerID;
-use rle::RleVec;
 
 use crate::{change::Change, op::RemoteOp};
 
-pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
 mod encode_enhanced;
