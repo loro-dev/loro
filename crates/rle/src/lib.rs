@@ -26,7 +26,9 @@ mod rle_trait;
 pub mod rle_tree;
 mod rle_vec;
 mod rle_vec_old;
-pub use crate::rle_trait::{HasIndex, HasLength, Mergable, Rle, Slice, Sliceable, ZeroElement};
+pub use crate::rle_trait::{
+    HasIndex, HasLength, Mergable, Rle, RleCollection, RlePush, Slice, Sliceable, ZeroElement,
+};
 pub use crate::rle_vec::{slice_vec_by, RleVec, RleVecWithLen};
 pub use crate::rle_vec_old::{RleVecWithIndex, SearchResult, SliceIterator};
 pub mod rle_impl;

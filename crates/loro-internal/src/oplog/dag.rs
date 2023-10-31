@@ -5,7 +5,7 @@ use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
-use rle::{HasIndex, HasLength, Mergable, Sliceable};
+use rle::{HasIndex, HasLength, Mergable, RleCollection, Sliceable};
 
 use super::{AppDag, AppDagNode};
 

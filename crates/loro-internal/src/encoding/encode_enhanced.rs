@@ -2,7 +2,7 @@
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan, TreeID};
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RlePush, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
@@ -703,7 +703,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
                 // don't need to push new element to dag because it only depends on itself
                 let nodes = oplog.dag.map.get_mut(&change.id.peer).unwrap();
-                let last = nodes.vec_mut().last_mut().unwrap();
+                let last = nodes.last_mut().unwrap();
                 assert_eq!(last.peer, change.id.peer);
                 assert_eq!(last.cnt + last.len as Counter, change.id.counter);
                 assert_eq!(last.lamport + last.len as Lamport, change.lamport);
@@ -716,7 +716,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     .map
                     .entry(change.id.peer)
                     .or_default()
-                    .push(AppDagNode {
+                    .push_rle_element(AppDagNode {
                         vv,
                         peer: change.id.peer,
                         cnt: change.id.counter,
@@ -742,7 +742,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 .changes
                 .entry(change.id.peer)
                 .or_default()
-                .push(change);
+                .push_rle_element(change);
         }
     });
     if !oplog.batch_importing {
