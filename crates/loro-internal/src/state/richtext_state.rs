@@ -280,7 +280,6 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        debug_log::debug_dbg!(&richtext);
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;
         for span in richtext.vec.iter() {

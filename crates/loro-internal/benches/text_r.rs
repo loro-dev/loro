@@ -30,7 +30,7 @@ mod run {
         b.bench_function("B4 with 100K actors history", |b| {
             let store = LoroDoc::default();
             for i in 0..100_000 {
-                store.set_peer_id(i);
+                store.set_peer_id(i).unwrap();
                 let list = store.get_list("list");
                 let value: LoroValue = i.to_string().into();
                 let mut txn = store.txn().unwrap();

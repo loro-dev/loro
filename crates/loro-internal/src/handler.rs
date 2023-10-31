@@ -1087,9 +1087,9 @@ mod test {
     #[test]
     fn import() {
         let loro = LoroDoc::new();
-        loro.set_peer_id(1);
+        loro.set_peer_id(1).unwrap();
         let loro2 = LoroDoc::new();
-        loro2.set_peer_id(2);
+        loro2.set_peer_id(2).unwrap();
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
@@ -1113,9 +1113,9 @@ mod test {
     #[test]
     fn richtext_handler() {
         let mut loro = LoroDoc::new();
-        loro.set_peer_id(1);
+        loro.set_peer_id(1).unwrap();
         let loro2 = LoroDoc::new();
-        loro2.set_peer_id(2);
+        loro2.set_peer_id(2).unwrap();
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
@@ -1242,7 +1242,7 @@ mod test {
     #[test]
     fn tree_meta() {
         let loro = LoroDoc::new();
-        loro.set_peer_id(1);
+        loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
         let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
         loro.with_txn(|txn| {

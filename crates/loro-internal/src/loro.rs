@@ -116,8 +116,37 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn set_peer_id(&self, peer: PeerID) {
-        self.state.lock().unwrap().peer = peer;
+    pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        if self.auto_commit {
+            let mut doc_state = self.state.lock().unwrap();
+            doc_state.peer = peer;
+            drop(doc_state);
+
+            let txn = self.txn.lock().unwrap().take();
+            if let Some(txn) = txn {
+                if !txn.is_empty() {
+                    txn.commit().unwrap();
+                } else {
+                    txn.abort();
+                }
+            }
+
+            let new_txn = self.txn().unwrap();
+            self.txn.lock().unwrap().replace(new_txn);
+            return Ok(());
+        }
+
+        let mut doc_state = self.state.lock().unwrap();
+        if doc_state.is_in_txn() {
+            return Err(LoroError::TransactionError(
+                "Cannot change peer id during transaction"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+
+        doc_state.peer = peer;
+        Ok(())
     }
 
     #[inline(always)]
@@ -591,6 +620,13 @@ impl LoroDoc {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
     }
+
+    /// Import ops from other doc.
+    ///
+    /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
+    pub fn merge(&self, other: &Self) -> LoroResult<()> {
+        self.import(&other.export_from(&self.oplog_vv()))
+    }
 }
 
 impl Default for LoroDoc {
@@ -615,7 +651,7 @@ mod test {
     #[test]
     fn test_checkout() {
         let mut loro = LoroDoc::new();
-        loro.set_peer_id(1);
+        loro.set_peer_id(1).unwrap();
         let text = loro.get_text("text");
         let map = loro.get_map("map");
         let list = loro.get_list("list");

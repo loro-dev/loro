@@ -408,6 +408,10 @@ impl Transaction {
             counter: self.next_counter,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.local_ops.is_empty()
+    }
 }
 
 impl Drop for Transaction {

@@ -40,7 +40,7 @@ fn auto_commit_list() {
 #[test]
 fn auto_commit_with_checkout() {
     let mut doc = LoroDoc::default();
-    doc.set_peer_id(1);
+    doc.set_peer_id(1).unwrap();
     doc.start_auto_commit();
     let map = doc.get_map("a");
     map.insert_("0", 0.into()).unwrap();

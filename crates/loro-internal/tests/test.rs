@@ -67,9 +67,9 @@ fn test_pending() {
 #[test]
 fn test_checkout() {
     let mut doc_0 = LoroDoc::new();
-    doc_0.set_peer_id(0);
+    doc_0.set_peer_id(0).unwrap();
     let doc_1 = LoroDoc::new();
-    doc_1.set_peer_id(1);
+    doc_1.set_peer_id(1).unwrap();
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
@@ -368,7 +368,7 @@ fn map_concurrent_checkout() {
 fn tree_checkout() {
     let mut doc_a = LoroDoc::new();
     doc_a.subscribe_deep(Arc::new(|_e| {}));
-    doc_a.set_peer_id(1);
+    doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
     let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
