@@ -327,11 +327,7 @@ impl LoroDoc {
 
         let mode: EncodeMode = input[0].try_into()?;
         match mode {
-            EncodeMode::Updates
-            | EncodeMode::RleUpdates
-            | EncodeMode::RleUpdatesV2
-            | EncodeMode::CompressedRleUpdatesV2
-            | EncodeMode::CompressedRleUpdates => {
+            EncodeMode::Updates | EncodeMode::RleUpdatesV2 | EncodeMode::CompressedRleUpdatesV2 => {
                 // TODO: need to throw error if state is in transaction
                 debug_log::group!("import to {}", self.peer_id());
                 let mut oplog = self.oplog.lock().unwrap();

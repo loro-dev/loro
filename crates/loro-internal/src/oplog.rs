@@ -347,19 +347,6 @@ impl OpLog {
         changes
     }
 
-    pub(crate) fn get_change_since(&self, id: ID) -> Vec<Change> {
-        let mut changes = Vec::new();
-        if let Some(peer_changes) = self.changes.get(&id.peer) {
-            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                for change in &peer_changes.vec()[result.merged_index..] {
-                    changes.push(change.clone())
-                }
-            }
-        }
-
-        changes
-    }
-
     pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
     }

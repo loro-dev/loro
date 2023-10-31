@@ -103,7 +103,7 @@ impl generic_btree::rle::Mergeable for EventHint {
                     ..
                 },
             ) => *pos + *len == *r_pos && styles == r_styles,
-            (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => true,
+            (EventHint::InsertList { .. }, EventHint::InsertList { .. }) => true,
             (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.is_mergable(r, &()),
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
             _ => false,
@@ -141,7 +141,7 @@ impl generic_btree::rle::Sliceable for EventHint {
             },
             EventHint::DeleteText(d) => EventHint::DeleteText(d.slice(range.start, range.end)),
             EventHint::DeleteList(d) => EventHint::DeleteList(d.slice(range.start, range.end)),
-            EventHint::InsertList { len } => EventHint::InsertList {
+            EventHint::InsertList { .. } => EventHint::InsertList {
                 len: range.len() as u32,
             },
             a => {
