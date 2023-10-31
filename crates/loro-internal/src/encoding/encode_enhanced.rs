@@ -677,7 +677,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             // convert change into inner format
             let mut ops = RleVec::new();
             for op in change.ops {
-                let mut lamport = change.lamport;
+                let lamport = change.lamport;
                 let content = op.content;
                 let op = converter.convert_single_op(
                     &op.container,
@@ -686,7 +686,6 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     lamport,
                     content,
                 );
-                lamport += op.atom_len() as Lamport;
                 ops.push(op);
             }
 

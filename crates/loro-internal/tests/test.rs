@@ -43,6 +43,21 @@ fn import_after_init_handlers() {
     a.import(&b.export_snapshot()).unwrap();
     a.commit();
 }
+fn test_from_snapshot() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "0").unwrap();
+    let snapshot = a.export_snapshot();
+    let c = LoroDoc::from_snapshot(&snapshot).unwrap();
+    assert_eq!(a.get_deep_value(), c.get_deep_value());
+    assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
+    assert_eq!(a.state_frontiers(), c.state_frontiers());
+    let updates = a.export_from(&Default::default());
+    let d = match LoroDoc::from_snapshot(&updates) {
+        Ok(_) => panic!(),
+        Err(e) => e,
+    };
+    assert!(matches!(d, loro_common::LoroError::DecodeError(..)));
+}
 
 #[test]
 fn test_pending() {
