@@ -5,6 +5,26 @@ use loro_internal::{version::Frontiers, ApplyDiff, LoroDoc, ToJson};
 use serde_json::json;
 
 #[test]
+fn test_pending() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "0").unwrap();
+    let b = LoroDoc::new_auto_commit();
+    b.import(&a.export_from(&Default::default())).unwrap();
+    b.get_text("text").insert_(0, "1").unwrap();
+    let c = LoroDoc::new_auto_commit();
+    c.import(&b.export_from(&Default::default())).unwrap();
+    c.get_text("text").insert_(0, "2").unwrap();
+
+    // c creates a pending change for a, insert "2" cannot be merged into a yet
+    a.import(&c.export_from(&b.oplog_vv())).unwrap();
+    assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "0"}));
+
+    // b does not has c's change
+    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+    assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
+}
+
+#[test]
 fn test_checkout() {
     let mut doc_0 = LoroDoc::new();
     doc_0.set_peer_id(0);

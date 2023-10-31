@@ -75,6 +75,14 @@ impl LoroDoc {
         }
     }
 
+    /// Create a doc with auto commit enabled.
+    #[inline]
+    pub fn new_auto_commit() -> Self {
+        let mut doc = Self::new();
+        doc.start_auto_commit();
+        doc
+    }
+
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
@@ -261,6 +269,7 @@ impl LoroDoc {
         &self.state
     }
 
+    #[inline]
     pub fn get_state_deep_value(&self) -> LoroValue {
         self.state.lock().unwrap().get_deep_value()
     }
@@ -282,12 +291,14 @@ impl LoroDoc {
         self.import_with(bytes, Default::default())
     }
 
+    #[inline]
     pub fn import_without_state(&mut self, bytes: &[u8]) -> Result<(), LoroError> {
         self.commit();
         self.detach();
         self.import(bytes)
     }
 
+    #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
         self.commit();
         let ans = self._import_with(bytes, origin);
@@ -390,11 +401,13 @@ impl LoroDoc {
     }
 
     /// Get the version vector of the current OpLog
+    #[inline]
     pub fn oplog_vv(&self) -> VersionVector {
         self.oplog.lock().unwrap().vv().clone()
     }
 
     /// Get the version vector of the current [DocState]
+    #[inline]
     pub fn state_vv(&self) -> VersionVector {
         let f = &self.state.lock().unwrap().frontiers;
         self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
@@ -402,6 +415,7 @@ impl LoroDoc {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
+    #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let idx = self.get_container_idx(id, ContainerType::Text);
         TextHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
@@ -409,6 +423,7 @@ impl LoroDoc {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
+    #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let idx = self.get_container_idx(id, ContainerType::List);
         ListHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
@@ -416,6 +431,7 @@ impl LoroDoc {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
+    #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let idx = self.get_container_idx(id, ContainerType::Map);
         MapHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
@@ -423,25 +439,30 @@ impl LoroDoc {
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
+    #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let idx = self.get_container_idx(id, ContainerType::Tree);
         TreeHandler::new(self.get_global_txn(), idx, Arc::downgrade(&self.state))
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
+    #[inline]
     pub fn diagnose_size(&self) {
         self.oplog().lock().unwrap().diagnose_size();
     }
 
+    #[inline]
     fn get_container_idx<I: IntoContainerId>(&self, id: I, c_type: ContainerType) -> ContainerIdx {
         let id = id.into_container_id(&self.arena, c_type);
         self.arena.register_container(&id)
     }
 
+    #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
         self.oplog().lock().unwrap().frontiers().clone()
     }
 
+    #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
         self.state.lock().unwrap().frontiers.clone()
     }
@@ -449,6 +470,7 @@ impl LoroDoc {
     /// - Ordering::Less means self is less than target or parallel
     /// - Ordering::Equal means versions equal
     /// - Ordering::Greater means self's version is greater than target
+    #[inline]
     pub fn cmp_frontiers(&self, other: &Frontiers) -> Ordering {
         self.oplog().lock().unwrap().cmp_frontiers(other)
     }
@@ -471,6 +493,7 @@ impl LoroDoc {
         self.observer.subscribe(container_id, callback)
     }
 
+    #[inline]
     pub fn unsubscribe(&self, id: SubID) {
         self.observer.unsubscribe(id);
     }
@@ -509,11 +532,13 @@ impl LoroDoc {
     }
 
     /// Get deep value of the document.
+    #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.state.lock().unwrap().get_deep_value()
     }
 
     /// Get deep value of the document with container id
+    #[inline]
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.state.lock().unwrap().get_deep_value_with_id()
     }
@@ -561,10 +586,12 @@ impl LoroDoc {
         Ok(())
     }
 
+    #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.oplog.lock().unwrap().dag.vv_to_frontiers(vv)
     }
 
+    #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
     }
