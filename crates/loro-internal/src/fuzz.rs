@@ -476,7 +476,7 @@ pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         let loro = LoroDoc::new();
-        loro.set_peer_id(i as u64);
+        loro.set_peer_id(i as u64).unwrap();
         sites.push(loro);
     }
 

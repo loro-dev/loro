@@ -6,7 +6,7 @@ use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
 
 fn init(s: &str) -> LoroDoc {
     let doc = LoroDoc::default();
-    doc.set_peer_id(1);
+    doc.set_peer_id(1).unwrap();
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.insert(txn, 0, s)).unwrap();
     doc
@@ -14,7 +14,7 @@ fn init(s: &str) -> LoroDoc {
 
 fn clone(doc: &LoroDoc, peer_id: u64) -> LoroDoc {
     let doc2 = LoroDoc::default();
-    doc2.set_peer_id(peer_id);
+    doc2.set_peer_id(peer_id).unwrap();
     doc2.import(&doc.export_from(&Default::default())).unwrap();
     doc2
 }

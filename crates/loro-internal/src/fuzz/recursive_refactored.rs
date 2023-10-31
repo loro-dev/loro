@@ -72,7 +72,7 @@ struct Actor {
 impl Actor {
     fn new(id: PeerID) -> Self {
         let app = LoroDoc::new();
-        app.set_peer_id(id);
+        app.set_peer_id(id).unwrap();
         let mut actor = Actor {
             peer: id,
             loro: app,

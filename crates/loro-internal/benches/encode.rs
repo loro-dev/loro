@@ -13,9 +13,9 @@ mod sync {
         b.bench_function("update", |b| {
             b.iter(|| {
                 let c1 = LoroDoc::new();
-                c1.set_peer_id(1);
+                c1.set_peer_id(1).unwrap();
                 let c2 = LoroDoc::new();
-                c1.set_peer_id(2);
+                c1.set_peer_id(2).unwrap();
                 let t1 = c1.get_text("text");
                 let t2 = c2.get_text("text");
                 for (i, action) in actions.iter().enumerate() {
@@ -121,9 +121,9 @@ mod import {
         b.bench_function("parallel_500", |b| {
             b.iter(|| {
                 let c1 = LoroDoc::new();
-                c1.set_peer_id(1);
+                c1.set_peer_id(1).unwrap();
                 let c2 = LoroDoc::new();
-                c1.set_peer_id(2);
+                c1.set_peer_id(2).unwrap();
 
                 let text1 = c1.get_text("text");
                 let text2 = c2.get_text("text");

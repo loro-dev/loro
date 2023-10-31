@@ -229,6 +229,7 @@ impl Tracker {
         self._checkout(to, true);
         // debug_log::debug_dbg!(from, to, &self);
         // self.id_to_cursor.diagnose();
+        debug_log::debug_dbg!(&self);
         self.rope.get_diff()
     }
 }

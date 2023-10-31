@@ -260,9 +260,9 @@ mod test {
     #[test]
     fn import_pending() {
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
 
@@ -290,9 +290,9 @@ mod test {
     #[test]
     fn pending_import_snapshot() {
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
         let update1 = a.export_snapshot();
@@ -312,13 +312,13 @@ mod test {
         //        \    /
         // b:       b1
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let c = LoroDoc::new();
-        c.set_peer_id(3);
+        c.set_peer_id(3).unwrap();
         let d = LoroDoc::new();
-        d.set_peer_id(4);
+        d.set_peer_id(4).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
@@ -353,11 +353,11 @@ mod test {
         // In this case, c apply b's change first, then apply all the changes from a.
         // C is expected to have the same content as a, after a imported b's change
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let c = LoroDoc::new();
-        c.set_peer_id(3);
+        c.set_peer_id(3).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();
