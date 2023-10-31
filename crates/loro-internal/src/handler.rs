@@ -326,25 +326,22 @@ impl TextHandler {
             });
 
         debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
-        let mut is_first = true;
+        let mut offset = 0;
         for range in ranges.iter().rev() {
+            let len = (range.end - range.start) as isize;
             txn.apply_local_op(
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
                     pos: range.start as isize,
-                    signed_len: (range.end - range.start) as isize,
+                    signed_len: len,
                 })),
-                if is_first {
-                    EventHint::DeleteText(DeleteSpan {
-                        pos: pos as isize,
-                        signed_len: len as isize,
-                    })
-                } else {
-                    EventHint::None
-                },
+                EventHint::DeleteText(DeleteSpan {
+                    pos: pos as isize + offset,
+                    signed_len: len,
+                }),
                 &self.state,
             )?;
-            is_first = false;
+            offset += len;
         }
 
         debug_log::group_end!();
@@ -427,7 +424,7 @@ impl TextHandler {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
-            EventHint::None,
+            EventHint::MarkEnd,
             &self.state,
         )?;
 
@@ -465,10 +462,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList {
-                pos,
-                value: v.clone(),
-            },
+            EventHint::InsertList { len: 1 },
             &self.state,
         )
     }
@@ -518,10 +512,7 @@ impl ListHandler {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
             }),
-            EventHint::InsertList {
-                pos,
-                value: v.clone(),
-            },
+            EventHint::InsertList { len: 1 },
             &self.state,
         )?;
         Ok(Handler::new(

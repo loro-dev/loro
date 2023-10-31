@@ -2056,6 +2056,37 @@ mod test {
     }
 
     #[test]
+    fn fuzz_7() {
+        test_multi_sites_refactored(
+            5,
+            &mut [
+                Ins {
+                    content: 23507,
+                    pos: 18446694595669524485,
+                    site: 255,
+                },
+                SyncAll,
+                Mark {
+                    pos: 281474976710504,
+                    len: 2018765,
+                    site: 0,
+                    style_key: 0,
+                },
+                Ins {
+                    content: 29812,
+                    pos: 13238251629368014964,
+                    site: 183,
+                },
+                Del {
+                    pos: 222575692683,
+                    len: 8391339105262239744,
+                    site: 120,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
         minify_error(5, vec![], test_multi_sites_refactored, |_, ans| {
             ans.to_vec()
