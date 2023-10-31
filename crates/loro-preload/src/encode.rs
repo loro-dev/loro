@@ -134,11 +134,11 @@ pub enum EncodedContainerState<'a> {
     Map(Vec<MapEntry>),
     List(Vec<usize>),
     #[serde(borrow)]
-    Richtext(EncodedRichtextState<'a>),
+    Richtext(Box<EncodedRichtextState<'a>>),
     Tree(Vec<(usize, Option<usize>)>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EncodedRichtextState<'a> {
     /// It's composed of interleaved:
     ///

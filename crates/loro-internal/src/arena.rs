@@ -25,7 +25,7 @@ use crate::{
 
 use self::str_arena::StrArena;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct InnerSharedArena {
     // The locks should not be exposed outside this file.
     // It might be better to use RwLock in the future
@@ -42,7 +42,7 @@ struct InnerSharedArena {
 
 /// This is shared between [OpLog] and [AppState].
 ///
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct SharedArena {
     inner: Arc<InnerSharedArena>,
 }
@@ -390,12 +390,8 @@ impl SharedArena {
         self.inner_convert_op(content, peer, counter, lamport, container)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.container_idx_to_id.lock().unwrap().is_empty()
-            && self.inner.container_id_to_idx.lock().unwrap().is_empty()
-            && self.inner.str.lock().unwrap().is_empty()
-            && self.inner.values.lock().unwrap().is_empty()
-            && self.inner.parents.lock().unwrap().is_empty()
+    pub fn can_import_snapshot(&self) -> bool {
+        self.inner.str.lock().unwrap().is_empty() && self.inner.values.lock().unwrap().is_empty()
     }
 
     fn inner_convert_op(

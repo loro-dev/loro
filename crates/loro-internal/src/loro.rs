@@ -85,7 +85,7 @@ impl LoroDoc {
 
     /// Is the document empty? (no ops)
     #[inline(always)]
-    pub fn is_empty(&self) -> bool {
+    pub fn can_reset_with_snapshot(&self) -> bool {
         self.oplog.lock().unwrap().is_empty() && self.state.lock().unwrap().is_empty()
     }
 
@@ -356,7 +356,7 @@ impl LoroDoc {
                 debug_log::group_end!();
             }
             EncodeMode::Snapshot => {
-                if self.is_empty() {
+                if self.can_reset_with_snapshot() {
                     decode_app_snapshot(self, &input[1..], !self.detached)?;
                 } else {
                     let app = LoroDoc::new();

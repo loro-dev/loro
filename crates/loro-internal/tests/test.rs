@@ -1,8 +1,48 @@
 use std::sync::{Arc, Mutex};
 
-use loro_common::{ContainerType, LoroValue, ID};
+use loro_common::{ContainerID, ContainerType, LoroValue, ID};
 use loro_internal::{version::Frontiers, ApplyDiff, LoroDoc, ToJson};
 use serde_json::json;
+
+#[test]
+fn import_after_init_handlers() {
+    let a = LoroDoc::new_auto_commit();
+    a.subscribe(
+        &ContainerID::new_root("text", ContainerType::Text),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::Text(_)
+            ))
+        }),
+    );
+    a.subscribe(
+        &ContainerID::new_root("map", ContainerType::Map),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::NewMap(_)
+            ))
+        }),
+    );
+    a.subscribe(
+        &ContainerID::new_root("list", ContainerType::List),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::List(_)
+            ))
+        }),
+    );
+
+    let b = LoroDoc::new_auto_commit();
+    b.get_list("list").insert_(0, "list".into()).unwrap();
+    b.get_list("list_a").insert_(0, "list_a".into()).unwrap();
+    b.get_text("text").insert_(0, "text").unwrap();
+    b.get_map("map").insert_("m", "map".into()).unwrap();
+    a.import(&b.export_snapshot()).unwrap();
+    a.commit();
+}
 
 #[test]
 fn test_pending() {

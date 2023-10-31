@@ -1194,7 +1194,6 @@ mod test {
 
         // assert has bold
         let value = handler2.get_richtext_value();
-        dbg!(&value);
         assert_eq!(value[0]["insert"], "hello".into());
         let meta = value[0]["attributes"].as_map().unwrap();
         assert_eq!(meta.len(), 1);
