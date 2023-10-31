@@ -1,4 +1,4 @@
-pub mod recursive_refactored;
+pub mod recursive;
 pub mod tree;
 
 use crate::{array_mut_ref, container::richtext::TextStyleInfoFlag, loro::LoroDoc};
@@ -316,7 +316,7 @@ pub fn change_pos_to_char_boundary(pos: &mut usize, len: usize) {
     *pos %= len + 1;
 }
 
-fn check_synced_refactored(sites: &mut [LoroDoc]) {
+fn check_synced(sites: &mut [LoroDoc]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);
@@ -472,7 +472,7 @@ where
     }
 }
 
-pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
+pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
     for i in 0..site_num {
         let loro = LoroDoc::new();
@@ -492,7 +492,7 @@ pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
 
     debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
-    check_synced_refactored(&mut sites);
+    check_synced(&mut sites);
     debug_log::group_end!();
 }
 
@@ -503,7 +503,7 @@ mod test {
 
     #[test]
     fn fuzz_r1() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -533,7 +533,7 @@ mod test {
 
     #[test]
     fn fuzz_r() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -788,7 +788,7 @@ mod test {
 
     #[test]
     fn new_encode() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -829,7 +829,7 @@ mod test {
 
     #[test]
     fn snapshot() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -853,7 +853,7 @@ mod test {
 
     #[test]
     fn snapshot_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -1178,7 +1178,7 @@ mod test {
 
     #[test]
     fn checkout() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             4,
             &mut [
                 Ins {
@@ -1203,7 +1203,7 @@ mod test {
 
     #[test]
     fn text_fuzz_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -1267,7 +1267,7 @@ mod test {
 
     #[test]
     fn text_fuzz_3() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             2,
             &mut [
                 Ins {
@@ -1391,7 +1391,7 @@ mod test {
 
     #[test]
     fn text_fuzz_4() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             2,
             &mut [
                 Ins {
@@ -1814,7 +1814,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_0() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1840,7 +1840,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_1() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1872,7 +1872,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Del {
@@ -1909,7 +1909,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_3() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [Del {
                 pos: 36310271995488768,
@@ -1921,7 +1921,7 @@ mod test {
 
     #[test]
     fn fuzz_4() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1945,7 +1945,7 @@ mod test {
 
     #[test]
     fn fuzz_5() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1979,7 +1979,7 @@ mod test {
 
     #[test]
     fn fuzz_6() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -2057,7 +2057,7 @@ mod test {
 
     #[test]
     fn fuzz_7() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -2088,8 +2088,6 @@ mod test {
 
     #[test]
     fn mini_r() {
-        minify_error(5, vec![], test_multi_sites_refactored, |_, ans| {
-            ans.to_vec()
-        })
+        minify_error(5, vec![], test_multi_sites, |_, ans| ans.to_vec())
     }
 }

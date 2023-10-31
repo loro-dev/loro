@@ -12,7 +12,7 @@ mod run {
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
-        let mut b = c.benchmark_group("refactored direct_apply");
+        let mut b = c.benchmark_group("direct_apply");
         b.sample_size(10);
         b.bench_function("B4", |b| {
             b.iter(|| {
@@ -254,7 +254,7 @@ mod run {
         });
 
         drop(b);
-        let mut b = c.benchmark_group("refactored-sync");
+        let mut b = c.benchmark_group("sync");
         b.bench_function("B4Parallel", |b| {
             b.iter(|| {
                 let loro = LoroDoc::default();

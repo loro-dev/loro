@@ -7,7 +7,7 @@ use crate::{change::Change, op::RemoteOp};
 pub(crate) type ClientChanges = FxHashMap<PeerID, RleVec<[Change; 0]>>;
 pub(crate) type RemoteClientChanges<'a> = FxHashMap<PeerID, Vec<Change<RemoteOp<'a>>>>;
 
-mod encode_enhanced;
+mod encode_rle;
 pub(crate) mod encode_snapshot;
 mod encode_updates;
 
@@ -17,7 +17,7 @@ use crate::{oplog::OpLog, LoroError, VersionVector};
 
 use self::encode_updates::decode_oplog_updates;
 
-pub(crate) use encode_enhanced::{decode_oplog_v2, encode_oplog_v2};
+pub(crate) use encode_rle::{decode_oplog_v2, encode_oplog_v2};
 pub(crate) use encode_updates::encode_oplog_updates;
 
 pub(crate) const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
