@@ -415,11 +415,13 @@ impl TextHandler {
                 info: flag,
                 style: crate::container::richtext::Style {
                     key: key.into(),
-                    // FIXME: style meta is incorrect for comment
                     data: if flag.is_delete() {
                         LoroValue::Bool(false)
-                    } else {
+                    } else if flag.mergeable() {
                         LoroValue::Bool(true)
+                    } else {
+                        // for non-mergeable type like comment.
+                        LoroValue::Null
                     },
                 },
             },
