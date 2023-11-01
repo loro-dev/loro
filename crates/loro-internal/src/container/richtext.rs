@@ -32,7 +32,7 @@ pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RichtextSpan {
     pub text: StringSlice,
-    pub styles: StyleMeta,
+    pub attributes: StyleMeta,
 }
 
 /// This is used to communicate with the frontend.

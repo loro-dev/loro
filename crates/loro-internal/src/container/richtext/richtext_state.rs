@@ -1567,7 +1567,7 @@ impl RichtextState {
                 entity_index += *unicode_len as usize;
                 Some(RichtextSpan {
                     text: text.clone().into(),
-                    styles,
+                    attributes: styles,
                 })
             }
             RichtextStateChunk::Style { .. } => {
@@ -1584,12 +1584,11 @@ impl RichtextState {
 
     pub fn get_richtext_value(&self) -> LoroValue {
         let mut ans: Vec<LoroValue> = Vec::new();
-        let mut last_style_set: Option<FxHashSet<_>> = None;
-        dbg!(&self.style_ranges);
+        let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {
-            let style_set: FxHashSet<Style> = span.styles.iter().map(|x| x.1).collect();
-            if let Some(last) = last_style_set.as_ref() {
-                if &style_set == last {
+            let attributes: LoroValue = span.attributes.to_value();
+            if let Some(last) = last_attributes.as_ref() {
+                if &attributes == last {
                     let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
                     let s = Arc::make_mut(hash_map)
                         .get_mut("insert")
@@ -1607,12 +1606,12 @@ impl RichtextState {
                 LoroValue::String(Arc::new(span.text.as_str().into())),
             );
 
-            if !span.styles.is_empty() {
-                value.insert("attributes".into(), span.styles.to_value());
+            if !span.attributes.is_empty() {
+                value.insert("attributes".into(), attributes.clone());
             }
 
             ans.push(LoroValue::Map(Arc::new(value)));
-            last_style_set = Some(style_set);
+            last_attributes = Some(attributes);
         }
 
         LoroValue::List(Arc::new(ans))
