@@ -13,11 +13,12 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, LengthFinder, UseLengthFinder,
 };
+
 use once_cell::sync::Lazy;
 
-use crate::InternalString;
+use crate::delta::StyleMeta;
 
-use super::{Style, StyleOp};
+use super::{Style, StyleKey, StyleOp};
 
 /// This struct keep the mapping of ranges to numbers
 ///
@@ -31,7 +32,7 @@ pub(super) struct StyleRangeMap {
 #[derive(Debug, Clone)]
 pub(super) struct RangeNumMapTrait;
 
-pub(crate) type Styles = FxHashMap<InternalString, StyleValue>;
+pub(crate) type Styles = FxHashMap<StyleKey, StyleValue>;
 
 pub(super) static EMPTY_STYLES: Lazy<Styles> =
     Lazy::new(|| HashMap::with_hasher(Default::default()));
@@ -42,33 +43,32 @@ pub(super) struct Elem {
     len: usize,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct StyleValue {
+    // we need a set here because we need to calculate the intersection of styles when
+    // users insert new text between two style sets
     set: BTreeSet<Arc<StyleOp>>,
-    should_merge: bool,
+}
+
+impl StyleValue {
+    pub fn union(&mut self, other: &Self) {
+        for op in other.set.iter() {
+            self.set.insert(op.clone());
+        }
+    }
+
+    pub fn insert(&mut self, value: Arc<StyleOp>) {
+        self.set.insert(value);
+    }
+
+    pub fn get(&self) -> Option<&Arc<StyleOp>> {
+        self.set.last()
+    }
 }
 
 impl Default for StyleRangeMap {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl StyleValue {
-    pub fn new(mergeable: bool) -> Self {
-        Self {
-            set: Default::default(),
-            should_merge: mergeable,
-        }
-    }
-
-    // PERF: can we avoid this box
-    pub fn to_styles(&self) -> Box<dyn Iterator<Item = Style> + '_> {
-        if self.should_merge {
-            Box::new(self.set.iter().rev().take(1).filter_map(|x| x.to_style()))
-        } else {
-            Box::new(self.set.iter().filter_map(|x| x.to_style()))
-        }
     }
 }
 
@@ -98,19 +98,13 @@ impl StyleRangeMap {
         debug_log::debug_log!("Range={:?}", &range);
         self.tree
             .update(range.start.cursor..range.end.cursor, &mut |x| {
-                // only leave one value with the greatest lamport if the style is mergeable
-                if let Some(set) = x.styles.get_mut(&style.key) {
+                if let Some(set) = x.styles.get_mut(&style.get_style_key()) {
                     set.set.insert(style.clone());
-                    // TODO: Doc this, and validate it earlier
-                    assert_eq!(
-                        set.should_merge,
-                        style.info.mergeable(),
-                        "Merge behavior should be the same for the same style key"
-                    );
                 } else {
-                    let mut style_set = StyleValue::new(style.info.mergeable());
-                    style_set.set.insert(style.clone());
-                    x.styles.insert(style.key.clone(), style_set);
+                    let key = style.get_style_key();
+                    let mut value = StyleValue::default();
+                    value.insert(style.clone());
+                    x.styles.insert(key, value);
                 }
 
                 None
@@ -180,9 +174,9 @@ impl StyleRangeMap {
     }
 
     /// Return the style sets beside `index` and get the intersection of them.
-    pub fn get_styles_for_insert(&self, index: usize) -> Vec<Style> {
+    pub fn get_styles_for_insert(&self, index: usize) -> StyleMeta {
         if index == 0 || !self.has_style {
-            return Vec::new();
+            return StyleMeta::default();
         }
 
         let left = self
@@ -193,7 +187,7 @@ impl StyleRangeMap {
         let right = self.tree.shift_path_by_one_offset(left).unwrap();
         if left.leaf == right.leaf {
             let styles = &self.tree.get_elem(left.leaf).unwrap().styles;
-            map_to_styles(styles)
+            styles.clone().into()
         } else {
             let mut styles = self.tree.get_elem(left.leaf).unwrap().styles.clone();
             let right_styles = &self.tree.get_elem(right.leaf).unwrap().styles;
@@ -206,13 +200,11 @@ impl StyleRangeMap {
                 false
             });
 
-            map_to_styles(&styles)
+            styles.into()
         }
     }
 
-    pub fn iter(
-        &self,
-    ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (Range<usize>, &Styles)> + '_ {
         let mut index = 0;
         self.tree.iter().filter_map(move |elem| {
             let len = elem.len;
@@ -230,7 +222,7 @@ impl StyleRangeMap {
     pub fn iter_from(
         &self,
         start_entity_index: usize,
-    ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
+    ) -> impl Iterator<Item = (Range<usize>, &Styles)> + '_ {
         let start = self
             .tree
             .query::<LengthFinder>(&start_entity_index)
@@ -352,11 +344,15 @@ impl BTreeTrait for RangeNumMapTrait {
     }
 }
 
-pub(super) fn map_to_styles(style_map: &FxHashMap<InternalString, StyleValue>) -> Vec<Style> {
+pub(super) fn map_to_styles(style_map: &Styles) -> Vec<Style> {
     let mut styles = Vec::with_capacity(style_map.len());
-    for style in style_map.iter().flat_map(|(_, values)| values.to_styles()) {
+    for style in style_map
+        .iter()
+        .filter_map(|(_, values)| values.get().map(|x| x.to_style()))
+    {
         styles.push(style);
     }
+
     styles
 }
 

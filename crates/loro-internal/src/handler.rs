@@ -412,6 +412,7 @@ impl TextHandler {
             EventHint::Mark {
                 start: start as u32,
                 end: end as u32,
+                info: flag,
                 style: crate::container::richtext::Style {
                     key: key.into(),
                     // FIXME: style meta is incorrect for comment

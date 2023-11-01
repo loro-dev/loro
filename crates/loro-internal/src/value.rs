@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    container::richtext::Style,
     delta::{Delta, DeltaItem, Meta, StyleMeta},
     event::{Diff, Index, Path},
     state::Forest,
@@ -44,31 +43,6 @@ impl ToJson for LoroValue {
         #[cfg(not(feature = "json"))]
         let ans = LoroValue::Null;
         ans
-    }
-}
-
-impl ToJson for StyleMeta {
-    fn to_json_value(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        for style in self.vec.iter() {
-            map.insert(
-                style.key.to_string(),
-                serde_json::to_value(&style.data).unwrap(),
-            );
-        }
-        serde_json::Value::Object(map)
-    }
-
-    fn from_json(s: &str) -> Self {
-        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(s).unwrap();
-        let mut vec = Vec::new();
-        for (key, value) in map.into_iter() {
-            vec.push(Style {
-                key: key.into(),
-                data: serde_json::from_value(value).unwrap(),
-            });
-        }
-        Self { vec }
     }
 }
 
@@ -347,7 +321,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, StyleMeta, TreeDelta, TreeDiffItem},
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDelta, TreeDiffItem},
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
@@ -611,7 +585,7 @@ pub mod wasm {
                         &JsValue::from_f64(len as f64),
                     )
                     .unwrap();
-                    if !meta.vec.is_empty() {
+                    if !meta.is_empty() {
                         js_sys::Reflect::set(
                             &obj,
                             &JsValue::from_str("attributes"),
@@ -627,7 +601,7 @@ pub mod wasm {
                         &JsValue::from_str(value.as_str()),
                     )
                     .unwrap();
-                    if !meta.vec.is_empty() {
+                    if !meta.is_empty() {
                         js_sys::Reflect::set(
                             &obj,
                             &JsValue::from_str("attributes"),
@@ -653,13 +627,18 @@ pub mod wasm {
     impl From<StyleMeta> for JsValue {
         fn from(value: StyleMeta) -> Self {
             let obj = Object::new();
-            for style in value.vec {
-                js_sys::Reflect::set(
-                    &obj,
-                    &JsValue::from_str(&style.key),
-                    &JsValue::from(style.data),
-                )
-                .unwrap();
+            for (key, style) in value.iter() {
+                let value = if matches!(style.data, LoroValue::Null | LoroValue::Bool(_)) {
+                    JsValue::from(style.data)
+                } else {
+                    let value = Object::new();
+                    js_sys::Reflect::set(&value, &"key".into(), &JsValue::from_str(&style.key))
+                        .unwrap();
+                    let data = JsValue::from(style.data);
+                    js_sys::Reflect::set(&value, &"data".into(), &data).unwrap();
+                    value.into()
+                };
+                js_sys::Reflect::set(&obj, &JsValue::from_str(&key.to_attr_key()), &value).unwrap();
             }
 
             obj.into_js_result().unwrap()
