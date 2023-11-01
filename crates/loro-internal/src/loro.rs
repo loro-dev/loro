@@ -262,7 +262,6 @@ impl LoroDoc {
             }
             EncodeMode::Auto => unreachable!(),
         };
-
         self.emit_events();
         Ok(())
     }

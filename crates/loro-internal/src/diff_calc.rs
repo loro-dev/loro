@@ -108,7 +108,6 @@ impl DiffCalculator {
                 self.has_all = true;
                 self.last_vv = Default::default();
             }
-
             let (lca, iter) =
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
 
@@ -195,8 +194,8 @@ impl DiffCalculator {
 
         // Because we need to get correct `reset` value that indicates container is created during this round of diff calc,
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
-        let mut new_containers: FxHashSet<ContainerID> = FxHashSet::default();
-        let empty_vv: VersionVector = Default::default();
+        let mut new_containers = FxHashSet::default();
+        let mut container_id_to_depth = FxHashMap::default();
         let mut all: Vec<(u16, ContainerIdx)> = if let Some(set) = affected_set {
             // only visit the affected containers
             set.into_iter()
@@ -211,7 +210,6 @@ impl DiffCalculator {
                 .map(|(x, (depth, _))| (*depth, *x))
                 .collect()
         };
-
         let mut are_rest_containers_deleted = false;
         let mut ans = FxHashMap::default();
         while !all.is_empty() {
@@ -223,70 +221,53 @@ impl DiffCalculator {
                 if ans.contains_key(&idx) {
                     continue;
                 }
-
                 let (depth, calc) = self.calculators.get_mut(&idx).unwrap();
                 if *depth == u16::MAX && !are_rest_containers_deleted {
                     if let Some(d) = oplog.arena.get_depth(idx) {
-                        *depth = d;
+                        if d != *depth {
+                            *depth = d;
+                            all.push((*depth, idx));
+                            continue;
+                        }
                     }
-
-                    all.push((*depth, idx));
-                    continue;
                 }
+                // println!("depth {} idx {:?}", depth, idx);
+                let id = oplog.arena.idx_to_id(idx).unwrap();
 
-                let (from, reset) = if new_containers.remove(&oplog.arena.idx_to_id(idx).unwrap()) {
-                    // if the container is new, we need to calculate the diff from the beginning
-                    (&empty_vv, true)
-                } else {
-                    (before, false)
-                };
+                // new_containers.retain(|x: &(u16, ContainerID)| {
+                //     if x.1 != id {
+                //         true
+                //     } else {
+                //         println!("new delete {:?}", x.1);
+                //         bring_back = true;
+                //         false
+                //     }
+                // });
+                let bring_back = new_containers.remove(&id);
 
-                let diff = calc.calculate_diff(oplog, from, after, |c| {
+                let diff = calc.calculate_diff(oplog, before, after, |c| {
                     new_containers.insert(c.clone());
+                    container_id_to_depth.insert(c.clone(), depth.saturating_add(1));
                     let child_idx = oplog.arena.register_container(c);
                     oplog.arena.set_parent(child_idx, Some(idx));
                 });
-                if !diff.is_empty() || reset {
+                if !diff.is_empty() || bring_back {
                     ans.insert(
                         idx,
-                        InternalContainerDiff {
-                            idx,
-                            reset,
-                            is_container_deleted: are_rest_containers_deleted,
-                            diff: diff.into(),
-                        },
+                        (
+                            *depth,
+                            InternalContainerDiff {
+                                idx,
+                                bring_back,
+                                diff: Some(diff.into()),
+                            },
+                        ),
                     );
                 }
             }
 
             debug_log::debug_dbg!(&new_containers);
             // reset left new_containers
-            while !new_containers.is_empty() {
-                for id in std::mem::take(&mut new_containers) {
-                    let Some(idx) = oplog.arena.id_to_idx(&id) else {
-                        continue;
-                    };
-                    let Some((_, calc)) = self.calculators.get_mut(&idx) else {
-                        continue;
-                    };
-                    let diff = calc.calculate_diff(oplog, &empty_vv, after, |c| {
-                        new_containers.insert(c.clone());
-                        let child_idx = oplog.arena.register_container(c);
-                        oplog.arena.set_parent(child_idx, Some(idx));
-                    });
-                    // this can override the previous diff with `reset = false`
-                    // otherwise, the diff event will be incorrect
-                    ans.insert(
-                        idx,
-                        InternalContainerDiff {
-                            idx,
-                            reset: true,
-                            is_container_deleted: false,
-                            diff: diff.into(),
-                        },
-                    );
-                }
-            }
 
             if len == all.len() {
                 debug_log::debug_log!("Container might be deleted");
@@ -298,9 +279,36 @@ impl DiffCalculator {
                 are_rest_containers_deleted = true;
             }
         }
-
+        while !new_containers.is_empty() {
+            for id in std::mem::take(&mut new_containers) {
+                let Some(idx) = oplog.arena.id_to_idx(&id) else {
+                    continue;
+                };
+                if ans.contains_key(&idx) {
+                    continue;
+                }
+                let depth = container_id_to_depth.remove(&id).unwrap();
+                // this can override the previous diff with `reset = false`
+                // otherwise, the diff event will be incorrect
+                ans.insert(
+                    idx,
+                    (
+                        depth,
+                        InternalContainerDiff {
+                            idx,
+                            bring_back: true,
+                            // is_container_deleted: false,
+                            diff: None,
+                        },
+                    ),
+                );
+            }
+        }
         debug_log::debug_dbg!(&ans);
-        ans.into_iter().map(|x| x.1).collect_vec()
+        ans.into_values()
+            .sorted_by_key(|x| x.0)
+            .map(|x| x.1)
+            .collect_vec()
     }
 }
 
@@ -417,9 +425,9 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                     value: None,
                     lamport: (0, 0),
                 });
+
             updated.insert(key, value);
         }
-
         InternalDiff::Map(MapDelta { updated })
     }
 }
@@ -763,10 +771,13 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
         diff.diff.iter().for_each(|d| {
             // the metadata could be modified before, so (re)create a node need emit the map container diffs
+            // create -> maybe in a diff calc  uncreate and then create back
             if matches!(
                 d.action,
-                TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_) // | TreeDiffItem::Create
-                                                                     // | TreeDiffItem::CreateMove(_)
+                TreeDiffItem::Restore
+                    | TreeDiffItem::RestoreMove(_)
+                    | TreeDiffItem::Create
+                    | TreeDiffItem::CreateMove(_)
             ) {
                 on_new_container(&d.target.associated_meta_container())
             }

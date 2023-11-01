@@ -94,10 +94,17 @@ impl Actor {
         actor.loro.subscribe_deep(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
             debug_dbg!(&event);
+            // if id == 0 {
+            //     println!("\nbefore {:?}", root_value);
+            //     println!("\ndiff {:?}", event);
+            // }
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
             );
+            // if id == 0 {
+            //     println!("\nafter {:?}", root_value);
+            // }
         }));
 
         let tree = Arc::clone(&actor.tree_tracker);
@@ -1679,6 +1686,43 @@ mod failed_tests {
                     action: TreeAction::Move,
                     target: (15481123706782866, 1157562368),
                     parent: (18446537660035301188, -117440513),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn tree_0() {
+        test_multi_sites(
+            5,
+            &mut [
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (1297037105016282879, -65536),
+                    parent: (71810203921678335, 16842592),
+                },
+                Tree {
+                    site: 255,
+                    container_idx: 255,
+                    action: TreeAction::Create,
+                    target: (7523378309278230528, -1),
+                    parent: (7040879940371245160, -1634364121),
+                },
+                Tree {
+                    site: 97,
+                    container_idx: 68,
+                    action: TreeAction::Move,
+                    target: (2369443269732456, 2130710784),
+                    parent: (10995706711611801855, -32104),
+                },
+                Tree {
+                    site: 30,
+                    container_idx: 255,
+                    action: TreeAction::Meta,
+                    target: (280710472564735, -256),
+                    parent: (8584986789609525, -16777216),
                 },
             ],
         )

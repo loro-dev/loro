@@ -90,6 +90,11 @@ impl TreeDelta {
         unimplemented!("tree compose")
     }
 
+    pub(crate) fn extend(mut self, other: TreeDelta) -> Self {
+        self.diff.extend(other.diff);
+        self
+    }
+
     pub(crate) fn push(mut self, diff: TreeDiff) -> Self {
         self.diff.push(diff);
         self

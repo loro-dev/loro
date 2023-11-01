@@ -210,9 +210,8 @@ impl Transaction {
                     arr.into_iter()
                         .map(|x| InternalContainerDiff {
                             idx: x.idx,
-                            reset: false,
-                            is_container_deleted: false,
-                            diff: x.diff.into(),
+                            bring_back: false,
+                            diff: Some(x.diff.into()),
                         })
                         .collect(),
                 ),

@@ -202,6 +202,7 @@ impl ListState {
 
     pub fn delete(&mut self, index: usize) {
         let leaf = self.list.query::<LengthFinder>(&index);
+
         let elem = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
         let value = elem.v;
         if self.in_txn {

@@ -118,7 +118,6 @@ impl TreeDiffCache {
         lca_min_lamport: Lamport,
         from_min_max_lamport: (Lamport, Lamport),
     ) -> TreeDelta {
-        // println!("\nFROM {:?} TO {:?} LCA {:?}", from, to, lca);
         self.checkout(from, from_min_max_lamport.0, from_min_max_lamport.1);
         // println!(
         //     "current vv {:?}  all vv {:?}",
@@ -188,9 +187,14 @@ impl TreeDiffCache {
     }
 
     fn checkout(&mut self, vv: &VersionVector, min_lamport: Lamport, max_lamport: Lamport) {
+        // TODO: use all as max
+
         if vv == &self.current_version {
             return;
         }
+        // let same = true;
+        // self.current_version.get_missing_span(vv).iter().all(|id_span|)
+
         self.retreat(vv, min_lamport);
         let apply_ops = self.forward(vv, max_lamport);
         for op in apply_ops {
@@ -385,13 +389,16 @@ pub(crate) trait TreeDeletedSetTrait {
         }
     }
     fn update_deleted_cache_inner(&mut self, target: TreeID, set_children_deleted: bool) {
-        let mut s = self.get_children(target);
         if set_children_deleted {
             self.deleted_mut().insert(target);
         } else {
             self.deleted_mut().remove(&target);
         }
+        let mut s = self.get_children(target);
         while let Some(child) = s.pop() {
+            if child == target {
+                continue;
+            }
             if set_children_deleted {
                 self.deleted_mut().insert(child);
             } else {
@@ -417,7 +424,8 @@ impl TreeDeletedSetTrait for TreeDiffCache {
             if tree_id == &target {
                 continue;
             }
-            if self.get_parent(*tree_id) == Some(target) {
+            let parent = self.get_parent(*tree_id);
+            if parent == Some(target) {
                 ans.push(*tree_id)
             }
         }

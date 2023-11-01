@@ -49,9 +49,9 @@ pub struct DocDiff {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
-    pub(crate) reset: bool,
-    pub(crate) is_container_deleted: bool,
-    pub(crate) diff: DiffVariant,
+    pub(crate) bring_back: bool,
+    // pub(crate)
+    pub(crate) diff: Option<DiffVariant>,
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -188,6 +188,24 @@ impl InternalDiff {
         }
     }
 
+    pub(crate) fn concat(self, other: InternalDiff) -> Self {
+        match (self, other) {
+            (InternalDiff::SeqRaw(a), InternalDiff::SeqRaw(b)) => InternalDiff::SeqRaw(a.concat(b)),
+            (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
+                InternalDiff::RichtextRaw(a.concat(b))
+            }
+            (InternalDiff::Map(a), InternalDiff::Map(b)) => {
+                let mut a = a;
+                for (k, v) in b.updated {
+                    a = a.with_entry(k, v)
+                }
+                InternalDiff::Map(a)
+            }
+            (InternalDiff::Tree(a), InternalDiff::Tree(b)) => InternalDiff::Tree(a.extend(b)),
+            (a, _) => unreachable!(),
+        }
+    }
+
     pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
@@ -215,5 +233,26 @@ impl Diff {
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
+    }
+
+    pub(crate) fn concat(self, diff: Diff) -> Diff {
+        // print!("\ndiff concat {:?} and {:?} ", self, diff);
+        // PERF: avoid clone
+        let ans = match (self, diff) {
+            (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
+            (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
+            (Diff::NewMap(a), Diff::NewMap(b)) => {
+                let mut a = a;
+                for (k, v) in b.updated {
+                    a = a.with_entry(k, v);
+                }
+                Diff::NewMap(a)
+            }
+
+            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b)),
+            _ => unreachable!(),
+        };
+        // println!("=ans {:?}", ans);
+        ans
     }
 }

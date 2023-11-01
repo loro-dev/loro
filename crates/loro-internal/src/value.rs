@@ -131,6 +131,7 @@ impl ApplyDiff for LoroValue {
                                         map.remove(&key.to_string());
                                     }
                                 }
+                                debug_log::debug_log!("after {:?}", map);
                             }
                         }
                         _ => unreachable!(),
