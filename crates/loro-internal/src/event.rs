@@ -100,7 +100,7 @@ mod test {
     #[test]
     fn test_text_event() {
         let loro = LoroDoc::new();
-        loro.subscribe_deep(Arc::new(|event| {
+        loro.subscribe_root(Arc::new(|event| {
             let mut value = LoroValue::String(Default::default());
             value.apply_diff(&[event.container.diff.clone()]);
             assert_eq!(value, "h223ello".into());

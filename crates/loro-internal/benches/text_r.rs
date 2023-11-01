@@ -63,7 +63,7 @@ mod run {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let text = loro.get_text("text");
-                loro.subscribe_deep(Arc::new(move |event| {
+                loro.subscribe_root(Arc::new(move |event| {
                     black_box(event);
                 }));
                 let mut txn = loro.txn().unwrap();
@@ -220,7 +220,7 @@ mod run {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let text = loro.get_text("text");
-                loro.subscribe_deep(Arc::new(move |event| {
+                loro.subscribe_root(Arc::new(move |event| {
                     black_box(event);
                 }));
                 {

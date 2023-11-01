@@ -252,17 +252,17 @@ impl TextHandler {
             return Ok(());
         }
 
-        let entity_index = self
+        let (entity_index, styles) = self
             .state
             .upgrade()
             .unwrap()
             .lock()
             .unwrap()
             .with_state_mut(self.container_idx, |state| {
-                state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .get_entity_index_for_text_insert_event_index(pos)
+                let richtext_state = &mut state.as_richtext_state_mut().unwrap();
+                let pos = richtext_state.get_entity_index_for_text_insert(pos);
+                let styles = richtext_state.get_styles_at_entity_index(pos);
+                (pos, styles)
             });
 
         let unicode_len = s.chars().count();
@@ -278,7 +278,7 @@ impl TextHandler {
             EventHint::InsertText {
                 pos: pos as u32,
                 // FIXME: this is wrong
-                styles: vec![],
+                styles,
                 len: unicode_len as u32,
             },
             &self.state,
@@ -393,11 +393,11 @@ impl TextHandler {
                     state
                         .as_richtext_state_mut()
                         .unwrap()
-                        .get_entity_index_for_text_insert_event_index(start),
+                        .get_entity_index_for_text_insert(start),
                     state
                         .as_richtext_state_mut()
                         .unwrap()
-                        .get_entity_index_for_text_insert_event_index(end),
+                        .get_entity_index_for_text_insert(end),
                 )
             });
 
@@ -412,10 +412,17 @@ impl TextHandler {
             EventHint::Mark {
                 start: start as u32,
                 end: end as u32,
+                info: flag,
                 style: crate::container::richtext::Style {
                     key: key.into(),
-                    // FIXME: style meta is incorrect
-                    data: LoroValue::Bool(true),
+                    data: if flag.is_delete() {
+                        LoroValue::Bool(false)
+                    } else if flag.mergeable() {
+                        LoroValue::Bool(true)
+                    } else {
+                        // for non-mergeable type like comment.
+                        LoroValue::Null
+                    },
                 },
             },
             &self.state,
@@ -1284,7 +1291,7 @@ mod test {
         .unwrap();
 
         let loro2 = LoroDoc::new();
-        loro2.subscribe_deep(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
+        loro2.subscribe_root(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
         loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
         assert_eq!(loro.get_deep_value(), loro2.get_deep_value());
     }

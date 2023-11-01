@@ -10,7 +10,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
+            richtext_state::PosType, AnchorType, RichtextState as InnerState, Style, StyleOp,
             TextStyleInfoFlag,
         },
     },
@@ -137,11 +137,17 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
+        let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
+        struct Pos {
+            entity_index: usize,
+            event_index: usize,
+        }
+
+        let mut style_starts: FxHashMap<Arc<StyleOp>, Pos> = FxHashMap::default();
         let mut entity_index = 0;
         let mut event_index = 0;
-        let mut last_style_index = 0;
-        let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         for span in richtext.vec.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { len, .. } => {
@@ -157,12 +163,7 @@ impl ContainerState for RichtextState {
                                     text: text.clone(),
                                 },
                             );
-                            let insert_styles = StyleMeta {
-                                vec: styles
-                                    .iter()
-                                    .flat_map(|(_, value)| value.to_styles())
-                                    .collect(),
-                            };
+                            let insert_styles = styles.clone().into();
 
                             if pos > event_index {
                                 let mut new_len = 0;
@@ -172,15 +173,7 @@ impl ContainerState for RichtextState {
                                     .iter_styles_in_event_index_range(event_index..pos)
                                 {
                                     new_len += len;
-                                    ans = ans.retain_with_meta(
-                                        len,
-                                        StyleMeta {
-                                            vec: styles
-                                                .iter()
-                                                .flat_map(|(_, value)| value.to_styles())
-                                                .collect(),
-                                        },
-                                    );
+                                    ans = ans.retain_with_meta(len, styles.clone().into());
                                 }
 
                                 assert_eq!(new_len, pos - event_index);
@@ -194,31 +187,52 @@ impl ContainerState for RichtextState {
                             ans = ans
                                 .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
                         }
-                        RichtextStateChunk::Style { style, anchor_type } => {
-                            match anchor_type {
-                                AnchorType::Start => {}
-                                AnchorType::End => {
-                                    last_style_index = event_index;
-                                }
-                            }
-                            self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Style {
-                                    style: style.clone(),
-                                    anchor_type: *anchor_type,
-                                },
-                            );
+                        RichtextStateChunk::Style { anchor_type, style } => {
+                            let (event_index, _) =
+                                self.state.get_mut().insert_elem_at_entity_index(
+                                    entity_index,
+                                    RichtextStateChunk::Style {
+                                        style: style.clone(),
+                                        anchor_type: *anchor_type,
+                                    },
+                                );
 
                             if *anchor_type == AnchorType::Start {
-                                style_starts.insert(style.clone(), entity_index);
+                                style_starts.insert(
+                                    style.clone(),
+                                    Pos {
+                                        entity_index,
+                                        event_index,
+                                    },
+                                );
                             } else {
-                                let start_pos =
-                                    style_starts.get(style).expect("Style start not found");
+                                // get the pair of style anchor. now we can annotate the range
+                                let Pos {
+                                    entity_index: start_entity_index,
+                                    event_index: start_event_index,
+                                } = style_starts.remove(style).unwrap();
+
                                 // we need to + 1 because we also need to annotate the end anchor
                                 self.state.get_mut().annotate_style_range(
-                                    *start_pos..entity_index + 1,
+                                    start_entity_index..entity_index + 1,
                                     style.clone(),
                                 );
+
+                                let mut meta = StyleMeta::default();
+
+                                meta.insert(
+                                    style.get_style_key(),
+                                    crate::delta::StyleMetaItem {
+                                        lamport: style.lamport,
+                                        peer: style.peer,
+                                        value: style.to_value(),
+                                    },
+                                );
+                                let delta: Delta<StringSlice, _> = Delta::new()
+                                    .retain(start_event_index)
+                                    .retain_with_meta(event_index - start_event_index, meta);
+                                dbg!(&delta);
+                                style_delta = style_delta.compose(delta);
                             }
                         }
                     }
@@ -235,15 +249,7 @@ impl ContainerState for RichtextState {
                             .get_mut()
                             .iter_styles_in_event_index_range(event_index..start)
                         {
-                            ans = ans.retain_with_meta(
-                                len,
-                                StyleMeta {
-                                    vec: styles
-                                        .iter()
-                                        .flat_map(|(_, value)| value.to_styles())
-                                        .collect(),
-                                },
-                            );
+                            ans = ans.retain_with_meta(len, styles.clone().into());
                         }
 
                         event_index = start;
@@ -254,25 +260,8 @@ impl ContainerState for RichtextState {
             }
         }
 
-        if last_style_index > event_index {
-            for (len, styles) in self
-                .state
-                .get_mut()
-                .iter_styles_in_event_index_range(event_index..last_style_index)
-            {
-                ans = ans.retain_with_meta(
-                    len,
-                    StyleMeta {
-                        vec: styles
-                            .iter()
-                            .flat_map(|(_, value)| value.to_styles())
-                            .collect(),
-                    },
-                );
-            }
-        }
-
-        Diff::Text(ans)
+        debug_assert!(style_starts.is_empty(), "Styles should always be paired");
+        Diff::Text(ans.compose(style_delta))
     }
 
     fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {
@@ -405,7 +394,7 @@ impl ContainerState for RichtextState {
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
                 value: span.text,
-                meta: StyleMeta { vec: span.styles },
+                meta: span.attributes,
             })
         }
 
@@ -494,10 +483,17 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(pos, PosType::Event)
+            .get_entity_index_for_text_insert(event_index, PosType::Event)
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_styles_at_entity_index(&mut self, entity_index: usize) -> StyleMeta {
+        self.state
+            .get_mut()
+            .get_styles_at_entity_index_for_insert(entity_index)
     }
 
     #[inline(always)]
