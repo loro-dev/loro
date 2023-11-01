@@ -39,14 +39,93 @@ fn richtext_mark_event() {
             assert_eq!(
                 delta.to_json_value(),
                 json!([
-                        {"insert": "He", "attributes": {"bold": true}},
-                        {"insert": "ll", "attributes": {"bold": false}},
-                        {"insert": "o", "attributes": {"bold": true}}
+                    {"insert": "He", "attributes": {"bold": true}},
+                    {"insert": "ll", "attributes": {"bold": false}},
+                    {"insert": "o", "attributes": {"bold": true}}
                 ])
             )
         }),
     );
     b.merge(&a).unwrap();
+}
+
+#[test]
+fn concurrent_richtext_mark_event() {
+    let a = LoroDoc::new_auto_commit();
+    let b = LoroDoc::new_auto_commit();
+    let c = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    b.merge(&a).unwrap();
+    c.merge(&a).unwrap();
+    b.get_text("text")
+        .mark_(0, 3, "bold", TextStyleInfoFlag::BOLD)
+        .unwrap();
+    c.get_text("text")
+        .mark_(1, 4, "link", TextStyleInfoFlag::LINK)
+        .unwrap();
+    b.merge(&c).unwrap();
+    let sub_id = a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {"retain": 1, "attributes": {"bold": true, }},
+                    {"retain": 2, "attributes": {"bold": true, "link": true}},
+                    {"retain": 1, "attributes": {"link": true}},
+                ])
+            )
+        }),
+    );
+
+    a.merge(&b).unwrap();
+    a.unsubscribe(sub_id);
+
+    let sub_id = a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {
+                        "retain": 2,
+                    },
+                    {
+                        "retain": 1,
+                        "attributes": {"bold": false}
+                    }
+                ])
+            )
+        }),
+    );
+
+    b.get_text("text")
+        .mark_(2, 3, "bold", TextStyleInfoFlag::BOLD.to_delete())
+        .unwrap();
+    a.merge(&b).unwrap();
+    a.unsubscribe(sub_id);
+    a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {
+                        "retain": 2,
+                    },
+                    {
+                        "insert": "A",
+                        "attributes": {"bold": true, "link": true}
+                    }
+                ])
+            )
+        }),
+    );
+    a.get_text("text").insert_(2, "A").unwrap();
+    a.commit_then_stop();
 }
 
 #[test]
