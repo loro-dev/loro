@@ -99,7 +99,7 @@ export class QuillBinding {
           a,
           b,
         );
-        console.log("SIZE", this.doc.exportSnapshot().length);
+        console.log("SIZE", this.doc.exportFrom().length);
       }
     }
   };

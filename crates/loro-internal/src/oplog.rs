@@ -715,7 +715,7 @@ impl OpLog {
         self.changes.values().map(|x| x.len()).sum()
     }
 
-    pub fn diagnose_size(&self) {
+    pub fn diagnose_size(&self) -> SizeInfo {
         let mut total_changes = 0;
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
@@ -732,7 +732,21 @@ impl OpLog {
         println!("total ops: {}", total_ops);
         println!("total atom ops: {}", total_atom_ops);
         println!("total dag node: {}", total_dag_node);
+        SizeInfo {
+            total_changes,
+            total_ops,
+            total_atom_ops,
+            total_dag_node,
+        }
     }
+}
+
+#[derive(Debug)]
+pub struct SizeInfo {
+    pub total_changes: usize,
+    pub total_ops: usize,
+    pub total_atom_ops: usize,
+    pub total_dag_node: usize,
 }
 
 impl Default for OpLog {

@@ -426,6 +426,12 @@ impl Loro {
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
+
+    #[wasm_bindgen(js_name = "debugHistory")]
+    pub fn debug_history(&self) {
+        let oplog = self.0.oplog().lock().unwrap();
+        console_log!("{:#?}", oplog.diagnose_size());
+    }
 }
 
 #[allow(unused)]
