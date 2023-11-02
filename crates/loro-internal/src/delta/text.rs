@@ -74,7 +74,7 @@ impl Meta for StyleMeta {
         self.map == other.map
     }
 
-    fn merge(&mut self, other: &Self) {}
+    fn merge(&mut self, _: &Self) {}
 }
 
 impl StyleMeta {
@@ -94,10 +94,6 @@ impl StyleMeta {
         self.map.insert(key, value);
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.map.clear()
-    }
-
     pub(crate) fn to_value(&self) -> LoroValue {
         LoroValue::Map(Arc::new(
             self.map
@@ -105,21 +101,13 @@ impl StyleMeta {
                 .map(|(key, value)| {
                     (
                         key.to_attr_key(),
-                        match &value.value {
-                            LoroValue::Null | LoroValue::Bool(_) => value.value.clone(),
-                            LoroValue::Map(_) => {
-                                let mut map: FxHashMap<String, LoroValue> = Default::default();
-                                map.insert("key".into(), key.key().to_string().into());
-                                map.insert("data".into(), value.value.clone());
-                                LoroValue::Map(Arc::new(map))
-                            }
-                            LoroValue::Container(_) => {
-                                let mut map: FxHashMap<String, LoroValue> = Default::default();
-                                map.insert("key".into(), key.key().to_string().into());
-                                map.insert("data".into(), LoroValue::Null);
-                                LoroValue::Map(Arc::new(map))
-                            }
-                            _ => unreachable!(),
+                        if key.contains_id() {
+                            let mut map: FxHashMap<String, LoroValue> = Default::default();
+                            map.insert("key".into(), key.key().to_string().into());
+                            map.insert("data".into(), value.value.clone());
+                            LoroValue::Map(Arc::new(map))
+                        } else {
+                            value.value.clone()
                         },
                     )
                 })
@@ -147,7 +135,7 @@ impl ToJson for StyleMeta {
         serde_json::Value::Object(map)
     }
 
-    fn from_json(s: &str) -> Self {
+    fn from_json(_: &str) -> Self {
         unreachable!()
     }
 }

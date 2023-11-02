@@ -17,7 +17,7 @@ fn richtext_mark_event() {
                 delta.to_json_value(),
                 json!([
                         {"insert": "He", "attributes": {"bold": true}},
-                        {"insert": "ll", "attributes": {"bold": false}},
+                        {"insert": "ll", "attributes": {"bold": null}},
                         {"insert": "o", "attributes": {"bold": true}}
                 ])
             )
@@ -25,10 +25,16 @@ fn richtext_mark_event() {
     );
     a.get_text("text").insert_(0, "Hello").unwrap();
     a.get_text("text")
-        .mark_(0, 5, "bold", TextStyleInfoFlag::BOLD)
+        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     a.get_text("text")
-        .mark_(2, 4, "bold", TextStyleInfoFlag::BOLD.to_delete())
+        .mark_(
+            2,
+            4,
+            "bold",
+            LoroValue::Null,
+            TextStyleInfoFlag::BOLD.to_delete(),
+        )
         .unwrap();
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
@@ -40,7 +46,7 @@ fn richtext_mark_event() {
                 delta.to_json_value(),
                 json!([
                     {"insert": "He", "attributes": {"bold": true}},
-                    {"insert": "ll", "attributes": {"bold": false}},
+                    {"insert": "ll", "attributes": {"bold": null}},
                     {"insert": "o", "attributes": {"bold": true}}
                 ])
             )
@@ -58,10 +64,10 @@ fn concurrent_richtext_mark_event() {
     b.merge(&a).unwrap();
     c.merge(&a).unwrap();
     b.get_text("text")
-        .mark_(0, 3, "bold", TextStyleInfoFlag::BOLD)
+        .mark_(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     c.get_text("text")
-        .mark_(1, 4, "link", TextStyleInfoFlag::LINK)
+        .mark_(1, 4, "link", true.into(), TextStyleInfoFlag::LINK)
         .unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
@@ -94,7 +100,7 @@ fn concurrent_richtext_mark_event() {
                     },
                     {
                         "retain": 1,
-                        "attributes": {"bold": false}
+                        "attributes": {"bold": null}
                     }
                 ])
             )
@@ -102,7 +108,13 @@ fn concurrent_richtext_mark_event() {
     );
 
     b.get_text("text")
-        .mark_(2, 3, "bold", TextStyleInfoFlag::BOLD.to_delete())
+        .mark_(
+            2,
+            3,
+            "bold",
+            LoroValue::Null,
+            TextStyleInfoFlag::BOLD.to_delete(),
+        )
         .unwrap();
     a.merge(&b).unwrap();
     a.unsubscribe(sub_id);
@@ -133,7 +145,7 @@ fn insert_richtext_event() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert_(0, "Hello").unwrap();
     a.get_text("text")
-        .mark_(0, 5, "bold", TextStyleInfoFlag::BOLD)
+        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");

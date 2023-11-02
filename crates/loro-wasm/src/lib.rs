@@ -1,14 +1,17 @@
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
-    configure::SecureRandomGenerator,
-    container::ContainerID,
+    container::{
+        richtext::{ExpandType, TextStyleInfoFlag},
+        ContainerID,
+    },
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
-    ContainerType, DiffEvent, LoroDoc, LoroError, VersionVector,
+    ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue, VersionVector,
 };
+use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, ops::Deref, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
@@ -19,7 +22,7 @@ mod convert;
 
 #[wasm_bindgen(js_name = setPanicHook)]
 pub fn set_panic_hook() {
-    panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_error_panic_hook::set_once();
 }
 
 #[wasm_bindgen(js_name = setDebug)]
@@ -53,26 +56,16 @@ extern "C" {
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: bigint, counter: number }")]
     pub type JsID;
+    #[wasm_bindgen(
+        typescript_type = "{ start: number, end: number, expand?: 'before'|'after'|'both'|'none' }"
+    )]
+    pub type JsRange;
+    #[wasm_bindgen(typescript_type = "number|bool|string|null")]
+    pub type JsMarkValue;
     #[wasm_bindgen(typescript_type = "TreeID")]
     pub type JsTreeID;
-}
-
-struct MathRandom;
-impl SecureRandomGenerator for MathRandom {
-    fn fill_byte(&self, dest: &mut [u8]) {
-        let mut bytes: [u8; 8] = js_sys::Math::random().to_be_bytes();
-        let mut index = 0;
-        let mut count = 0;
-        while index < dest.len() {
-            dest[index] = bytes[count];
-            index += 1;
-            count += 1;
-            if count == 8 {
-                bytes = js_sys::Math::random().to_be_bytes();
-                count = 0;
-            }
-        }
-    }
+    #[wasm_bindgen(typescript_type = "Delta<string>[]")]
+    pub type JsStringDelta;
 }
 
 mod observer {
@@ -410,6 +403,13 @@ impl Event {
 #[wasm_bindgen]
 pub struct LoroText(TextHandler);
 
+#[derive(Serialize, Deserialize)]
+struct MarkRange {
+    start: usize,
+    end: usize,
+    expand: Option<String>,
+}
+
 #[wasm_bindgen]
 impl LoroText {
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
@@ -422,12 +422,94 @@ impl LoroText {
         Ok(())
     }
 
+    /// Mark a range of text with a key and a value.
+    ///
+    /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: this is not suitable for unmergeable annotations like comments.
+    pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
+        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
+        let value: LoroValue = LoroValue::try_from(value)?;
+        let expand = range
+            .expand
+            .map(|x| {
+                ExpandType::try_from_str(&x)
+                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
+            })
+            .unwrap_or(ExpandType::After);
+        self.0.mark_(
+            range.start,
+            range.end,
+            key,
+            value,
+            TextStyleInfoFlag::new(true, expand, false, false),
+        )?;
+        Ok(())
+    }
+
+    /// Unmark a range of text with a key and a value.
+    ///
+    /// You can use it to remove highlights, bolds or links
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// **Note: You should specify the same expand type as when you mark the text.**
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: you cannot delete unmergeable annotations like comments by this method.
+    pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
+        // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
+        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
+        let expand = range
+            .expand
+            .map(|x| {
+                ExpandType::try_from_str(&x)
+                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
+            })
+            .unwrap_or(ExpandType::After);
+        let expand = expand.reverse();
+        self.0.mark_(
+            range.start,
+            range.end,
+            key,
+            LoroValue::Null,
+            TextStyleInfoFlag::new(true, expand, false, false),
+        )?;
+        Ok(())
+    }
+
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
         self.0.get_value().as_string().unwrap().to_string()
     }
 
+    /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// The returned value will include the rich text information.
+    #[wasm_bindgen(js_name = "toDelta")]
+    pub fn to_delta(&self) -> JsStringDelta {
+        let delta = self.0.get_richtext_value();
+        let value: JsValue = delta.into();
+        value.into()
+    }
+
+    /// Get the container id of the text.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
@@ -439,6 +521,9 @@ impl LoroText {
         self.0.len_utf16()
     }
 
+    /// Subscribe to the changes of the text.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -720,4 +805,22 @@ interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
 }
+export type Delta<T> =
+  | {
+    insert: T;
+    attributes?: { [key in string]: {} },
+    retain?: undefined;
+    delete?: undefined;
+  }
+  | {
+    delete: number;
+    retain?: undefined;
+    insert?: undefined;
+  }
+  | {
+    retain: number;
+    attributes?: { [key in string]: {} },
+    delete?: undefined;
+    insert?: undefined;
+  };
 "#;

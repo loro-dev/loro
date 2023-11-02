@@ -18,7 +18,7 @@ use once_cell::sync::Lazy;
 
 use crate::delta::StyleMeta;
 
-use super::{Style, StyleKey, StyleOp};
+use super::{StyleKey, StyleOp};
 
 /// This struct keep the mapping of ranges to numbers
 ///
@@ -51,12 +51,6 @@ pub(crate) struct StyleValue {
 }
 
 impl StyleValue {
-    pub fn union(&mut self, other: &Self) {
-        for op in other.set.iter() {
-            self.set.insert(op.clone());
-        }
-    }
-
     pub fn insert(&mut self, value: Arc<StyleOp>) {
         self.set.insert(value);
     }
@@ -344,18 +338,6 @@ impl BTreeTrait for RangeNumMapTrait {
     }
 }
 
-pub(super) fn map_to_styles(style_map: &Styles) -> Vec<Style> {
-    let mut styles = Vec::with_capacity(style_map.len());
-    for style in style_map
-        .iter()
-        .filter_map(|(_, values)| values.get().map(|x| x.to_style()))
-    {
-        styles.push(style);
-    }
-
-    styles
-}
-
 #[cfg(test)]
 mod test {
     use loro_common::PeerID;
@@ -371,6 +353,7 @@ mod test {
             cnt: n,
             key: n.to_string().into(),
             info: TextStyleInfoFlag::default(),
+            value: loro_common::LoroValue::Bool(true),
         })
     }
 

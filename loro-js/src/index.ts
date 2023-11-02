@@ -5,9 +5,10 @@ export {
   PrelimList,
   PrelimMap,
   PrelimText,
+  Delta,
   setPanicHook,
 } from "loro-wasm";
-import { PrelimMap } from "loro-wasm";
+import { Delta, PrelimMap } from "loro-wasm";
 import { PrelimText } from "loro-wasm";
 import { PrelimList } from "loro-wasm";
 import {
@@ -61,24 +62,6 @@ export type Value =
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
 export type Path = (number | string)[];
-export type Delta<T> =
-  | {
-    insert: T;
-    attributes?: { [key in string]: {} },
-    retain?: undefined;
-    delete?: undefined;
-  }
-  | {
-    delete: number;
-    retain?: undefined;
-    insert?: undefined;
-  }
-  | {
-    retain: number;
-    attributes?: { [key in string]: {} },
-    delete?: undefined;
-    insert?: undefined;
-  };
 
 export type ListDiff = {
   type: "list";

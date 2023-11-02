@@ -148,6 +148,7 @@ struct DocEncoding<'a> {
     #[columnar(borrow)]
     style_info: Cow<'a, [u8]>,
     style_key: Vec<usize>,
+    style_values: Vec<LoroValue>,
     #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
     start_counter: Vec<Counter>,
@@ -207,6 +208,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut tree_id_to_idx = FxHashMap::default();
     let mut string: String = String::new();
     let mut style_key_idx = Vec::new();
+    let mut style_values = Vec::new();
     let mut style_info = Vec::new();
 
     for change in &diff_changes {
@@ -311,6 +313,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             end,
                             key,
                             info,
+                            value,
                         } => {
                             let key_idx = *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key.clone());
@@ -318,6 +321,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             });
                             style_key_idx.push(key_idx);
                             style_info.push(info.to_byte());
+                            style_values.push(value);
                             (
                                 start as usize,
                                 Kind::TextAnchorStart,
@@ -357,6 +361,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         normal_containers,
         values,
         style_key: style_key_idx,
+        style_values,
         style_info: Cow::Owned(style_info),
         tree_ids,
     };
@@ -461,6 +466,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         root_containers,
         values,
         style_key,
+        style_values,
         style_info,
         tree_ids,
     } = encoded;
@@ -487,6 +493,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut op_iter = ops;
     let mut deps_iter = deps;
     let mut style_key_iter = style_key.into_iter();
+    let mut style_value_iter = style_values.into_iter();
     let mut style_info_iter = style_info.iter();
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
@@ -606,6 +613,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                 start: pos as u32,
                                 end: insert_del_len as u32 + pos as u32,
                                 key: keys[style_key_iter.next().unwrap()].clone(),
+                                value: style_value_iter.next().unwrap(),
                                 info: TextStyleInfoFlag::from_byte(
                                     *style_info_iter.next().unwrap(),
                                 ),

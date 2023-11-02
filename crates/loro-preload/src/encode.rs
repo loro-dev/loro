@@ -215,6 +215,7 @@ pub struct CompactStyleOp {
     pub counter: u32,
     pub lamport: u32,
     pub style_info: u8,
+    pub value: LoroValue,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

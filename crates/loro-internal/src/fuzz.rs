@@ -4,6 +4,7 @@ pub mod tree;
 use crate::{array_mut_ref, container::richtext::TextStyleInfoFlag, loro::LoroDoc};
 use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
+use loro_common::LoroValue;
 use std::{fmt::Debug, time::Instant};
 use tabled::{TableIteratorExt, Tabled};
 
@@ -242,12 +243,18 @@ impl Actionable for Vec<LoroDoc> {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
+                let style = STYLES[*style_key as usize];
                 text.mark(
                     &mut txn,
                     *pos,
                     *pos + *len,
                     &style_key.to_string(),
-                    STYLES[*style_key as usize],
+                    if style.is_delete() {
+                        LoroValue::Null
+                    } else {
+                        true.into()
+                    },
+                    style,
                 )
                 .unwrap();
             }
