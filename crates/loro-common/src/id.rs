@@ -9,13 +9,13 @@ use std::{
 
 impl Debug for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("c{}:{}", self.peer, self.counter).as_str())
+        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
     }
 }
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
+        f.write_str(format!("{}@{:X}", self.counter, self.peer).as_str())
     }
 }
 
@@ -23,16 +23,17 @@ impl TryFrom<&str> for ID {
     type Error = LoroError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let splitted: Vec<_> = value.split('@').collect();
-        if splitted.len() != 2 {
+        if value.split('@').count() != 2 {
             return Err(LoroError::DecodeError("Invalid ID format".into()));
         }
 
-        let counter = splitted[0]
+        let mut iter = value.split('@');
+        let counter = iter
+            .next()
+            .unwrap()
             .parse::<Counter>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
-        let client_id = splitted[1]
-            .parse::<PeerID>()
+        let client_id = u64::from_str_radix(iter.next().unwrap(), 16)
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         Ok(ID {
             peer: client_id,

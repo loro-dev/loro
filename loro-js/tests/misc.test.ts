@@ -167,7 +167,6 @@ describe("sync", () => {
     assertEquals(text.toString(), "a hello world");
     const map = loro.getMap("map");
     map.set("key", "value");
-
   });
 });
 
@@ -224,9 +223,17 @@ describe("prelim", () => {
       list.insert(2, prelim_list);
       loro.commit();
 
-      assertEquals(list.getDeepValue(), ["ttt", { a: 1, b: 2 }, [1, "2", {
-        a: 4,
-      }]]);
+      assertEquals(list.getDeepValue(), [
+        "ttt",
+        { a: 1, b: 2 },
+        [
+          1,
+          "2",
+          {
+            a: 4,
+          },
+        ],
+      ]);
     });
   });
 });
@@ -315,16 +322,15 @@ describe("tree", () => {
     const childID = tree.create(id);
     console.log(typeof id);
     assertEquals(tree.parent(childID), id);
-  })
+  });
 
   it("meta", () => {
-    const id = tree.create()
+    const id = tree.create();
     const meta = tree.getMeta(id);
     meta.set("a", 123);
     assertEquals(meta.get("a"), 123);
-
-  })
-})
+  });
+});
 
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));

@@ -164,6 +164,12 @@ impl Loro {
         self.0.peer_id()
     }
 
+    /// Get peer id in hex string.
+    #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
+    pub fn peer_id_str(&self) -> String {
+        format!("{:X}", self.0.peer_id())
+    }
+
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
         let text = self.0.get_text(name);
@@ -699,7 +705,7 @@ impl LoroTree {
     pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
-            self.0.create_and_mov_(parent.try_into().unwrap())?
+            self.0.create_and_mov_(parent.try_into().unwrap_throw())?
         } else {
             self.0.create_()?
         };
@@ -797,9 +803,9 @@ impl LoroTree {
 const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
 export type ContainerID =
-  | `/${string}:${ContainerType}`
-  | `${number}@${number}:${ContainerType}`;
-export type TreeID = `${number}@${number}`;
+  | `cid:root-${string}:${ContainerType}`
+  | `cid:${number}@${string}:${ContainerType}`;
+export type TreeID = `${number}@${string}`;
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
