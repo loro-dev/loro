@@ -5,7 +5,7 @@ use loro_internal::{
         ContainerID,
     },
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
+    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler},
     id::{Counter, TreeID, ID},
     obs::SubID,
     version::Frontiers,
@@ -50,6 +50,8 @@ impl Deref for Loro {
 extern "C" {
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
+    #[wasm_bindgen(typescript_type = "ContainerID | string")]
+    pub type JsIntoContainerID;
     #[wasm_bindgen(typescript_type = "Transaction | Loro")]
     pub type JsTransaction;
     #[wasm_bindgen(typescript_type = "string | undefined")]
@@ -66,6 +68,8 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsStringDelta;
+    #[wasm_bindgen(typescript_type = "Map<bigint, number>")]
+    pub type JsVersionVectorMap;
 }
 
 mod observer {
@@ -130,6 +134,36 @@ fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
     ans
 }
 
+fn js_value_to_container_id(
+    cid: &JsIntoContainerID,
+    kind: ContainerType,
+) -> Result<ContainerID, JsValue> {
+    if !cid.is_string() {
+        return Err(JsValue::from_str("ContainerID must be a string"));
+    }
+
+    let s = cid.as_string().unwrap();
+    let cid = ContainerID::try_from(s.as_str())
+        .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
+    Ok(cid)
+}
+
+fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
+    let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
+        None
+    } else {
+        let arr: Uint8Array = Uint8Array::new(version);
+        Some(arr.to_vec())
+    };
+
+    let vv = match version {
+        Some(x) => VersionVector::decode(&x)?,
+        None => Default::default(),
+    };
+
+    Ok(vv)
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
@@ -145,20 +179,57 @@ impl Loro {
         Ok(Loro(doc))
     }
 
+    /// Attach the document state to the latest known version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This method has the same effect as invoking `checkout_to_latest`.
     pub fn attach(&mut self) {
         self.0.attach();
     }
 
-    pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
-        self.0.checkout(&ids_to_frontiers(frontiers)?)?;
-        Ok(())
+    /// `detached` indicates that the `DocState` is not synchronized with the latest version of `OpLog`.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// When `detached`, the document is not editable.
+    pub fn is_detached(&self) -> bool {
+        self.0.is_detached()
     }
 
+    /// Checkout the `DocState` to the lastest version of `OpLog`.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This has the same effect as `attach`.
     pub fn checkout_to_latest(&mut self) -> JsResult<()> {
         self.0.checkout_to_latest();
         Ok(())
     }
 
+    /// Checkout the `DocState` to a specific version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
+        self.0.checkout(&ids_to_frontiers(frontiers)?)?;
+        Ok(())
+    }
+
+    /// Peer ID of the current writer.
     #[wasm_bindgen(js_name = "peerId", method, getter)]
     pub fn peer_id(&self) -> u64 {
         self.0.peer_id()
@@ -170,10 +241,14 @@ impl Loro {
         format!("{:X}", self.0.peer_id())
     }
 
-    #[wasm_bindgen(js_name = "getText")]
-    pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
-        let text = self.0.get_text(name);
-        Ok(LoroText(text))
+    /// Set the peer ID of the current writer.
+    ///
+    /// Note: use it with caution. You need to make sure there is not chance that two peers
+    /// have the same peer ID.
+    #[wasm_bindgen(js_name = "setPeerId", method)]
+    pub fn set_peer_id(&self, id: u64) -> JsResult<()> {
+        self.0.set_peer_id(id)?;
+        Ok(())
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -181,21 +256,35 @@ impl Loro {
         self.0.commit_with(origin.map(|x| x.into()), None, true);
     }
 
+    #[wasm_bindgen(js_name = "getText")]
+    pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
+        let text = self
+            .0
+            .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
+        Ok(LoroText(text))
+    }
+
     #[wasm_bindgen(js_name = "getMap")]
-    pub fn get_map(&self, name: &str) -> JsResult<LoroMap> {
-        let map = self.0.get_map(name);
+    pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
+        let map = self
+            .0
+            .get_map(js_value_to_container_id(cid, ContainerType::Map)?);
         Ok(LoroMap(map))
     }
 
     #[wasm_bindgen(js_name = "getList")]
-    pub fn get_list(&self, name: &str) -> JsResult<LoroList> {
-        let list = self.0.get_list(name);
+    pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
+        let list = self
+            .0
+            .get_list(js_value_to_container_id(cid, ContainerType::List)?);
         Ok(LoroList(list))
     }
 
     #[wasm_bindgen(js_name = "getTree")]
-    pub fn get_tree(&self, name: &str) -> JsResult<LoroTree> {
-        let tree = self.0.get_tree(name);
+    pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
+        let tree = self
+            .0
+            .get_tree(js_value_to_container_id(cid, ContainerType::Tree)?);
         Ok(LoroTree(tree))
     }
 
@@ -223,19 +312,54 @@ impl Loro {
         })
     }
 
+    /// Get the encoded version vector of the current document.
+    ///
+    /// If you checkout to a specific version, the version vector will change.
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.oplog_vv().encode()
+        self.0.state_vv().encode()
     }
 
+    /// Get the encoded version vector of the lastest verison in OpLog.
+    ///
+    /// If you checkout to a specific version, the version vector will not change.
+    #[inline(always)]
+    pub fn oplog_version(&self) -> Vec<u8> {
+        self.0.state_vv().encode()
+    }
+
+    /// Get the frontiers of the current document.
+    ///
+    /// If you checkout to a specific version, this value will change.
     #[inline]
     pub fn frontiers(&self) -> Vec<JsID> {
+        frontiers_to_ids(&self.0.state_frontiers())
+    }
+
+    /// Get the frontiers of the lastest version in OpLog.
+    ///
+    /// If you checkout to a specific version, this value will not change.
+    #[inline(always)]
+    pub fn oplog_frontiers(&self) -> Vec<JsID> {
         frontiers_to_ids(&self.0.oplog_frontiers())
     }
 
-    /// - -1: self's version is less than frontiers or is parallel to target
-    /// - 0: self's version equals to frontiers
-    /// - 1: self's version is greater than frontiers
+    /// Compare the version of the OpLog with the specified frontiers.
+    ///
+    /// This method is useful to compare the version by only a small amount of data.
+    ///
+    /// This method returns an integer indicating the relationship between the version of the OpLog (referred to as 'self')
+    /// and the provided 'frontiers' parameter:
+    ///
+    /// - -1: The version of 'self' is either less than 'frontiers' or is non-comparable (parallel) to 'frontiers',
+    ///        indicating that it is not definitively less than 'frontiers'.
+    /// - 0: The version of 'self' is equal to 'frontiers'.
+    /// - 1: The version of 'self' is greater than 'frontiers'.
+    ///
+    /// # Internal
+    ///
+    /// Frontiers cannot be compared without the history of the OpLog.
+    ///
     #[inline]
     #[wasm_bindgen(js_name = "cmpFrontiers")]
     pub fn cmp_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
@@ -254,18 +378,8 @@ impl Loro {
 
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
-        let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
-            None
-        } else {
-            let arr: Uint8Array = Uint8Array::new(version);
-            Some(arr.to_vec())
-        };
-
-        let vv = match version {
-            Some(x) => VersionVector::decode(&x)?,
-            None => Default::default(),
-        };
-
+        // `version` may be null or undefined
+        let vv = js_value_to_version(version)?;
         Ok(self.0.export_from(&vv))
     }
 
@@ -274,6 +388,9 @@ impl Loro {
         Ok(())
     }
 
+    /// Import a batch of updates.
+    ///
+    /// It's more efficient than importing updates one by one.
     #[wasm_bindgen(js_name = "importUpdateBatch")]
     pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
         let data = data
@@ -546,6 +663,14 @@ impl LoroText {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
+
+    #[wasm_bindgen(js_name = "applyDelta")]
+    pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
+        let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
+        console_log!("apply_delta {:?}", delta);
+        self.0.apply_delta_(&delta)?;
+        Ok(())
+    }
 }
 
 #[wasm_bindgen]
@@ -799,6 +924,33 @@ impl LoroTree {
     }
 }
 
+/// Convert a encoded version vector to a readable js Map.
+///
+/// # Example
+///
+/// ```js
+/// const loro = new Loro();
+/// loro.setPeerId('100');
+/// loro.getText("t").insert(0, 'a');
+/// loro.commit();
+/// const version = loro.getVersion();
+/// const readableVersion = convertVersionToReadableObj(version);
+/// console.log(readableVersion); // Map(1) { 100n => 1 }
+/// ```
+#[wasm_bindgen(js_name = "convertVersionToReadableMap")]
+pub fn convert_version_to_readable_map(version: &[u8]) -> Result<JsVersionVectorMap, JsValue> {
+    let version_vector = VersionVector::decode(version)?;
+    let map = js_sys::Map::new();
+    for (k, v) in version_vector.iter() {
+        let k = js_sys::BigInt::from(*k);
+        let v = JsValue::from(*v);
+        map.set(&k.to_owned(), &v);
+    }
+
+    let map: JsValue = map.into();
+    Ok(JsVersionVectorMap::from(map))
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
@@ -814,18 +966,19 @@ interface Loro {
 export type Delta<T> =
   | {
     insert: T;
-    attributes?: { [key in string]: {} },
+    attributes?: { [key in string]: {} };
     retain?: undefined;
     delete?: undefined;
   }
   | {
     delete: number;
+    attributes?: undefined;
     retain?: undefined;
     insert?: undefined;
   }
   | {
     retain: number;
-    attributes?: { [key in string]: {} },
+    attributes?: { [key in string]: {} };
     delete?: undefined;
     insert?: undefined;
   };

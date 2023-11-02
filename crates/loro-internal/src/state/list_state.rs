@@ -297,11 +297,11 @@ impl ContainerState for ListState {
         let mut index = 0;
         for span in delta.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, .. } => {
+                crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     index += len;
                     ans = ans.retain(*len);
                 }
-                crate::delta::DeltaItem::Insert { value, .. } => {
+                crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
                     for slices in value.0.iter() {
                         for i in slices.0.start..slices.0.end {
@@ -319,7 +319,7 @@ impl ContainerState for ListState {
                     self.insert_batch(index, arr);
                     index += len;
                 }
-                crate::delta::DeltaItem::Delete { len, .. } => {
+                crate::delta::DeltaItem::Delete { delete: len, .. } => {
                     self.delete_range(index..index + len);
                     ans = ans.delete(*len);
                 }
@@ -335,10 +335,10 @@ impl ContainerState for ListState {
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
-                        crate::delta::DeltaItem::Retain { len, .. } => {
+                        crate::delta::DeltaItem::Retain { retain: len, .. } => {
                             index += len;
                         }
-                        crate::delta::DeltaItem::Insert { value, .. } => {
+                        crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
                             for slices in value.0.iter() {
                                 for i in slices.0.start..slices.0.end {
@@ -356,7 +356,7 @@ impl ContainerState for ListState {
                             self.insert_batch(index, arr);
                             index += len;
                         }
-                        crate::delta::DeltaItem::Delete { len, .. } => {
+                        crate::delta::DeltaItem::Delete { delete: len, .. } => {
                             self.delete_range(index..index + len);
                         }
                     }

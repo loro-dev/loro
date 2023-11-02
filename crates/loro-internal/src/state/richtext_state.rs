@@ -150,10 +150,10 @@ impl ContainerState for RichtextState {
         let mut event_index = 0;
         for span in richtext.vec.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, .. } => {
+                crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { value, .. } => {
+                crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
                             let (pos, styles) = self.state.get_mut().insert_elem_at_entity_index(
@@ -238,7 +238,10 @@ impl ContainerState for RichtextState {
                     }
                     entity_index += value.rle_len();
                 }
-                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                crate::delta::DeltaItem::Delete {
+                    delete: len,
+                    attributes: _,
+                } => {
                     let (start, end) =
                         self.state
                             .get_mut()
@@ -273,10 +276,16 @@ impl ContainerState for RichtextState {
         let mut entity_index = 0;
         for span in richtext.vec.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                crate::delta::DeltaItem::Retain {
+                    retain: len,
+                    attributes: _,
+                } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                crate::delta::DeltaItem::Insert {
+                    insert: value,
+                    attributes: _,
+                } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
                             self.state.get_mut().insert_elem_at_entity_index(
@@ -311,7 +320,10 @@ impl ContainerState for RichtextState {
                     }
                     entity_index += value.rle_len();
                 }
-                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                crate::delta::DeltaItem::Delete {
+                    delete: len,
+                    attributes: _,
+                } => {
                     self.state
                         .get_mut()
                         .drain_by_entity_index(entity_index, *len, |_| {});
@@ -395,8 +407,8 @@ impl ContainerState for RichtextState {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
-                value: span.text,
-                meta: span.attributes,
+                insert: span.text,
+                attributes: span.attributes,
             })
         }
 

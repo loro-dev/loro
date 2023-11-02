@@ -18,9 +18,9 @@ impl<V: Serialize, M: Serialize> Serialize for Delta<V, M> {
 
 #[derive(Debug, EnumAsInner, Clone, PartialEq, Eq, Serialize)]
 pub enum DeltaItem<Value, Meta> {
-    Retain { len: usize, meta: Meta },
-    Insert { value: Value, meta: Meta },
-    Delete { len: usize, meta: Meta },
+    Retain { retain: usize, attributes: Meta },
+    Insert { insert: Value, attributes: Meta },
+    Delete { delete: usize, attributes: Meta },
 }
 
 #[derive(PartialEq, Eq)]
@@ -87,9 +87,18 @@ impl<V: DeltaValue, M: Debug> DeltaValue for DeltaItem<V, M> {
 
     fn length(&self) -> usize {
         match self {
-            DeltaItem::Retain { len, meta: _ } => *len,
-            DeltaItem::Insert { value, meta: _ } => value.length(),
-            DeltaItem::Delete { len, meta: _ } => *len,
+            DeltaItem::Retain {
+                retain: len,
+                attributes: _,
+            } => *len,
+            DeltaItem::Insert {
+                insert: value,
+                attributes: _,
+            } => value.length(),
+            DeltaItem::Delete {
+                delete: len,
+                attributes: _,
+            } => *len,
         }
     }
 }
@@ -97,25 +106,42 @@ impl<V: DeltaValue, M: Debug> DeltaValue for DeltaItem<V, M> {
 impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     pub fn meta(&self) -> &M {
         match self {
-            DeltaItem::Insert { meta, .. } => meta,
-            DeltaItem::Retain { meta, .. } => meta,
-            DeltaItem::Delete { len: _, meta } => meta,
+            DeltaItem::Insert {
+                attributes: meta, ..
+            } => meta,
+            DeltaItem::Retain {
+                attributes: meta, ..
+            } => meta,
+            DeltaItem::Delete {
+                delete: _,
+                attributes: meta,
+            } => meta,
         }
     }
 
     pub fn meta_mut(&mut self) -> &mut M {
         match self {
-            DeltaItem::Insert { meta, .. } => meta,
-            DeltaItem::Retain { meta, .. } => meta,
-            DeltaItem::Delete { len: _, meta } => meta,
+            DeltaItem::Insert {
+                attributes: meta, ..
+            } => meta,
+            DeltaItem::Retain {
+                attributes: meta, ..
+            } => meta,
+            DeltaItem::Delete {
+                delete: _,
+                attributes: meta,
+            } => meta,
         }
     }
 
     pub fn set_meta(&mut self, meta: M) {
         match self {
-            DeltaItem::Insert { meta: m, .. } => *m = meta,
-            DeltaItem::Retain { meta: m, .. } => *m = meta,
-            DeltaItem::Delete { len: _, meta: m } => *m = meta,
+            DeltaItem::Insert { attributes: m, .. } => *m = meta,
+            DeltaItem::Retain { attributes: m, .. } => *m = meta,
+            DeltaItem::Delete {
+                delete: _,
+                attributes: m,
+            } => *m = meta,
         }
     }
 
@@ -138,26 +164,35 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     // and return the taken one.
     pub(crate) fn take(&mut self, length: usize) -> Self {
         match self {
-            DeltaItem::Insert { value, meta } => {
+            DeltaItem::Insert {
+                insert: value,
+                attributes: meta,
+            } => {
                 let v = value.take(length);
                 Self::Insert {
-                    value: v,
-                    meta: meta.clone(),
+                    insert: v,
+                    attributes: meta.clone(),
                 }
             }
-            DeltaItem::Retain { len, meta } => {
+            DeltaItem::Retain {
+                retain: len,
+                attributes: meta,
+            } => {
                 *len -= length;
                 Self::Retain {
-                    len: length,
-                    meta: meta.clone(),
+                    retain: length,
+                    attributes: meta.clone(),
                 }
             }
-            DeltaItem::Delete { len, meta: _ } => {
+            DeltaItem::Delete {
+                delete: len,
+                attributes: _,
+            } => {
                 *len -= length;
                 Self::Delete {
-                    len: length,
+                    delete: length,
                     // meta may store utf16 length, this take will invalidate it
-                    meta: M::empty(),
+                    attributes: M::empty(),
                 }
             }
         }
@@ -165,25 +200,34 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     pub(crate) fn take_with_meta_ref(&mut self, length: usize, other_meta: &Self) -> Self {
         match self {
-            DeltaItem::Insert { value, meta } => {
+            DeltaItem::Insert {
+                insert: value,
+                attributes: meta,
+            } => {
                 let v = value.take(length);
                 Self::Insert {
-                    value: v,
-                    meta: meta.take(other_meta.meta()),
+                    insert: v,
+                    attributes: meta.take(other_meta.meta()),
                 }
             }
-            DeltaItem::Retain { len, meta } => {
+            DeltaItem::Retain {
+                retain: len,
+                attributes: meta,
+            } => {
                 *len -= length;
                 Self::Retain {
-                    len: length,
-                    meta: meta.take(other_meta.meta()),
+                    retain: length,
+                    attributes: meta.take(other_meta.meta()),
                 }
             }
-            DeltaItem::Delete { len, meta } => {
+            DeltaItem::Delete {
+                delete: len,
+                attributes: meta,
+            } => {
                 *len -= length;
                 Self::Delete {
-                    len: length,
-                    meta: meta.take(other_meta.meta()),
+                    delete: length,
+                    attributes: meta.take(other_meta.meta()),
                 }
             }
         }
@@ -191,7 +235,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     fn insert_inner(self) -> Value {
         match self {
-            DeltaItem::Insert { value, .. } => value,
+            DeltaItem::Insert { insert: value, .. } => value,
             _ => unreachable!(),
         }
     }
@@ -229,8 +273,8 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         let next_op = self.peek_mut();
         if next_op.is_none() {
             return DeltaItem::Retain {
-                len: usize::MAX,
-                meta: M::empty(),
+                retain: usize::MAX,
+                attributes: M::empty(),
             };
         }
         let op = next_op.unwrap();
@@ -247,8 +291,8 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         let next_op = self.peek_mut();
         if next_op.is_none() {
             return DeltaItem::Retain {
-                len: other.length(),
-                meta: other.meta().clone(),
+                retain: other.length(),
+                attributes: other.meta().clone(),
             };
         }
         let op = next_op.unwrap();
@@ -344,20 +388,26 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
             return self;
         }
 
-        self.push(DeltaItem::Retain { len, meta });
+        self.push(DeltaItem::Retain {
+            retain: len,
+            attributes: meta,
+        });
         self
     }
 
     pub fn insert_with_meta<V: Into<Value>>(mut self, value: V, meta: M) -> Self {
         self.push(DeltaItem::Insert {
-            value: value.into(),
-            meta,
+            insert: value.into(),
+            attributes: meta,
         });
         self
     }
 
     pub fn delete_with_meta(mut self, len: usize, meta: M) -> Self {
-        self.push(DeltaItem::Delete { len, meta });
+        self.push(DeltaItem::Delete {
+            delete: len,
+            attributes: meta,
+        });
         self
     }
 
@@ -366,8 +416,8 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
             return self;
         }
         self.push(DeltaItem::Delete {
-            len,
-            meta: M::empty(),
+            delete: len,
+            attributes: M::empty(),
         });
         self
     }
@@ -378,16 +428,16 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         }
 
         self.push(DeltaItem::Retain {
-            len,
-            meta: M::empty(),
+            retain: len,
+            attributes: M::empty(),
         });
         self
     }
 
     pub fn insert<V: Into<Value>>(mut self, value: V) -> Self {
         self.push(DeltaItem::Insert {
-            value: value.into(),
-            meta: M::empty(),
+            insert: value.into(),
+            attributes: M::empty(),
         });
         self
     }
@@ -427,8 +477,13 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                         }
                         Err(inner) => {
                             self.vec.insert(index - 1, last_op);
-                            self.vec
-                                .insert(index, DeltaItem::Insert { value: inner, meta });
+                            self.vec.insert(
+                                index,
+                                DeltaItem::Insert {
+                                    insert: inner,
+                                    attributes: meta,
+                                },
+                            );
                             return false;
                         }
                     }
@@ -681,8 +736,8 @@ mod test {
     fn delta_push() {
         let mut a: Delta<String, ()> = Delta::new().insert("a".to_string());
         a.push(DeltaItem::Insert {
-            value: "b".to_string(),
-            meta: (),
+            insert: "b".to_string(),
+            attributes: (),
         });
         assert_eq!(a, Delta::new().insert("ab".to_string()));
     }

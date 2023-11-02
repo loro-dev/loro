@@ -45,7 +45,7 @@
     "*.rs": "${capture}.excalidraw"
   },
   "excalidraw.theme": "dark",
-  "deno.enable": true,
+  "deno.enable": false ,
   "cortex-debug.variableUseNaturalFormat": true,
   "[markdown]": {
     "editor.defaultFormatter": "darkriszty.markdown-table-prettify"

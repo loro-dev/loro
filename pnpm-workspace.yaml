@@ -1,3 +1,4 @@
 packages:
   - "loro-js"
   - "crates/loro-wasm"
+  - "examples/loro-quill"
