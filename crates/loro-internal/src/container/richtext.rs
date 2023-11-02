@@ -67,7 +67,7 @@ impl StyleKey {
     pub fn to_attr_key(&self) -> String {
         match self {
             Self::Key(key) => key.to_string(),
-            Self::KeyWithId { key, id } => format!("id:{}", id),
+            Self::KeyWithId { key: _, id } => format!("id:{}", id),
         }
     }
 

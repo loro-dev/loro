@@ -74,7 +74,7 @@ impl Meta for StyleMeta {
         self.map == other.map
     }
 
-    fn merge(&mut self, other: &Self) {}
+    fn merge(&mut self, _: &Self) {}
 }
 
 impl StyleMeta {
@@ -92,10 +92,6 @@ impl StyleMeta {
 
     pub(crate) fn insert(&mut self, key: StyleKey, value: StyleMetaItem) {
         self.map.insert(key, value);
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.map.clear()
     }
 
     pub(crate) fn to_value(&self) -> LoroValue {
@@ -139,7 +135,7 @@ impl ToJson for StyleMeta {
         serde_json::Value::Object(map)
     }
 
-    fn from_json(s: &str) -> Self {
+    fn from_json(_: &str) -> Self {
         unreachable!()
     }
 }

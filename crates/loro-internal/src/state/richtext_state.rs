@@ -10,7 +10,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            richtext_state::PosType, AnchorType, RichtextState as InnerState, Style, StyleOp,
+            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
             TextStyleInfoFlag,
         },
     },
