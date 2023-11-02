@@ -331,7 +331,6 @@ impl Cursor {
             }
             _ => unreachable!(),
         }
-        debug_log::debug_dbg!(&self);
     }
 
     fn get_insert(&self, pos: usize) -> Option<LeafIndex> {

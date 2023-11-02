@@ -96,6 +96,19 @@ impl StringSlice {
     pub fn is_empty(&self) -> bool {
         self.bytes().is_empty()
     }
+
+    pub fn extend(&mut self, s: &str) {
+        match &mut self.bytes {
+            Variant::BytesSlice(_) => {
+                *self = Self {
+                    bytes: Variant::Owned(format!("{}{}", self.as_str(), s)),
+                }
+            }
+            Variant::Owned(v) => {
+                v.push_str(s);
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for StringSlice {

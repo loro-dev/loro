@@ -242,7 +242,7 @@ impl CrdtRope {
         let start = start.cursor;
         let elem = self.tree.get_elem_mut(start.leaf).unwrap();
         if elem.rle_len() >= start.offset + len {
-            debug_log::debug_log!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
+            // debug_log::debug_log!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
             let (_, splitted) = self.tree.update_leaf(start.leaf, |elem| {
                 let (a, b) = elem.update_with_split(start.offset..start.offset + len, |elem| {
                     assert!(elem.is_activated());
@@ -254,7 +254,7 @@ impl CrdtRope {
                 (true, a, b)
             });
 
-            debug_log::debug_dbg!(&splitted);
+            // debug_log::debug_dbg!(&splitted);
             return splitted;
         }
 

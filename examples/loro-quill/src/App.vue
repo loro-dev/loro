@@ -65,7 +65,12 @@
         Promise.resolve().then(() => {
           const version = text.version();
           const map = convertVersionToReadableMap(version);
-          const versionStr = JSON.stringify(map, null, 2);
+          const versionObj = {};
+          for (const [key, value] of map) {
+            versionObj[key.toString()] = value;
+          }
+          const versionStr = JSON.stringify(versionObj, null, 2);
+          console.log(map, versionStr);
           editorVersions[this_index] = versionStr;
         });
       });

@@ -121,7 +121,6 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroEr
 
     let mode: EncodeMode = input[0].try_into()?;
     let decoded = &input[1..];
-    debug_log::debug_dbg!(&mode);
     match mode {
         EncodeMode::Updates => decode_oplog_updates(oplog, decoded),
         EncodeMode::Snapshot => unimplemented!(),

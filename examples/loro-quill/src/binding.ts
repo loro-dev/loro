@@ -99,7 +99,7 @@ export class QuillBinding {
           a,
           b,
         );
-        console.log("SIZE", this.doc.exportFrom().length);
+        console.log("SIZE", this.doc.exportSnapshot().length);
       }
     }
   };
@@ -123,6 +123,14 @@ function assertEqual(a: Delta<string>[], b: Delta<string>[]): boolean {
  * Normalize attributes field
  */
 export const normQuillDelta = (delta: Delta<string>[]) => {
+  for (const d of delta) {
+    for (const key of Object.keys(d.attributes || {})) {
+      if (d.attributes![key] == null) {
+        delete d.attributes![key];
+      }
+    }
+  }
+
   for (const d of delta) {
     if (Object.keys(d.attributes || {}).length === 0) {
       delete d.attributes;

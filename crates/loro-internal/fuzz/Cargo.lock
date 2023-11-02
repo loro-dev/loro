@@ -340,16 +340,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jumprope"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "829c74fe88dda0d2a5425b022b44921574a65c4eb78e6e39a61b40eb416a4ef8"
-dependencies = [
- "rand",
- "str_indices",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,7 +396,6 @@ dependencies = [
  "getrandom",
  "im",
  "itertools",
- "jumprope",
  "loro-common",
  "loro-preload",
  "miniz_oxide",
@@ -872,12 +861,6 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
-
-[[package]]
-name = "str_indices"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f026164926842ec52deb1938fae44f83dfdb82d0a5b0270c5bd5935ab74d6dd"
 
 [[package]]
 name = "string_cache"

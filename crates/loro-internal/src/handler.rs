@@ -234,7 +234,7 @@ impl TextHandler {
             })
     }
 
-    pub fn with_state(&self, f: impl FnOnce(&RichtextState)) {
+    pub fn with_state<R>(&self, f: impl FnOnce(&RichtextState) -> R) -> R {
         self.state
             .upgrade()
             .unwrap()
@@ -242,7 +242,19 @@ impl TextHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let state = state.as_richtext_state().unwrap();
-                f(state);
+                f(state)
+            })
+    }
+
+    pub fn with_state_mut<R>(&self, f: impl FnOnce(&mut RichtextState) -> R) -> R {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                let state = state.as_richtext_state_mut().unwrap();
+                f(state)
             })
     }
 
@@ -345,9 +357,10 @@ impl TextHandler {
             });
 
         debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
-        let mut offset = 0;
+        let mut end = (pos + len) as isize;
         for range in ranges.iter().rev() {
             let len = (range.end - range.start) as isize;
+            let start = end - len;
             txn.apply_local_op(
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
@@ -355,12 +368,12 @@ impl TextHandler {
                     signed_len: len,
                 })),
                 EventHint::DeleteText(DeleteSpan {
-                    pos: pos as isize + offset,
+                    pos: start,
                     signed_len: len,
                 }),
                 &self.state,
             )?;
-            offset += len;
+            end = start;
         }
 
         debug_log::group_end!();

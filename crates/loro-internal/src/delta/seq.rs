@@ -531,6 +531,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
     /// Reference: [Quill Delta](https://github.com/quilljs/delta)
     // TODO: PERF use &mut self and &other
     pub fn compose(self, other: Delta<Value, M>) -> Delta<Value, M> {
+        // debug_log::debug_dbg!(&self, &other);
         let mut this_iter = self.into_op_iter();
         let mut other_iter = other.into_op_iter();
         let mut ops = vec![];
@@ -581,12 +582,12 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                     if concat_rest {
                         let vec = this_iter.rest();
                         if vec.is_empty() {
-                            debug_log::debug_dbg!(&delta);
-                            return delta.chop();
+                            break;
                         }
+
                         let rest = Delta { vec };
-                        debug_log::debug_dbg!(&delta, &rest);
-                        return delta.concat(rest).chop();
+                        delta = delta.concat(rest);
+                        break;
                     }
                 } else if other_op.is_delete() && this_op.is_retain() {
                     // 3. this: retain, other: delete
@@ -599,7 +600,8 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 }
             }
         }
-        debug_log::debug_dbg!(&delta);
+
+        // debug_log::debug_dbg!(&delta);
         delta.chop()
     }
 

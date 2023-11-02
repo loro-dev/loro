@@ -137,6 +137,8 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        debug_log::group!("apply_diff_and_convert");
+        debug_log::debug_dbg!(&richtext);
         // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
         let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
@@ -166,17 +168,7 @@ impl ContainerState for RichtextState {
                             let insert_styles = styles.clone().into();
 
                             if pos > event_index {
-                                let mut new_len = 0;
-                                for (len, styles) in self
-                                    .state
-                                    .get_mut()
-                                    .iter_styles_in_event_index_range(event_index..pos)
-                                {
-                                    new_len += len;
-                                    ans = ans.retain_with_meta(len, styles.clone().into());
-                                }
-
-                                assert_eq!(new_len, pos - event_index);
+                                ans = ans.retain(pos - event_index);
                             }
                             event_index = pos
                                 + (if cfg!(feature = "wasm") {
@@ -188,7 +180,7 @@ impl ContainerState for RichtextState {
                                 .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
                         }
                         RichtextStateChunk::Style { anchor_type, style } => {
-                            let (event_index, _) =
+                            let (new_event_index, _) =
                                 self.state.get_mut().insert_elem_at_entity_index(
                                     entity_index,
                                     RichtextStateChunk::Style {
@@ -197,12 +189,18 @@ impl ContainerState for RichtextState {
                                     },
                                 );
 
+                            if new_event_index > event_index {
+                                ans = ans.retain(new_event_index - event_index);
+                                // inserting style anchor will not affect event_index's positions
+                                event_index = new_event_index;
+                            }
+
                             if *anchor_type == AnchorType::Start {
                                 style_starts.insert(
                                     style.clone(),
                                     Pos {
                                         entity_index,
-                                        event_index,
+                                        event_index: new_event_index,
                                     },
                                 );
                             } else {
@@ -230,8 +228,8 @@ impl ContainerState for RichtextState {
                                 );
                                 let delta: Delta<StringSlice, _> = Delta::new()
                                     .retain(start_event_index)
-                                    .retain_with_meta(event_index - start_event_index, meta);
-                                dbg!(&delta);
+                                    .retain_with_meta(new_event_index - start_event_index, meta);
+                                debug_log::debug_dbg!(&delta);
                                 style_delta = style_delta.compose(delta);
                             }
                         }
@@ -247,14 +245,7 @@ impl ContainerState for RichtextState {
                             .get_mut()
                             .drain_by_entity_index(entity_index, *len, |_| {});
                     if start > event_index {
-                        for (len, styles) in self
-                            .state
-                            .get_mut()
-                            .iter_styles_in_event_index_range(event_index..start)
-                        {
-                            ans = ans.retain_with_meta(len, styles.clone().into());
-                        }
-
+                        ans = ans.retain(start - event_index);
                         event_index = start;
                     }
 
@@ -264,7 +255,11 @@ impl ContainerState for RichtextState {
         }
 
         debug_assert!(style_starts.is_empty(), "Styles should always be paired");
-        Diff::Text(ans.compose(style_delta))
+        debug_log::debug_dbg!(&ans, &style_delta);
+        let ans = ans.compose(style_delta);
+        debug_log::debug_dbg!(&ans);
+        debug_log::group_end!();
+        Diff::Text(ans)
     }
 
     fn apply_diff(&mut self, diff: InternalDiff, _arena: &SharedArena) {

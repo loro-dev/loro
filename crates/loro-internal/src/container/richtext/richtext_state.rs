@@ -1583,7 +1583,6 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
-        dbg!(&self);
         let mut ans: Vec<LoroValue> = Vec::new();
         let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {

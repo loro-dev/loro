@@ -298,7 +298,6 @@ impl DiffCalculator {
             }
         }
 
-        debug_log::debug_dbg!(&ans);
         ans.into_iter().map(|x| x.1).collect_vec()
     }
 }
