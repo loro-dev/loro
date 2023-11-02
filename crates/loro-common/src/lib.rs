@@ -158,13 +158,13 @@ mod container {
                 ContainerID::Root {
                     name,
                     container_type,
-                } => f.write_fmt(format_args!("/{}:{}", name, container_type))?,
+                } => f.write_fmt(format_args!("cid:root-{}:{}", name, container_type))?,
                 ContainerID::Normal {
                     peer,
                     counter,
                     container_type,
                 } => f.write_fmt(format_args!(
-                    "{}:{}",
+                    "cid:{}:{}",
                     ID::new(*peer, *counter),
                     container_type
                 ))?,
@@ -176,24 +176,39 @@ mod container {
     impl TryFrom<&str> for ContainerID {
         type Error = ();
 
-        fn try_from(value: &str) -> Result<Self, Self::Error> {
-            let mut parts = value.split(':');
-            let id = parts.next().ok_or(())?;
-            let container_type = parts.next().ok_or(())?;
-            let container_type = ContainerType::try_from(container_type).map_err(|_| ())?;
-            if let Some(id) = id.strip_prefix('/') {
+        fn try_from(mut s: &str) -> Result<Self, Self::Error> {
+            if !s.starts_with("cid:") {
+                return Err(());
+            }
+
+            s = &s[4..];
+            if s.starts_with("root-") {
+                // root container
+                s = &s[5..];
+                let split = s.rfind(':').ok_or(())?;
+                if split == 0 {
+                    return Err(());
+                }
+                let kind = ContainerType::try_from(&s[split + 1..]).map_err(|_| ())?;
+                let name = &s[..split];
                 Ok(ContainerID::Root {
-                    name: id.into(),
-                    container_type,
+                    name: name.into(),
+                    container_type: kind,
                 })
             } else {
-                let mut parts = id.split('@');
-                let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-                let client = parts.next().ok_or(())?.parse().map_err(|_| ())?;
+                let mut iter = s.split(':');
+                let id = iter.next().ok_or(())?;
+                let kind = iter.next().ok_or(())?;
+                if iter.next().is_some() {
+                    return Err(());
+                }
+
+                let id = ID::try_from(id).map_err(|_| ())?;
+                let kind = ContainerType::try_from(kind).map_err(|_| ())?;
                 Ok(ContainerID::Normal {
-                    counter,
-                    peer: client,
-                    container_type,
+                    peer: id.peer,
+                    counter: id.counter,
+                    container_type: kind,
                 })
             }
         }
@@ -328,18 +343,19 @@ impl Display for TreeID {
 }
 
 impl TryFrom<&str> for TreeID {
-    type Error = ();
+    type Error = LoroError;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut parts = value.split('@');
-        let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-        let peer = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-        Ok(TreeID { peer, counter })
+        let id = ID::try_from(value)?;
+        Ok(TreeID {
+            peer: id.peer,
+            counter: id.counter,
+        })
     }
 }
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use crate::TreeID;
+    use crate::{LoroError, TreeID};
     use wasm_bindgen::JsValue;
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {
@@ -348,13 +364,50 @@ pub mod wasm {
     }
 
     impl TryFrom<JsValue> for TreeID {
-        type Error = ();
+        type Error = LoroError;
         fn try_from(value: JsValue) -> Result<Self, Self::Error> {
             let id = value.as_string().unwrap();
-            let mut parts = id.split('@');
-            let counter = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-            let peer = parts.next().ok_or(())?.parse().map_err(|_| ())?;
-            Ok(TreeID { peer, counter })
+            TreeID::try_from(id.as_str())
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ContainerID;
+
+    #[test]
+    fn test_container_id_convert_to_and_from_str() {
+        let id = ContainerID::Root {
+            name: "name".into(),
+            container_type: crate::ContainerType::Map,
+        };
+        let id_str = id.to_string();
+        assert_eq!(id_str.as_str(), "cid:root-name:Map");
+        assert_eq!(ContainerID::try_from(id_str.as_str()).unwrap(), id);
+
+        let id = ContainerID::Normal {
+            counter: 10,
+            peer: 255,
+            container_type: crate::ContainerType::Map,
+        };
+        let id_str = id.to_string();
+        assert_eq!(id_str.as_str(), "cid:10@FF:Map");
+        assert_eq!(ContainerID::try_from(id_str.as_str()).unwrap(), id);
+
+        let id = ContainerID::try_from("cid:root-a:b:c:Tree").unwrap();
+        assert_eq!(
+            id,
+            ContainerID::new_root("a:b:c", crate::ContainerType::Tree)
+        );
+    }
+
+    #[test]
+    fn test_convert_invalid_container_id_str() {
+        assert!(ContainerID::try_from("cid:root-:Map").is_err());
+        assert!(ContainerID::try_from("cid:0@:Map").is_err());
+        assert!(ContainerID::try_from("cid:@:Map").is_err());
+        assert!(ContainerID::try_from("cid:x@0:Map").is_err());
+        assert!(ContainerID::try_from("id:0@0:Map").is_err());
     }
 }

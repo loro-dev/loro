@@ -11,13 +11,7 @@ export {
 import { Delta, PrelimMap } from "loro-wasm";
 import { PrelimText } from "loro-wasm";
 import { PrelimList } from "loro-wasm";
-import {
-  ContainerID,
-  Loro,
-  LoroList,
-  LoroMap,
-  LoroText,
-} from "loro-wasm";
+import { ContainerID, Loro, LoroList, LoroMap, LoroText } from "loro-wasm";
 
 export type { ContainerID, ContainerType } from "loro-wasm";
 
@@ -95,27 +89,7 @@ interface Listener {
 const CONTAINER_TYPES = ["Map", "Text", "List"];
 
 export function isContainerId(s: string): s is ContainerID {
-  try {
-    if (s.startsWith("/")) {
-      const [_, type] = s.slice(1).split(":");
-      if (!CONTAINER_TYPES.includes(type)) {
-        return false;
-      }
-    } else {
-      const [id, type] = s.split(":");
-      if (!CONTAINER_TYPES.includes(type)) {
-        return false;
-      }
-
-      const [counter, client] = id.split("@");
-      Number.parseInt(counter);
-      Number.parseInt(client);
-    }
-
-    return true;
-  } catch (e) {
-    return false;
-  }
+  return s.startsWith("cid:");
 }
 
 export { Loro };
@@ -142,40 +116,22 @@ declare module "loro-wasm" {
 
     get(index: number): Value;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
-    insertTyped<Key extends keyof T & number>(
-      pos: Key,
-      value: T[Key],
-    ): void;
+    insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
     insert(pos: number, value: Value | Prelim): void;
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
 
   interface LoroMap<T extends Record<string, any> = Record<string, any>> {
-    insertContainer(
-      key: string,
-      container_type: "Map",
-    ): LoroMap;
-    insertContainer(
-      key: string,
-      container_type: "List",
-    ): LoroList;
-    insertContainer(
-      key: string,
-      container_type: "Text",
-    ): LoroText;
-    insertContainer(
-      key: string,
-      container_type: string,
-    ): never;
+    insertContainer(key: string, container_type: "Map"): LoroMap;
+    insertContainer(key: string, container_type: "List"): LoroList;
+    insertContainer(key: string, container_type: "Text"): LoroText;
+    insertContainer(key: string, container_type: string): never;
 
     get(key: string): Value;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(key: string, value: Value | Prelim): void;
-    setTyped<Key extends keyof T & string>(
-      key: Key,
-      value: T[Key],
-    ): void;
+    setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
     delete(key: string): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
