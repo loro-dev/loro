@@ -604,6 +604,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     end,
                     key,
                     info,
+                    value,
                 } => {
                     debug_assert!(start < end, "start: {}, end: {}", start, end);
                     let style_id = self.styles.len();
@@ -612,6 +613,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         peer: op.peer,
                         cnt: op.id_start().counter,
                         key: key.clone(),
+                        value: value.clone(),
                         info: *info,
                     });
                     self.tracker.insert(

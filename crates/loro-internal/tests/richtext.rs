@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use loro_common::LoroValue;
 use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
 use serde_json::json;
 
@@ -57,8 +58,21 @@ fn delete(doc: &LoroDoc, pos: usize, len: usize) {
 
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| richtext.mark(txn, range.start, range.end, kind.key(), kind.flag()))
-        .unwrap();
+    doc.with_txn(|txn| {
+        richtext.mark(
+            txn,
+            range.start,
+            range.end,
+            kind.key(),
+            if kind.flag().is_delete() {
+                LoroValue::Null
+            } else {
+                true.into()
+            },
+            kind.flag(),
+        )
+    })
+    .unwrap();
 }
 
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
@@ -69,6 +83,7 @@ fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
             range.start,
             range.end,
             kind.key(),
+            false.into(),
             kind.flag().to_delete(),
         )
     })

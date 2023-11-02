@@ -369,6 +369,7 @@ impl ContainerState for RichtextState {
                     start,
                     end,
                     key,
+                    value,
                     info,
                 } => {
                     self.state.get_mut().mark_with_entity_index(
@@ -378,6 +379,7 @@ impl ContainerState for RichtextState {
                             peer: r_op.id.peer,
                             cnt: r_op.id.counter,
                             key: key.clone(),
+                            value: value.clone(),
                             info: *info,
                         }),
                     );
@@ -571,6 +573,7 @@ impl RichtextState {
                             peer: common.peer_ids[style_compact.peer_idx as usize],
                             cnt: style_compact.counter as Counter,
                             key: state_arena.keywords[style_compact.key_idx as usize].clone(),
+                            value: style_compact.value.clone(),
                             info: TextStyleInfoFlag::from_byte(style_compact.style_info),
                         }),
                         if is_start {
@@ -634,6 +637,7 @@ impl RichtextState {
                         counter: style.cnt as u32,
                         lamport: style.lamport,
                         style_info: style.info.to_byte(),
+                        value: style.value.clone(),
                     })
                 }
             }

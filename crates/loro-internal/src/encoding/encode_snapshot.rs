@@ -141,6 +141,7 @@ pub fn decode_oplog(
                                     start: start as u32,
                                     end: end as u32,
                                     key,
+                                    value: style.value.clone(),
                                     info: TextStyleInfoFlag::from_byte(info),
                                 }),
                                 container_idx,
@@ -360,6 +361,7 @@ struct OplogEncoded {
 struct StyleInfo {
     key_idx: u32,
     info: u8,
+    value: LoroValue,
 }
 
 impl OplogEncoded {
@@ -938,6 +940,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         end,
                         key,
                         info,
+                        value,
                     } => {
                         encoded_ops.push(EncodedSnapshotOp::from(
                             SnapshotOp::RichtextStyleStart {
@@ -949,6 +952,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         styles.push(StyleInfo {
                             key_idx: record_key(key) as u32,
                             info: info.to_byte(),
+                            value: value.clone(),
                         })
                     }
                     InnerListOp::StyleEnd => {

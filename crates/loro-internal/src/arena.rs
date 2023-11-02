@@ -144,6 +144,7 @@ impl<'a> OpConverter<'a> {
                     end,
                     info,
                     key,
+                    value,
                 } => Op {
                     counter,
                     container,
@@ -152,6 +153,7 @@ impl<'a> OpConverter<'a> {
                         end,
                         info,
                         key,
+                        value,
                     }),
                 },
                 ListOp::StyleEnd => Op {
@@ -448,6 +450,7 @@ impl SharedArena {
                     end,
                     info,
                     key,
+                    value,
                 } => Op {
                     counter,
                     container,
@@ -456,6 +459,7 @@ impl SharedArena {
                         end,
                         key,
                         info,
+                        value,
                     }),
                 },
                 ListOp::StyleEnd => Op {

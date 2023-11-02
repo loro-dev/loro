@@ -359,9 +359,12 @@ impl TextHandler {
         start: usize,
         end: usize,
         key: &str,
+        value: LoroValue,
         flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.mark(txn, start, end, key, flag))
+        with_txn(&self.txn, |txn| {
+            self.mark(txn, start, end, key, value, flag)
+        })
     }
 
     /// `start` and `end` are [Event Index]s:
@@ -374,6 +377,7 @@ impl TextHandler {
         start: usize,
         end: usize,
         key: &str,
+        value: LoroValue,
         flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
         if start >= end {
@@ -407,6 +411,7 @@ impl TextHandler {
                 start: entity_start as u32,
                 end: entity_end as u32,
                 key: key.into(),
+                value: value.clone(),
                 info: flag,
             }),
             EventHint::Mark {
@@ -415,14 +420,7 @@ impl TextHandler {
                 info: flag,
                 style: crate::container::richtext::Style {
                     key: key.into(),
-                    data: if flag.is_delete() {
-                        LoroValue::Bool(false)
-                    } else if flag.mergeable() {
-                        LoroValue::Bool(true)
-                    } else {
-                        // for non-mergeable type like comment.
-                        LoroValue::Null
-                    },
+                    data: value,
                 },
             },
             &self.state,
@@ -1178,7 +1176,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold", TextStyleInfoFlag::BOLD)
+            .mark(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 
@@ -1230,7 +1228,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold", TextStyleInfoFlag::BOLD)
+            .mark(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 

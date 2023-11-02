@@ -105,21 +105,13 @@ impl StyleMeta {
                 .map(|(key, value)| {
                     (
                         key.to_attr_key(),
-                        match &value.value {
-                            LoroValue::Null | LoroValue::Bool(_) => value.value.clone(),
-                            LoroValue::Map(_) => {
-                                let mut map: FxHashMap<String, LoroValue> = Default::default();
-                                map.insert("key".into(), key.key().to_string().into());
-                                map.insert("data".into(), value.value.clone());
-                                LoroValue::Map(Arc::new(map))
-                            }
-                            LoroValue::Container(_) => {
-                                let mut map: FxHashMap<String, LoroValue> = Default::default();
-                                map.insert("key".into(), key.key().to_string().into());
-                                map.insert("data".into(), LoroValue::Null);
-                                LoroValue::Map(Arc::new(map))
-                            }
-                            _ => unreachable!(),
+                        if key.contains_id() {
+                            let mut map: FxHashMap<String, LoroValue> = Default::default();
+                            map.insert("key".into(), key.key().to_string().into());
+                            map.insert("data".into(), value.value.clone());
+                            LoroValue::Map(Arc::new(map))
+                        } else {
+                            value.value.clone()
                         },
                     )
                 })

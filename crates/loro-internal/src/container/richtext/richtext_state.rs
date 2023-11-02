@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
@@ -33,7 +33,7 @@ use self::{
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
     style_range_map::{StyleRangeMap, Styles, EMPTY_STYLES},
-    AnchorType, RichtextSpan, Style, StyleOp,
+    AnchorType, RichtextSpan, StyleOp,
 };
 
 pub(crate) use query::PosType;
@@ -1714,13 +1714,19 @@ mod test {
     }
 
     fn bold(n: isize) -> Arc<StyleOp> {
-        Arc::new(StyleOp::new_for_test(n, "bold", TextStyleInfoFlag::BOLD))
+        Arc::new(StyleOp::new_for_test(
+            n,
+            "bold",
+            true.into(),
+            TextStyleInfoFlag::BOLD,
+        ))
     }
 
     fn comment(n: isize) -> Arc<StyleOp> {
         Arc::new(StyleOp::new_for_test(
             n,
             "comment",
+            "comment".into(),
             TextStyleInfoFlag::COMMENT,
         ))
     }
@@ -1729,12 +1735,18 @@ mod test {
         Arc::new(StyleOp::new_for_test(
             n,
             "bold",
+            LoroValue::Null,
             TextStyleInfoFlag::BOLD.to_delete(),
         ))
     }
 
     fn link(n: isize) -> Arc<StyleOp> {
-        Arc::new(StyleOp::new_for_test(n, "link", TextStyleInfoFlag::LINK))
+        Arc::new(StyleOp::new_for_test(
+            n,
+            "link",
+            true.into(),
+            TextStyleInfoFlag::LINK,
+        ))
     }
 
     #[test]
@@ -1962,7 +1974,7 @@ mod test {
                 {
                     "insert": " World!",
                     "attributes": {
-                        "bold": false
+                        "bold": null
                     }
                 }
             ])
@@ -1980,7 +1992,7 @@ mod test {
                 {
                     "insert": " World!",
                     "attributes": {
-                        "bold": false
+                        "bold": null
                     }
                 }
             ])
@@ -2002,7 +2014,7 @@ mod test {
                 {
                     "insert": " World!",
                     "attributes": {
-                        "bold": false
+                        "bold": null
                     }
                 }
             ])
@@ -2037,7 +2049,7 @@ mod test {
     }
 
     #[test]
-    fn comments() {
+    fn test_comments() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
         wrapper.mark(0..5, comment(0));
@@ -2050,7 +2062,7 @@ mod test {
                     "attributes": {
                         "id:0@0": {
                             "key": "comment",
-                            "data": null
+                            "data": "comment"
                         },
                     },
                 },
@@ -2059,11 +2071,11 @@ mod test {
                     "attributes": {
                         "id:0@0": {
                             "key": "comment",
-                            "data": null
+                            "data": "comment"
                         },
                         "id:1@1": {
                             "key": "comment",
-                            "data": null
+                            "data": "comment"
                         }
                     },
                 },
@@ -2073,7 +2085,7 @@ mod test {
                     "attributes": {
                         "id:1@1": {
                             "key": "comment",
-                            "data": null
+                            "data": "comment"
                         }
                     },
                 },

@@ -371,6 +371,7 @@ mod test {
             cnt: n,
             key: n.to_string().into(),
             info: TextStyleInfoFlag::default(),
+            value: loro_common::LoroValue::Bool(true),
         })
     }
 

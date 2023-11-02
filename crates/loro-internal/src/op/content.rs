@@ -60,11 +60,13 @@ impl<'a> RawOpContent<'a> {
                     start,
                     end,
                     key,
+                    value,
                     info,
                 } => RawOpContent::List(ListOp::StyleStart {
                     start: *start,
                     end: *end,
                     key: key.clone(),
+                    value: value.clone(),
                     info: *info,
                 }),
                 ListOp::StyleEnd => RawOpContent::List(ListOp::StyleEnd),

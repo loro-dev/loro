@@ -53,6 +53,7 @@ pub struct StyleOp {
     pub(crate) peer: PeerID,
     pub(crate) cnt: Counter,
     pub(crate) key: InternalString,
+    pub(crate) value: LoroValue,
     pub(crate) info: TextStyleInfoFlag,
 }
 
@@ -75,6 +76,10 @@ impl StyleKey {
             Self::Key(key) => key,
             Self::KeyWithId { key, .. } => key,
         }
+    }
+
+    pub fn contains_id(&self) -> bool {
+        matches!(self, Self::KeyWithId { .. })
     }
 }
 
@@ -105,17 +110,7 @@ impl StyleOp {
     }
 
     pub fn to_value(&self) -> LoroValue {
-        if self.info.is_delete() {
-            LoroValue::Bool(false)
-        } else if self.info.is_container() {
-            LoroValue::Container(loro_common::ContainerID::Normal {
-                peer: self.peer,
-                counter: self.cnt,
-                container_type: loro_common::ContainerType::Map,
-            })
-        } else {
-            LoroValue::Bool(true)
-        }
+        self.value.clone()
     }
 
     pub(crate) fn get_style_key(&self) -> StyleKey {
@@ -130,12 +125,13 @@ impl StyleOp {
     }
 
     #[cfg(test)]
-    pub fn new_for_test(n: isize, key: &str, info: TextStyleInfoFlag) -> Self {
+    pub fn new_for_test(n: isize, key: &str, value: LoroValue, info: TextStyleInfoFlag) -> Self {
         Self {
             lamport: n as Lamport,
             peer: n as PeerID,
             cnt: n as Counter,
             key: key.to_string().into(),
+            value,
             info,
         }
     }
@@ -223,6 +219,35 @@ impl ExpandType {
     #[inline(always)]
     pub const fn expand_after(&self) -> bool {
         matches!(self, ExpandType::After | ExpandType::Both)
+    }
+
+    /// 'before'|'after'|'both'|'none'
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "before" => Some(ExpandType::Before),
+            "after" => Some(ExpandType::After),
+            "both" => Some(ExpandType::Both),
+            "none" => Some(ExpandType::None),
+            _ => None,
+        }
+    }
+
+    /// Create reversed expand type.
+    ///
+    /// Beofre  -> After
+    /// After   -> Before
+    /// Both    -> None
+    /// None    -> Both
+    ///
+    /// Because the creation of text styles and the deletion of the text styles have reversed expand type.
+    /// This method is useful to convert between the two
+    pub fn reverse(self) -> Self {
+        match self {
+            ExpandType::Before => ExpandType::After,
+            ExpandType::After => ExpandType::Before,
+            ExpandType::Both => ExpandType::None,
+            ExpandType::None => ExpandType::Both,
+        }
     }
 }
 

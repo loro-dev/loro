@@ -450,11 +450,13 @@ impl OpLog {
                     start,
                     end,
                     key,
+                    value,
                     info,
                 } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
                     start: *start,
                     end: *end,
                     key: key.clone(),
+                    value: value.clone(),
                     info: *info,
                 })),
                 list_op::InnerListOp::StyleEnd => {
