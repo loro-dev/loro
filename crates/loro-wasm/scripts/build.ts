@@ -29,17 +29,20 @@ async function build() {
     return;
   }
 
-  await Promise.all(TARGETS.map((target) => {
-    return buildTarget(target);
-  }));
+  await Promise.all(
+    TARGETS.map((target) => {
+      return buildTarget(target);
+    }),
+  );
 
   if (profile !== "dev") {
-    await Promise.all(TARGETS.map(async (target) => {
-      const cmd =
-        `wasm-opt -O4 ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
-      console.log(">", cmd);
-      await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
-    }));
+    await Promise.all(
+      TARGETS.map(async (target) => {
+        const cmd = `wasm-opt -O4 ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
+        console.log(">", cmd);
+        await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
+      }),
+    );
   }
 
   console.log(
@@ -51,8 +54,7 @@ async function build() {
 }
 
 async function cargoBuild() {
-  const cmd =
-    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+  const cmd = `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
   console.log(cmd);
   const status = await Deno.run({
     cmd: cmd.split(" "),
@@ -80,8 +82,7 @@ async function buildTarget(target: string) {
   }
 
   // TODO: polyfill FinalizationRegistry
-  const cmd =
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+  const cmd = `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
