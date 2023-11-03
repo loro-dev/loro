@@ -203,12 +203,6 @@ impl OpLog {
             Some(last) => {
                 assert_eq!(change.id.counter, last.ctr_end());
                 let timestamp_change = change.timestamp - last.timestamp;
-                debug_log::debug_dbg!(
-                    timestamp_change,
-                    &change,
-                    change.deps_on_self(),
-                    last.has_dependents,
-                );
                 if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
@@ -694,7 +688,8 @@ impl OpLog {
     ///
     /// returns: (common_ancestor_vv, iterator)
     ///
-    /// Note: the change returned by the iterator may include redundant ops at the beginning
+    /// Note: the change returned by the iterator may include redundant ops at the beginning, you should trim it by yourself.
+    /// You can trim it by the provided counter value. It should start with the counter.
     ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
     pub(crate) fn iter_from_lca_causally(

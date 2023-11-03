@@ -321,6 +321,7 @@ fn test_timestamp() {
 #[test]
 fn test_text_checkout() {
     let mut doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
     text.insert(&mut txn, 0, "你界").unwrap();
