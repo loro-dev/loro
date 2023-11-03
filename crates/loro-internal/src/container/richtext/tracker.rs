@@ -76,7 +76,7 @@ impl Tracker {
             return;
         }
 
-        debug_log::group!("before insert {} pos={}", op_id, pos);
+        // debug_log::group!("before insert {} pos={}", op_id, pos);
         // debug_log::debug_dbg!(&self);
         let result = self.rope.insert(
             pos,
@@ -101,13 +101,13 @@ impl Tracker {
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
         // debug_log::debug_dbg!(&self);
-        debug_log::group_end!();
+        // debug_log::group_end!();
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
         for &new_leaf_idx in split {
             let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
-            debug_log::debug_dbg!(&leaf.id_span(), new_leaf_idx);
+            // debug_log::debug_dbg!(&leaf.id_span(), new_leaf_idx);
             self.id_to_cursor
                 .update_insert(leaf.id_span(), new_leaf_idx)
         }
@@ -229,7 +229,6 @@ impl Tracker {
         self._checkout(to, true);
         // debug_log::debug_dbg!(from, to, &self);
         // self.id_to_cursor.diagnose();
-        debug_log::debug_dbg!(&self);
         self.rope.get_diff()
     }
 }

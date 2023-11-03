@@ -21,7 +21,7 @@ pub(crate) use encode_updates::encode_oplog_updates;
 pub(crate) const COMPRESS_RLE_THRESHOLD: usize = 20 * 1024;
 // TODO: Test this threshold
 #[cfg(not(test))]
-pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 512;
+pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 32;
 #[cfg(test)]
 pub(crate) const UPDATE_ENCODE_THRESHOLD: usize = 16;
 pub(crate) const MAGIC_BYTES: [u8; 4] = [0x6c, 0x6f, 0x72, 0x6f];
@@ -121,7 +121,6 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroEr
 
     let mode: EncodeMode = input[0].try_into()?;
     let decoded = &input[1..];
-    debug_log::debug_dbg!(&mode);
     match mode {
         EncodeMode::Updates => decode_oplog_updates(oplog, decoded),
         EncodeMode::Snapshot => unimplemented!(),

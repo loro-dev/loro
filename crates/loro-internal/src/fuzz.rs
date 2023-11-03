@@ -1,11 +1,22 @@
 pub mod recursive_refactored;
 pub mod tree;
 
-use crate::{array_mut_ref, container::richtext::TextStyleInfoFlag, loro::LoroDoc};
+use crate::{
+    array_mut_ref,
+    container::richtext::TextStyleInfoFlag,
+    delta::{Delta, DeltaItem, StyleMeta},
+    loro::LoroDoc,
+    state::ContainerState,
+    utils::string_slice::StringSlice,
+};
 use debug_log::debug_log;
 use enum_as_inner::EnumAsInner;
-use loro_common::LoroValue;
-use std::{fmt::Debug, time::Instant};
+use loro_common::{ContainerID, LoroValue};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use tabled::{TableIteratorExt, Tabled};
 
 const STYLES: [TextStyleInfoFlag; 8] = [
@@ -323,7 +334,7 @@ pub fn change_pos_to_char_boundary(pos: &mut usize, len: usize) {
     *pos %= len + 1;
 }
 
-fn check_synced_refactored(sites: &mut [LoroDoc]) {
+fn check_synced(sites: &mut [LoroDoc], texts: &[Arc<Mutex<Delta<StringSlice, StyleMeta>>>]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);
@@ -346,6 +357,25 @@ fn check_synced_refactored(sites: &mut [LoroDoc]) {
             }
             check_eq(a, b);
             debug_log::group_end!();
+
+            // for (x, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
+            //     if x != i && x != j {
+            //         continue;
+            //     }
+
+            //     debug_log::group!("Check {}", x);
+            //     let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
+            //     let mut diff = diff.into_text().unwrap();
+            //     compact(&mut diff);
+            //     let mut text = text.lock().unwrap();
+            //     compact(&mut text);
+            //     assert_eq!(
+            //         &diff, &*text,
+            //         "site:{}\nEXPECTED {:#?}\nACTUAL {:#?}",
+            //         x, diff, text
+            //     );
+            //     debug_log::group_end!();
+            // }
         }
     }
 }
@@ -479,11 +509,31 @@ where
     }
 }
 
-pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
+pub fn test_multi_sites(site_num: u8, actions: &mut [Action]) {
     let mut sites = Vec::new();
+    let mut texts = Vec::new();
     for i in 0..site_num {
         let loro = LoroDoc::new();
+        let text: Arc<Mutex<Delta<StringSlice, StyleMeta>>> = Arc::new(Mutex::new(Delta::new()));
+        let text_clone = text.clone();
         loro.set_peer_id(i as u64).unwrap();
+        loro.subscribe(
+            &ContainerID::new_root("text", loro_common::ContainerType::Text),
+            Arc::new(move |event| {
+                if let crate::event::Diff::Text(t) = &event.container.diff {
+                    let mut text = text_clone.lock().unwrap();
+                    debug_log::debug_log!(
+                        "RECEIVE site:{} event:{:#?}\nCURRENT: {:#?}",
+                        i,
+                        t,
+                        &text
+                    );
+                    *text = text.clone().compose(t.clone());
+                    debug_log::debug_log!("new:{:#?}", &text);
+                }
+            }),
+        );
+        texts.push(text);
         sites.push(loro);
     }
 
@@ -495,12 +545,87 @@ pub fn test_multi_sites_refactored(site_num: u8, actions: &mut [Action]) {
         debug_log::group!("ApplyAction {:?}", &action);
         sites.apply_action(action);
         debug_log::group_end!();
+
+        // for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
+        //     debug_log::group!("Check {}", i);
+        //     let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
+        //     let mut diff = diff.into_text().unwrap();
+        //     compact(&mut diff);
+        //     let mut text = text.lock().unwrap();
+        //     compact(&mut text);
+        //     assert_eq!(
+        //         &diff, &*text,
+        //         "site:{}\nEXPECTED{:#?}\nACTUAL{:#?}",
+        //         i, diff, text
+        //     );
+        //     debug_log::group_end!();
+        // }
     }
 
     debug_log::group!("CheckSynced");
     // println!("{}", actions.table());
-    check_synced_refactored(&mut sites);
+    check_synced(&mut sites, &texts);
     debug_log::group_end!();
+    debug_log::group!("CheckTextEvent");
+    for (i, (site, text)) in sites.iter().zip(texts.iter()).enumerate() {
+        debug_log::group!("Check {}", i);
+        let diff = site.get_text("text").with_state_mut(|s| s.to_diff());
+        let mut diff = diff.into_text().unwrap();
+        compact(&mut diff);
+        let mut text = text.lock().unwrap();
+        compact(&mut text);
+        assert_eq!(
+            &diff, &*text,
+            "site:{}\nEXPECTED{:#?}\nACTUAL{:#?}",
+            i, diff, text
+        );
+        debug_log::group_end!();
+    }
+
+    debug_log::group_end!();
+}
+
+pub fn compact(delta: &mut Delta<StringSlice, StyleMeta>) {
+    let mut ops: Vec<DeltaItem<StringSlice, StyleMeta>> = vec![];
+    for op in delta.vec.drain(..) {
+        match (ops.last_mut(), op) {
+            (
+                Some(DeltaItem::Retain {
+                    retain: last_retain,
+                    attributes: last_attr,
+                }),
+                DeltaItem::Retain { retain, attributes },
+            ) if &attributes == last_attr => {
+                *last_retain += retain;
+            }
+            (
+                Some(DeltaItem::Insert {
+                    insert: last_insert,
+                    attributes: last_attr,
+                }),
+                DeltaItem::Insert { insert, attributes },
+            ) if last_attr == &attributes => {
+                last_insert.extend(insert.as_str());
+            }
+            (
+                Some(DeltaItem::Delete {
+                    delete: last_delete,
+                    attributes: _,
+                }),
+                DeltaItem::Delete {
+                    delete,
+                    attributes: _,
+                },
+            ) => {
+                *last_delete += delete;
+            }
+            (_, a) => {
+                ops.push(a);
+            }
+        }
+    }
+
+    delta.vec = ops;
 }
 
 #[cfg(test)]
@@ -510,7 +635,7 @@ mod test {
 
     #[test]
     fn fuzz_r1() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -540,7 +665,7 @@ mod test {
 
     #[test]
     fn fuzz_r() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -795,7 +920,7 @@ mod test {
 
     #[test]
     fn new_encode() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -836,7 +961,7 @@ mod test {
 
     #[test]
     fn snapshot() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -860,7 +985,7 @@ mod test {
 
     #[test]
     fn snapshot_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -1185,7 +1310,7 @@ mod test {
 
     #[test]
     fn checkout() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             4,
             &mut [
                 Ins {
@@ -1210,7 +1335,7 @@ mod test {
 
     #[test]
     fn text_fuzz_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             8,
             &mut [
                 Ins {
@@ -1274,7 +1399,7 @@ mod test {
 
     #[test]
     fn text_fuzz_3() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             2,
             &mut [
                 Ins {
@@ -1398,7 +1523,7 @@ mod test {
 
     #[test]
     fn text_fuzz_4() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             2,
             &mut [
                 Ins {
@@ -1821,7 +1946,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_0() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1847,7 +1972,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_1() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1879,7 +2004,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_2() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Del {
@@ -1916,7 +2041,7 @@ mod test {
 
     #[test]
     fn richtext_fuzz_3() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [Del {
                 pos: 36310271995488768,
@@ -1928,7 +2053,7 @@ mod test {
 
     #[test]
     fn fuzz_4() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1952,7 +2077,7 @@ mod test {
 
     #[test]
     fn fuzz_5() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -1986,7 +2111,7 @@ mod test {
 
     #[test]
     fn fuzz_6() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -2064,7 +2189,7 @@ mod test {
 
     #[test]
     fn fuzz_7() {
-        test_multi_sites_refactored(
+        test_multi_sites(
             5,
             &mut [
                 Ins {
@@ -2094,9 +2219,38 @@ mod test {
     }
 
     #[test]
+    fn fuzz_8() {
+        test_multi_sites(
+            5,
+            &mut [
+                Ins {
+                    content: 0,
+                    pos: 16384000,
+                    site: 0,
+                },
+                Mark {
+                    pos: 4503599627370752,
+                    len: 14829735428355981312,
+                    site: 0,
+                    style_key: 0,
+                },
+                Ins {
+                    content: 52685,
+                    pos: 3474262130214096333,
+                    site: 128,
+                },
+                Mark {
+                    pos: 3607102274975328360,
+                    len: 7812629349709198644,
+                    site: 108,
+                    style_key: 108,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
-        minify_error(5, vec![], test_multi_sites_refactored, |_, ans| {
-            ans.to_vec()
-        })
+        minify_error(5, vec![], test_multi_sites, |_, ans| ans.to_vec())
     }
 }

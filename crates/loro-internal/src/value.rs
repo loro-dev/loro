@@ -49,7 +49,10 @@ impl ToJson for LoroValue {
 impl ToJson for DeltaItem<StringSlice, StyleMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         match self {
-            DeltaItem::Retain { len, meta } => {
+            DeltaItem::Retain {
+                retain: len,
+                attributes: meta,
+            } => {
                 let mut map = serde_json::Map::new();
                 map.insert("retain".into(), serde_json::to_value(len).unwrap());
                 if !meta.is_empty() {
@@ -57,7 +60,10 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
                 }
                 serde_json::Value::Object(map)
             }
-            DeltaItem::Insert { value, meta } => {
+            DeltaItem::Insert {
+                insert: value,
+                attributes: meta,
+            } => {
                 let mut map = serde_json::Map::new();
                 map.insert("insert".into(), serde_json::to_value(value).unwrap());
                 if !meta.is_empty() {
@@ -65,7 +71,10 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
                 }
                 serde_json::Value::Object(map)
             }
-            DeltaItem::Delete { len, meta: _ } => {
+            DeltaItem::Delete {
+                delete: len,
+                attributes: _,
+            } => {
                 let mut map = serde_json::Map::new();
                 map.insert("delete".into(), serde_json::to_value(len).unwrap());
                 serde_json::Value::Object(map)
@@ -83,8 +92,8 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
                 StyleMeta::default()
             };
             DeltaItem::Retain {
-                len: len as usize,
-                meta,
+                retain: len as usize,
+                attributes: meta,
             }
         } else if map.contains_key("insert") {
             let value = map["insert"].as_str().unwrap().to_string().into();
@@ -93,12 +102,15 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
             } else {
                 StyleMeta::default()
             };
-            DeltaItem::Insert { value, meta }
+            DeltaItem::Insert {
+                insert: value,
+                attributes: meta,
+            }
         } else if map.contains_key("delete") {
             let len = map["delete"].as_u64().unwrap();
             DeltaItem::Delete {
-                len: len as usize,
-                meta: Default::default(),
+                delete: len as usize,
+                attributes: Default::default(),
             }
         } else {
             panic!("Invalid delta item: {}", s);
@@ -148,14 +160,14 @@ impl ApplyDiff for LoroValue {
                     let mut index = 0;
                     for delta_item in delta.iter() {
                         match delta_item {
-                            DeltaItem::Retain { len, .. } => {
+                            DeltaItem::Retain { retain: len, .. } => {
                                 index += len;
                             }
-                            DeltaItem::Insert { value, .. } => {
+                            DeltaItem::Insert { insert: value, .. } => {
                                 s.insert_str(index, value.as_str());
                                 index += value.len_bytes();
                             }
-                            DeltaItem::Delete { len, .. } => {
+                            DeltaItem::Delete { delete: len, .. } => {
                                 s.drain(index..index + len);
                             }
                         }
@@ -170,17 +182,17 @@ impl ApplyDiff for LoroValue {
                     let mut index = 0;
                     for delta_item in delta.iter() {
                         match delta_item {
-                            DeltaItem::Retain { len, .. } => {
+                            DeltaItem::Retain { retain: len, .. } => {
                                 index += len;
                             }
-                            DeltaItem::Insert { value, .. } => {
+                            DeltaItem::Insert { insert: value, .. } => {
                                 value.iter().for_each(|v| {
                                     let value = unresolved_to_collection(v);
                                     seq.insert(index, value);
                                     index += 1;
                                 });
                             }
-                            DeltaItem::Delete { len, .. } => {
+                            DeltaItem::Delete { delete: len, .. } => {
                                 seq.drain(index..index + len);
                             }
                         }
@@ -578,7 +590,10 @@ pub mod wasm {
         fn from(value: DeltaItem<StringSlice, StyleMeta>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len, meta } => {
+                DeltaItem::Retain {
+                    retain: len,
+                    attributes: meta,
+                } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("retain"),
@@ -594,7 +609,10 @@ pub mod wasm {
                         .unwrap();
                     }
                 }
-                DeltaItem::Insert { value, meta } => {
+                DeltaItem::Insert {
+                    insert: value,
+                    attributes: meta,
+                } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("insert"),
@@ -610,7 +628,10 @@ pub mod wasm {
                         .unwrap();
                     }
                 }
-                DeltaItem::Delete { len, meta: _ } => {
+                DeltaItem::Delete {
+                    delete: len,
+                    attributes: _,
+                } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("delete"),
@@ -649,7 +670,7 @@ pub mod wasm {
         fn from(value: DeltaItem<Vec<LoroValue>, ()>) -> Self {
             let obj = Object::new();
             match value {
-                DeltaItem::Retain { len, .. } => {
+                DeltaItem::Retain { retain: len, .. } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("retain"),
@@ -657,7 +678,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Insert { value, .. } => {
+                DeltaItem::Insert { insert: value, .. } => {
                     let arr = Array::new_with_length(value.len() as u32);
                     for (i, v) in value.into_iter().enumerate() {
                         arr.set(i as u32, convert(v));
@@ -670,7 +691,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                DeltaItem::Delete { len, .. } => {
+                DeltaItem::Delete { delete: len, .. } => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("delete"),

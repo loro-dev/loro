@@ -1,19 +1,8 @@
-export {
-  LoroList,
-  LoroMap,
-  LoroText,
-  PrelimList,
-  PrelimMap,
-  PrelimText,
-  Delta,
-  setPanicHook,
-} from "loro-wasm";
+export * from "loro-wasm";
 import { Delta, PrelimMap } from "loro-wasm";
 import { PrelimText } from "loro-wasm";
 import { PrelimList } from "loro-wasm";
 import { ContainerID, Loro, LoroList, LoroMap, LoroText } from "loro-wasm";
-
-export type { ContainerID, ContainerType } from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);

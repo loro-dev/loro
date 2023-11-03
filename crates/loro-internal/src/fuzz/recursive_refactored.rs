@@ -110,10 +110,16 @@ impl Actor {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
-                                DeltaItem::Retain { len, meta: _ } => {
+                                DeltaItem::Retain {
+                                    retain: len,
+                                    attributes: _,
+                                } => {
                                     index += len;
                                 }
-                                DeltaItem::Insert { value, meta: _ } => {
+                                DeltaItem::Insert {
+                                    insert: value,
+                                    attributes: _,
+                                } => {
                                     let utf8_index = if cfg!(feature = "wasm") {
                                         utf16_to_utf8_index(&text, index).unwrap()
                                     } else {
@@ -122,7 +128,7 @@ impl Actor {
                                     text.insert_str(utf8_index, value.as_str());
                                     index += value.len_unicode();
                                 }
-                                DeltaItem::Delete { len, .. } => {
+                                DeltaItem::Delete { delete: len, .. } => {
                                     text.drain(index..index + *len);
                                 }
                             }
@@ -171,16 +177,22 @@ impl Actor {
                     let mut index = 0;
                     for item in delta.iter() {
                         match item {
-                            DeltaItem::Retain { len, meta: _ } => {
+                            DeltaItem::Retain {
+                                retain: len,
+                                attributes: _,
+                            } => {
                                 index += len;
                             }
-                            DeltaItem::Insert { value, meta: _ } => {
+                            DeltaItem::Insert {
+                                insert: value,
+                                attributes: _,
+                            } => {
                                 for v in value {
                                     list.insert(index, v.clone());
                                     index += 1;
                                 }
                             }
-                            DeltaItem::Delete { len, .. } => {
+                            DeltaItem::Delete { delete: len, .. } => {
                                 list.drain(index..index + *len);
                             }
                         }
