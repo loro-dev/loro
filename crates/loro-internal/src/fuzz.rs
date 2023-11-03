@@ -334,7 +334,7 @@ pub fn change_pos_to_char_boundary(pos: &mut usize, len: usize) {
     *pos %= len + 1;
 }
 
-fn check_synced(sites: &mut [LoroDoc], texts: &[Arc<Mutex<Delta<StringSlice, StyleMeta>>>]) {
+fn check_synced(sites: &mut [LoroDoc], _: &[Arc<Mutex<Delta<StringSlice, StyleMeta>>>]) {
     for i in 0..sites.len() - 1 {
         for j in i + 1..sites.len() {
             debug_log::group!("checking {} with {}", i, j);

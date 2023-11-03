@@ -9,7 +9,7 @@ use serde::{ser::SerializeStruct, Serialize};
 use std::fmt::{Display, Formatter};
 use std::{
     ops::{Add, AddAssign, Range, Sub},
-    str::{from_utf8_unchecked, Utf8Error},
+    str::Utf8Error,
     sync::Arc,
 };
 
@@ -32,7 +32,7 @@ use self::{
 
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
-    style_range_map::{StyleRangeMap, Styles, EMPTY_STYLES},
+    style_range_map::{StyleRangeMap, Styles},
     AnchorType, RichtextSpan, StyleOp,
 };
 
@@ -1447,97 +1447,6 @@ impl RichtextState {
         // 2. We need to include the end anchor in the range, so we need to +1
         self.style_ranges
             .annotate(range.start..range.end + 2, style);
-    }
-
-    // FIXME: tests (unstable)
-    /// iter item is (event_length, styles)
-    pub fn iter_styles_in_event_index_range(
-        &self,
-        target_event_range: Range<usize>,
-    ) -> impl Iterator<Item = (usize, &Styles)> + '_ {
-        let start = self
-            .tree
-            .query::<EventIndexQuery>(&target_event_range.start);
-        let start_entity_index = match start {
-            Some(start) => self.get_entity_index_from_path(start.cursor),
-            None => 0,
-        };
-
-        let mut event_index = target_event_range.start;
-        let mut entity_index = start_entity_index;
-        let mut style_range_iter = self.style_ranges.iter_from(start_entity_index);
-        let mut cur_style_range = style_range_iter
-            .next()
-            .unwrap_or_else(|| (start_entity_index..usize::MAX, &EMPTY_STYLES));
-        let mut text_iter = self.tree.iter_range(
-            start.map(|x| x.cursor).unwrap_or_else(|| Cursor {
-                leaf: self.tree.first_leaf().unwrap_leaf().into(),
-                offset: 0,
-            })..,
-        );
-        let mut last_emit_event_index = target_event_range.start;
-        std::iter::from_fn(move || loop {
-            if entity_index >= cur_style_range.0.end {
-                let ans = cur_style_range.1;
-                cur_style_range = style_range_iter
-                    .next()
-                    .unwrap_or_else(|| (entity_index..usize::MAX, &EMPTY_STYLES));
-                let len = event_index - last_emit_event_index;
-                last_emit_event_index = event_index;
-                return Some((len, ans));
-            }
-
-            if event_index >= target_event_range.end {
-                if last_emit_event_index < target_event_range.end {
-                    let ans = cur_style_range.1;
-                    let len = target_event_range.end - last_emit_event_index;
-                    last_emit_event_index = target_event_range.end;
-                    return Some((len, ans));
-                } else {
-                    return None;
-                }
-            }
-
-            let Some(slice) = text_iter.next() else {
-                if event_index > last_emit_event_index {
-                    let ans = cur_style_range.1;
-                    let len = event_index - last_emit_event_index;
-                    last_emit_event_index = event_index;
-                    return Some((len, ans));
-                } else {
-                    return None;
-                }
-            };
-
-            let start_offset = slice.start.unwrap_or(0);
-            let elem = slice.elem;
-            match elem {
-                RichtextStateChunk::Text { unicode_len, text } => {
-                    event_index += if cfg!(feature = "wasm") {
-                        if start_offset == 0 {
-                            count_utf16_chars(text)
-                        } else {
-                            let offset = unicode_to_utf8_index(
-                                // SAFETY: we know that the text is valid utf8
-                                unsafe { from_utf8_unchecked(text) },
-                                start_offset,
-                            )
-                            .unwrap();
-                            count_utf16_chars(&text[offset..])
-                        }
-                    } else if start_offset == 0 {
-                        *unicode_len as usize
-                    } else {
-                        *unicode_len as usize - start_offset
-                    };
-
-                    entity_index += *unicode_len as usize;
-                }
-                RichtextStateChunk::Style { .. } => {
-                    entity_index += 1;
-                }
-            }
-        })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan> + '_ {
