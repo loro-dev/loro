@@ -92,13 +92,11 @@ impl TreeDiffCache {
     // Because importing the local op must not cause circular references, it has been checked.
     pub(crate) fn add_node_uncheck(&mut self, node: MoveLamportAndID) {
         if !self.all_version.includes_id(node.id) {
-            // TODO: update deleted cache
             let old_parent = self.get_parent(node.target);
 
             self.update_deleted_cache(node.target, node.parent, old_parent);
 
             self.cache.entry(node.target).or_default().insert(node);
-            // assert len == 1
             self.current_version.set_last(node.id);
             self.all_version.set_last(node.id);
         }
@@ -150,8 +148,10 @@ impl TreeDiffCache {
         debug_log::debug_log!("apply ops {:?}", apply_ops);
         for op in apply_ops.into_iter() {
             let old_parent = self.get_parent(op.target);
-            let is_parent_deleted = op.parent.is_some_and(|x| self.is_deleted(&x));
-            let is_old_parent_deleted = old_parent.is_some_and(|x| self.is_deleted(&x));
+            let is_parent_deleted =
+                op.parent.is_some() && self.is_deleted(op.parent.as_ref().unwrap());
+            let is_old_parent_deleted =
+                old_parent.is_some() && self.is_deleted(old_parent.as_ref().unwrap());
             let effected = self.apply(op);
             if effected {
                 // we need to know whether op.parent is deleted
@@ -187,14 +187,10 @@ impl TreeDiffCache {
     }
 
     fn checkout(&mut self, vv: &VersionVector, min_lamport: Lamport, max_lamport: Lamport) {
-        // TODO: use all as max
-
+        // TODO: use all as max, because from version may contain `meta op`, current version != from version
         if vv == &self.current_version {
             return;
         }
-        // let same = true;
-        // self.current_version.get_missing_span(vv).iter().all(|id_span|)
-
         self.retreat(vv, min_lamport);
         let apply_ops = self.forward(vv, max_lamport);
         for op in apply_ops {
@@ -286,9 +282,10 @@ impl TreeDiffCache {
             let old_parent = self.get_parent(op.target);
             if op.effected {
                 // we need to know whether old_parent is deleted
-
-                let is_parent_deleted = op.parent.is_some_and(|x| self.is_deleted(&x));
-                let is_old_parent_deleted = old_parent.is_some_and(|x| self.is_deleted(&x));
+                let is_parent_deleted =
+                    op.parent.is_some() && self.is_deleted(op.parent.as_ref().unwrap());
+                let is_old_parent_deleted =
+                    old_parent.is_some() && self.is_deleted(old_parent.as_ref().unwrap());
                 let this_diff = TreeDiff::new(
                     op.target,
                     old_parent,

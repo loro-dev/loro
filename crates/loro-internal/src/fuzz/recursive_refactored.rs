@@ -91,18 +91,10 @@ impl Actor {
             let mut root_value = root_value.lock().unwrap();
             debug_log::debug_dbg!(&event.container);
             debug_log::debug_dbg!(&root_value);
-            // if id == 1 {
-            //     println!("\nbefore {:?}", root_value);
-            //     println!("\nevent {:?}", event.doc.diff);
-            // }
-
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
             );
-            // if id == 1 {
-            //     println!("\nafter {:?}", root_value);
-            // }
             debug_log::debug_dbg!(&root_value);
         }));
 
@@ -743,14 +735,6 @@ fn check_synced(sites: &mut [Actor]) {
 
 fn check_history(actor: &mut Actor) {
     assert!(!actor.history.is_empty());
-    // for (k, v) in actor.history.iter() {
-    //     println!(
-    //         "{:?} {:?}",
-    //         actor.loro.frontiers_to_vv(&Frontiers::from(k)),
-    //         v
-    //     );
-    // }
-
     for (_, (f, v)) in actor.history.iter().enumerate() {
         let f = Frontiers::from(f);
         debug_log::group!(
@@ -758,14 +742,7 @@ fn check_history(actor: &mut Actor) {
             &actor.loro.state_frontiers(),
             &f
         );
-        // println!(
-        //     "\ncheckout from {:?} to {:?}",
-        //     &actor.loro.state_vv(),
-        //     actor.loro.frontiers_to_vv(&f)
-        // );
-        // println!("checkout before {:?}", actor.loro.get_deep_value());
         actor.loro.checkout(&f).unwrap();
-        // println!("checkout after {:?}", actor.loro.get_deep_value());
         let actual = actor.loro.get_deep_value();
         assert_value_eq(v, &actual);
         assert_value_eq(v, &actor.value_tracker.lock().unwrap());

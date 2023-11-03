@@ -192,7 +192,7 @@ impl DiffCalculator {
             }
         };
 
-        // Because we need to get correct `reset` value that indicates container is created during this round of diff calc,
+        // Because we need to get correct `bring_back` value that indicates container is created during this round of diff calc,
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
         let mut new_containers = FxHashSet::default();
         let mut container_id_to_depth = FxHashMap::default();
@@ -231,18 +231,7 @@ impl DiffCalculator {
                         }
                     }
                 }
-                // println!("depth {} idx {:?}", depth, idx);
                 let id = oplog.arena.idx_to_id(idx).unwrap();
-
-                // new_containers.retain(|x: &(u16, ContainerID)| {
-                //     if x.1 != id {
-                //         true
-                //     } else {
-                //         println!("new delete {:?}", x.1);
-                //         bring_back = true;
-                //         false
-                //     }
-                // });
                 let bring_back = new_containers.remove(&id);
 
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
@@ -267,8 +256,6 @@ impl DiffCalculator {
             }
 
             debug_log::debug_dbg!(&new_containers);
-            // reset left new_containers
-
             if len == all.len() {
                 debug_log::debug_log!("Container might be deleted");
                 debug_log::debug_dbg!(&all);
@@ -288,8 +275,6 @@ impl DiffCalculator {
                     continue;
                 }
                 let depth = container_id_to_depth.remove(&id).unwrap();
-                // this can override the previous diff with `reset = false`
-                // otherwise, the diff event will be incorrect
                 ans.insert(
                     idx,
                     (

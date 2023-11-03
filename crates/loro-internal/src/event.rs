@@ -188,24 +188,6 @@ impl InternalDiff {
         }
     }
 
-    pub(crate) fn concat(self, other: InternalDiff) -> Self {
-        match (self, other) {
-            (InternalDiff::SeqRaw(a), InternalDiff::SeqRaw(b)) => InternalDiff::SeqRaw(a.concat(b)),
-            (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
-                InternalDiff::RichtextRaw(a.concat(b))
-            }
-            (InternalDiff::Map(a), InternalDiff::Map(b)) => {
-                let mut a = a;
-                for (k, v) in b.updated {
-                    a = a.with_entry(k, v)
-                }
-                InternalDiff::Map(a)
-            }
-            (InternalDiff::Tree(a), InternalDiff::Tree(b)) => InternalDiff::Tree(a.extend(b)),
-            (a, _) => unreachable!(),
-        }
-    }
-
     pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
@@ -236,9 +218,7 @@ impl Diff {
     }
 
     pub(crate) fn concat(self, diff: Diff) -> Diff {
-        // print!("\ndiff concat {:?} and {:?} ", self, diff);
-        // PERF: avoid clone
-        let ans = match (self, diff) {
+        match (self, diff) {
             (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
             (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
             (Diff::NewMap(a), Diff::NewMap(b)) => {
@@ -251,8 +231,6 @@ impl Diff {
 
             (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b)),
             _ => unreachable!(),
-        };
-        // println!("=ans {:?}", ans);
-        ans
+        }
     }
 }

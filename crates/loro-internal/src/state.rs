@@ -8,7 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    event::{Diff, DiffVariant, Index},
+    event::{Diff, Index},
     event::{InternalContainerDiff, InternalDiff},
     fx_map,
     id::PeerID,
@@ -237,10 +237,9 @@ impl DocState {
         };
         // TODO: avoid inner insert
         // TODO: avoid empty bring back
-        // println!("Inner {:?}", inner);
         let mut idx2state_diff = FxHashMap::default();
         let mut current_inner_idx = 0;
-        // cache from version state
+        // cache current version state
         loop {
             let (idx, bring_back) = {
                 let Some(diff) = inner.get_mut(current_inner_idx) else {
@@ -257,7 +256,7 @@ impl DocState {
             }
             current_inner_idx += 1;
         }
-        // println!("\nexternal DIFF {:?}", inner);
+        // apply diff
         let mut current_inner_idx = 0;
         let is_recording = self.is_recording();
         loop {
@@ -284,11 +283,6 @@ impl DocState {
                 // process bring_back before apply
                 let external_diff = if bring_back {
                     let state_diff = idx2state_diff.remove(&idx).unwrap();
-                    // println!(
-                    //     "1state {:?} apply diff {:?}",
-                    //     idx,
-                    //     internal_diff.clone().into_internal().unwrap()
-                    // );
                     let external_diff = state.apply_diff_and_convert(
                         internal_diff.into_internal().unwrap(),
                         &self.arena,
@@ -296,11 +290,6 @@ impl DocState {
 
                     state_diff.concat(external_diff)
                 } else {
-                    // println!(
-                    //     "2state {:?} apply diff {:?}",
-                    //     idx,
-                    //     internal_diff.clone().into_internal().unwrap()
-                    // );
                     state
                         .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena)
                 };
@@ -313,10 +302,9 @@ impl DocState {
         }
 
         self.frontiers = (*diff.new_version).to_owned();
-
         if self.is_recording() {
             let mut current_inner_idx = 0;
-            // bring back
+            // bring back event
             loop {
                 let state_diff = {
                     let Some(diff) = inner.get_mut(current_inner_idx) else {
@@ -329,12 +317,9 @@ impl DocState {
                     idx2state_diff.remove(&diff.idx).unwrap()
                 };
                 let diff = inner.get_mut(current_inner_idx).unwrap();
-                // println!("###bring back {:?}", self.arena.idx_to_id(diff.idx));
                 diff.diff = Some(state_diff.into());
-                // println!("###back diff {:?}", diff);
                 current_inner_idx += 1;
             }
-            // println!("\nFinal external DIFF {:?}", inner);
             self.record_diff(diff)
         }
     }
@@ -759,20 +744,17 @@ fn bring_back_sub_container(
                     for v in delta.as_insert().unwrap().0.iter() {
                         if v.is_container() {
                             let idx = arena.id_to_idx(v.as_container().unwrap()).unwrap();
-                            // print!("sub bring {:?}", v);
                             // TODO: perf
                             let mut has = false;
                             for index in (current_inner_idx + 1)..inner.len() {
                                 let other = inner.get_mut(index).unwrap();
                                 if other.idx == idx {
-                                    // println!(" change flag");
                                     other.bring_back = true;
                                     has = true;
                                     break;
                                 }
                             }
                             if !has {
-                                // println!(" add");
                                 inner.insert(
                                     current_inner_idx + 1,
                                     InternalContainerDiff {
@@ -791,19 +773,16 @@ fn bring_back_sub_container(
             for (_, v) in map.updated.iter() {
                 if let Some(LoroValue::Container(id)) = &v.value {
                     let idx = arena.id_to_idx(id).unwrap();
-                    // print!("sub bring {:?}", id);
                     let mut has = false;
                     for index in (current_inner_idx + 1)..inner.len() {
                         let other = inner.get_mut(index).unwrap();
                         if other.idx == idx {
-                            // println!(" change flag");
                             other.bring_back = true;
                             has = true;
                             break;
                         }
                     }
                     if !has {
-                        // println!(" add");
                         inner.insert(
                             current_inner_idx + 1,
                             InternalContainerDiff {
@@ -816,14 +795,6 @@ fn bring_back_sub_container(
                 }
             }
         }
-        // Diff::Tree(tree) => {
-        //     for diff in tree.diff {
-        //         let target = diff.target;
-        //         match diff.action {
-
-        //         }
-        //     }
-        // }
         _ => {}
     };
 }
