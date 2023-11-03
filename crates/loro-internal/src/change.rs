@@ -12,8 +12,10 @@ use crate::{
     span::{HasId, HasLamport},
     version::Frontiers,
 };
+use loro_common::{HasCounter, HasCounterSpan};
 use num::traits::AsPrimitive;
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
+use smallvec::SmallVec;
 
 pub type Timestamp = i64;
 pub type Lamport = u32;
@@ -21,6 +23,7 @@ pub type Lamport = u32;
 /// A `Change` contains a list of [Op]s.
 ///
 /// When undo/redo we should always undo/redo a whole [Change].
+// PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 1]>,
@@ -32,6 +35,8 @@ pub struct Change<O = Op> {
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
+    /// if it has dependents, it cannot merge with new changes
+    pub(crate) has_dependents: bool,
 }
 
 impl<O> Change<O> {
@@ -48,6 +53,7 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
+            has_dependents: false,
         }
     }
 
@@ -115,11 +121,53 @@ impl<O: Mergable + HasLength + HasIndex + Debug> HasLength for Change<O> {
     }
 }
 
-impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
+impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Sliceable for Change<O> {
     // TODO: feels slow, need to confirm whether this affects performance
     fn slice(&self, from: usize, to: usize) -> Self {
+        assert!(from < to);
+        assert!(to <= self.atom_len());
+        let from_counter = self.id.counter + from as Counter;
+        let to_counter = self.id.counter + to as Counter;
+        let ops = {
+            if from >= to {
+                RleVec::new()
+            } else {
+                let mut ans: SmallVec<[_; 1]> = SmallVec::new();
+                let mut start_index = 0;
+                if self.ops.len() >= 8 {
+                    let result = self
+                        .ops
+                        .binary_search_by(|op| op.ctr_end().cmp(&from_counter));
+                    start_index = match result {
+                        Ok(i) => i,
+                        Err(i) => i,
+                    };
+                }
+
+                for i in start_index..self.ops.len() {
+                    let op = &self.ops[i];
+                    if op.ctr_start() >= to_counter {
+                        break;
+                    }
+                    if op.ctr_end() <= from_counter {
+                        continue;
+                    }
+
+                    let start_offset =
+                        ((from_counter - op.ctr_start()).max(0) as usize).min(op.atom_len());
+                    let end_offset =
+                        ((to_counter - op.ctr_start()).max(0) as usize).min(op.atom_len());
+                    assert_ne!(start_offset, end_offset);
+                    ans.push(op.slice(start_offset, end_offset))
+                }
+
+                RleVec::from(ans)
+            }
+        };
+        assert_eq!(ops.first().unwrap().ctr_start(), from_counter);
+        assert_eq!(ops.last().unwrap().ctr_end(), to_counter);
         Self {
-            ops: self.ops.slice(from, to),
+            ops,
             deps: if from > 0 {
                 Frontiers::from_id(self.id.inc(from as Counter - 1))
             } else {
@@ -128,6 +176,7 @@ impl<O: Mergable + HasLength + Sliceable> Sliceable for Change<O> {
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
+            has_dependents: self.has_dependents,
         }
     }
 }

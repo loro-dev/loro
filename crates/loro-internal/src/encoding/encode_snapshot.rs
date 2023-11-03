@@ -236,6 +236,7 @@ pub fn decode_oplog(
             timestamp,
             id: ID::new(peer_id, start_counter),
             lamport: 0, // calculate lamport when importing
+            has_dependents: false,
         });
     }
 

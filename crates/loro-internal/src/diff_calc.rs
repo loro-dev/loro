@@ -216,7 +216,6 @@ impl DiffCalculator {
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
-            debug_log::debug_dbg!(&all);
             let len = all.len();
             for (_, idx) in std::mem::take(&mut all) {
                 if ans.contains_key(&idx) {
@@ -258,7 +257,6 @@ impl DiffCalculator {
                 }
             }
 
-            debug_log::debug_dbg!(&new_containers);
             // reset left new_containers
             while !new_containers.is_empty() {
                 for id in std::mem::take(&mut new_containers) {
@@ -288,17 +286,15 @@ impl DiffCalculator {
             }
 
             if len == all.len() {
-                debug_log::debug_log!("Container might be deleted");
-                debug_log::debug_dbg!(&all);
-                for (_, idx) in all.iter() {
-                    debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
-                }
+                // debug_log::debug_dbg!(&all);
+                // for (_, idx) in all.iter() {
+                // debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
+                // }
                 // we still emit the event of deleted container
                 are_rest_containers_deleted = true;
             }
         }
 
-        debug_log::debug_dbg!(&ans);
         ans.into_iter().map(|x| x.1).collect_vec()
     }
 }
@@ -736,7 +732,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         to: &crate::VersionVector,
         _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        debug_log::debug_log!("from {:?} to {:?}", from, to);
+        // debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers = from.to_frontiers(&oplog.dag);
@@ -746,7 +742,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
         let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        debug_log::debug_log!("lca vv {:?}", lca_vv);
+        // debug_log::debug_log!("lca vv {:?}", lca_vv);
 
         let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
         let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
@@ -763,7 +759,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         );
 
         // FIXME: inserting new containers
-        debug_log::debug_log!("\ndiff {:?}", diff);
+        // debug_log::debug_log!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
     }

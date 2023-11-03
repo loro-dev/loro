@@ -2,7 +2,7 @@
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasLamportSpan, TreeID};
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RleVec, Sliceable};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
@@ -179,8 +179,14 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         start_counter.push(changes.id.counter);
     }
 
-    for (change, _) in oplog.iter_causally(start_vv, self_vv.clone()) {
-        diff_changes.push(change);
+    for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
+        let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        if change.id.counter < start_cnt {
+            let offset = start_cnt - change.id.counter;
+            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+        } else {
+            diff_changes.push(Cow::Borrowed(change));
+        }
     }
 
     let (root_containers, container_idx2index, normal_containers) =
@@ -374,7 +380,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 /// Containers are sorted by their peer_id and counter so that
 /// they can be compressed by using delta encoding.
 fn extract_containers(
-    diff_changes: &Vec<&Change>,
+    diff_changes: &Vec<Cow<Change>>,
     oplog: &OpLog,
     peer_id_to_idx: &mut FxHashMap<PeerID, PeerIdx>,
     peers: &mut Vec<PeerID>,
@@ -648,6 +654,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 },
                 // calc lamport after parsing all changes
                 lamport: 0,
+                has_dependents: false,
                 timestamp,
                 ops,
                 deps,
@@ -703,8 +710,12 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 deps: change.deps,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
+                has_dependents: false,
             };
 
+            let Some(change) = oplog.trim_the_known_part_of_change(change) else {
+                continue;
+            };
             // update dag and push the change
             oplog.insert_dag_node_on_new_change(&change);
             oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());

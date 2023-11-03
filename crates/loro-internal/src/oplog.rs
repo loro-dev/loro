@@ -4,11 +4,12 @@ mod pending_changes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::mem::take;
 use std::rc::Rc;
 use std::sync::Mutex;
 
 use fxhash::FxHashMap;
-use rle::{HasLength, RleCollection, RlePush, RleVec};
+use rle::{HasLength, RleCollection, RlePush, RleVec, Sliceable};
 use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
@@ -192,9 +193,37 @@ impl OpLog {
         &self.changes
     }
 
-    /// This is the only place to update the `changes`
-    pub fn insert_new_change(&mut self, change: Change) {
-        self.changes.entry(change.id.peer).or_default().push(change);
+    /// This is the only place to update the `OpLog.changes`
+    pub fn insert_new_change(&mut self, mut change: Change) {
+        debug_log::debug_log!("importing {} ", change.id);
+        debug_log::debug_dbg!(&self);
+        if cfg!(debug_assertions) {
+            // TODO: ensure this check has ran at compile time
+            for dep in change.deps.iter() {
+                self.ensure_dep_on_change_end(*dep);
+            }
+        }
+
+        let entry = self.changes.entry(change.id.peer).or_default();
+        match entry.last_mut() {
+            Some(last) => {
+                assert_eq!(change.id.counter, last.ctr_end());
+                if !last.has_dependents
+                    && change.deps_on_self()
+                    && change.timestamp - last.timestamp < 1000
+                {
+                    for op in take(change.ops.vec_mut()) {
+                        last.ops.push(op);
+                    }
+                } else {
+                    entry.push(change);
+                }
+            }
+            None => {
+                assert!(change.id.counter == 0);
+                entry.push(change);
+            }
+        }
     }
 
     /// Import a change.
@@ -208,6 +237,9 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+        let Some(change) = self.trim_the_known_part_of_change(change) else {
+            return Ok(());
+        };
         self.check_id_is_not_duplicated(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
             return Err(LoroError::DecodeError(
@@ -269,27 +301,75 @@ impl OpLog {
             last.has_succ = false;
         } else {
             let vv = self.dag.frontiers_to_im_vv(&change.deps);
-            self.dag
-                .map
-                .entry(change.id.peer)
-                .or_default()
-                .push_rle_element(AppDagNode {
-                    vv,
-                    peer: change.id.peer,
-                    cnt: change.id.counter,
-                    lamport: change.lamport,
-                    deps: change.deps.clone(),
-                    has_succ: false,
-                    len,
-                });
+            let dag_row = &mut self.dag.map.entry(change.id.peer).or_default();
+            if change.id.counter > 0 {
+                assert_eq!(dag_row.last().unwrap().ctr_end(), change.id.counter);
+            }
+            dag_row.push_rle_element(AppDagNode {
+                vv,
+                peer: change.id.peer,
+                cnt: change.id.counter,
+                lamport: change.lamport,
+                deps: change.deps.clone(),
+                has_succ: false,
+                len,
+            });
 
             for dep in change.deps.iter() {
+                self.ensure_dep_on_change_end(*dep);
                 let target = self.dag.get_mut(*dep).unwrap();
                 if target.ctr_last() == dep.counter {
                     target.has_succ = true;
                 }
             }
         }
+    }
+
+    fn ensure_dep_on_change_end(&mut self, dep: ID) {
+        let changes = self.changes.get_mut(&dep.peer).unwrap();
+        match changes.binary_search_by(|c| c.ctr_last().cmp(&dep.counter)) {
+            Ok(index) => {
+                changes[index].has_dependents = true;
+            }
+            Err(index) => {
+                // This operation is slow in some rare cases, but I guess it's fine for now.
+                //
+                // It's only slow when you import an old concurrent change.
+                // And once it's imported, because it's old, it has small lamport timestamp, so it
+                // won't be slow again in the future imports.
+                let change = &mut changes[index];
+                let offset = (dep.counter - change.id.counter + 1) as usize;
+                let left = change.slice(0, offset);
+                let right = change.slice(offset, change.atom_len());
+                assert_ne!(left.atom_len(), 0);
+                assert_ne!(right.atom_len(), 0);
+                *change = left;
+                changes.insert(index + 1, right);
+            }
+        }
+    }
+
+    /// Trim the known part of change
+    pub(crate) fn trim_the_known_part_of_change(&self, change: Change) -> Option<Change> {
+        let Some(changes) = self.changes.get(&change.id.peer) else {
+            return Some(change);
+        };
+
+        if changes.is_empty() {
+            return Some(change);
+        }
+
+        let end = changes.last().unwrap().ctr_end();
+        if change.id.counter >= end {
+            return Some(change);
+        }
+
+        if change.ctr_end() <= end {
+            return None;
+        }
+
+        let offset = (end - change.id.counter) as usize;
+        Some(change.slice(offset, change.atom_len()))
     }
 
     fn check_id_is_not_duplicated(&self, id: ID) -> Result<(), LoroError> {
@@ -351,7 +431,17 @@ impl OpLog {
             if let Some(peer_changes) = self.changes.get(&peer) {
                 if let Some(result) = peer_changes.get_by_atom_index(start_cnt) {
                     for change in &peer_changes[result.merged_index..] {
-                        temp.push(self.convert_change_to_remote(change))
+                        if change.id.counter < start_cnt {
+                            if change.id.counter + change.atom_len() as Counter <= start_cnt {
+                                continue;
+                            }
+
+                            let sliced = change
+                                .slice((start_cnt - change.id.counter) as usize, change.atom_len());
+                            temp.push(self.convert_change_to_remote(&sliced));
+                        } else {
+                            temp.push(self.convert_change_to_remote(change));
+                        }
                     }
                 }
             }
@@ -401,6 +491,7 @@ impl OpLog {
             deps: change.deps.clone(),
             lamport: change.lamport,
             timestamp: change.timestamp,
+            has_dependents: false,
         }
     }
 
@@ -507,7 +598,7 @@ impl OpLog {
         let latest_vv = self.dag.vv.clone();
         // op_converter is faster than using arena directly
         let ids = self.arena.clone().with_op_converter(|converter| {
-            self.calc_pending_changes(remote_changes, converter, latest_vv)
+            self.apply_appliable_changes_and_cache_pending(remote_changes, converter, latest_vv)
         });
         let mut latest_vv = self.dag.vv.clone();
         self.try_apply_pending(ids, &mut latest_vv);
@@ -523,7 +614,7 @@ impl OpLog {
     ) -> Result<(), LoroError> {
         let latest_vv = self.dag.vv.clone();
         self.arena.clone().with_op_converter(|converter| {
-            self.extend_unknown_pending_changes(remote_changes, converter, &latest_vv)
+            self.extend_pending_changes_with_unknown_lamport(remote_changes, converter, &latest_vv)
         });
         Ok(())
     }
