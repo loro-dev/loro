@@ -6,7 +6,7 @@ pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, HasIdSpan, LoroValue, PeerID, ID};
+use loro_common::{ContainerID, HasCounterSpan, HasIdSpan, LoroValue, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -112,7 +112,7 @@ impl DiffCalculator {
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
 
             let mut started_set = FxHashSet::default();
-            for (change, vv) in iter {
+            for (change, start_counter, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
                     assert!(
                         self.last_vv.includes_id(change.id.inc(-1)),
@@ -126,8 +126,16 @@ impl DiffCalculator {
                     self.last_vv.extend_to_include_end_id(change.id_end());
                 }
 
+                let iter_start = if change.ops.len() < 64 {
+                    0
+                } else {
+                    change
+                        .ops
+                        .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                        .unwrap_or_else(|e| e)
+                };
                 let mut visited = FxHashSet::default();
-                for op in change.ops.iter() {
+                for op in &change.ops.vec()[iter_start..] {
                     let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
                     let (_, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
@@ -216,7 +224,6 @@ impl DiffCalculator {
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
-            debug_log::debug_dbg!(&all);
             let len = all.len();
             for (_, idx) in std::mem::take(&mut all) {
                 if ans.contains_key(&idx) {
@@ -258,7 +265,6 @@ impl DiffCalculator {
                 }
             }
 
-            debug_log::debug_dbg!(&new_containers);
             // reset left new_containers
             while !new_containers.is_empty() {
                 for id in std::mem::take(&mut new_containers) {
@@ -288,11 +294,10 @@ impl DiffCalculator {
             }
 
             if len == all.len() {
-                debug_log::debug_log!("Container might be deleted");
-                debug_log::debug_dbg!(&all);
-                for (_, idx) in all.iter() {
-                    debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
-                }
+                // debug_log::debug_dbg!(&all);
+                // for (_, idx) in all.iter() {
+                // debug_log::debug_dbg!(oplog.arena.get_container_id(*idx));
+                // }
                 // we still emit the event of deleted container
                 are_rest_containers_deleted = true;
             }
@@ -739,7 +744,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         to: &crate::VersionVector,
         _: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        debug_log::debug_log!("from {:?} to {:?}", from, to);
+        // debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers = from.to_frontiers(&oplog.dag);
@@ -749,7 +754,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
         let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        debug_log::debug_log!("lca vv {:?}", lca_vv);
+        // debug_log::debug_log!("lca vv {:?}", lca_vv);
 
         let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
         let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
@@ -766,7 +771,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         );
 
         // FIXME: inserting new containers
-        debug_log::debug_log!("\ndiff {:?}", diff);
+        // debug_log::debug_log!("\ndiff {:?}", diff);
 
         InternalDiff::Tree(diff)
     }

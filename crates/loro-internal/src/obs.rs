@@ -201,7 +201,7 @@ impl Observer {
     }
 
     pub fn unsubscribe(&self, sub_id: SubID) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.try_lock().unwrap();
         inner.subscribers.remove(&sub_id);
         if self.is_taken() {
             inner.deleted.insert(sub_id);

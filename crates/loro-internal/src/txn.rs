@@ -265,6 +265,7 @@ impl Transaction {
             timestamp: oplog
                 .latest_timestamp
                 .max(self.timestamp.unwrap_or_else(get_sys_timestamp)),
+            has_dependents: false,
         };
 
         let diff = if state.is_recording() {

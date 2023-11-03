@@ -252,12 +252,12 @@ impl Cursor {
     }
 
     fn update_insert(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
-        debug_log::debug_log!(
-            "set_insert: from={}, to={}, new_leaf={:?}",
-            from,
-            to,
-            &new_leaf
-        );
+        // debug_log::debug_log!(
+        //     "set_insert: from={}, to={}, new_leaf={:?}",
+        //     from,
+        //     to,
+        //     &new_leaf
+        // );
 
         assert!(from <= to);
         assert!(to <= self.rle_len());

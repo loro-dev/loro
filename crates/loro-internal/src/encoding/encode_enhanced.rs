@@ -1,14 +1,14 @@
 // allow impl in zerovec macro
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasCounterSpan, HasLamportSpan, TreeID};
-use rle::{HasLength, RlePush, RleVec};
+use loro_common::{HasLamportSpan, TreeID};
+use rle::{HasLength, RleVec, Sliceable};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
-    change::{Change, Lamport, Timestamp},
+    change::{Change, Timestamp},
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, ListOp},
@@ -19,7 +19,7 @@ use crate::{
     },
     id::{Counter, PeerID, ID},
     op::{ListSlice, RawOpContent, RemoteOp},
-    oplog::{AppDagNode, OpLog},
+    oplog::OpLog,
     span::HasId,
     version::Frontiers,
     InternalString, LoroError, LoroValue, VersionVector,
@@ -161,7 +161,7 @@ struct DocEncoding<'a> {
 
 pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut peer_id_to_idx: FxHashMap<PeerID, PeerIdx> = FxHashMap::default();
-    let mut peers = Vec::with_capacity(oplog.changes.len());
+    let mut peers = Vec::with_capacity(oplog.changes().len());
     let mut diff_changes = Vec::new();
     let self_vv = oplog.vv();
     let start_vv = vv.trim(&oplog.vv());
@@ -179,8 +179,14 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         start_counter.push(changes.id.counter);
     }
 
-    for (change, _) in oplog.iter_causally(start_vv, self_vv.clone()) {
-        diff_changes.push(change);
+    for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
+        let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
+        if change.id.counter < start_cnt {
+            let offset = start_cnt - change.id.counter;
+            diff_changes.push(Cow::Owned(change.slice(offset as usize, change.atom_len())));
+        } else {
+            diff_changes.push(Cow::Borrowed(change));
+        }
     }
 
     let (root_containers, container_idx2index, normal_containers) =
@@ -374,7 +380,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 /// Containers are sorted by their peer_id and counter so that
 /// they can be compressed by using delta encoding.
 fn extract_containers(
-    diff_changes: &Vec<&Change>,
+    diff_changes: &Vec<Cow<Change>>,
     oplog: &OpLog,
     peer_id_to_idx: &mut FxHashMap<PeerID, PeerIdx>,
     peers: &mut Vec<PeerID>,
@@ -648,6 +654,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 },
                 // calc lamport after parsing all changes
                 lamport: 0,
+                has_dependents: false,
                 timestamp,
                 ops,
                 deps,
@@ -703,55 +710,24 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 deps: change.deps,
                 lamport: change.lamport,
                 timestamp: change.timestamp,
+                has_dependents: false,
             };
 
+            let Some(change) = oplog.trim_the_known_part_of_change(change) else {
+                continue;
+            };
             // update dag and push the change
-            let len = change.content_len();
-            if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
-                // don't need to push new element to dag because it only depends on itself
-                let nodes = oplog.dag.map.get_mut(&change.id.peer).unwrap();
-                let last = nodes.last_mut().unwrap();
-                assert_eq!(last.peer, change.id.peer);
-                assert_eq!(last.cnt + last.len as Counter, change.id.counter);
-                assert_eq!(last.lamport + last.len as Lamport, change.lamport);
-                last.len = change.id.counter as usize + len - last.cnt as usize;
-                last.has_succ = false;
-            } else {
-                let vv = oplog.dag.frontiers_to_im_vv(&change.deps);
-                oplog
-                    .dag
-                    .map
-                    .entry(change.id.peer)
-                    .or_default()
-                    .push_rle_element(AppDagNode {
-                        vv,
-                        peer: change.id.peer,
-                        cnt: change.id.counter,
-                        lamport: change.lamport,
-                        deps: change.deps.clone(),
-                        has_succ: false,
-                        len,
-                    });
-                for dep in change.deps.iter() {
-                    let target = oplog.dag.get_mut(*dep).unwrap();
-                    if target.ctr_last() == dep.counter {
-                        target.has_succ = true;
-                    }
-                }
-            }
+            oplog.insert_dag_node_on_new_change(&change);
             oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
             oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
             oplog.dag.vv.extend_to_include_end_id(ID {
                 peer: change.id.peer,
                 counter: change.id.counter + change.atom_len() as Counter,
             });
-            oplog
-                .changes
-                .entry(change.id.peer)
-                .or_default()
-                .push_rle_element(change);
+            oplog.insert_new_change(change);
         }
     });
+
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }

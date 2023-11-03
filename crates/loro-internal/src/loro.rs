@@ -269,6 +269,17 @@ impl LoroDoc {
         }
     }
 
+    /// Abort the current auto commit transaction.
+    ///
+    /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
+    #[inline]
+    pub fn abort_txn(&self) {
+        if let Some(mut txn) = self.txn.lock().unwrap().take() {
+            txn.take_on_commit();
+            txn.abort();
+        }
+    }
+
     pub fn renew_txn_if_auto_commit(&self) {
         if self.auto_commit && !self.detached {
             let mut self_txn = self.txn.try_lock().unwrap();
@@ -372,7 +383,6 @@ impl LoroDoc {
                 let old_vv = oplog.vv().clone();
                 let old_frontiers = oplog.frontiers().clone();
                 oplog.decode(bytes)?;
-                // debug_log::debug_dbg!(&oplog);
                 if !self.detached {
                     let mut diff = DiffCalculator::default();
                     let diff = diff.calc_diff_internal(
@@ -658,6 +668,12 @@ fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        self.abort_txn();
     }
 }
 
