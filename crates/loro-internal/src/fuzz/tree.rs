@@ -17,7 +17,6 @@ use crate::{
     ContainerType, LoroValue,
 };
 use crate::{
-    container::idx::ContainerIdx,
     delta::TreeValue,
     event::Index,
     handler::TreeHandler,
@@ -78,8 +77,6 @@ impl Actor {
     fn new(id: PeerID) -> Self {
         let app = LoroDoc::new();
         app.set_peer_id(id).unwrap();
-        let mut default_tree_tracker = FxHashMap::default();
-        default_tree_tracker.insert(TreeID::delete_root().unwrap(), None);
         let mut actor = Actor {
             peer: id,
             loro: app,

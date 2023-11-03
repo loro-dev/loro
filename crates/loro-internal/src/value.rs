@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     delta::{Delta, DeltaItem, Meta, StyleMeta, TreeValue},
     event::{Diff, Index, Path},
-    state::Forest,
     utils::string_slice::StringSlice,
 };
 
@@ -213,34 +212,26 @@ impl ApplyDiff for LoroValue {
                 }
             }
             LoroValue::Map(map) => {
-                let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
-                if !is_tree {
-                    for item in diff.iter() {
-                        match item {
-                            Diff::NewMap(diff) => {
-                                let map = Arc::make_mut(map);
-                                for (key, value) in diff.updated.iter() {
-                                    match &value.value {
-                                        Some(value) => {
-                                            map.insert(
-                                                key.to_string(),
-                                                unresolved_to_collection(value),
-                                            );
-                                        }
-                                        None => {
-                                            map.remove(&key.to_string());
-                                        }
+                for item in diff.iter() {
+                    match item {
+                        Diff::NewMap(diff) => {
+                            let map = Arc::make_mut(map);
+                            for (key, value) in diff.updated.iter() {
+                                match &value.value {
+                                    Some(value) => {
+                                        map.insert(
+                                            key.to_string(),
+                                            unresolved_to_collection(value),
+                                        );
+                                    }
+                                    None => {
+                                        map.remove(&key.to_string());
                                     }
                                 }
                             }
-                            _ => unreachable!(),
                         }
+                        _ => unreachable!(),
                     }
-                } else {
-                    // TODO: perf
-                    let forest = Forest::from_value(map.as_ref().clone().into()).unwrap();
-                    let diff_forest = forest.apply_diffs(diff);
-                    *map = diff_forest.to_value().into_map().unwrap()
                 }
             }
             _ => unreachable!(),
@@ -329,7 +320,6 @@ pub mod wasm {
 
     use crate::{
         delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDelta, TreeDiffItem},
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, StyleMeta, TreeDelta, TreeDiffItem},
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
