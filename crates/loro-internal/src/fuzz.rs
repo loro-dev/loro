@@ -2250,6 +2250,41 @@ mod test {
     }
 
     #[test]
+    fn fuzz_9() {
+        test_multi_sites(
+            5,
+            &mut [
+                Ins {
+                    content: 3855,
+                    pos: 0,
+                    site: 0,
+                },
+                SyncAll,
+                Ins {
+                    content: 59648,
+                    pos: 3,
+                    site: 0,
+                },
+                Ins {
+                    content: 12815,
+                    pos: 2,
+                    site: 0,
+                },
+                Ins {
+                    content: 65535,
+                    pos: 12,
+                    site: 0,
+                },
+                Del {
+                    pos: 9,
+                    len: 18,
+                    site: 0,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn mini_r() {
         minify_error(5, vec![], test_multi_sites, |_, ans| ans.to_vec())
     }

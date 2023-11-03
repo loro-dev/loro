@@ -141,6 +141,7 @@ impl std::fmt::Debug for OpLog {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("changes", &self.changes)
+            .field("pending_changes", &self.pending_changes)
             .field("next_lamport", &self.next_lamport)
             .field("latest_timestamp", &self.latest_timestamp)
             .finish()
@@ -642,7 +643,7 @@ impl OpLog {
 
     #[inline(always)]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog(self, vv, EncodeMode::Auto)
+        encode_oplog(self, vv, EncodeMode::RleUpdates)
     }
 
     #[inline(always)]

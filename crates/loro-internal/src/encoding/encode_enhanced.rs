@@ -1,7 +1,7 @@
 // allow impl in zerovec macro
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{HasLamportSpan, TreeID};
+use loro_common::{HasCounterSpan, HasIdSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec, Sliceable};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
@@ -176,7 +176,12 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         let idx = peers.len() as PeerIdx;
         peers.push(peer_id);
         peer_id_to_idx.insert(peer_id, idx);
-        start_counter.push(changes.id.counter);
+        start_counter.push(
+            changes
+                .id
+                .counter
+                .max(start_vv.get(&peer_id).copied().unwrap_or(0)),
+        );
     }
 
     for (change, _) in oplog.iter_causally(start_vv.clone(), self_vv.clone()) {
@@ -242,7 +247,13 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 let content = op.content;
                 let (prop, kind, insert_del_len) = match content {
                     crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
-                        let target_peer_idx = *peer_id_to_idx.get(&target.peer).unwrap();
+                        // TODO: refactor extract register idx
+                        let target_peer_idx =
+                            *peer_id_to_idx.entry(target.peer).or_insert_with(|| {
+                                let idx = peers.len() as PeerIdx;
+                                peers.push(target.peer);
+                                idx
+                            });
                         let target_encoding = TreeIDEncoding {
                             client_idx: target_peer_idx,
                             counter: target.counter,
@@ -257,7 +268,12 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             if TreeID::is_deleted_root(Some(parent)) {
                                 (Kind::Insert, 0)
                             } else {
-                                let parent_peer_idx = *peer_id_to_idx.get(&parent.peer).unwrap();
+                                let parent_peer_idx =
+                                    *peer_id_to_idx.entry(parent.peer).or_insert_with(|| {
+                                        let idx = peers.len() as PeerIdx;
+                                        peers.push(parent.peer);
+                                        idx
+                                    });
                                 let parent_encoding = TreeIDEncoding {
                                     client_idx: parent_peer_idx,
                                     counter: parent.counter,
@@ -477,25 +493,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         tree_ids,
     } = encoded;
 
-    let start_vv: VersionVector = peers
-        .iter()
-        .copied()
-        .zip(start_counter.iter().map(|x| *x as Counter))
-        .collect::<FxHashMap<_, _>>()
-        .into();
-    let ord = start_vv.partial_cmp(oplog.vv());
-    if ord.is_none() || ord.unwrap() == Ordering::Greater {
-        return Err(LoroError::DecodeError(
-            format!(
-                "Warning: current Loro version is `{:?}`, but remote changes start at version `{:?}`.
-                These updates can not be applied",
-                oplog.vv(),
-                start_vv
-            )
-            .into(),
-        ));
-    }
-
+    debug_log::debug_dbg!(&start_counter);
     let mut op_iter = ops;
     let mut deps_iter = deps;
     let mut style_key_iter = style_key.into_iter();
@@ -643,7 +641,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     ID::new(peers[raw.client_idx as usize], raw.counter)
                 })
                 .collect();
-            if dep_on_self {
+            if dep_on_self && *counter > 0 {
                 deps.push(ID::new(peer_id, *counter - 1));
             }
 
@@ -669,13 +667,16 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         Err(err) => return Err(err),
     };
     let mut pending_remote_changes = Vec::new();
+    debug_log::debug_dbg!(&changes);
+    let mut latest_ids = Vec::new();
     oplog.arena.clone().with_op_converter(|converter| {
         'outer: for mut change in changes {
-            if change.id.counter < oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
+            if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 // skip included changes
                 continue;
             }
 
+            latest_ids.push(change.id_last());
             // calc lamport or pending if its deps are not satisfied
             for dep in change.deps.iter() {
                 match oplog.dag.get_lamport(dep) {
@@ -728,6 +729,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         }
     });
 
+    let mut vv = oplog.dag.vv.clone();
+    oplog.try_apply_pending(latest_ids, &mut vv);
     if !oplog.batch_importing {
         oplog.dag.refresh_frontiers();
     }

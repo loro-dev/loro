@@ -76,6 +76,7 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
+        debug_dbg!(&before, &after, &oplog);
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -132,6 +133,7 @@ impl DiffCalculator {
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
                     .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
+                debug_log::debug_dbg!(&change, iter_start);
                 for mut op in &change.ops.vec()[iter_start..] {
                     // slice the op if needed
                     let stack_sliced_op;

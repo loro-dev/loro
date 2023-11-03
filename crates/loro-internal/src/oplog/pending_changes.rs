@@ -126,7 +126,7 @@ impl OpLog {
         Ok(())
     }
 
-    pub(super) fn try_apply_pending(
+    pub(crate) fn try_apply_pending(
         &mut self,
         mut id_stack: Vec<ID>,
         latest_vv: &mut VersionVector,

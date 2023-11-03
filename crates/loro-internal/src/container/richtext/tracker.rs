@@ -70,6 +70,7 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
+        debug_log::debug_dbg!(&self, op_id, pos, &content);
         if self.applied_vv.includes_id(op_id) {
             let last_id = op_id.inc(content.len() as Counter - 1);
             assert!(self.applied_vv.includes_id(last_id));
@@ -128,8 +129,19 @@ impl Tracker {
 
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, op_id: ID, pos: usize, len: usize, reverse: bool) {
+        debug_log::debug_dbg!(&self, op_id, pos, len);
         if self.applied_vv.includes_id(op_id) {
-            assert!(self.applied_vv.includes_id(op_id.inc(len as Counter - 1)));
+            let last_id = op_id.inc(len as Counter - 1);
+            assert!(self.applied_vv.includes_id(last_id));
+            if !self.current_vv.includes_id(last_id) {
+                // PERF: may be slow
+                let mut updates = Default::default();
+                self.forward(
+                    IdSpan::new(op_id.peer, op_id.counter, op_id.counter + len as Counter),
+                    &mut updates,
+                );
+                self.batch_update(updates, false);
+            }
             return;
         }
 
