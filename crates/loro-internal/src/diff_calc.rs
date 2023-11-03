@@ -530,7 +530,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let ans = self.tracker.diff(from, to);
         // PERF: We may simplify list to avoid these getting
         for v in ans.iter() {
-            if let crate::delta::DeltaItem::Insert { value, meta: _ } = &v {
+            if let crate::delta::DeltaItem::Insert {
+                insert: value,
+                attributes: _,
+            } = &v
+            {
                 for range in &value.0 {
                     for i in range.0.clone() {
                         let v = oplog.arena.get_value(i as usize);

@@ -10,15 +10,34 @@ use crate::{
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
+    utils::utf16::count_utf16_chars,
 };
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
 };
+
+#[derive(Debug, Clone, EnumAsInner, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum TextDelta {
+    Retain {
+        retain: usize,
+        attributes: Option<FxHashMap<String, LoroValue>>,
+    },
+    Insert {
+        insert: String,
+        attributes: Option<FxHashMap<String, LoroValue>>,
+    },
+    Delete {
+        delete: usize,
+    },
+}
 
 #[derive(Clone)]
 pub struct TextHandler {
@@ -215,7 +234,7 @@ impl TextHandler {
             })
     }
 
-    pub fn with_state(&self, f: impl FnOnce(&RichtextState)) {
+    pub fn with_state<R>(&self, f: impl FnOnce(&RichtextState) -> R) -> R {
         self.state
             .upgrade()
             .unwrap()
@@ -223,7 +242,19 @@ impl TextHandler {
             .unwrap()
             .with_state(self.container_idx, |state| {
                 let state = state.as_richtext_state().unwrap();
-                f(state);
+                f(state)
+            })
+    }
+
+    pub fn with_state_mut<R>(&self, f: impl FnOnce(&mut RichtextState) -> R) -> R {
+        self.state
+            .upgrade()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .with_state_mut(self.container_idx, |state| {
+                let state = state.as_richtext_state_mut().unwrap();
+                f(state)
             })
     }
 
@@ -326,9 +357,10 @@ impl TextHandler {
             });
 
         debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
-        let mut offset = 0;
+        let mut end = (pos + len) as isize;
         for range in ranges.iter().rev() {
             let len = (range.end - range.start) as isize;
+            let start = end - len;
             txn.apply_local_op(
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
@@ -336,12 +368,12 @@ impl TextHandler {
                     signed_len: len,
                 })),
                 EventHint::DeleteText(DeleteSpan {
-                    pos: pos as isize + offset,
+                    pos: start,
                     signed_len: len,
                 }),
                 &self.state,
             )?;
-            offset += len;
+            end = start;
         }
 
         debug_log::group_end!();
@@ -434,6 +466,63 @@ impl TextHandler {
         )?;
 
         Ok(())
+    }
+
+    pub fn apply_delta_(&self, delta: &[TextDelta]) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.apply_delta(txn, delta))
+    }
+
+    pub fn apply_delta(&self, txn: &mut Transaction, delta: &[TextDelta]) -> LoroResult<()> {
+        let mut index = 0;
+        let mut marks = Vec::new();
+        for d in delta {
+            match d {
+                TextDelta::Insert { insert, attributes } => {
+                    let end = index + event_len(insert.as_str());
+                    self.insert(txn, index, insert.as_str())?;
+                    match attributes {
+                        Some(attr) if !attr.is_empty() => {
+                            for (key, value) in attr {
+                                marks.push((index, end, key.as_str(), value.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    index = end;
+                }
+                TextDelta::Delete { delete } => {
+                    self.delete(txn, index, *delete)?;
+                }
+                TextDelta::Retain { attributes, retain } => {
+                    let end = index + *retain;
+                    match attributes {
+                        Some(attr) if !attr.is_empty() => {
+                            for (key, value) in attr {
+                                marks.push((index, end, key.as_str(), value.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
+                    index = end;
+                }
+            }
+        }
+
+        for (start, end, key, value) in marks {
+            // FIXME: allow users to set a config table to store the flag, so that we can use it directly
+            self.mark(txn, start, end, key, value, TextStyleInfoFlag::BOLD)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn event_len(s: &str) -> usize {
+    if cfg!(feature = "wasm") {
+        count_utf16_chars(s.as_bytes())
+    } else {
+        s.chars().count()
     }
 }
 
@@ -1069,8 +1158,11 @@ mod test {
     use crate::container::richtext::TextStyleInfoFlag;
     use crate::loro::LoroDoc;
     use crate::version::Frontiers;
-    use crate::ToJson;
+    use crate::{fx_map, ToJson};
     use loro_common::ID;
+    use serde_json::json;
+
+    use super::TextDelta;
 
     #[test]
     fn test() {
@@ -1292,5 +1384,39 @@ mod test {
         loro2.subscribe_root(Arc::new(|e| println!("{} {:?} ", e.doc.local, e.doc.diff)));
         loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
         assert_eq!(loro.get_deep_value(), loro2.get_deep_value());
+    }
+
+    #[test]
+    fn richtext_apply_delta() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.apply_delta_(&[TextDelta::Insert {
+            insert: "Hello World!".into(),
+            attributes: None,
+        }])
+        .unwrap();
+        dbg!(text.get_richtext_value());
+        text.apply_delta_(&[
+            TextDelta::Retain {
+                retain: 6,
+                attributes: Some(fx_map!("italic".into() => loro_common::LoroValue::Bool(true))),
+            },
+            TextDelta::Insert {
+                insert: "New ".into(),
+                attributes: Some(fx_map!("bold".into() => loro_common::LoroValue::Bool(true))),
+            },
+        ])
+        .unwrap();
+        dbg!(text.get_richtext_value());
+        loro.commit_then_renew();
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([
+                {"insert": "Hello ", "attributes": {"italic": true}},
+                {"insert": "New ", "attributes": {"bold": true}},
+                {"insert": "World!"}
+
+            ])
+        )
     }
 }

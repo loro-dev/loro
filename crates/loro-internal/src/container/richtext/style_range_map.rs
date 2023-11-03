@@ -81,7 +81,6 @@ impl StyleRangeMap {
     }
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-        debug_log::debug_log!("Annotate {:?}", &range);
         let range = self.tree.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
@@ -89,7 +88,6 @@ impl StyleRangeMap {
 
         self.has_style = true;
         let range = range.unwrap();
-        debug_log::debug_log!("Range={:?}", &range);
         self.tree
             .update(range.start.cursor..range.end.cursor, &mut |x| {
                 if let Some(set) = x.styles.get_mut(&style.get_style_key()) {
@@ -163,8 +161,8 @@ impl StyleRangeMap {
             false
         });
 
-        self.tree.insert_by_path(right, Elem { len, styles });
-        return &self.tree.get_elem(right.leaf).unwrap().styles;
+        let (target, _) = self.tree.insert_by_path(right, Elem { len, styles });
+        return &self.tree.get_elem(target.leaf).unwrap().styles;
     }
 
     /// Return the style sets beside `index` and get the intersection of them.
