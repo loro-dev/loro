@@ -19,9 +19,8 @@ describe("event", () => {
     });
     const text = loro.getText("text");
     const id = text.id;
-    loro.transact((tx) => {
-      text.insert(tx, 0, "123");
-    });
+    text.insert(0, "123");
+    loro.commit();
     expect(lastEvent?.target).toEqual(id);
   });
 
@@ -32,22 +31,17 @@ describe("event", () => {
       lastEvent = event;
     });
     const map = loro.getMap("map");
-    const subMap = loro.transact((tx) => {
-      const subMap = map.insertContainer(tx, "sub", "Map");
-      subMap.set(tx, "0", "1");
-      return subMap;
-    });
+    const subMap = map.insertContainer("sub", "Map");
+    subMap.set("0", "1");
+    loro.commit();
 
     expect(lastEvent?.path).toStrictEqual(["map", "sub"]);
-    const text = loro.transact((tx) => {
-      const list = subMap.insertContainer(tx, "list", "List");
-      list.insert(tx, 0, "2");
-      const text = list.insertContainer(tx, 1, "Text");
-      return text;
-    });
-    loro.transact((tx) => {
-      text.insert(tx, 0, "3");
-    });
+    const list = subMap.insertContainer("list", "List");
+    list.insert(0, "2");
+    const text = list.insertContainer(1, "Text");
+    loro.commit();
+    text.insert(0, "3");
+    loro.commit();
     expect(lastEvent?.path).toStrictEqual(["map", "sub", "list", 1]);
   });
 
@@ -58,16 +52,14 @@ describe("event", () => {
       lastEvent = event;
     });
     const text = loro.getText("t");
-    loro.transact((tx) => {
-      text.insert(tx, 0, "3");
-    });
+    text.insert(0, "3");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "text",
       diff: [{ insert: "3" }],
     } as TextDiff);
-    loro.transact((tx) => {
-      text.insert(tx, 1, "12");
-    });
+    text.insert(1, "12");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "text",
       diff: [{ retain: 1 }, { insert: "12" }],
@@ -81,16 +73,14 @@ describe("event", () => {
       lastEvent = event;
     });
     const text = loro.getList("l");
-    loro.transact((tx) => {
-      text.insert(tx, 0, "3");
-    });
+    text.insert(0, "3");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "list",
       diff: [{ insert: ["3"] }],
     } as ListDiff);
-    loro.transact((tx) => {
-      text.insert(tx, 1, "12");
-    });
+    text.insert(1, "12");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "list",
       diff: [{ retain: 1 }, { insert: ["12"] }],
@@ -104,10 +94,9 @@ describe("event", () => {
       lastEvent = event;
     });
     const map = loro.getMap("m");
-    loro.transact((tx) => {
-      map.set(tx, "0", "3");
-      map.set(tx, "1", "2");
-    });
+    map.set("0", "3");
+    map.set("1", "2");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "map",
       updated: {
@@ -115,10 +104,9 @@ describe("event", () => {
         "1": "2",
       },
     } as MapDiff);
-    loro.transact((tx) => {
-      map.set(tx, "0", "0");
-      map.set(tx, "1", "1");
-    });
+    map.set("0", "0");
+    map.set("1", "1");
+    loro.commit();
     expect(lastEvent?.diff).toStrictEqual({
       type: "map",
       updated: {
@@ -143,12 +131,10 @@ describe("event", () => {
         expect(event.target).toBe(text.id);
       });
 
-      loro.transact((tx) => {
-        text.insert(tx, 0, "123");
-      });
-      loro.transact((tx) => {
-        text.insert(tx, 1, "456");
-      });
+      text.insert(0, "123");
+      loro.commit();
+      text.insert(1, "456");
+      loro.commit();
       expect(ran).toBeTruthy();
       // subscribeOnce test
       expect(text.toString()).toEqual("145623");
@@ -156,9 +142,8 @@ describe("event", () => {
       // unsubscribe
       const oldRan = ran;
       text.unsubscribe(loro, sub);
-      loro.transact((tx) => {
-        text.insert(tx, 0, "789");
-      });
+      text.insert(0, "789");
+      loro.commit();
       expect(ran).toBe(oldRan);
     });
 
@@ -170,20 +155,20 @@ describe("event", () => {
         times += 1;
       });
 
-      const subMap = loro.transact((tx) =>
-        map.insertContainer(tx, "sub", "Map"),
-      );
+      const subMap = map.insertContainer("sub", "Map");
+      loro.commit();
       expect(times).toBe(1);
-      const text = loro.transact((tx) =>
-        subMap.insertContainer(tx, "k", "Text"),
-      );
+      const text = subMap.insertContainer("k", "Text");
+      loro.commit();
       expect(times).toBe(2);
-      loro.transact((tx) => text.insert(tx, 0, "123"));
+      text.insert(0, "123");
+      loro.commit();
       expect(times).toBe(3);
 
       // unsubscribe
       loro.unsubscribe(sub);
-      loro.transact((tx) => text.insert(tx, 0, "123"));
+      text.insert(0, "123");
+      loro.commit();
       expect(times).toBe(3);
     });
 
@@ -195,14 +180,17 @@ describe("event", () => {
         times += 1;
       });
 
-      const text = loro.transact((tx) => list.insertContainer(tx, 0, "Text"));
+      const text = list.insertContainer(0, "Text");
+      loro.commit();
       expect(times).toBe(1);
-      loro.transact((tx) => text.insert(tx, 0, "123"));
+      text.insert(0, "123");
+      loro.commit();
       expect(times).toBe(2);
 
       // unsubscribe
       loro.unsubscribe(sub);
-      loro.transact((tx) => text.insert(tx, 0, "123"));
+      text.insert(0, "123");
+      loro.commit();
       expect(times).toBe(2);
     });
   });
@@ -232,16 +220,20 @@ describe("event", () => {
           string = newString + string.slice(pos);
         }
       });
-      loro.transact((tx) => text.insert(tx, 0, "你好"));
+      text.insert(0, "你好");
+      loro.commit();
       expect(text.toString()).toBe(string);
 
-      loro.transact((tx) => text.insert(tx, 1, "世界"));
+      text.insert(1, "世界");
+      loro.commit();
       expect(text.toString()).toBe(string);
 
-      loro.transact((tx) => text.insert(tx, 2, "👍"));
+      text.insert(2, "👍");
+      loro.commit();
       expect(text.toString()).toBe(string);
 
-      loro.transact((tx) => text.insert(tx, 2, "♪(^∇^*)"));
+      text.insert(2, "♪(^∇^*)");
+      loro.commit();
       expect(text.toString()).toBe(string);
     });
   });

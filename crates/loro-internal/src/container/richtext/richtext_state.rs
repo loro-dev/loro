@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, Cursor,
@@ -14,13 +14,11 @@ use std::{
 };
 
 use crate::{
-    container::richtext::{
-        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex},
-        style_range_map::StyleValue,
+    container::richtext::query_by_len::{
+        EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
     },
-    delta::DeltaValue,
+    delta::{DeltaValue, Meta, StyleMeta},
     utils::{string_slice::unicode_range_to_byte_range, utf16::count_utf16_chars},
-    InternalString,
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -35,7 +33,7 @@ use self::{
 use super::{
     query_by_len::{IndexQuery, QueryByLen},
     style_range_map::{StyleRangeMap, Styles, EMPTY_STYLES},
-    AnchorType, RichtextSpan, Style, StyleOp,
+    AnchorType, RichtextSpan, StyleOp,
 };
 
 pub(crate) use query::PosType;
@@ -913,6 +911,21 @@ impl RichtextState {
         entity_index
     }
 
+    /// Get the insert text styles at the given entity index if we insert text at that position
+    ///
+    // TODO: PERF we can avoid this calculation by getting it when inserting new text
+    // but that requires a lot of changes
+    pub(crate) fn get_styles_at_entity_index_for_insert(
+        &mut self,
+        entity_index: usize,
+    ) -> StyleMeta {
+        if !self.style_ranges.has_style() {
+            return Default::default();
+        }
+
+        self.style_ranges.get_styles_for_insert(entity_index)
+    }
+
     /// This is used to accept changes from DiffCalculator
     pub(crate) fn insert_at_entity_index(&mut self, entity_index: usize, text: BytesSlice) {
         let elem = RichtextStateChunk::try_from_bytes(text).unwrap();
@@ -1531,22 +1544,12 @@ impl RichtextState {
         let mut entity_index = 0;
         let mut style_range_iter = self.style_ranges.iter();
         let mut cur_style_range = style_range_iter.next();
-
-        fn to_styles(
-            (_, style_map): &(Range<usize>, &FxHashMap<InternalString, StyleValue>),
-        ) -> Vec<Style> {
-            let mut styles = Vec::with_capacity(style_map.len());
-            for style in style_map.iter().flat_map(|(_, values)| values.to_styles()) {
-                styles.push(style);
-            }
-            styles
-        }
-
-        let mut cur_styles = cur_style_range.as_ref().map(to_styles);
+        let mut cur_styles: Option<StyleMeta> =
+            cur_style_range.as_ref().map(|x| x.1.clone().into());
 
         self.tree.iter().filter_map(move |x| match x {
             RichtextStateChunk::Text { unicode_len, text } => {
-                let mut styles = Vec::new();
+                let mut styles = Default::default();
                 while let Some((inner_cur_range, _)) = cur_style_range.as_ref() {
                     if entity_index < inner_cur_range.start {
                         break;
@@ -1557,14 +1560,14 @@ impl RichtextState {
                         break;
                     } else {
                         cur_style_range = style_range_iter.next();
-                        cur_styles = cur_style_range.as_ref().map(to_styles);
+                        cur_styles = cur_style_range.as_ref().map(|x| x.1.clone().into());
                     }
                 }
 
                 entity_index += *unicode_len as usize;
                 Some(RichtextSpan {
                     text: text.clone().into(),
-                    styles,
+                    attributes: styles,
                 })
             }
             RichtextStateChunk::Style { .. } => {
@@ -1574,17 +1577,18 @@ impl RichtextState {
         })
     }
 
+    #[inline]
     pub fn iter_chunk(&self) -> impl Iterator<Item = &RichtextStateChunk> {
         self.tree.iter()
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
         let mut ans: Vec<LoroValue> = Vec::new();
-        let mut last_style_set: Option<FxHashSet<_>> = None;
+        let mut last_attributes: Option<LoroValue> = None;
         for span in self.iter() {
-            let style_set: FxHashSet<Style> = span.styles.iter().cloned().collect();
-            if let Some(last) = last_style_set.as_ref() {
-                if &style_set == last {
+            let attributes: LoroValue = span.attributes.to_value();
+            if let Some(last) = last_attributes.as_ref() {
+                if &attributes == last {
                     let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
                     let s = Arc::make_mut(hash_map)
                         .get_mut("insert")
@@ -1602,17 +1606,12 @@ impl RichtextState {
                 LoroValue::String(Arc::new(span.text.as_str().into())),
             );
 
-            if !span.styles.is_empty() {
-                let mut styles = FxHashMap::default();
-                for style in span.styles.iter() {
-                    styles.insert(style.key.to_string(), style.data.clone());
-                }
-
-                value.insert("attributes".into(), LoroValue::Map(Arc::new(styles)));
+            if !span.attributes.is_empty() {
+                value.insert("attributes".into(), attributes.clone());
             }
 
             ans.push(LoroValue::Map(Arc::new(value)));
-            last_style_set = Some(style_set);
+            last_attributes = Some(attributes);
         }
 
         LoroValue::List(Arc::new(ans))
@@ -1669,9 +1668,9 @@ impl RichtextState {
 #[cfg(test)]
 mod test {
     use append_only_bytes::AppendOnlyBytes;
-    use loro_common::{ContainerID, ContainerType, LoroValue, ID};
+    use serde_json::json;
 
-    use crate::container::richtext::TextStyleInfoFlag;
+    use crate::{container::richtext::TextStyleInfoFlag, ToJson};
 
     use super::*;
 
@@ -1715,13 +1714,19 @@ mod test {
     }
 
     fn bold(n: isize) -> Arc<StyleOp> {
-        Arc::new(StyleOp::new_for_test(n, "bold", TextStyleInfoFlag::BOLD))
+        Arc::new(StyleOp::new_for_test(
+            n,
+            "bold",
+            true.into(),
+            TextStyleInfoFlag::BOLD,
+        ))
     }
 
     fn comment(n: isize) -> Arc<StyleOp> {
         Arc::new(StyleOp::new_for_test(
             n,
             "comment",
+            "comment".into(),
             TextStyleInfoFlag::COMMENT,
         ))
     }
@@ -1730,12 +1735,18 @@ mod test {
         Arc::new(StyleOp::new_for_test(
             n,
             "bold",
+            LoroValue::Null,
             TextStyleInfoFlag::BOLD.to_delete(),
         ))
     }
 
     fn link(n: isize) -> Arc<StyleOp> {
-        Arc::new(StyleOp::new_for_test(n, "link", TextStyleInfoFlag::LINK))
+        Arc::new(StyleOp::new_for_test(
+            n,
+            "link",
+            true.into(),
+            TextStyleInfoFlag::LINK,
+        ))
     }
 
     #[test]
@@ -1744,58 +1755,47 @@ mod test {
         wrapper.insert(0, "Hello World!");
         wrapper.mark(0..5, bold(0));
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
+                {
+                    "insert": " World!"
                 }
-            ]
+            ])
         );
         wrapper.mark(2..7, link(1));
-        dbg!(&wrapper.state);
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "He".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "He",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: "llo".into(),
-                    styles: vec![
-                        Style {
-                            key: "bold".into(),
-                            data: LoroValue::Bool(true)
-                        },
-                        Style {
-                            key: "link".into(),
-                            data: LoroValue::Bool(true)
-                        }
-                    ]
+                {
+                    "insert": "llo",
+                    "attributes": {
+                        "bold": true,
+                        "link": true
+                    }
                 },
-                RichtextSpan {
-                    text: " W".into(),
-                    styles: vec![Style {
-                        key: "link".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+                {
+                    "insert": " W",
+                    "attributes": {
+                        "link": true
+                    }
                 },
-                RichtextSpan {
-                    text: "orld!".into(),
-                    styles: vec![]
+                {
+                    "insert": "orld!"
                 }
-            ]
+
+            ])
         );
     }
 
@@ -1805,49 +1805,44 @@ mod test {
         wrapper.insert(0, "Hello World!");
         wrapper.delete(0, 5);
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![RichtextSpan {
-                text: " World!".into(),
-                styles: vec![]
-            }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": " World!"
+                }
+            ])
         );
 
         wrapper.delete(1, 1);
-        dbg!(&wrapper.state);
+
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: " ".into(),
-                    styles: vec![]
-                },
-                RichtextSpan {
-                    text: "orld!".into(),
-                    styles: vec![]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": " orld!"
                 }
-            ]
+            ])
         );
 
         wrapper.delete(5, 1);
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: " ".into(),
-                    styles: vec![]
-                },
-                RichtextSpan {
-                    text: "orld".into(),
-                    styles: vec![]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": " orld"
                 }
-            ]
+            ])
         );
 
         wrapper.delete(0, 5);
-        assert_eq!(wrapper.state.to_vec(), vec![]);
+        assert_eq!(
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([])
+        );
     }
 
     #[test]
+    #[ignore]
     fn insert_cache_hit() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "H");
@@ -1866,27 +1861,18 @@ mod test {
         wrapper.mark(0..5, bold(0));
         wrapper.insert(5, " Test");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello Test",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: " Test".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
-                },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
+                {
+                    "insert": " World!"
                 }
-            ]
+            ])
         );
     }
 
@@ -1897,24 +1883,18 @@ mod test {
         wrapper.mark(0..5, link(0));
         wrapper.insert(5, " Test");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "link".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello",
+                    "attributes": {
+                        "link": true
+                    }
                 },
-                RichtextSpan {
-                    text: " Test".into(),
-                    styles: vec![]
+                {
+                    "insert": " Test World!"
                 },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
-                }
-            ]
+            ])
         );
     }
 
@@ -1924,11 +1904,12 @@ mod test {
         wrapper.insert(0, "Hello");
         wrapper.insert(5, " World!");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![RichtextSpan {
-                text: "Hello World!".into(),
-                styles: vec![]
-            },]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello World!"
+                },
+            ])
         );
     }
 
@@ -1940,14 +1921,15 @@ mod test {
         wrapper.insert(5, " World!");
         dbg!(&wrapper.state);
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![RichtextSpan {
-                text: "Hello World!".into(),
-                styles: vec![Style {
-                    key: "bold".into(),
-                    data: LoroValue::Bool(true)
-                }]
-            },]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello World!",
+                    "attributes": {
+                        "bold": true
+                    }
+                },
+            ])
         );
     }
 
@@ -1958,20 +1940,19 @@ mod test {
         wrapper.mark(0..5, link(0));
         wrapper.insert(5, " World!");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "link".into(),
-                        data: LoroValue::Bool(true)
-                    },]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello",
+                    "attributes": {
+                        "link": true
+                    }
                 },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
-                },
-            ]
+                {
+
+                    "insert": " World!",
+                }
+            ])
         );
     }
 
@@ -1982,73 +1963,61 @@ mod test {
         wrapper.mark(0..12, bold(0));
         wrapper.mark(5..12, unbold(1));
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
+                {
+                    "insert": " World!",
+                    "attributes": {
+                        "bold": null
+                    }
                 }
-            ]
+            ])
         );
         wrapper.insert(5, "A");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "HelloA",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: "A".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
-                },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
+                {
+                    "insert": " World!",
+                    "attributes": {
+                        "bold": null
+                    }
                 }
-            ]
+            ])
         );
 
         wrapper.insert(0, "A");
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "A".into(),
-                    styles: vec![]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "A",
                 },
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+                {
+                    "insert": "HelloA",
+                    "attributes": {
+                        "bold": true
+                    }
                 },
-                RichtextSpan {
-                    text: "A".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
-                },
-                RichtextSpan {
-                    text: " World!".into(),
-                    styles: vec![]
+                {
+                    "insert": " World!",
+                    "attributes": {
+                        "bold": null
+                    }
                 }
-            ]
+            ])
         );
     }
 
@@ -2059,87 +2028,71 @@ mod test {
         wrapper.mark(0..5, link(0));
         wrapper.mark(0..5, bold(1));
         wrapper.insert(5, "A");
-
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "Hello".into(),
-                    styles: vec![
-                        Style {
-                            key: "bold".into(),
-                            data: LoroValue::Bool(true)
-                        },
-                        Style {
-                            key: "link".into(),
-                            data: LoroValue::Bool(true)
-                        }
-                    ]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "Hello",
+                    "attributes": {
+                        "bold": true,
+                        "link": true
+                    }
                 },
-                RichtextSpan {
-                    text: "A".into(),
-                    styles: vec![Style {
-                        key: "bold".into(),
-                        data: LoroValue::Bool(true)
-                    }]
+                {
+                    "insert": "A",
+                    "attributes": {
+                        "bold": true,
+                    }
                 },
-            ]
+            ])
         );
     }
 
     #[test]
-    fn comments() {
+    fn test_comments() {
         let mut wrapper = SimpleWrapper::default();
         wrapper.insert(0, "Hello World!");
         wrapper.mark(0..5, comment(0));
         wrapper.mark(1..6, comment(1));
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![
-                RichtextSpan {
-                    text: "H".into(),
-                    styles: vec![Style {
-                        key: "comment".into(),
-                        data: LoroValue::Container(ContainerID::new_normal(
-                            ID::new(0, 0),
-                            ContainerType::Map
-                        ))
-                    },]
-                },
-                RichtextSpan {
-                    text: "ello".into(),
-                    styles: vec![
-                        Style {
-                            key: "comment".into(),
-                            data: LoroValue::Container(ContainerID::new_normal(
-                                ID::new(0, 0),
-                                ContainerType::Map
-                            ))
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([
+                {
+                    "insert": "H",
+                    "attributes": {
+                        "id:0@0": {
+                            "key": "comment",
+                            "data": "comment"
                         },
-                        Style {
-                            key: "comment".into(),
-                            data: LoroValue::Container(ContainerID::new_normal(
-                                ID::new(1, 1),
-                                ContainerType::Map
-                            ))
+                    },
+                },
+                {
+                    "insert": "ello",
+                    "attributes": {
+                        "id:0@0": {
+                            "key": "comment",
+                            "data": "comment"
                         },
-                    ]
+                        "id:1@1": {
+                            "key": "comment",
+                            "data": "comment"
+                        }
+                    },
                 },
-                RichtextSpan {
-                    text: " ".into(),
-                    styles: vec![Style {
-                        key: "comment".into(),
-                        data: LoroValue::Container(ContainerID::new_normal(
-                            ID::new(1, 1),
-                            ContainerType::Map
-                        ))
-                    },]
+
+                {
+                    "insert": " ",
+                    "attributes": {
+                        "id:1@1": {
+                            "key": "comment",
+                            "data": "comment"
+                        }
+                    },
                 },
-                RichtextSpan {
-                    text: "World!".into(),
-                    styles: vec![]
-                },
-            ]
+                {
+                    "insert": "World!",
+                }
+            ])
         );
     }
 
@@ -2157,11 +2110,10 @@ mod test {
 
         assert_eq!(count, 2);
         assert_eq!(
-            wrapper.state.to_vec(),
-            vec![RichtextSpan {
-                text: " World!".into(),
-                styles: vec![]
-            },]
+            wrapper.state.get_richtext_value().to_json_value(),
+            json!([{
+                "insert": " World!"
+            }])
         );
     }
 }

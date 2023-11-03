@@ -2,7 +2,7 @@
 #![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasLamportSpan, TreeID};
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RlePush, RleVec};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
@@ -148,6 +148,7 @@ struct DocEncoding<'a> {
     #[columnar(borrow)]
     style_info: Cow<'a, [u8]>,
     style_key: Vec<usize>,
+    style_values: Vec<LoroValue>,
     #[columnar(borrow)]
     root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
     start_counter: Vec<Counter>,
@@ -207,6 +208,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
     let mut tree_id_to_idx = FxHashMap::default();
     let mut string: String = String::new();
     let mut style_key_idx = Vec::new();
+    let mut style_values = Vec::new();
     let mut style_info = Vec::new();
 
     for change in &diff_changes {
@@ -229,8 +231,9 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         for op in change.ops.iter() {
             let container = op.container;
             let container_index = *container_idx2index.get(&container).unwrap();
-            let op = oplog.local_op_to_remote(op);
-            for content in op.contents.into_iter() {
+            let remote_ops = oplog.local_op_to_remote(op);
+            for op in remote_ops {
+                let content = op.content;
                 let (prop, kind, insert_del_len) = match content {
                     crate::op::RawOpContent::Tree(TreeOp { target, parent }) => {
                         let target_peer_idx = *peer_id_to_idx.get(&target.peer).unwrap();
@@ -310,6 +313,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             end,
                             key,
                             info,
+                            value,
                         } => {
                             let key_idx = *key_to_idx.entry(key.clone()).or_insert_with(|| {
                                 keys.push(key.clone());
@@ -317,6 +321,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                             });
                             style_key_idx.push(key_idx);
                             style_info.push(info.to_byte());
+                            style_values.push(value);
                             (
                                 start as usize,
                                 Kind::TextAnchorStart,
@@ -335,7 +340,6 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
                 })
             }
         }
-
         changes.push(ChangeEncoding {
             peer_idx: client_idx as PeerIdx,
             timestamp: change.timestamp,
@@ -357,6 +361,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         normal_containers,
         values,
         style_key: style_key_idx,
+        style_values,
         style_info: Cow::Owned(style_info),
         tree_ids,
     };
@@ -461,6 +466,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
         root_containers,
         values,
         style_key,
+        style_values,
         style_info,
         tree_ids,
     } = encoded;
@@ -487,6 +493,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
     let mut op_iter = ops;
     let mut deps_iter = deps;
     let mut style_key_iter = style_key.into_iter();
+    let mut style_value_iter = style_values.into_iter();
     let mut style_info_iter = style_info.iter();
     let get_container = |idx: usize| {
         if idx < root_containers.len() {
@@ -606,6 +613,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                                 start: pos as u32,
                                 end: insert_del_len as u32 + pos as u32,
                                 key: keys[style_key_iter.next().unwrap()].clone(),
+                                value: style_value_iter.next().unwrap(),
                                 info: TextStyleInfoFlag::from_byte(
                                     *style_info_iter.next().unwrap(),
                                 ),
@@ -617,7 +625,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 let remote_op = RemoteOp {
                     container: container_id,
                     counter: *counter + delta,
-                    contents: vec![content].into(),
+                    content,
                 };
                 delta += remote_op.content_len() as i32;
                 ops.push(remote_op);
@@ -677,18 +685,16 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             // convert change into inner format
             let mut ops = RleVec::new();
             for op in change.ops {
-                let mut lamport = change.lamport;
-                for content in op.contents.into_iter() {
-                    let op = converter.convert_single_op(
-                        &op.container,
-                        change.id.peer,
-                        op.counter,
-                        lamport,
-                        content,
-                    );
-                    lamport += op.atom_len() as Lamport;
-                    ops.push(op);
-                }
+                let lamport = change.lamport;
+                let content = op.content;
+                let op = converter.convert_single_op(
+                    &op.container,
+                    change.id.peer,
+                    op.counter,
+                    lamport,
+                    content,
+                );
+                ops.push(op);
             }
 
             let change = Change {
@@ -704,7 +710,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
             if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
                 // don't need to push new element to dag because it only depends on itself
                 let nodes = oplog.dag.map.get_mut(&change.id.peer).unwrap();
-                let last = nodes.vec_mut().last_mut().unwrap();
+                let last = nodes.last_mut().unwrap();
                 assert_eq!(last.peer, change.id.peer);
                 assert_eq!(last.cnt + last.len as Counter, change.id.counter);
                 assert_eq!(last.lamport + last.len as Lamport, change.lamport);
@@ -717,7 +723,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                     .map
                     .entry(change.id.peer)
                     .or_default()
-                    .push(AppDagNode {
+                    .push_rle_element(AppDagNode {
                         vv,
                         peer: change.id.peer,
                         cnt: change.id.counter,
@@ -743,7 +749,7 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 .changes
                 .entry(change.id.peer)
                 .or_default()
-                .push(change);
+                .push_rle_element(change);
         }
     });
     if !oplog.batch_importing {

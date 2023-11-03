@@ -520,7 +520,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let ans = self.tracker.diff(from, to);
         // PERF: We may simplify list to avoid these getting
         for v in ans.iter() {
-            if let crate::delta::DeltaItem::Insert { value, meta: _ } = &v {
+            if let crate::delta::DeltaItem::Insert {
+                insert: value,
+                attributes: _,
+            } = &v
+            {
                 for range in &value.0 {
                     for i in range.0.clone() {
                         let v = oplog.arena.get_value(i as usize);
@@ -598,6 +602,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     end,
                     key,
                     info,
+                    value,
                 } => {
                     debug_assert!(start < end, "start: {}, end: {}", start, end);
                     let style_id = self.styles.len();
@@ -606,6 +611,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         peer: op.peer,
                         cnt: op.id_start().counter,
                         key: key.clone(),
+                        value: value.clone(),
                         info: *info,
                     });
                     self.tracker.insert(

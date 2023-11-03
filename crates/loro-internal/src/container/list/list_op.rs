@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
+use loro_common::LoroValue;
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,7 @@ pub enum ListOp<'a> {
         end: u32,
         key: InternalString,
         info: TextStyleInfoFlag,
+        value: LoroValue,
     },
     StyleEnd,
 }
@@ -51,6 +53,7 @@ pub enum InnerListOp {
         start: u32,
         end: u32,
         key: InternalString,
+        value: LoroValue,
         info: TextStyleInfoFlag,
     },
     StyleEnd,
@@ -190,6 +193,8 @@ impl Mergable for DeleteSpan {
     where
         Self: Sized,
     {
+        // merge continuous deletions:
+        // note that the previous deletions will affect the position of the later deletions
         match (self.bidirectional(), other.bidirectional()) {
             (true, true) => self.pos == other.pos || self.pos == other.pos + 1,
             (true, false) => self.pos == other.prev_pos(),

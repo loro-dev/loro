@@ -19,7 +19,8 @@
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.0.1",
     "@typescript-eslint/parser": "^6.2.0",
-    "esbuild": "^0.17.12",
+    "@vitest/ui": "^0.34.6",
+    "esbuild": "^0.18.20",
     "eslint": "^8.46.0",
     "prettier": "^3.0.0",
     "rollup": "^3.20.1",
@@ -28,6 +29,6 @@
     "typescript": "^5.0.2",
     "vite": "^4.2.1",
     "vite-plugin-wasm": "^3.2.2",
-    "vitest": "^0.29.7"
+    "vitest": "^0.30.1"
   }
 }

@@ -71,7 +71,6 @@ impl IdToCursor {
         assert_eq!(start_counter, id_span.counter.end);
     }
 
-    // FIXME: delete id span can be reversed
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.client_id).unwrap_or(&EMPTY_VEC);
@@ -161,6 +160,24 @@ impl IdToCursor {
         list[index]
             .cursor
             .get_insert((id.counter - list[index].counter) as usize)
+    }
+
+    #[allow(unused)]
+    pub fn diagnose(&self) {
+        let fragment_num = self.map.iter().map(|x| x.1.len()).sum::<usize>();
+        let insert_pieces = self
+            .map
+            .iter()
+            .flat_map(|x| x.1.iter())
+            .map(|x| match &x.cursor {
+                Cursor::Insert { set, len } => set.len(),
+                Cursor::Delete(_) => 0,
+            })
+            .sum::<usize>();
+        eprintln!(
+            "fragments:{}, insert_pieces:{}",
+            fragment_num, insert_pieces
+        );
     }
 }
 
@@ -314,7 +331,6 @@ impl Cursor {
             }
             _ => unreachable!(),
         }
-        debug_log::debug_dbg!(&self);
     }
 
     fn get_insert(&self, pos: usize) -> Option<LeafIndex> {

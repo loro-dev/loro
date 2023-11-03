@@ -16,13 +16,15 @@ pub(crate) mod richtext_state;
 mod style_range_map;
 mod tracker;
 
-use crate::{change::Lamport, utils::string_slice::StringSlice, InternalString};
+use crate::{change::Lamport, delta::StyleMeta, utils::string_slice::StringSlice, InternalString};
 use fugue_span::*;
-use loro_common::{Counter, LoroValue, PeerID};
+use loro_common::{Counter, LoroValue, PeerID, ID};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
 pub(crate) use richtext_state::RichtextState;
+pub(crate) use style_range_map::Styles;
 pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 
 /// This is the data structure that represents a span of rich text.
@@ -30,7 +32,7 @@ pub(crate) use tracker::{CrdtRopeDelta, Tracker as RichtextTracker};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RichtextSpan {
     pub text: StringSlice,
-    pub styles: Vec<Style>,
+    pub attributes: StyleMeta,
 }
 
 /// This is used to communicate with the frontend.
@@ -51,41 +53,92 @@ pub struct StyleOp {
     pub(crate) peer: PeerID,
     pub(crate) cnt: Counter,
     pub(crate) key: InternalString,
+    pub(crate) value: LoroValue,
     pub(crate) info: TextStyleInfoFlag,
 }
 
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
+pub(crate) enum StyleKey {
+    Key(InternalString),
+    KeyWithId { key: InternalString, id: ID },
+}
+
+impl StyleKey {
+    pub fn to_attr_key(&self) -> String {
+        match self {
+            Self::Key(key) => key.to_string(),
+            Self::KeyWithId { key: _, id } => format!("id:{}", id),
+        }
+    }
+
+    pub fn key(&self) -> &InternalString {
+        match self {
+            Self::Key(key) => key,
+            Self::KeyWithId { key, .. } => key,
+        }
+    }
+
+    pub fn contains_id(&self) -> bool {
+        matches!(self, Self::KeyWithId { .. })
+    }
+}
+
 impl StyleOp {
-    pub fn to_style(&self) -> Option<Style> {
+    pub fn to_style(&self) -> Style {
         if self.info.is_delete() {
-            return None;
+            return Style {
+                key: self.key.clone(),
+                data: LoroValue::Bool(false),
+            };
         }
 
         if self.info.is_container() {
-            Some(Style {
+            Style {
                 key: self.key.clone(),
                 data: LoroValue::Container(loro_common::ContainerID::Normal {
                     peer: self.peer,
                     counter: self.cnt,
                     container_type: loro_common::ContainerType::Map,
                 }),
-            })
+            }
         } else {
-            Some(Style {
+            Style {
                 key: self.key.clone(),
                 data: LoroValue::Bool(true),
-            })
+            }
+        }
+    }
+
+    pub fn to_value(&self) -> LoroValue {
+        self.value.clone()
+    }
+
+    pub(crate) fn get_style_key(&self) -> StyleKey {
+        if !self.info.mergeable() {
+            StyleKey::KeyWithId {
+                key: self.key.clone(),
+                id: self.id(),
+            }
+        } else {
+            StyleKey::Key(self.key.clone())
         }
     }
 
     #[cfg(test)]
-    pub fn new_for_test(n: isize, key: &str, info: TextStyleInfoFlag) -> Self {
+    pub fn new_for_test(n: isize, key: &str, value: LoroValue, info: TextStyleInfoFlag) -> Self {
         Self {
             lamport: n as Lamport,
             peer: n as PeerID,
             cnt: n as Counter,
             key: key.to_string().into(),
+            value,
             info,
         }
+    }
+
+    #[inline(always)]
+    pub fn id(&self) -> ID {
+        ID::new(self.peer, self.cnt)
     }
 }
 
@@ -166,6 +219,35 @@ impl ExpandType {
     #[inline(always)]
     pub const fn expand_after(&self) -> bool {
         matches!(self, ExpandType::After | ExpandType::Both)
+    }
+
+    /// 'before'|'after'|'both'|'none'
+    pub fn try_from_str(s: &str) -> Option<Self> {
+        match s {
+            "before" => Some(ExpandType::Before),
+            "after" => Some(ExpandType::After),
+            "both" => Some(ExpandType::Both),
+            "none" => Some(ExpandType::None),
+            _ => None,
+        }
+    }
+
+    /// Create reversed expand type.
+    ///
+    /// Beofre  -> After
+    /// After   -> Before
+    /// Both    -> None
+    /// None    -> Both
+    ///
+    /// Because the creation of text styles and the deletion of the text styles have reversed expand type.
+    /// This method is useful to convert between the two
+    pub fn reverse(self) -> Self {
+        match self {
+            ExpandType::Before => ExpandType::After,
+            ExpandType::After => ExpandType::Before,
+            ExpandType::Both => ExpandType::None,
+            ExpandType::None => ExpandType::Both,
+        }
     }
 }
 

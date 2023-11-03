@@ -1,7 +1,7 @@
 use std::{ops::Range, sync::Arc};
 
 use fxhash::FxHashMap;
-use generic_btree::rle::HasLength;
+use generic_btree::rle::{HasLength, Mergeable};
 use loro_common::{Counter, LoroResult, LoroValue, PeerID, ID};
 use loro_preload::{CommonArena, EncodedRichtextState, TempArena, TextRanges};
 
@@ -87,6 +87,49 @@ enum UndoItem {
     },
 }
 
+impl Mergeable for UndoItem {
+    fn can_merge(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (UndoItem::Insert { index, len }, UndoItem::Insert { index: r_index, .. }) => {
+                *index + *len == *r_index
+            }
+            (
+                UndoItem::Delete { index, content },
+                UndoItem::Delete {
+                    index: r_i,
+                    content: r_c,
+                },
+            ) => *r_i + r_c.rle_len() as u32 == *index && r_c.can_merge(content),
+            _ => false,
+        }
+    }
+
+    fn merge_right(&mut self, rhs: &Self) {
+        match (self, rhs) {
+            (UndoItem::Insert { len, .. }, UndoItem::Insert { len: r_len, .. }) => {
+                *len += *r_len;
+            }
+            (
+                UndoItem::Delete { content, index },
+                UndoItem::Delete {
+                    content: r_c,
+                    index: r_i,
+                },
+            ) => {
+                if *r_i + r_c.rle_len() as u32 == *index {
+                    content.merge_right(r_c);
+                    *index = *r_i
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn merge_left(&mut self, _: &Self) {
+        unreachable!()
+    }
+}
+
 impl ContainerState for RichtextState {
     // TODO: refactor
     fn apply_diff_and_convert(&mut self, diff: InternalDiff, _arena: &SharedArena) -> Diff {
@@ -94,17 +137,25 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        debug_log::group!("apply_diff_and_convert");
+        debug_log::debug_dbg!(&richtext);
+        // PERF: compose delta
         let mut ans: Delta<StringSlice, StyleMeta> = Delta::new();
+        let mut style_delta: Delta<StringSlice, StyleMeta> = Delta::new();
+        struct Pos {
+            entity_index: usize,
+            event_index: usize,
+        }
+
+        let mut style_starts: FxHashMap<Arc<StyleOp>, Pos> = FxHashMap::default();
         let mut entity_index = 0;
         let mut event_index = 0;
-        let mut last_style_index = 0;
-        let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         for span in richtext.vec.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, .. } => {
+                crate::delta::DeltaItem::Retain { retain: len, .. } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { value, .. } => {
+                crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
                             let (pos, styles) = self.state.get_mut().insert_elem_at_entity_index(
@@ -114,33 +165,10 @@ impl ContainerState for RichtextState {
                                     text: text.clone(),
                                 },
                             );
-                            let insert_styles = StyleMeta {
-                                vec: styles
-                                    .iter()
-                                    .flat_map(|(_, value)| value.to_styles())
-                                    .collect(),
-                            };
+                            let insert_styles = styles.clone().into();
 
                             if pos > event_index {
-                                let mut new_len = 0;
-                                for (len, styles) in self
-                                    .state
-                                    .get_mut()
-                                    .iter_styles_in_event_index_range(event_index..pos)
-                                {
-                                    new_len += len;
-                                    ans = ans.retain_with_meta(
-                                        len,
-                                        StyleMeta {
-                                            vec: styles
-                                                .iter()
-                                                .flat_map(|(_, value)| value.to_styles())
-                                                .collect(),
-                                        },
-                                    );
-                                }
-
-                                assert_eq!(new_len, pos - event_index);
+                                ans = ans.retain(pos - event_index);
                             }
                             event_index = pos
                                 + (if cfg!(feature = "wasm") {
@@ -151,67 +179,73 @@ impl ContainerState for RichtextState {
                             ans = ans
                                 .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
                         }
-                        RichtextStateChunk::Style { style, anchor_type } => {
-                            match anchor_type {
-                                AnchorType::Start => {}
-                                AnchorType::End => {
-                                    last_style_index = event_index;
-                                }
+                        RichtextStateChunk::Style { anchor_type, style } => {
+                            let (new_event_index, _) =
+                                self.state.get_mut().insert_elem_at_entity_index(
+                                    entity_index,
+                                    RichtextStateChunk::Style {
+                                        style: style.clone(),
+                                        anchor_type: *anchor_type,
+                                    },
+                                );
+
+                            if new_event_index > event_index {
+                                ans = ans.retain(new_event_index - event_index);
+                                // inserting style anchor will not affect event_index's positions
+                                event_index = new_event_index;
                             }
-                            self.state.get_mut().insert_elem_at_entity_index(
-                                entity_index,
-                                RichtextStateChunk::Style {
-                                    style: style.clone(),
-                                    anchor_type: *anchor_type,
-                                },
-                            );
 
                             if *anchor_type == AnchorType::Start {
-                                style_starts.insert(style.clone(), entity_index);
+                                style_starts.insert(
+                                    style.clone(),
+                                    Pos {
+                                        entity_index,
+                                        event_index: new_event_index,
+                                    },
+                                );
                             } else {
-                                let start_pos =
-                                    style_starts.get(style).expect("Style start not found");
+                                // get the pair of style anchor. now we can annotate the range
+                                let Pos {
+                                    entity_index: start_entity_index,
+                                    event_index: start_event_index,
+                                } = style_starts.remove(style).unwrap();
+
                                 // we need to + 1 because we also need to annotate the end anchor
                                 self.state.get_mut().annotate_style_range(
-                                    *start_pos..entity_index + 1,
+                                    start_entity_index..entity_index + 1,
                                     style.clone(),
                                 );
+
+                                let mut meta = StyleMeta::default();
+
+                                meta.insert(
+                                    style.get_style_key(),
+                                    crate::delta::StyleMetaItem {
+                                        lamport: style.lamport,
+                                        peer: style.peer,
+                                        value: style.to_value(),
+                                    },
+                                );
+                                let delta: Delta<StringSlice, _> = Delta::new()
+                                    .retain(start_event_index)
+                                    .retain_with_meta(new_event_index - start_event_index, meta);
+                                debug_log::debug_dbg!(&delta);
+                                style_delta = style_delta.compose(delta);
                             }
                         }
                     }
-                    self.undo_stack.push(UndoItem::Insert {
-                        index: entity_index as u32,
-                        len: value.rle_len() as u32,
-                    });
                     entity_index += value.rle_len();
                 }
-                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                crate::delta::DeltaItem::Delete {
+                    delete: len,
+                    attributes: _,
+                } => {
                     let (start, end) =
                         self.state
                             .get_mut()
-                            .drain_by_entity_index(entity_index, *len, |span| {
-                                self.undo_stack.push(UndoItem::Delete {
-                                    index: entity_index as u32,
-                                    content: span,
-                                })
-                            });
+                            .drain_by_entity_index(entity_index, *len, |_| {});
                     if start > event_index {
-                        for (len, styles) in self
-                            .state
-                            .get_mut()
-                            .iter_styles_in_event_index_range(event_index..start)
-                        {
-                            ans = ans.retain_with_meta(
-                                len,
-                                StyleMeta {
-                                    vec: styles
-                                        .iter()
-                                        .flat_map(|(_, value)| value.to_styles())
-                                        .collect(),
-                                },
-                            );
-                        }
-
+                        ans = ans.retain(start - event_index);
                         event_index = start;
                     }
 
@@ -220,24 +254,11 @@ impl ContainerState for RichtextState {
             }
         }
 
-        if last_style_index > event_index {
-            for (len, styles) in self
-                .state
-                .get_mut()
-                .iter_styles_in_event_index_range(event_index..last_style_index)
-            {
-                ans = ans.retain_with_meta(
-                    len,
-                    StyleMeta {
-                        vec: styles
-                            .iter()
-                            .flat_map(|(_, value)| value.to_styles())
-                            .collect(),
-                    },
-                );
-            }
-        }
-
+        debug_assert!(style_starts.is_empty(), "Styles should always be paired");
+        debug_log::debug_dbg!(&ans, &style_delta);
+        let ans = ans.compose(style_delta);
+        debug_log::debug_dbg!(&ans);
+        debug_log::group_end!();
         Diff::Text(ans)
     }
 
@@ -246,15 +267,20 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        debug_log::debug_dbg!(&richtext);
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;
         for span in richtext.vec.iter() {
             match span {
-                crate::delta::DeltaItem::Retain { len, meta: _ } => {
+                crate::delta::DeltaItem::Retain {
+                    retain: len,
+                    attributes: _,
+                } => {
                     entity_index += len;
                 }
-                crate::delta::DeltaItem::Insert { value, meta: _ } => {
+                crate::delta::DeltaItem::Insert {
+                    insert: value,
+                    attributes: _,
+                } => {
                     match value {
                         RichtextStateChunk::Text { unicode_len, text } => {
                             self.state.get_mut().insert_elem_at_entity_index(
@@ -287,21 +313,15 @@ impl ContainerState for RichtextState {
                             }
                         }
                     }
-                    self.undo_stack.push(UndoItem::Insert {
-                        index: entity_index as u32,
-                        len: value.rle_len() as u32,
-                    });
                     entity_index += value.rle_len();
                 }
-                crate::delta::DeltaItem::Delete { len, meta: _ } => {
+                crate::delta::DeltaItem::Delete {
+                    delete: len,
+                    attributes: _,
+                } => {
                     self.state
                         .get_mut()
-                        .drain_by_entity_index(entity_index, *len, |span| {
-                            self.undo_stack.push(UndoItem::Delete {
-                                index: entity_index as u32,
-                                content: span,
-                            })
-                        });
+                        .drain_by_entity_index(entity_index, *len, |_| {});
                 }
             }
         }
@@ -324,7 +344,7 @@ impl ContainerState for RichtextState {
                         .insert_at_entity_index(*pos as usize, slice.clone());
 
                     if self.in_txn {
-                        self.undo_stack.push(UndoItem::Insert {
+                        self.push_undo(UndoItem::Insert {
                             index: *pos,
                             len: *len,
                         })
@@ -336,10 +356,18 @@ impl ContainerState for RichtextState {
                         rle::HasLength::atom_len(&del),
                         |span| {
                             if self.in_txn {
-                                self.undo_stack.push(UndoItem::Delete {
+                                let item = UndoItem::Delete {
                                     index: del.start() as u32,
                                     content: span,
-                                })
+                                };
+                                match self.undo_stack.last_mut() {
+                                    Some(last) if last.can_merge(&item) => {
+                                        last.merge_right(&item);
+                                    }
+                                    _ => {
+                                        self.undo_stack.push(item);
+                                    }
+                                }
                             }
                         },
                     );
@@ -348,6 +376,7 @@ impl ContainerState for RichtextState {
                     start,
                     end,
                     key,
+                    value,
                     info,
                 } => {
                     self.state.get_mut().mark_with_entity_index(
@@ -357,6 +386,7 @@ impl ContainerState for RichtextState {
                             peer: r_op.id.peer,
                             cnt: r_op.id.counter,
                             key: key.clone(),
+                            value: value.clone(),
                             info: *info,
                         }),
                     );
@@ -372,8 +402,8 @@ impl ContainerState for RichtextState {
         let mut delta = crate::delta::Delta::new();
         for span in self.state.get_mut().iter() {
             delta.vec.push(DeltaItem::Insert {
-                value: span.text,
-                meta: StyleMeta { vec: span.styles },
+                insert: span.text,
+                attributes: span.attributes,
             })
         }
 
@@ -427,6 +457,17 @@ impl RichtextState {
         }
     }
 
+    fn push_undo(&mut self, item: UndoItem) {
+        match self.undo_stack.last_mut() {
+            Some(last) if last.can_merge(&item) => {
+                last.merge_right(&item);
+            }
+            _ => {
+                self.undo_stack.push(item);
+            }
+        }
+    }
+
     #[inline(always)]
     pub fn len_utf8(&mut self) -> usize {
         self.state.get_mut().len_utf8()
@@ -451,10 +492,17 @@ impl RichtextState {
     }
 
     #[inline(always)]
-    pub(crate) fn get_entity_index_for_text_insert_event_index(&mut self, pos: usize) -> usize {
+    pub(crate) fn get_entity_index_for_text_insert(&mut self, event_index: usize) -> usize {
         self.state
             .get_mut()
-            .get_entity_index_for_text_insert(pos, PosType::Event)
+            .get_entity_index_for_text_insert(event_index, PosType::Event)
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_styles_at_entity_index(&mut self, entity_index: usize) -> StyleMeta {
+        self.state
+            .get_mut()
+            .get_styles_at_entity_index_for_insert(entity_index)
     }
 
     #[inline(always)]
@@ -504,6 +552,10 @@ impl RichtextState {
         arena: &SharedArena,
     ) {
         assert!(self.is_empty());
+        if text_bytes.is_empty() {
+            return;
+        }
+
         let bit_len = is_style_start.len() * 8;
         let is_style_start = BitMap::from_vec(is_style_start, bit_len);
         let mut is_style_start_iter = is_style_start.iter();
@@ -528,6 +580,7 @@ impl RichtextState {
                             peer: common.peer_ids[style_compact.peer_idx as usize],
                             cnt: style_compact.counter as Counter,
                             key: state_arena.keywords[style_compact.key_idx as usize].clone(),
+                            value: style_compact.value.clone(),
                             info: TextStyleInfoFlag::from_byte(style_compact.style_info),
                         }),
                         if is_start {
@@ -591,6 +644,7 @@ impl RichtextState {
                         counter: style.cnt as u32,
                         lamport: style.lamport,
                         style_info: style.info.to_byte(),
+                        value: style.value.clone(),
                     })
                 }
             }
@@ -623,7 +677,6 @@ impl From<RichtextStateLoader> for InnerState {
 
 impl RichtextStateLoader {
     pub fn push(&mut self, elem: RichtextStateChunk) {
-        debug_log::debug_dbg!(&elem);
         if let RichtextStateChunk::Style { style, anchor_type } = &elem {
             if *anchor_type == AnchorType::Start {
                 self.start_anchor_pos
@@ -652,7 +705,6 @@ impl RichtextStateLoader {
             state.annotate_style_range(range, style);
         }
 
-        debug_log::debug_dbg!(&state);
         if cfg!(debug_assertions) {
             state.check();
         }

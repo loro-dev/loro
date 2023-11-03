@@ -9,7 +9,7 @@ use itertools::Itertools;
 use loro_common::{
     Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, Lamport, LoroError, ID,
 };
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RlePush, RleVec};
 use smallvec::SmallVec;
 
 use super::AppDagNode;
@@ -170,7 +170,7 @@ impl OpLog {
         if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
             // don't need to push new element to dag because it only depends on itself
             let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
-            let last = nodes.vec_mut().last_mut().unwrap();
+            let last = nodes.last_mut().unwrap();
             assert_eq!(last.peer, change.id.peer);
             assert_eq!(last.cnt + last.len as Counter, change.id.counter);
             assert_eq!(last.lamport + last.len as Lamport, change.lamport);
@@ -182,7 +182,7 @@ impl OpLog {
                 .map
                 .entry(change.id.peer)
                 .or_default()
-                .push(AppDagNode {
+                .push_rle_element(AppDagNode {
                     vv,
                     peer: change.id.peer,
                     cnt: change.id.counter,
@@ -198,25 +198,26 @@ impl OpLog {
                 }
             }
         }
-        self.changes.entry(change.id.peer).or_default().push(change);
+        self.changes
+            .entry(change.id.peer)
+            .or_default()
+            .push_rle_element(change);
     }
 }
 
 pub(super) fn to_local_op(change: Change<RemoteOp>, converter: &mut OpConverter) -> Change {
     let mut ops = RleVec::new();
     for op in change.ops {
-        let mut lamport = change.lamport;
-        for content in op.contents.into_iter() {
-            let op = converter.convert_single_op(
-                &op.container,
-                change.id.peer,
-                op.counter,
-                lamport,
-                content,
-            );
-            lamport += op.atom_len() as Lamport;
-            ops.push(op);
-        }
+        let lamport = change.lamport;
+        let content = op.content;
+        let op = converter.convert_single_op(
+            &op.container,
+            change.id.peer,
+            op.counter,
+            lamport,
+            content,
+        );
+        ops.push(op);
     }
     Change {
         ops,
@@ -260,9 +261,9 @@ mod test {
     #[test]
     fn import_pending() {
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
 
@@ -290,9 +291,9 @@ mod test {
     #[test]
     fn pending_import_snapshot() {
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
         let update1 = a.export_snapshot();
@@ -312,13 +313,13 @@ mod test {
         //        \    /
         // b:       b1
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let c = LoroDoc::new();
-        c.set_peer_id(3);
+        c.set_peer_id(3).unwrap();
         let d = LoroDoc::new();
-        d.set_peer_id(4);
+        d.set_peer_id(4).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
@@ -353,11 +354,11 @@ mod test {
         // In this case, c apply b's change first, then apply all the changes from a.
         // C is expected to have the same content as a, after a imported b's change
         let a = LoroDoc::new();
-        a.set_peer_id(1);
+        a.set_peer_id(1).unwrap();
         let b = LoroDoc::new();
-        b.set_peer_id(2);
+        b.set_peer_id(2).unwrap();
         let c = LoroDoc::new();
-        c.set_peer_id(3);
+        c.set_peer_id(3).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
         a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();

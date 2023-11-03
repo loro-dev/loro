@@ -2,11 +2,13 @@
 
 use std::ops::Range;
 
+use loro_common::LoroValue;
 use loro_internal::{container::richtext::TextStyleInfoFlag, LoroDoc, ToJson};
+use serde_json::json;
 
 fn init(s: &str) -> LoroDoc {
     let doc = LoroDoc::default();
-    doc.set_peer_id(1);
+    doc.set_peer_id(1).unwrap();
     let richtext = doc.get_text("r");
     doc.with_txn(|txn| richtext.insert(txn, 0, s)).unwrap();
     doc
@@ -14,7 +16,7 @@ fn init(s: &str) -> LoroDoc {
 
 fn clone(doc: &LoroDoc, peer_id: u64) -> LoroDoc {
     let doc2 = LoroDoc::default();
-    doc2.set_peer_id(peer_id);
+    doc2.set_peer_id(peer_id).unwrap();
     doc2.import(&doc.export_from(&Default::default())).unwrap();
     doc2
 }
@@ -56,8 +58,21 @@ fn delete(doc: &LoroDoc, pos: usize, len: usize) {
 
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| richtext.mark(txn, range.start, range.end, kind.key(), kind.flag()))
-        .unwrap();
+    doc.with_txn(|txn| {
+        richtext.mark(
+            txn,
+            range.start,
+            range.end,
+            kind.key(),
+            if kind.flag().is_delete() {
+                LoroValue::Null
+            } else {
+                true.into()
+            },
+            kind.flag(),
+        )
+    })
+    .unwrap();
 }
 
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
@@ -68,6 +83,7 @@ fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
             range.start,
             range.end,
             kind.key(),
+            false.into(),
             kind.flag().to_delete(),
         )
     })
@@ -79,16 +95,16 @@ fn merge(a: &LoroDoc, b: &LoroDoc) {
     b.import(&a.export_from(&b.oplog_vv())).unwrap();
 }
 
-fn expect_result(doc: &LoroDoc, json: &str) {
-    let richtext = doc.get_text("r");
-    let s = richtext.get_richtext_value().to_json();
-    assert_eq!(&s, json);
-}
-
-fn expect_result_value(doc: &LoroDoc, json: serde_json::Value) {
+fn expect_result(doc: &LoroDoc, json: serde_json::Value) {
     let richtext = doc.get_text("r");
     let s = richtext.get_richtext_value().to_json_value();
-    assert_eq!(s, json);
+    assert_eq!(
+        &s,
+        &json,
+        "expect: {}, got: {}",
+        serde_json::to_string_pretty(&json).unwrap(),
+        serde_json::to_string_pretty(&s).unwrap()
+    );
 }
 
 #[test]
@@ -100,7 +116,7 @@ fn case0() {
     merge(&doc_a, &doc_b);
     expect_result(
         &doc_a,
-        r#"[{"insert":"Hello New World","attributes":{"bold":true}}]"#,
+        json!([{"insert":"Hello New World","attributes":{"bold":true}}]),
     );
 }
 
@@ -113,7 +129,7 @@ fn case1() {
     merge(&doc_a, &doc_b);
     expect_result(
         &doc_a,
-        r#"[{"insert":"Hello World","attributes":{"bold":true}}]"#,
+        json!([{"insert":"Hello World","attributes":{"bold":true}}]),
     );
 }
 
@@ -127,7 +143,7 @@ fn case2() {
     merge(&doc_a, &doc_b);
     expect_result(
         &doc_a,
-        r#"[{"insert":"Hello a "},{"insert":"World","attributes":{"bold":true}}]"#,
+        json!([{"insert":"Hello a ","attributes":{"bold":false}},{"insert":"World","attributes":{"bold":true}}]),
     );
 }
 
@@ -147,7 +163,7 @@ fn case3() {
     merge(&doc_a, &doc_b);
     expect_result(
         &doc_a,
-        r#"[{"insert":"Hello a "},{"insert":"World","attributes":{"bold":true}}]"#,
+        json!([{"insert":"Hello a "},{"insert":"World","attributes":{"bold":true}}]),
     );
 }
 
@@ -163,17 +179,17 @@ fn case5() {
     let doc_b = clone(&doc_a, 2);
     mark(&doc_a, 0..5, Kind::Link);
     delete(&doc_b, 2, 3);
-    expect_result(&doc_b, r#"[{"insert":"He World"}]"#);
+    expect_result(&doc_b, json!([{"insert":"He World"}]));
     insert(&doc_b, 2, "y");
-    expect_result(&doc_b, r#"[{"insert":"Hey World"}]"#);
+    expect_result(&doc_b, json!([{"insert":"Hey World"}]));
     merge(&doc_a, &doc_b);
     expect_result(
         &doc_b,
-        r#"[{"insert":"Hey","attributes":{"link":true}},{"insert":" World"}]"#,
+        json!([{"insert":"Hey","attributes":{"link":true}},{"insert":" World"}]),
     );
     expect_result(
         &doc_a,
-        r#"[{"insert":"Hey","attributes":{"link":true}},{"insert":" World"}]"#,
+        json!([{"insert":"Hey","attributes":{"link":true}},{"insert":" World"}]),
     );
 }
 
@@ -187,7 +203,7 @@ fn case5() {
 fn case6() {
     let doc = init("Hello World");
     mark(&doc, 0..5, Kind::Bold);
-    expect_result_value(
+    expect_result(
         &doc,
         serde_json::json!([
             {"insert": "Hello", "attributes": {"bold": true}},
@@ -195,7 +211,7 @@ fn case6() {
         ]),
     );
     mark(&doc, 0..5, Kind::Link);
-    expect_result_value(
+    expect_result(
         &doc,
         serde_json::json!([
             {"insert": "Hello", "attributes": {"bold": true, "link": true}},
@@ -203,7 +219,7 @@ fn case6() {
         ]),
     );
     insert(&doc, 5, "t");
-    expect_result_value(
+    expect_result(
         &doc,
         serde_json::json!([
             {"insert": "Hello", "attributes": {"bold": true, "link": true}},
@@ -228,7 +244,15 @@ fn case7() {
     unmark(&doc_a, 0..3, Kind::Bold);
     unmark(&doc_b, 4..7, Kind::Bold);
     merge(&doc_a, &doc_b);
-    expect_result(&doc_a, r#"[{"insert":"The fox jumped over the dog."}]"#);
+    expect_result(
+        &doc_a,
+        json!([
+            {"insert":"The", "attributes": {"bold": false}},
+            {"insert":" ",},
+            {"insert":"fox", "attributes": {"bold": false}},
+            {"insert":" jumped over the dog."}
+        ]),
+    );
 }
 
 /// | Name            | Text                                         |
@@ -246,11 +270,12 @@ fn case8() {
     unmark(&doc_b, 3..14, Kind::Bold);
     mark(&doc_b, 24..27, Kind::Bold);
     merge(&doc_a, &doc_b);
-    expect_result_value(
+    expect_result(
         &doc_a,
         serde_json::json!([
             {"insert": "The", "attributes": {"bold": true}},
-            {"insert": " fox jumped over the "},
+            {"insert": " fox jumped", "attributes": {"bold": false}},
+            {"insert": " over the "},
             {"insert": "dog", "attributes": {"bold": true}},
             {"insert": "."}
         ]),
@@ -270,7 +295,7 @@ fn case9() {
     mark(&doc_a, 0..7, Kind::Bold);
     mark(&doc_a, 4..14, Kind::Italic);
     merge(&doc_a, &doc_b);
-    expect_result_value(
+    expect_result(
         &doc_a,
         serde_json::json!([
             {"insert": "The ", "attributes": {"bold": true}},

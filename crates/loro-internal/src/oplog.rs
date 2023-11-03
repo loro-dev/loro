@@ -8,7 +8,8 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use fxhash::FxHashMap;
-use rle::{HasLength, RleVec};
+use rle::{HasLength, RleCollection, RlePush, RleVec};
+use smallvec::SmallVec;
 // use tabled::measurment::Percent;
 
 use crate::change::{Change, Lamport, Timestamp};
@@ -16,14 +17,15 @@ use crate::container::list::list_op;
 use crate::dag::DagUtils;
 use crate::diff_calc::tree::MoveLamportAndID;
 use crate::diff_calc::TreeDiffCache;
+use crate::encoding::RemoteClientChanges;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
-use crate::encoding::{ClientChanges, RemoteClientChanges};
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{ListSlice, RawOpContent, RemoteOp};
 use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 
+type ClientChanges = FxHashMap<PeerID, Vec<Change>>;
 use self::pending_changes::PendingChanges;
 
 use super::arena::SharedArena;
@@ -57,7 +59,7 @@ pub struct OpLog {
 /// It's faster to answer the question like what's the LCA version
 #[derive(Debug, Clone, Default)]
 pub struct AppDag {
-    pub(crate) map: FxHashMap<PeerID, RleVec<[AppDagNode; 0]>>,
+    pub(crate) map: FxHashMap<PeerID, Vec<AppDagNode>>,
     pub(crate) frontiers: Frontiers,
     pub(crate) vv: VersionVector,
 }
@@ -95,12 +97,12 @@ impl AppDag {
             counter,
         } = id;
         self.map.get_mut(&client_id).and_then(|rle| {
-            if counter >= rle.atom_len() {
+            if counter >= rle.sum_atom_len() {
                 return None;
             }
 
             let index = rle.search_atom_index(counter);
-            Some(&mut rle.vec_mut()[index])
+            Some(&mut rle[index])
         })
     }
 
@@ -183,7 +185,7 @@ impl OpLog {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.dag.map.is_empty() && self.arena.is_empty()
+        self.dag.map.is_empty() && self.arena.can_import_snapshot()
     }
 
     /// Import a change.
@@ -223,7 +225,7 @@ impl OpLog {
         if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
             // don't need to push new element to dag because it only depends on itself
             let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
-            let last = nodes.vec_mut().last_mut().unwrap();
+            let last = nodes.last_mut().unwrap();
             assert_eq!(last.peer, change.id.peer);
             assert_eq!(last.cnt + last.len as Counter, change.id.counter);
             assert_eq!(last.lamport + last.len as Lamport, change.lamport);
@@ -235,7 +237,7 @@ impl OpLog {
                 .map
                 .entry(change.id.peer)
                 .or_default()
-                .push(AppDagNode {
+                .push_rle_element(AppDagNode {
                     vv,
                     peer: change.id.peer,
                     cnt: change.id.counter,
@@ -274,7 +276,10 @@ impl OpLog {
             }
         }
 
-        self.changes.entry(change.id.peer).or_default().push(change);
+        self.changes
+            .entry(change.id.peer)
+            .or_default()
+            .push_rle_element(change);
 
         Ok(())
     }
@@ -307,7 +312,7 @@ impl OpLog {
         ID::new(peer, cnt)
     }
 
-    pub fn get_peer_changes(&self, peer: PeerID) -> Option<&RleVec<[Change; 0]>> {
+    pub fn get_peer_changes(&self, peer: PeerID) -> Option<&Vec<Change>> {
         self.changes.get(&peer)
     }
 
@@ -337,7 +342,7 @@ impl OpLog {
             let mut temp = Vec::new();
             if let Some(peer_changes) = self.changes.get(&peer) {
                 if let Some(result) = peer_changes.get_by_atom_index(start_cnt) {
-                    for change in &peer_changes.vec()[result.merged_index..] {
+                    for change in &peer_changes[result.merged_index..] {
                         temp.push(self.convert_change_to_remote(change))
                     }
                 }
@@ -345,19 +350,6 @@ impl OpLog {
 
             if !temp.is_empty() {
                 changes.insert(peer, temp);
-            }
-        }
-
-        changes
-    }
-
-    pub(crate) fn get_change_since(&self, id: ID) -> Vec<Change> {
-        let mut changes = Vec::new();
-        if let Some(peer_changes) = self.changes.get(&id.peer) {
-            if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                for change in &peer_changes.vec()[result.merged_index..] {
-                    changes.push(change.clone())
-                }
             }
         }
 
@@ -380,7 +372,7 @@ impl OpLog {
     pub fn get_change_at(&self, id: ID) -> Option<&Change> {
         if let Some(peer_changes) = self.changes.get(&id.peer) {
             if let Some(result) = peer_changes.get_by_atom_index(id.counter) {
-                return Some(&peer_changes.vec()[result.merged_index]);
+                return Some(&peer_changes[result.merged_index]);
             }
         }
 
@@ -390,8 +382,9 @@ impl OpLog {
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
         let mut ops = RleVec::new();
         for op in change.ops.iter() {
-            let raw_op = self.local_op_to_remote(op);
-            ops.push(raw_op);
+            for op in self.local_op_to_remote(op) {
+                ops.push(op);
+            }
         }
 
         Change {
@@ -403,9 +396,9 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> RemoteOp<'_> {
+    pub(crate) fn local_op_to_remote(&self, op: &crate::op::Op) -> SmallVec<[RemoteOp<'_>; 1]> {
         let container = self.arena.get_container_id(op.container).unwrap();
-        let mut contents = RleVec::new();
+        let mut contents: SmallVec<[_; 1]> = SmallVec::new();
         match &op.content {
             crate::op::InnerContent::List(list) => match list {
                 list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
@@ -461,11 +454,13 @@ impl OpLog {
                     start,
                     end,
                     key,
+                    value,
                     info,
                 } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
                     start: *start,
                     end: *end,
                     key: key.clone(),
+                    value: value.clone(),
                     info: *info,
                 })),
                 list_op::InnerListOp::StyleEnd => {
@@ -482,11 +477,15 @@ impl OpLog {
             crate::op::InnerContent::Tree(tree) => contents.push(RawOpContent::Tree(*tree)),
         };
 
-        RemoteOp {
-            container,
-            contents,
-            counter: op.counter,
+        let mut ans = SmallVec::with_capacity(contents.len());
+        for content in contents {
+            ans.push(RemoteOp {
+                container: container.clone(),
+                content,
+                counter: op.counter,
+            })
         }
+        ans
     }
 
     // Changes are expected to be sorted by counter in each value in the hashmap
@@ -574,8 +573,8 @@ impl OpLog {
             let Some(result) = changes.get_by_atom_index(from_cnt) else {
                 continue;
             };
-            for i in result.merged_index..changes.vec().len() {
-                let change = &changes.vec()[i];
+
+            for change in &changes[result.merged_index..changes.len()] {
                 if change.id.counter >= to_cnt {
                     break;
                 }
@@ -720,7 +719,7 @@ impl OpLog {
         self.changes.values().map(|x| x.len()).sum()
     }
 
-    pub fn diagnose_size(&self) {
+    pub fn diagnose_size(&self) -> SizeInfo {
         let mut total_changes = 0;
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
@@ -737,7 +736,21 @@ impl OpLog {
         println!("total ops: {}", total_ops);
         println!("total atom ops: {}", total_atom_ops);
         println!("total dag node: {}", total_dag_node);
+        SizeInfo {
+            total_changes,
+            total_ops,
+            total_atom_ops,
+            total_dag_node,
+        }
     }
+}
+
+#[derive(Debug)]
+pub struct SizeInfo {
+    pub total_changes: usize,
+    pub total_ops: usize,
+    pub total_atom_ops: usize,
+    pub total_dag_node: usize,
 }
 
 impl Default for OpLog {

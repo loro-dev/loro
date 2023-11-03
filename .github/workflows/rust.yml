@@ -2,47 +2,46 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - uses: jetli/wasm-pack-action@v0.4.0
-      with:
-        # Optional version of wasm-pack to install(eg. 'v0.9.1', 'latest')
-        version: 'latest'
-    - uses: denoland/setup-deno@v1
-      with:
-        deno-version: v1.x
-    - uses: actions/setup-node@v3
-      with:
-        node-version: 18
-    - uses: pnpm/action-setup@v2
-      with:
-        version: 8
-    - name: Install nextest
-      uses: taiki-e/install-action@v1
-      with:
-        tool: nextest
-    
-    - run: rustup toolchain install stable --profile minimal
-    - run: rustup target add wasm32-unknown-unknown
-    - uses: jetli/wasm-bindgen-action@v0.2.0
-      with:
-        version: 'latest'
-    - uses: Swatinem/rust-cache@v2
-    - name: Build
-      run: cargo build --verbose
-    - name: Run rust tests
-      run: deno task test 
-    - name: Run wasm tests
-      run: deno task test-wasm
+      - uses: actions/checkout@v3
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          # Optional version of wasm-pack to install(eg. 'v0.9.1', 'latest')
+          version: "latest"
+      - uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Install nextest
+        uses: taiki-e/install-action@v1
+        with:
+          tool: nextest
+
+      - run: rustup toolchain install stable --profile minimal
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: jetli/wasm-bindgen-action@v0.2.0
+        with:
+          version: "0.2.86"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --verbose
+      - name: Run rust tests
+        run: deno task test
+      - name: Run wasm tests
+        run: deno task test-wasm

@@ -1,19 +1,258 @@
 use std::sync::{Arc, Mutex};
 
-use loro_common::{ContainerType, LoroValue, ID};
-use loro_internal::{version::Frontiers, ApplyDiff, LoroDoc, ToJson};
+use loro_common::{ContainerID, ContainerType, LoroValue, ID};
+use loro_internal::{
+    container::richtext::TextStyleInfoFlag, version::Frontiers, ApplyDiff, LoroDoc, ToJson,
+};
 use serde_json::json;
+
+#[test]
+fn richtext_mark_event() {
+    let a = LoroDoc::new_auto_commit();
+    a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                        {"insert": "He", "attributes": {"bold": true}},
+                        {"insert": "ll", "attributes": {"bold": null}},
+                        {"insert": "o", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text")
+        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.get_text("text")
+        .mark_(
+            2,
+            4,
+            "bold",
+            LoroValue::Null,
+            TextStyleInfoFlag::BOLD.to_delete(),
+        )
+        .unwrap();
+    a.commit_then_stop();
+    let b = LoroDoc::new_auto_commit();
+    b.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {"insert": "He", "attributes": {"bold": true}},
+                    {"insert": "ll", "attributes": {"bold": null}},
+                    {"insert": "o", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+    b.merge(&a).unwrap();
+}
+
+#[test]
+fn concurrent_richtext_mark_event() {
+    let a = LoroDoc::new_auto_commit();
+    let b = LoroDoc::new_auto_commit();
+    let c = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    b.merge(&a).unwrap();
+    c.merge(&a).unwrap();
+    b.get_text("text")
+        .mark_(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .unwrap();
+    c.get_text("text")
+        .mark_(1, 4, "link", true.into(), TextStyleInfoFlag::LINK)
+        .unwrap();
+    b.merge(&c).unwrap();
+    let sub_id = a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {"retain": 1, "attributes": {"bold": true, }},
+                    {"retain": 2, "attributes": {"bold": true, "link": true}},
+                    {"retain": 1, "attributes": {"link": true}},
+                ])
+            )
+        }),
+    );
+
+    a.merge(&b).unwrap();
+    a.unsubscribe(sub_id);
+
+    let sub_id = a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {
+                        "retain": 2,
+                    },
+                    {
+                        "retain": 1,
+                        "attributes": {"bold": null}
+                    }
+                ])
+            )
+        }),
+    );
+
+    b.get_text("text")
+        .mark_(
+            2,
+            3,
+            "bold",
+            LoroValue::Null,
+            TextStyleInfoFlag::BOLD.to_delete(),
+        )
+        .unwrap();
+    a.merge(&b).unwrap();
+    a.unsubscribe(sub_id);
+    a.subscribe(
+        &a.get_text("text").id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                    {
+                        "retain": 2,
+                    },
+                    {
+                        "insert": "A",
+                        "attributes": {"bold": true, "link": true}
+                    }
+                ])
+            )
+        }),
+    );
+    a.get_text("text").insert_(2, "A").unwrap();
+    a.commit_then_stop();
+}
+
+#[test]
+fn insert_richtext_event() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text")
+        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .unwrap();
+    a.commit_then_renew();
+    let text = a.get_text("text");
+    a.subscribe(
+        &text.id(),
+        Arc::new(|e| {
+            let delta = e.container.diff.as_text().unwrap();
+            assert_eq!(
+                delta.to_json_value(),
+                json!([
+                        {"retain": 5,},
+                        {"insert": " World!", "attributes": {"bold": true}}
+                ])
+            )
+        }),
+    );
+
+    text.insert_(5, " World!").unwrap();
+}
+
+#[test]
+fn import_after_init_handlers() {
+    let a = LoroDoc::new_auto_commit();
+    a.subscribe(
+        &ContainerID::new_root("text", ContainerType::Text),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::Text(_)
+            ))
+        }),
+    );
+    a.subscribe(
+        &ContainerID::new_root("map", ContainerType::Map),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::NewMap(_)
+            ))
+        }),
+    );
+    a.subscribe(
+        &ContainerID::new_root("list", ContainerType::List),
+        Arc::new(|event| {
+            assert!(matches!(
+                event.container.diff,
+                loro_internal::event::Diff::List(_)
+            ))
+        }),
+    );
+
+    let b = LoroDoc::new_auto_commit();
+    b.get_list("list").insert_(0, "list".into()).unwrap();
+    b.get_list("list_a").insert_(0, "list_a".into()).unwrap();
+    b.get_text("text").insert_(0, "text").unwrap();
+    b.get_map("map").insert_("m", "map".into()).unwrap();
+    a.import(&b.export_snapshot()).unwrap();
+    a.commit_then_renew();
+}
+
+#[test]
+fn test_from_snapshot() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "0").unwrap();
+    let snapshot = a.export_snapshot();
+    let c = LoroDoc::from_snapshot(&snapshot).unwrap();
+    assert_eq!(a.get_deep_value(), c.get_deep_value());
+    assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
+    assert_eq!(a.state_frontiers(), c.state_frontiers());
+    let updates = a.export_from(&Default::default());
+    let d = match LoroDoc::from_snapshot(&updates) {
+        Ok(_) => panic!(),
+        Err(e) => e,
+    };
+    assert!(matches!(d, loro_common::LoroError::DecodeError(..)));
+}
+
+#[test]
+fn test_pending() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "0").unwrap();
+    let b = LoroDoc::new_auto_commit();
+    b.import(&a.export_from(&Default::default())).unwrap();
+    b.get_text("text").insert_(0, "1").unwrap();
+    let c = LoroDoc::new_auto_commit();
+    c.import(&b.export_from(&Default::default())).unwrap();
+    c.get_text("text").insert_(0, "2").unwrap();
+
+    // c creates a pending change for a, insert "2" cannot be merged into a yet
+    a.import(&c.export_from(&b.oplog_vv())).unwrap();
+    assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "0"}));
+
+    // b does not has c's change
+    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+    assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
+}
 
 #[test]
 fn test_checkout() {
     let mut doc_0 = LoroDoc::new();
-    doc_0.set_peer_id(0);
+    doc_0.set_peer_id(0).unwrap();
     let doc_1 = LoroDoc::new();
-    doc_1.set_peer_id(1);
+    doc_1.set_peer_id(1).unwrap();
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
-    doc_0.subscribe_deep(Arc::new(move |event| {
+    doc_0.subscribe_root(Arc::new(move |event| {
         let mut root_value = root_value.lock().unwrap();
         root_value.apply(
             &event.container.path.iter().map(|x| x.1.clone()).collect(),
@@ -307,8 +546,8 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let mut doc_a = LoroDoc::new();
-    doc_a.subscribe_deep(Arc::new(|_e| {}));
-    doc_a.set_peer_id(1);
+    doc_a.subscribe_root(Arc::new(|_e| {}));
+    doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
     let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
     let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();

@@ -67,9 +67,9 @@ pub mod idx {
 
 pub mod list;
 pub mod map;
-pub mod tree;
 pub mod richtext;
 pub(crate) mod text;
+pub mod tree;
 
 use idx::ContainerIdx;
 
@@ -183,19 +183,19 @@ mod test {
     fn container_id_convert() {
         let container_id = ContainerID::new_normal(ID::new(12, 12), ContainerType::List);
         let s = container_id.to_string();
-        assert_eq!(s, "12@12:List");
+        assert_eq!(s, "cid:12@C:List");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
         let container_id = ContainerID::new_root("123", ContainerType::Map);
         let s = container_id.to_string();
-        assert_eq!(s, "/123:Map");
+        assert_eq!(s, "cid:root-123:Map");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
         let container_id = ContainerID::new_root("kkk", ContainerType::Text);
         let s = container_id.to_string();
-        assert_eq!(s, "/kkk:Text");
+        assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
     }

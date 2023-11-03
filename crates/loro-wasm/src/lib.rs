@@ -1,16 +1,18 @@
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
-    configure::SecureRandomGenerator,
-    container::ContainerID,
+    container::{
+        richtext::{ExpandType, TextStyleInfoFlag},
+        ContainerID,
+    },
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
+    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler},
     id::{Counter, TreeID, ID},
     obs::SubID,
-    txn::Transaction as Txn,
     version::Frontiers,
-    ContainerType, DiffEvent, LoroDoc, LoroError, VersionVector,
+    ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue, VersionVector,
 };
-use std::{cell::RefCell, cmp::Ordering, ops::Deref, rc::Rc, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{cell::RefCell, cmp::Ordering, ops::Deref, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
 mod log;
 mod prelim;
@@ -20,13 +22,6 @@ mod convert;
 
 #[wasm_bindgen(js_name = setPanicHook)]
 pub fn set_panic_hook() {
-    // When the `console_error_panic_hook` feature is enabled, we can call the
-    // `set_panic_hook` function at least once during initialization, and then
-    // we will get better error messages if our code ever panics.
-    //
-    // For more details see
-    // https://github.com/rustwasm/console_error_panic_hook#readme
-    #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 }
 
@@ -55,32 +50,26 @@ impl Deref for Loro {
 extern "C" {
     #[wasm_bindgen(typescript_type = "ContainerID")]
     pub type JsContainerID;
+    #[wasm_bindgen(typescript_type = "ContainerID | string")]
+    pub type JsIntoContainerID;
     #[wasm_bindgen(typescript_type = "Transaction | Loro")]
     pub type JsTransaction;
     #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
     #[wasm_bindgen(typescript_type = "{ peer: bigint, counter: number }")]
     pub type JsID;
+    #[wasm_bindgen(
+        typescript_type = "{ start: number, end: number, expand?: 'before'|'after'|'both'|'none' }"
+    )]
+    pub type JsRange;
+    #[wasm_bindgen(typescript_type = "number|bool|string|null")]
+    pub type JsMarkValue;
     #[wasm_bindgen(typescript_type = "TreeID")]
     pub type JsTreeID;
-}
-
-struct MathRandom;
-impl SecureRandomGenerator for MathRandom {
-    fn fill_byte(&self, dest: &mut [u8]) {
-        let mut bytes: [u8; 8] = js_sys::Math::random().to_be_bytes();
-        let mut index = 0;
-        let mut count = 0;
-        while index < dest.len() {
-            dest[index] = bytes[count];
-            index += 1;
-            count += 1;
-            if count == 8 {
-                bytes = js_sys::Math::random().to_be_bytes();
-                count = 0;
-            }
-        }
-    }
+    #[wasm_bindgen(typescript_type = "Delta<string>[]")]
+    pub type JsStringDelta;
+    #[wasm_bindgen(typescript_type = "Map<bigint, number>")]
+    pub type JsVersionVectorMap;
 }
 
 mod observer {
@@ -145,60 +134,157 @@ fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
     ans
 }
 
+fn js_value_to_container_id(
+    cid: &JsIntoContainerID,
+    kind: ContainerType,
+) -> Result<ContainerID, JsValue> {
+    if !cid.is_string() {
+        return Err(JsValue::from_str("ContainerID must be a string"));
+    }
+
+    let s = cid.as_string().unwrap();
+    let cid = ContainerID::try_from(s.as_str())
+        .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
+    Ok(cid)
+}
+
+fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
+    let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
+        None
+    } else {
+        let arr: Uint8Array = Uint8Array::new(version);
+        Some(arr.to_vec())
+    };
+
+    let vv = match version {
+        Some(x) => VersionVector::decode(&x)?,
+        None => Default::default(),
+    };
+
+    Ok(vv)
+}
+
 #[wasm_bindgen]
 impl Loro {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self(LoroDoc::new())
+        let mut doc = LoroDoc::new();
+        doc.start_auto_commit();
+        Self(doc)
     }
 
-    /// Create a new Loro transaction.
-    /// There can be only one transaction at a time.
+    #[wasm_bindgen(js_name = "fromSnapshot")]
+    pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
+        let doc = LoroDoc::from_snapshot(snapshot)?;
+        Ok(Loro(doc))
+    }
+
+    /// Attach the document state to the latest known version.
     ///
-    /// It's caller's responsibility to call `commit` or `abort` on the transaction.
-    /// Transaction.free() will commit the transaction if it's not committed or aborted.
-    #[wasm_bindgen(js_name = "newTransaction")]
-    pub fn new_transaction(&self, origin: Option<String>) -> Transaction {
-        Transaction(Some(
-            self.0.txn_with_origin(&origin.unwrap_or_default()).unwrap(),
-        ))
-    }
-
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This method has the same effect as invoking `checkout_to_latest`.
     pub fn attach(&mut self) {
         self.0.attach();
     }
 
+    /// `detached` indicates that the `DocState` is not synchronized with the latest version of `OpLog`.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// When `detached`, the document is not editable.
+    pub fn is_detached(&self) -> bool {
+        self.0.is_detached()
+    }
+
+    /// Checkout the `DocState` to the lastest version of `OpLog`.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// This has the same effect as `attach`.
+    pub fn checkout_to_latest(&mut self) -> JsResult<()> {
+        self.0.checkout_to_latest();
+        Ok(())
+    }
+
+    /// Checkout the `DocState` to a specific version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.0.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
     }
 
+    /// Peer ID of the current writer.
     #[wasm_bindgen(js_name = "peerId", method, getter)]
     pub fn peer_id(&self) -> u64 {
         self.0.peer_id()
     }
 
+    /// Get peer id in hex string.
+    #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
+    pub fn peer_id_str(&self) -> String {
+        format!("{:X}", self.0.peer_id())
+    }
+
+    /// Set the peer ID of the current writer.
+    ///
+    /// Note: use it with caution. You need to make sure there is not chance that two peers
+    /// have the same peer ID.
+    #[wasm_bindgen(js_name = "setPeerId", method)]
+    pub fn set_peer_id(&self, id: u64) -> JsResult<()> {
+        self.0.set_peer_id(id)?;
+        Ok(())
+    }
+
+    /// Commit the cumulative auto commit transaction.
+    pub fn commit(&self, origin: Option<String>) {
+        self.0.commit_with(origin.map(|x| x.into()), None, true);
+    }
+
     #[wasm_bindgen(js_name = "getText")]
-    pub fn get_text(&self, name: &str) -> JsResult<LoroText> {
-        let text = self.0.get_text(name);
+    pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
+        let text = self
+            .0
+            .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
         Ok(LoroText(text))
     }
 
     #[wasm_bindgen(js_name = "getMap")]
-    pub fn get_map(&self, name: &str) -> JsResult<LoroMap> {
-        let map = self.0.get_map(name);
+    pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
+        let map = self
+            .0
+            .get_map(js_value_to_container_id(cid, ContainerType::Map)?);
         Ok(LoroMap(map))
     }
 
     #[wasm_bindgen(js_name = "getList")]
-    pub fn get_list(&self, name: &str) -> JsResult<LoroList> {
-        let list = self.0.get_list(name);
+    pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
+        let list = self
+            .0
+            .get_list(js_value_to_container_id(cid, ContainerType::List)?);
         Ok(LoroList(list))
     }
 
     #[wasm_bindgen(js_name = "getTree")]
-    pub fn get_tree(&self, name: &str) -> JsResult<LoroTree> {
-        let tree = self.0.get_tree(name);
+    pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
+        let tree = self
+            .0
+            .get_tree(js_value_to_container_id(cid, ContainerType::Tree)?);
         Ok(LoroTree(tree))
     }
 
@@ -226,19 +312,54 @@ impl Loro {
         })
     }
 
+    /// Get the encoded version vector of the current document.
+    ///
+    /// If you checkout to a specific version, the version vector will change.
     #[inline(always)]
     pub fn version(&self) -> Vec<u8> {
-        self.0.oplog_vv().encode()
+        self.0.state_vv().encode()
     }
 
+    /// Get the encoded version vector of the lastest verison in OpLog.
+    ///
+    /// If you checkout to a specific version, the version vector will not change.
+    #[inline(always)]
+    pub fn oplog_version(&self) -> Vec<u8> {
+        self.0.state_vv().encode()
+    }
+
+    /// Get the frontiers of the current document.
+    ///
+    /// If you checkout to a specific version, this value will change.
     #[inline]
     pub fn frontiers(&self) -> Vec<JsID> {
+        frontiers_to_ids(&self.0.state_frontiers())
+    }
+
+    /// Get the frontiers of the lastest version in OpLog.
+    ///
+    /// If you checkout to a specific version, this value will not change.
+    #[inline(always)]
+    pub fn oplog_frontiers(&self) -> Vec<JsID> {
         frontiers_to_ids(&self.0.oplog_frontiers())
     }
 
-    /// - -1: self's version is less than frontiers or is parallel to target
-    /// - 0: self's version equals to frontiers
-    /// - 1: self's version is greater than frontiers
+    /// Compare the version of the OpLog with the specified frontiers.
+    ///
+    /// This method is useful to compare the version by only a small amount of data.
+    ///
+    /// This method returns an integer indicating the relationship between the version of the OpLog (referred to as 'self')
+    /// and the provided 'frontiers' parameter:
+    ///
+    /// - -1: The version of 'self' is either less than 'frontiers' or is non-comparable (parallel) to 'frontiers',
+    ///        indicating that it is not definitively less than 'frontiers'.
+    /// - 0: The version of 'self' is equal to 'frontiers'.
+    /// - 1: The version of 'self' is greater than 'frontiers'.
+    ///
+    /// # Internal
+    ///
+    /// Frontiers cannot be compared without the history of the OpLog.
+    ///
     #[inline]
     #[wasm_bindgen(js_name = "cmpFrontiers")]
     pub fn cmp_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
@@ -257,18 +378,8 @@ impl Loro {
 
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
-        let version: Option<Vec<u8>> = if version.is_null() || version.is_undefined() {
-            None
-        } else {
-            let arr: Uint8Array = Uint8Array::new(version);
-            Some(arr.to_vec())
-        };
-
-        let vv = match version {
-            Some(x) => VersionVector::decode(&x)?,
-            None => Default::default(),
-        };
-
+        // `version` may be null or undefined
+        let vv = js_value_to_version(version)?;
         Ok(self.0.export_from(&vv))
     }
 
@@ -277,6 +388,9 @@ impl Loro {
         Ok(())
     }
 
+    /// Import a batch of updates.
+    ///
+    /// It's more efficient than importing updates one by one.
     #[wasm_bindgen(js_name = "importUpdateBatch")]
     pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
         let data = data
@@ -302,7 +416,8 @@ impl Loro {
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
         self.0
-            .subscribe_deep(Arc::new(move |e| {
+            .subscribe_root(Arc::new(move |e| {
+                // call_after_micro_task(observer.clone(), e)
                 call_subscriber(observer.clone(), e);
             }))
             .into_u32()
@@ -312,23 +427,14 @@ impl Loro {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
 
-    /// It's the caller's responsibility to commit and free the transaction
-    #[wasm_bindgen(js_name = "__raw__transactionWithOrigin")]
-    pub fn transaction_with_origin(
-        &self,
-        origin: &JsOrigin,
-        f: js_sys::Function,
-    ) -> JsResult<JsValue> {
-        let origin = origin.as_string().unwrap();
-        debug_log::group!("transaction with origin: {}", origin);
-        let txn = self.0.txn_with_origin(&origin)?;
-        let js_txn = JsValue::from(Transaction(Some(txn)));
-        let ans = f.call1(&JsValue::NULL, &js_txn);
-        debug_log::group_end!();
-        ans
+    #[wasm_bindgen(js_name = "debugHistory")]
+    pub fn debug_history(&self) {
+        let oplog = self.0.oplog().lock().unwrap();
+        console_log!("{:#?}", oplog.diagnose_size());
     }
 }
 
+#[allow(unused)]
 fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
@@ -424,53 +530,95 @@ impl Event {
 }
 
 #[wasm_bindgen]
-pub struct Transaction(Option<Txn>);
+pub struct LoroText(TextHandler);
 
-#[wasm_bindgen]
-impl Transaction {
-    pub fn commit(&mut self) -> JsResult<()> {
-        if let Some(x) = self.0.take() {
-            x.commit()?;
-        }
-        Ok(())
-    }
-
-    pub fn abort(&mut self) -> JsResult<()> {
-        if let Some(x) = self.0.take() {
-            x.abort();
-        }
-        Ok(())
-    }
-
-    fn as_mut(&mut self) -> JsResult<&mut Txn> {
-        self.0
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("Transaction is aborted"))
-    }
+#[derive(Serialize, Deserialize)]
+struct MarkRange {
+    start: usize,
+    end: usize,
+    expand: Option<String>,
 }
 
 #[wasm_bindgen]
-pub struct LoroText(TextHandler);
-
-#[wasm_bindgen]
 impl LoroText {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        content: &str,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, index, content)?;
+    pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
+        self.0.insert_(index, content)?;
         Ok(())
     }
 
-    pub fn __txn_delete(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        len: usize,
-    ) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, index, len)?;
+    pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_(index, len)?;
+        Ok(())
+    }
+
+    /// Mark a range of text with a key and a value.
+    ///
+    /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: this is not suitable for unmergeable annotations like comments.
+    pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
+        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
+        let value: LoroValue = LoroValue::try_from(value)?;
+        let expand = range
+            .expand
+            .map(|x| {
+                ExpandType::try_from_str(&x)
+                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
+            })
+            .unwrap_or(ExpandType::After);
+        self.0.mark_(
+            range.start,
+            range.end,
+            key,
+            value,
+            TextStyleInfoFlag::new(true, expand, false, false),
+        )?;
+        Ok(())
+    }
+
+    /// Unmark a range of text with a key and a value.
+    ///
+    /// You can use it to remove highlights, bolds or links
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// **Note: You should specify the same expand type as when you mark the text.**
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: you cannot delete unmergeable annotations like comments by this method.
+    pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
+        // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
+        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
+        let expand = range
+            .expand
+            .map(|x| {
+                ExpandType::try_from_str(&x)
+                    .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
+            })
+            .unwrap_or(ExpandType::After);
+        let expand = expand.reverse();
+        self.0.mark_(
+            range.start,
+            range.end,
+            key,
+            LoroValue::Null,
+            TextStyleInfoFlag::new(true, expand, false, false),
+        )?;
         Ok(())
     }
 
@@ -480,6 +628,17 @@ impl LoroText {
         self.0.get_value().as_string().unwrap().to_string()
     }
 
+    /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// The returned value will include the rich text information.
+    #[wasm_bindgen(js_name = "toDelta")]
+    pub fn to_delta(&self) -> JsStringDelta {
+        let delta = self.0.get_richtext_value();
+        let value: JsValue = delta.into();
+        value.into()
+    }
+
+    /// Get the container id of the text.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
@@ -491,6 +650,9 @@ impl LoroText {
         self.0.len_utf16()
     }
 
+    /// Subscribe to the changes of the text.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -507,6 +669,14 @@ impl LoroText {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
+
+    #[wasm_bindgen(js_name = "applyDelta")]
+    pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
+        let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
+        console_log!("apply_delta {:?}", delta);
+        self.0.apply_delta_(&delta)?;
+        Ok(())
+    }
 }
 
 #[wasm_bindgen]
@@ -515,18 +685,14 @@ const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Ma
 
 #[wasm_bindgen]
 impl LoroMap {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        key: &str,
-        value: JsValue,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, key, value.into())?;
+    #[wasm_bindgen(js_name = "set")]
+    pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
+        self.0.insert_(key, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_delete(&mut self, txn: &mut Transaction, key: &str) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, key)?;
+    pub fn delete(&mut self, key: &str) -> JsResult<()> {
+        self.0.delete_(key)?;
         Ok(())
     }
 
@@ -552,20 +718,14 @@ impl LoroMap {
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(
-        &mut self,
-        txn: &mut Transaction,
-        key: &str,
-        container_type: &str,
-    ) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let t = txn.as_mut()?;
-        let c = self.0.insert_container(t, key, type_)?;
+        let c = self.0.insert_container_(key, type_)?;
 
         let container = match type_ {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
@@ -599,23 +759,13 @@ pub struct LoroList(ListHandler);
 
 #[wasm_bindgen]
 impl LoroList {
-    pub fn __txn_insert(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        value: JsValue,
-    ) -> JsResult<()> {
-        self.0.insert(txn.as_mut()?, index, value.into())?;
+    pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
+        self.0.insert_(index, value.into())?;
         Ok(())
     }
 
-    pub fn __txn_delete(
-        &mut self,
-        txn: &mut Transaction,
-        index: usize,
-        len: usize,
-    ) -> JsResult<()> {
-        self.0.delete(txn.as_mut()?, index, len)?;
+    pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.0.delete_(index, len)?;
         Ok(())
     }
 
@@ -641,20 +791,14 @@ impl LoroList {
     }
 
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(
-        &mut self,
-        txn: &mut Transaction,
-        pos: usize,
-        container: &str,
-    ) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, pos: usize, container: &str) -> JsResult<JsValue> {
         let _type = match container {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let t = txn.as_mut()?;
-        let c = self.0.insert_container(t, pos, _type)?;
+        let c = self.0.insert_container_(pos, _type)?;
         let container = match _type {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
@@ -689,51 +833,42 @@ pub struct LoroTree(TreeHandler);
 
 #[wasm_bindgen]
 impl LoroTree {
-    pub fn __txn_create(
-        &mut self,
-        txn: &mut Transaction,
-        parent: Option<JsTreeID>,
-    ) -> JsResult<JsTreeID> {
+    pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
-            self.0
-                .create_and_mov(txn.as_mut()?, parent.try_into().unwrap())?
+            self.0.create_and_mov_(parent.try_into().unwrap_throw())?
         } else {
-            self.0.create(txn.as_mut()?)?
+            self.0.create_()?
         };
         let js_id: JsValue = id.into();
         Ok(js_id.into())
     }
 
-    pub fn __txn_move(
-        &mut self,
-        txn: &mut Transaction,
-        target: JsTreeID,
-        parent: JsTreeID,
-    ) -> JsResult<()> {
+    pub fn mov(&mut self, target: JsTreeID, parent: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).unwrap();
         let parent: JsValue = parent.into();
         let parent = TreeID::try_from(parent).unwrap();
-        self.0.mov(txn.as_mut()?, target, parent)?;
+        self.0.mov_(target, parent)?;
         Ok(())
     }
 
-    pub fn __txn_delete(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+    pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.0.delete(txn.as_mut()?, target.try_into().unwrap())?;
+        self.0.delete_(target.try_into().unwrap())?;
         Ok(())
     }
 
-    pub fn __txn_as_root(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<()> {
+    pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.0.as_root(txn.as_mut()?, target.try_into().unwrap())?;
+        self.0.as_root_(target.try_into().unwrap())?;
         Ok(())
     }
 
-    pub fn __txn_get_meta(&mut self, txn: &mut Transaction, target: JsTreeID) -> JsResult<LoroMap> {
+    #[wasm_bindgen(js_name = "getMeta")]
+    pub fn get_meta(&mut self, target: JsTreeID) -> JsResult<LoroMap> {
         let target: JsValue = target.into();
-        let meta = self.0.get_meta(txn.as_mut()?, target.try_into().unwrap())?;
+        let meta = self.0.get_meta(target.try_into().unwrap())?;
         // .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
         Ok(LoroMap(meta))
     }
@@ -795,16 +930,62 @@ impl LoroTree {
     }
 }
 
+/// Convert a encoded version vector to a readable js Map.
+///
+/// # Example
+///
+/// ```js
+/// const loro = new Loro();
+/// loro.setPeerId('100');
+/// loro.getText("t").insert(0, 'a');
+/// loro.commit();
+/// const version = loro.getVersion();
+/// const readableVersion = convertVersionToReadableObj(version);
+/// console.log(readableVersion); // Map(1) { 100n => 1 }
+/// ```
+#[wasm_bindgen(js_name = "convertVersionToReadableMap")]
+pub fn convert_version_to_readable_map(version: &[u8]) -> Result<JsVersionVectorMap, JsValue> {
+    let version_vector = VersionVector::decode(version)?;
+    let map = js_sys::Map::new();
+    for (k, v) in version_vector.iter() {
+        let k = js_sys::BigInt::from(*k);
+        let v = JsValue::from(*v);
+        map.set(&k.to_owned(), &v);
+    }
+
+    let map: JsValue = map.into();
+    Ok(JsVersionVectorMap::from(map))
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
 export type ContainerID =
-  | `/${string}:${ContainerType}`
-  | `${number}@${number}:${ContainerType}`;
-export type TreeID = `${number}@${number}`;
+  | `cid:root-${string}:${ContainerType}`
+  | `cid:${number}@${string}:${ContainerType}`;
+export type TreeID = `${number}@${string}`;
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
 }
+export type Delta<T> =
+  | {
+    insert: T;
+    attributes?: { [key in string]: {} };
+    retain?: undefined;
+    delete?: undefined;
+  }
+  | {
+    delete: number;
+    attributes?: undefined;
+    retain?: undefined;
+    insert?: undefined;
+  }
+  | {
+    retain: number;
+    attributes?: { [key in string]: {} };
+    delete?: undefined;
+    insert?: undefined;
+  };
 "#;

@@ -205,6 +205,10 @@ impl DocState {
 
     fn convert_current_batch_diff_into_event(&mut self) {
         let recorder = &mut self.event_recorder;
+        if recorder.diffs.is_empty() {
+            return;
+        }
+
         let diffs = std::mem::take(&mut recorder.diffs);
         let start = recorder.diff_start_version.take().unwrap();
         recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
@@ -406,7 +410,6 @@ impl DocState {
         }
 
         if self.is_recording() {
-            debug_log::debug_log!("TO DIFF");
             let diff = self
                 .states
                 .iter_mut()
@@ -484,7 +487,7 @@ impl DocState {
     }
 
     pub fn is_empty(&self) -> bool {
-        !self.in_txn && self.states.is_empty() && self.arena.is_empty()
+        !self.in_txn && self.states.is_empty() && self.arena.can_import_snapshot()
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {

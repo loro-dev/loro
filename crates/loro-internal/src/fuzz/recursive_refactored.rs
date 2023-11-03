@@ -72,7 +72,7 @@ struct Actor {
 impl Actor {
     fn new(id: PeerID) -> Self {
         let app = LoroDoc::new();
-        app.set_peer_id(id);
+        app.set_peer_id(id).unwrap();
         let mut actor = Actor {
             peer: id,
             loro: app,
@@ -87,10 +87,8 @@ impl Actor {
         };
 
         let root_value = Arc::clone(&actor.value_tracker);
-        actor.loro.subscribe_deep(Arc::new(move |event| {
+        actor.loro.subscribe_root(Arc::new(move |event| {
             let mut root_value = root_value.lock().unwrap();
-            debug_log::debug_dbg!(&event.container);
-            debug_log::debug_dbg!(&root_value);
             root_value.apply(
                 &event.container.path.iter().map(|x| x.1.clone()).collect(),
                 &[event.container.diff.clone()],
@@ -112,10 +110,16 @@ impl Actor {
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
-                                DeltaItem::Retain { len, meta: _ } => {
+                                DeltaItem::Retain {
+                                    retain: len,
+                                    attributes: _,
+                                } => {
                                     index += len;
                                 }
-                                DeltaItem::Insert { value, meta: _ } => {
+                                DeltaItem::Insert {
+                                    insert: value,
+                                    attributes: _,
+                                } => {
                                     let utf8_index = if cfg!(feature = "wasm") {
                                         utf16_to_utf8_index(&text, index).unwrap()
                                     } else {
@@ -124,7 +128,7 @@ impl Actor {
                                     text.insert_str(utf8_index, value.as_str());
                                     index += value.len_unicode();
                                 }
-                                DeltaItem::Delete { len, .. } => {
+                                DeltaItem::Delete { delete: len, .. } => {
                                     text.drain(index..index + *len);
                                 }
                             }
@@ -173,16 +177,22 @@ impl Actor {
                     let mut index = 0;
                     for item in delta.iter() {
                         match item {
-                            DeltaItem::Retain { len, meta: _ } => {
+                            DeltaItem::Retain {
+                                retain: len,
+                                attributes: _,
+                            } => {
                                 index += len;
                             }
-                            DeltaItem::Insert { value, meta: _ } => {
+                            DeltaItem::Insert {
+                                insert: value,
+                                attributes: _,
+                            } => {
                                 for v in value {
                                     list.insert(index, v.clone());
                                     index += 1;
                                 }
                             }
-                            DeltaItem::Delete { len, .. } => {
+                            DeltaItem::Delete { delete: len, .. } => {
                                 list.drain(index..index + *len);
                             }
                         }
@@ -301,16 +311,23 @@ trait Actionable {
 
 impl Actor {
     fn add_new_container(&mut self, idx: ContainerIdx, type_: ContainerType) {
+        let txn = self.loro.get_global_txn();
         match type_ {
-            ContainerType::Text => self
-                .text_containers
-                .push(TextHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::Map => self
-                .map_containers
-                .push(MapHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
-            ContainerType::List => self
-                .list_containers
-                .push(ListHandler::new(idx, Arc::downgrade(self.loro.app_state()))),
+            ContainerType::Text => self.text_containers.push(TextHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
+            ContainerType::Map => self.map_containers.push(MapHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
+            ContainerType::List => self.list_containers.push(ListHandler::new(
+                txn,
+                idx,
+                Arc::downgrade(self.loro.app_state()),
+            )),
             ContainerType::Tree => {
                 // TODO Tree
             }
@@ -3011,6 +3028,1235 @@ mod failed_tests {
                     container_idx: 14,
                     key: 255,
                     value: Container(C::Tree),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_12() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 4,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34816,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 3,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 10,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 24,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34816,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 11,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 22,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34872,
+                    is_del: false,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 136,
+                    value: Null,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 32,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 18,
+                    value: 36232,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 61,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 63,
+                    value: 34878,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 56,
+                    value: 34952,
+                    is_del: false,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 136,
+                    value: I32(-2004318072),
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 13,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 50,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 39,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 32,
+                    value: 34858,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 25,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 18,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 11,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 4,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34816,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 12936,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 68,
+                    value: 34957,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 2,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 8,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34877,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 4,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 13,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 18,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 19,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 44,
+                    value: 34858,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 30,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 2,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 62,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 55,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 48,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 41,
+                    value: 11,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 62,
+                    value: 30,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 67,
+                    value: 3976,
+                    is_del: false,
+                },
+                Sync { from: 1, to: 3 },
+                Text {
+                    site: 3,
+                    container_idx: 0,
+                    pos: 27,
+                    value: 34952,
+                    is_del: false,
+                },
+                SyncAll,
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 27,
+                    value: 34952,
+                    is_del: false,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: I32(-2004318072),
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: I32(-2004318072),
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 20,
+                    value: 8,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 28,
+                    value: 34877,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 21,
+                    value: 16008,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 14,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 7,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 141,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 114,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 138,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34816,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 8,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 16,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 25,
+                    value: 34952,
+                    is_del: false,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 136,
+                    value: I32(-1903260024),
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 4,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 34,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 20,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 6,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 0,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 61,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 54,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 47,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 40,
+                    value: 12936,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 33,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 26,
+                    value: 34957,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 19,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 12,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 5,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34963,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 138,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 36488,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 8,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 35464,
+                    is_del: false,
+                },
+                List {
+                    site: 1,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 136,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34824,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 20,
+                    value: 0,
+                    is_del: false,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Map {
+                    site: 1,
+                    container_idx: 0,
+                    key: 11,
+                    value: Null,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 136,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 4,
+                    value: 34952,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 20,
+                    value: 8,
+                    is_del: true,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 2681,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 15,
+                    value: 30976,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 136,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 19,
+                    value: 34824,
+                    is_del: false,
+                },
+                Text {
+                    site: 1,
+                    container_idx: 0,
+                    pos: 1,
+                    value: 34952,
+                    is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_13() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 150,
+                    container_idx: 22,
+                    pos: 150,
+                    value: 38550,
+                    is_del: false,
+                },
+                Text {
+                    site: 43,
+                    container_idx: 0,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 120,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 150,
+                    container_idx: 22,
+                    pos: 150,
+                    value: 38550,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 0,
+                    pos: 0,
+                    value: 16,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 238,
+                    key: 0,
+                    value: I32(1950809972),
+                },
+                Text {
+                    site: 20,
+                    container_idx: 20,
+                    pos: 20,
+                    value: 5140,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 29812,
+                    is_del: false,
+                },
+                Map {
+                    site: 150,
+                    container_idx: 150,
+                    key: 150,
+                    value: I32(1953789044),
+                },
+                Text {
+                    site: 116,
+                    container_idx: 116,
+                    pos: 116,
+                    value: 116,
+                    is_del: false,
                 },
             ],
         )

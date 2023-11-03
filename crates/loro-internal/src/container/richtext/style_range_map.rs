@@ -13,11 +13,12 @@ use generic_btree::{
     rle::{HasLength, Mergeable, Sliceable},
     BTree, BTreeTrait, LengthFinder, UseLengthFinder,
 };
+
 use once_cell::sync::Lazy;
 
-use crate::InternalString;
+use crate::delta::StyleMeta;
 
-use super::{Style, StyleOp};
+use super::{StyleKey, StyleOp};
 
 /// This struct keep the mapping of ranges to numbers
 ///
@@ -31,7 +32,7 @@ pub(super) struct StyleRangeMap {
 #[derive(Debug, Clone)]
 pub(super) struct RangeNumMapTrait;
 
-pub(crate) type Styles = FxHashMap<InternalString, StyleValue>;
+pub(crate) type Styles = FxHashMap<StyleKey, StyleValue>;
 
 pub(super) static EMPTY_STYLES: Lazy<Styles> =
     Lazy::new(|| HashMap::with_hasher(Default::default()));
@@ -42,33 +43,26 @@ pub(super) struct Elem {
     len: usize,
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct StyleValue {
+    // we need a set here because we need to calculate the intersection of styles when
+    // users insert new text between two style sets
     set: BTreeSet<Arc<StyleOp>>,
-    should_merge: bool,
+}
+
+impl StyleValue {
+    pub fn insert(&mut self, value: Arc<StyleOp>) {
+        self.set.insert(value);
+    }
+
+    pub fn get(&self) -> Option<&Arc<StyleOp>> {
+        self.set.last()
+    }
 }
 
 impl Default for StyleRangeMap {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl StyleValue {
-    pub fn new(mergeable: bool) -> Self {
-        Self {
-            set: Default::default(),
-            should_merge: mergeable,
-        }
-    }
-
-    // PERF: can we avoid this box
-    pub fn to_styles(&self) -> Box<dyn Iterator<Item = Style> + '_> {
-        if self.should_merge {
-            Box::new(self.set.iter().rev().take(1).filter_map(|x| x.to_style()))
-        } else {
-            Box::new(self.set.iter().filter_map(|x| x.to_style()))
-        }
     }
 }
 
@@ -87,7 +81,6 @@ impl StyleRangeMap {
     }
 
     pub fn annotate(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-        debug_log::debug_log!("Annotate {:?}", &range);
         let range = self.tree.range::<LengthFinder>(range);
         if range.is_none() {
             unreachable!();
@@ -95,22 +88,15 @@ impl StyleRangeMap {
 
         self.has_style = true;
         let range = range.unwrap();
-        debug_log::debug_log!("Range={:?}", &range);
         self.tree
             .update(range.start.cursor..range.end.cursor, &mut |x| {
-                // only leave one value with the greatest lamport if the style is mergeable
-                if let Some(set) = x.styles.get_mut(&style.key) {
+                if let Some(set) = x.styles.get_mut(&style.get_style_key()) {
                     set.set.insert(style.clone());
-                    // TODO: Doc this, and validate it earlier
-                    assert_eq!(
-                        set.should_merge,
-                        style.info.mergeable(),
-                        "Merge behavior should be the same for the same style key"
-                    );
                 } else {
-                    let mut style_set = StyleValue::new(style.info.mergeable());
-                    style_set.set.insert(style.clone());
-                    x.styles.insert(style.key.clone(), style_set);
+                    let key = style.get_style_key();
+                    let mut value = StyleValue::default();
+                    value.insert(style.clone());
+                    x.styles.insert(key, value);
                 }
 
                 None
@@ -175,23 +161,42 @@ impl StyleRangeMap {
             false
         });
 
-        self.tree.insert_by_path(right, Elem { len, styles });
-        return &self.tree.get_elem(right.leaf).unwrap().styles;
+        let (target, _) = self.tree.insert_by_path(right, Elem { len, styles });
+        return &self.tree.get_elem(target.leaf).unwrap().styles;
     }
 
-    #[allow(unused)]
-    pub fn get(&mut self, index: usize) -> Option<&FxHashMap<InternalString, StyleValue>> {
-        if !self.has_style {
-            return None;
+    /// Return the style sets beside `index` and get the intersection of them.
+    pub fn get_styles_for_insert(&self, index: usize) -> StyleMeta {
+        if index == 0 || !self.has_style {
+            return StyleMeta::default();
         }
 
-        let result = self.tree.query::<LengthFinder>(&index)?.cursor;
-        self.tree.get_elem(result.leaf).map(|x| &x.styles)
+        let left = self
+            .tree
+            .query::<LengthFinder>(&(index - 1))
+            .unwrap()
+            .cursor;
+        let right = self.tree.shift_path_by_one_offset(left).unwrap();
+        if left.leaf == right.leaf {
+            let styles = &self.tree.get_elem(left.leaf).unwrap().styles;
+            styles.clone().into()
+        } else {
+            let mut styles = self.tree.get_elem(left.leaf).unwrap().styles.clone();
+            let right_styles = &self.tree.get_elem(right.leaf).unwrap().styles;
+            styles.retain(|key, value| {
+                if let Some(right_value) = right_styles.get(key) {
+                    value.set.retain(|x| right_value.set.contains(x));
+                    return !value.set.is_empty();
+                }
+
+                false
+            });
+
+            styles.into()
+        }
     }
 
-    pub fn iter(
-        &self,
-    ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (Range<usize>, &Styles)> + '_ {
         let mut index = 0;
         self.tree.iter().filter_map(move |elem| {
             let len = elem.len;
@@ -209,7 +214,7 @@ impl StyleRangeMap {
     pub fn iter_from(
         &self,
         start_entity_index: usize,
-    ) -> impl Iterator<Item = (Range<usize>, &FxHashMap<InternalString, StyleValue>)> + '_ {
+    ) -> impl Iterator<Item = (Range<usize>, &Styles)> + '_ {
         let start = self
             .tree
             .query::<LengthFinder>(&start_entity_index)
@@ -346,6 +351,7 @@ mod test {
             cnt: n,
             key: n.to_string().into(),
             info: TextStyleInfoFlag::default(),
+            value: loro_common::LoroValue::Bool(true),
         })
     }
 
