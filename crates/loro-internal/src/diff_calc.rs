@@ -6,7 +6,7 @@ pub(super) use tree::TreeDiffCache;
 
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{ContainerID, HasIdSpan, LoroValue, PeerID, ID};
+use loro_common::{ContainerID, HasCounterSpan, HasIdSpan, LoroValue, PeerID, ID};
 
 use crate::{
     change::Lamport,
@@ -112,7 +112,7 @@ impl DiffCalculator {
                 oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
 
             let mut started_set = FxHashSet::default();
-            for (change, vv) in iter {
+            for (change, start_counter, vv) in iter {
                 if change.id.counter > 0 && self.has_all {
                     assert!(
                         self.last_vv.includes_id(change.id.inc(-1)),
@@ -126,8 +126,16 @@ impl DiffCalculator {
                     self.last_vv.extend_to_include_end_id(change.id_end());
                 }
 
+                let iter_start = if change.ops.len() < 64 {
+                    0
+                } else {
+                    change
+                        .ops
+                        .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                        .unwrap_or_else(|e| e)
+                };
                 let mut visited = FxHashSet::default();
-                for op in change.ops.iter() {
+                for op in &change.ops.vec()[iter_start..] {
                     let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
                     let (_, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {

@@ -689,6 +689,8 @@ impl OpLog {
     ///
     /// returns: (common_ancestor_vv, iterator)
     ///
+    /// Note: the change returned by the iterator may include redundant ops at the beginning
+    ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
     pub(crate) fn iter_from_lca_causally(
         &self,
@@ -698,7 +700,7 @@ impl OpLog {
         to_frontiers: Option<&Frontiers>,
     ) -> (
         VersionVector,
-        impl Iterator<Item = (&Change, Rc<RefCell<VersionVector>>)>,
+        impl Iterator<Item = (&Change, Counter, Rc<RefCell<VersionVector>>)>,
     ) {
         debug_log::group!("iter_from_lca_causally");
         let mut merged_vv = from.clone();
@@ -760,7 +762,7 @@ impl OpLog {
 
                     inner_vv.extend_to_include_end_id(change.id);
                     // debug_log::debug_dbg!(&change, &inner_vv);
-                    Some((change, vv.clone()))
+                    Some((change, cnt, vv.clone()))
                 } else {
                     debug_log::group_end!();
                     None
