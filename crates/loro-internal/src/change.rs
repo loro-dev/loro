@@ -66,6 +66,10 @@ impl<O> Change<O> {
     pub fn id(&self) -> ID {
         self.id
     }
+
+    pub fn deps_on_self(&self) -> bool {
+        self.deps.len() == 1 && self.deps[0].peer == self.id.peer
+    }
 }
 
 impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {

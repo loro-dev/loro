@@ -6,13 +6,9 @@ use crate::{
 };
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{
-    Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, Lamport, LoroError, ID,
-};
-use rle::{HasLength, RlePush, RleVec};
+use loro_common::{CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, LoroError, ID};
+use rle::RleVec;
 use smallvec::SmallVec;
-
-use super::AppDagNode;
 
 #[derive(Debug)]
 pub enum PendingChange {
@@ -165,43 +161,8 @@ impl OpLog {
         // debug_dbg!(&change_causal_arr);
         self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-
-        let len = change.content_len();
-        if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
-            // don't need to push new element to dag because it only depends on itself
-            let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
-            let last = nodes.last_mut().unwrap();
-            assert_eq!(last.peer, change.id.peer);
-            assert_eq!(last.cnt + last.len as Counter, change.id.counter);
-            assert_eq!(last.lamport + last.len as Lamport, change.lamport);
-            last.len = change.id.counter as usize + len - last.cnt as usize;
-            last.has_succ = false;
-        } else {
-            let vv = self.dag.frontiers_to_im_vv(&change.deps);
-            self.dag
-                .map
-                .entry(change.id.peer)
-                .or_default()
-                .push_rle_element(AppDagNode {
-                    vv,
-                    peer: change.id.peer,
-                    cnt: change.id.counter,
-                    lamport: change.lamport,
-                    deps: change.deps.clone(),
-                    has_succ: false,
-                    len,
-                });
-            for dep in change.deps.iter() {
-                let target = self.dag.get_mut(*dep).unwrap();
-                if target.ctr_last() == dep.counter {
-                    target.has_succ = true;
-                }
-            }
-        }
-        self.changes
-            .entry(change.id.peer)
-            .or_default()
-            .push_rle_element(change);
+        self.insert_dag_node_on_new_change(&change);
+        self.insert_new_change(change);
     }
 }
 

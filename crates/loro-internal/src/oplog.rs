@@ -40,7 +40,7 @@ use super::arena::SharedArena;
 pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
-    pub(crate) changes: ClientChanges,
+    changes: ClientChanges,
     /// **lamport starts from 0**
     pub(crate) next_lamport: Lamport,
     pub(crate) latest_timestamp: Timestamp,
@@ -188,6 +188,15 @@ impl OpLog {
         self.dag.map.is_empty() && self.arena.can_import_snapshot()
     }
 
+    pub fn changes(&self) -> &ClientChanges {
+        &self.changes
+    }
+
+    /// This is the only place to update the `changes`
+    pub fn insert_new_change(&mut self, change: Change) {
+        self.changes.entry(change.id.peer).or_default().push(change);
+    }
+
     /// Import a change.
     ///
     /// Pending changes that haven't been applied to the dag.
@@ -221,8 +230,35 @@ impl OpLog {
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
+        self.insert_dag_node_on_new_change(&change);
+
+        // Update tree cache
+        let mut tree_cache = self.tree_parent_cache.lock().unwrap();
+        for op in change.ops().iter() {
+            if let crate::op::InnerContent::Tree(tree) = op.content {
+                let node = MoveLamportAndID {
+                    lamport: change.lamport,
+                    id: ID {
+                        peer: change.id.peer,
+                        counter: op.counter,
+                    },
+                    target: tree.target,
+                    parent: tree.parent,
+                    effected: true,
+                };
+                tree_cache.add_node_uncheck(node);
+            }
+        }
+
+        drop(tree_cache);
+        self.insert_new_change(change);
+        Ok(())
+    }
+
+    /// Every time we import a new change, it should run this function to update the dag
+    pub(crate) fn insert_dag_node_on_new_change(&mut self, change: &Change) {
         let len = change.content_len();
-        if change.deps.len() == 1 && change.deps[0].peer == change.id.peer {
+        if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
             let nodes = self.dag.map.get_mut(&change.id.peer).unwrap();
             let last = nodes.last_mut().unwrap();
@@ -254,30 +290,6 @@ impl OpLog {
                 }
             }
         }
-        // TODO: update tree cache
-        let mut tree_cache = self.tree_parent_cache.lock().unwrap();
-        for op in change.ops().iter() {
-            if let crate::op::InnerContent::Tree(tree) = op.content {
-                let node = MoveLamportAndID {
-                    lamport: change.lamport,
-                    id: ID {
-                        peer: change.id.peer,
-                        counter: op.counter,
-                    },
-                    target: tree.target,
-                    parent: tree.parent,
-                    effected: true,
-                };
-                tree_cache.add_node_uncheck(node);
-            }
-        }
-
-        self.changes
-            .entry(change.id.peer)
-            .or_default()
-            .push_rle_element(change);
-
-        Ok(())
     }
 
     fn check_id_is_not_duplicated(&self, id: ID) -> Result<(), LoroError> {
