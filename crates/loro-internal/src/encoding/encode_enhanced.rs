@@ -717,14 +717,14 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 continue;
             };
             // update dag and push the change
-            oplog.insert_dag_node_on_new_change(&change);
+            let mark = oplog.insert_dag_node_on_new_change(&change);
             oplog.next_lamport = oplog.next_lamport.max(change.lamport_end());
             oplog.latest_timestamp = oplog.latest_timestamp.max(change.timestamp);
             oplog.dag.vv.extend_to_include_end_id(ID {
                 peer: change.id.peer,
                 counter: change.id.counter + change.atom_len() as Counter,
             });
-            oplog.insert_new_change(change);
+            oplog.insert_new_change(change, mark);
         }
     });
 

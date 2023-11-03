@@ -427,6 +427,7 @@ impl Loro {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
 
+    /// Debug the size of the history
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let oplog = self.0.oplog().lock().unwrap();
@@ -542,6 +543,7 @@ struct MarkRange {
 #[wasm_bindgen]
 impl LoroText {
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
+        debug_log::debug_log!("InsertLogWasm");
         self.0.insert_(index, content)?;
         Ok(())
     }

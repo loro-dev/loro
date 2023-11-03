@@ -943,7 +943,7 @@ dependencies = [
  "crdt-list",
  "criterion 0.4.0",
  "ctor",
- "debug-log 0.1.4",
+ "debug-log 0.2.1",
  "dhat",
  "enum-as-inner 0.5.1",
  "enum_dispatch",

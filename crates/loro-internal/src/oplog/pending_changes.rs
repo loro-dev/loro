@@ -192,8 +192,8 @@ impl OpLog {
         // debug_dbg!(&change_causal_arr);
         self.dag.vv.extend_to_include_last_id(change.id_last());
         self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        self.insert_dag_node_on_new_change(&change);
-        self.insert_new_change(change);
+        let mark = self.insert_dag_node_on_new_change(&change);
+        self.insert_new_change(change, mark);
     }
 }
 
