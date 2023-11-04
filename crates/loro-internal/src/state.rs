@@ -240,25 +240,32 @@ impl DocState {
             unreachable!()
         };
         // TODO: avoid inner insert
-        // TODO: avoid empty bring back
         let mut idx2state_diff = FxHashMap::default();
         let mut current_inner_idx = 0;
         // cache current version state
         loop {
-            let (idx, bring_back) = {
+            let (idx, bring_back, need_apply_diff) = {
                 let Some(diff) = inner.get_mut(current_inner_idx) else {
                     break;
                 };
-                (diff.idx, diff.bring_back)
+                (diff.idx, diff.bring_back, diff.diff.is_some())
             };
+            let mut filter = false;
             if bring_back {
                 let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
                 let state_diff = state.to_diff();
-                // println!("process {:?}", idx);
-                bring_back_sub_container(&state_diff, inner, current_inner_idx, &self.arena);
-                idx2state_diff.insert(idx, state_diff);
+                if !state_diff.is_empty() {
+                    bring_back_sub_container(&state_diff, inner, current_inner_idx, &self.arena);
+                    idx2state_diff.insert(idx, state_diff);
+                } else if !need_apply_diff {
+                    // remove this diff
+                    filter = true;
+                    inner.remove(current_inner_idx);
+                }
             }
-            current_inner_idx += 1;
+            if !filter {
+                current_inner_idx += 1;
+            }
         }
         // apply diff
         let mut current_inner_idx = 0;
@@ -270,7 +277,9 @@ impl DocState {
                 };
                 let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
                     // only bring_back
-
+                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
+                        diff.diff = Some(state_diff.into());
+                    };
                     current_inner_idx += 1;
                     continue;
                 };
@@ -286,13 +295,16 @@ impl DocState {
             if is_recording {
                 // process bring_back before apply
                 let external_diff = if bring_back {
-                    let state_diff = idx2state_diff.remove(&idx).unwrap();
                     let external_diff = state.apply_diff_and_convert(
                         internal_diff.into_internal().unwrap(),
                         &self.arena,
                     );
-
-                    state_diff.concat(external_diff)
+                    if let Some(state_diff) = idx2state_diff.remove(&idx) {
+                        state_diff.concat(external_diff)
+                    } else {
+                        // empty state
+                        external_diff
+                    }
                 } else {
                     state
                         .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena)
@@ -307,23 +319,6 @@ impl DocState {
 
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
-            let mut current_inner_idx = 0;
-            // bring back event
-            loop {
-                let state_diff = {
-                    let Some(diff) = inner.get_mut(current_inner_idx) else {
-                        break;
-                    };
-                    if !diff.bring_back || diff.diff.is_some() {
-                        current_inner_idx += 1;
-                        continue;
-                    }
-                    idx2state_diff.remove(&diff.idx).unwrap()
-                };
-                let diff = inner.get_mut(current_inner_idx).unwrap();
-                diff.diff = Some(state_diff.into());
-                current_inner_idx += 1;
-            }
             self.record_diff(diff)
         }
     }
@@ -416,6 +411,7 @@ impl DocState {
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,
+                    is_container_deleted: false,
                     diff: Some(state.to_diff().into()),
                 })
                 .collect();
@@ -656,6 +652,10 @@ impl DocState {
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
+                if container_diff.is_container_deleted {
+                    // omit event form deleted container
+                    continue;
+                }
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
                         containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
@@ -763,6 +763,7 @@ fn bring_back_sub_container(
                                     InternalContainerDiff {
                                         idx,
                                         bring_back: true,
+                                        is_container_deleted: false,
                                         diff: None,
                                     },
                                 );
@@ -791,6 +792,7 @@ fn bring_back_sub_container(
                             InternalContainerDiff {
                                 idx,
                                 bring_back: true,
+                                is_container_deleted: false,
                                 diff: None,
                             },
                         );

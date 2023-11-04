@@ -296,6 +296,7 @@ impl Transaction {
                         .map(|x| InternalContainerDiff {
                             idx: x.idx,
                             bring_back: false,
+                            is_container_deleted: false,
                             diff: Some(x.diff.into()),
                         })
                         .collect(),

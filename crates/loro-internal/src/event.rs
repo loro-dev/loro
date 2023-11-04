@@ -50,7 +50,7 @@ pub struct DocDiff {
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
     pub(crate) bring_back: bool,
-    // pub(crate)
+    pub(crate) is_container_deleted: bool,
     pub(crate) diff: Option<DiffVariant>,
 }
 
@@ -214,6 +214,15 @@ impl Diff {
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Diff::List(s) => s.is_empty(),
+            Diff::Text(t) => t.is_empty(),
+            Diff::NewMap(m) => m.updated.is_empty(),
+            Diff::Tree(t) => t.diff.is_empty(),
         }
     }
 

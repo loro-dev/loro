@@ -242,10 +242,12 @@ impl DiffCalculator {
                 let bring_back = new_containers.remove(&id);
 
                 let diff = calc.calculate_diff(oplog, before, after, |c| {
-                    new_containers.insert(c.clone());
-                    container_id_to_depth.insert(c.clone(), depth.saturating_add(1));
-                    let child_idx = oplog.arena.register_container(c);
-                    oplog.arena.set_parent(child_idx, Some(idx));
+                    if !are_rest_containers_deleted {
+                        new_containers.insert(c.clone());
+                        container_id_to_depth.insert(c.clone(), depth.saturating_add(1));
+                        let child_idx = oplog.arena.register_container(c);
+                        oplog.arena.set_parent(child_idx, Some(idx));
+                    }
                 });
                 if !diff.is_empty() || bring_back {
                     ans.insert(
@@ -255,6 +257,7 @@ impl DiffCalculator {
                             InternalContainerDiff {
                                 idx,
                                 bring_back,
+                                is_container_deleted: are_rest_containers_deleted,
                                 diff: Some(diff.into()),
                             },
                         ),
@@ -289,7 +292,7 @@ impl DiffCalculator {
                         InternalContainerDiff {
                             idx,
                             bring_back: true,
-                            // is_container_deleted: false,
+                            is_container_deleted: false,
                             diff: None,
                         },
                     ),
