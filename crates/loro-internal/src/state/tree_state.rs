@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
 
-use crate::delta::{TreeDelta, TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
+use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::event::InternalDiff;
 use crate::DocState;
@@ -201,8 +201,7 @@ impl ContainerState for TreeState {
             .unwrap()
             .diff
             .into_iter()
-            .map(|diff| TreeDiffItem::from_delta_item(diff))
-            .flatten()
+            .flat_map(TreeDiffItem::from_delta_item)
             .collect_vec();
         Diff::Tree(TreeDiff { diff: ans })
     }

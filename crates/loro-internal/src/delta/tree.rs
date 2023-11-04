@@ -71,21 +71,12 @@ impl TreeDiffItem {
 }
 
 impl TreeDiff {
-    pub(crate) fn compose(mut self, other: Self) -> Self {
+    pub(crate) fn compose(self, _other: Self) -> Self {
         unreachable!("tree compose")
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.diff.is_empty()
     }
 
     pub(crate) fn extend<I: IntoIterator<Item = TreeDiffItem>>(mut self, other: I) -> Self {
         self.diff.extend(other);
-        self
-    }
-
-    pub(crate) fn push(mut self, diff: TreeDiffItem) -> Self {
-        self.diff.push(diff);
         self
     }
 }
@@ -175,18 +166,9 @@ impl TreeDelta {
     pub(crate) fn compose(&self, _x: TreeDelta) -> TreeDelta {
         unimplemented!("tree compose")
     }
-
-    pub(crate) fn extend(mut self, other: TreeDelta) -> Self {
-        self.diff.extend(other.diff);
-        self
-    }
-
-    pub(crate) fn push(mut self, diff: TreeDeltaItem) -> Self {
-        self.diff.push(diff);
-        self
-    }
 }
 
+#[derive(Debug)]
 pub(crate) struct TreeValue<'a>(pub(crate) &'a mut Vec<LoroValue>);
 
 impl<'a> TreeValue<'a> {
@@ -198,60 +180,6 @@ impl<'a> TreeValue<'a> {
                 TreeExternalDiff::Delete => self.delete_target(target),
                 TreeExternalDiff::Move(parent) => self.mov(target, parent),
             }
-        }
-    }
-
-    pub(crate) fn apply_internal_diff(&mut self, diff: &TreeDelta) {
-        for d in diff.iter() {
-            let target = d.target;
-            debug_log::debug_log!("before {:?}", self.0);
-            match d.action {
-                TreeInternalDiff::Create | TreeInternalDiff::Restore => {
-                    debug_log::debug_log!("create {:?}", target);
-                    self.create_target(target)
-                }
-                TreeInternalDiff::CreateMove(p) | TreeInternalDiff::RestoreMove(p) => {
-                    debug_log::debug_log!("create {:?} move {:?}", target, p);
-                    let mut t = FxHashMap::default();
-                    t.insert("id".to_string(), target.id().to_string().into());
-                    t.insert("parent".to_string(), p.to_string().into());
-                    t.insert("meta".to_string(), ContainerType::Map.default_value());
-                    self.0.push(t.into());
-                }
-                TreeInternalDiff::AsRoot => {
-                    debug_log::debug_log!("as root {:?}", target);
-                    if let Some(map) = self.0.iter_mut().find(|x| {
-                        let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                        id.as_ref() == &target.to_string()
-                    }) {
-                        let map = map.as_map_mut().unwrap();
-                        let map_mut = Arc::make_mut(map);
-                        map_mut.insert("parent".to_string(), LoroValue::Null);
-                    } else {
-                        unreachable!()
-                    }
-                }
-                TreeInternalDiff::Move(p) => {
-                    debug_log::debug_log!("move {:?} to {:?}", target, p);
-                    let map = self
-                        .0
-                        .iter_mut()
-                        .find(|x| {
-                            let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            id.as_ref() == &target.to_string()
-                        })
-                        .unwrap()
-                        .as_map_mut()
-                        .unwrap();
-                    let map_mut = Arc::make_mut(map);
-                    map_mut.insert("parent".to_string(), p.to_string().into());
-                }
-                TreeInternalDiff::Delete | TreeInternalDiff::UnCreate => {
-                    debug_log::debug_log!("delete {:?} ", target);
-                    self.delete_target(target)
-                }
-            }
-            debug_log::debug_log!("after {:?}\n", self.0);
         }
     }
 

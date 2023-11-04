@@ -712,7 +712,6 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
         match state {
             State::TreeState(tree) => {
                 let v = tree
-                    .trees
                     .iter()
                     .map(|(target, parent)| {
                         let peer_idx = record_peer(target.peer);

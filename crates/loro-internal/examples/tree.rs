@@ -28,6 +28,7 @@ fn checkout() {
     }
 }
 
+#[allow(unused)]
 fn mov() {
     let loro = LoroDoc::default();
     let tree = loro.get_tree("tree");

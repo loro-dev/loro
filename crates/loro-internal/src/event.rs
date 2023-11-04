@@ -184,7 +184,7 @@ impl InternalDiff {
             InternalDiff::SeqRaw(s) => s.is_empty(),
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
-            InternalDiff::Tree(t) => t.diff.is_empty(),
+            InternalDiff::Tree(t) => t.is_empty(),
         }
     }
 
@@ -238,7 +238,7 @@ impl Diff {
                 Diff::NewMap(a)
             }
 
-            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff.into_iter())),
+            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
             _ => unreachable!(),
         }
     }
