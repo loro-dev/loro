@@ -7,7 +7,7 @@ use std::{
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, LoroResult};
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -118,7 +118,7 @@ impl generic_btree::rle::Mergeable for EventHint {
             (
                 EventHint::InsertText {
                     pos,
-                    unicode_len: len,
+                    unicode_len: _,
                     event_len,
                     styles,
                 },
