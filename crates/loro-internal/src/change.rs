@@ -217,7 +217,7 @@ pub fn get_sys_timestamp() -> Timestamp {
         pub fn now() -> f64;
     }
 
-    now() as Timestamp
+    (now() / 1000.0) as Timestamp
 }
 
 #[cfg(test)]

@@ -141,11 +141,14 @@ impl std::fmt::Debug for OpLog {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("changes", &self.changes)
+            .field("pending_changes", &self.pending_changes)
             .field("next_lamport", &self.next_lamport)
             .field("latest_timestamp", &self.latest_timestamp)
             .finish()
     }
 }
+
+pub(crate) struct EnsureChangeDepsAreAtTheEnd;
 
 impl OpLog {
     pub fn new() -> Self {
@@ -194,24 +197,14 @@ impl OpLog {
     }
 
     /// This is the only place to update the `OpLog.changes`
-    pub fn insert_new_change(&mut self, mut change: Change) {
+    pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
         debug_log::debug_log!("importing {} ", change.id);
-        debug_log::debug_dbg!(&self);
-        if cfg!(debug_assertions) {
-            // TODO: ensure this check has ran at compile time
-            for dep in change.deps.iter() {
-                self.ensure_dep_on_change_end(*dep);
-            }
-        }
-
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {
                 assert_eq!(change.id.counter, last.ctr_end());
-                if !last.has_dependents
-                    && change.deps_on_self()
-                    && change.timestamp - last.timestamp < 1000
-                {
+                let timestamp_change = change.timestamp - last.timestamp;
+                if !last.has_dependents && change.deps_on_self() && timestamp_change < 1000 {
                     for op in take(change.ops.vec_mut()) {
                         last.ops.push(op);
                     }
@@ -262,7 +255,7 @@ impl OpLog {
         self.dag.frontiers.retain_non_included(&change.deps);
         self.dag.frontiers.filter_peer(change.id.peer);
         self.dag.frontiers.push(change.id_last());
-        self.insert_dag_node_on_new_change(&change);
+        let mark = self.insert_dag_node_on_new_change(&change);
 
         // Update tree cache
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
@@ -287,12 +280,15 @@ impl OpLog {
         }
 
         drop(tree_cache);
-        self.insert_new_change(change);
+        self.insert_new_change(change, mark);
         Ok(())
     }
 
     /// Every time we import a new change, it should run this function to update the dag
-    pub(crate) fn insert_dag_node_on_new_change(&mut self, change: &Change) {
+    pub(crate) fn insert_dag_node_on_new_change(
+        &mut self,
+        change: &Change,
+    ) -> EnsureChangeDepsAreAtTheEnd {
         let len = change.content_len();
         if change.deps_on_self() {
             // don't need to push new element to dag because it only depends on itself
@@ -320,20 +316,24 @@ impl OpLog {
             });
 
             for dep in change.deps.iter() {
-                self.ensure_dep_on_change_end(*dep);
+                self.ensure_dep_on_change_end(change.id.peer, *dep);
                 let target = self.dag.get_mut(*dep).unwrap();
                 if target.ctr_last() == dep.counter {
                     target.has_succ = true;
                 }
             }
         }
+
+        EnsureChangeDepsAreAtTheEnd
     }
 
-    fn ensure_dep_on_change_end(&mut self, dep: ID) {
+    fn ensure_dep_on_change_end(&mut self, src: PeerID, dep: ID) {
         let changes = self.changes.get_mut(&dep.peer).unwrap();
         match changes.binary_search_by(|c| c.ctr_last().cmp(&dep.counter)) {
             Ok(index) => {
-                changes[index].has_dependents = true;
+                if src != dep.peer {
+                    changes[index].has_dependents = true;
+                }
             }
             Err(index) => {
                 // This operation is slow in some rare cases, but I guess it's fine for now.
@@ -647,7 +647,7 @@ impl OpLog {
 
     #[inline(always)]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog(self, vv, EncodeMode::Auto)
+        encode_oplog(self, vv, EncodeMode::RleUpdates)
     }
 
     #[inline(always)]
@@ -693,7 +693,8 @@ impl OpLog {
     ///
     /// returns: (common_ancestor_vv, iterator)
     ///
-    /// Note: the change returned by the iterator may include redundant ops at the beginning
+    /// Note: the change returned by the iterator may include redundant ops at the beginning, you should trim it by yourself.
+    /// You can trim it by the provided counter value. It should start with the counter.
     ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
     pub(crate) fn iter_from_lca_causally(

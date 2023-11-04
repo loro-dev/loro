@@ -226,11 +226,14 @@ fn test_from_snapshot() {
 #[test]
 fn test_pending() {
     let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(0).unwrap();
     a.get_text("text").insert_(0, "0").unwrap();
     let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(1).unwrap();
     b.import(&a.export_from(&Default::default())).unwrap();
     b.get_text("text").insert_(0, "1").unwrap();
     let c = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
     c.import(&b.export_from(&Default::default())).unwrap();
     c.get_text("text").insert_(0, "2").unwrap();
 
@@ -240,6 +243,7 @@ fn test_pending() {
 
     // b does not has c's change
     a.import(&b.export_from(&a.oplog_vv())).unwrap();
+    dbg!(&a.oplog().lock().unwrap());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
 
@@ -321,6 +325,7 @@ fn test_timestamp() {
 #[test]
 fn test_text_checkout() {
     let mut doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
     text.insert(&mut txn, 0, "你界").unwrap();
