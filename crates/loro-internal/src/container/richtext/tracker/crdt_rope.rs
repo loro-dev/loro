@@ -352,7 +352,6 @@ impl CrdtRope {
             while let Some((index, elem)) = iter.next() {
                 // The elements will not be changed by this method.
                 // This index is current index of the elem (calculated by `status` field rather than `diff_status` field)
-                debug_log::debug_dbg!(&index, &elem);
                 match elem.diff() {
                     DiffStatus::NotChanged => {}
                     DiffStatus::Created => {

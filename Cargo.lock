@@ -529,15 +529,9 @@ dependencies = [
 
 [[package]]
 name = "debug-log"
-version = "0.1.4"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "364ff57c5031fee39b026dcdfdc9c7dc1d1d79451bfdacba90f040524b766254"
-
-[[package]]
-name = "debug-log"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23d13e7dd03f70e6b332a2b42a9cdfa5b04f1015098c9656e77995c09772c947"
+checksum = "b90f9d9c0c144c4aa35a874e362392ec6aef3b9291c882484235069540b26c73"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -943,7 +937,7 @@ dependencies = [
  "crdt-list",
  "criterion 0.4.0",
  "ctor",
- "debug-log 0.2.1",
+ "debug-log",
  "dhat",
  "enum-as-inner 0.5.1",
  "enum_dispatch",
@@ -1009,7 +1003,7 @@ name = "loro-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "debug-log 0.2.1",
+ "debug-log",
  "getrandom",
  "js-sys",
  "loro-internal",
@@ -1653,7 +1647,7 @@ dependencies = [
  "color-backtrace",
  "crdt-list",
  "ctor",
- "debug-log 0.1.4",
+ "debug-log",
  "enum-as-inner 0.5.1",
  "fxhash",
  "heapless",

@@ -138,7 +138,7 @@ impl DiffVariant {
 
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner, Serialize)]
-pub enum InternalDiff {
+pub(crate) enum InternalDiff {
     SeqRaw(Delta<SliceRanges>),
     /// This always uses entity indexes.
     RichtextRaw(Delta<RichtextStateChunk>),
