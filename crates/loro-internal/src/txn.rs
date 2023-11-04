@@ -5,15 +5,16 @@ use std::{
 };
 
 use enum_as_inner::EnumAsInner;
-use generic_btree::rle::{HasLength as RleHasLength, Mergeable, Sliceable as GBSliceable};
+use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, LoroResult};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
     container::{
         idx::ContainerIdx,
-        list::list_op::DeleteSpan,
+        list::list_op::{DeleteSpan, InnerListOp},
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
@@ -55,6 +56,13 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
 }
 
+/// We can infer local events directly from the local behavior. This enum is used to
+/// record them, so that we can avoid recalculate them when we commit the transaction.
+///
+/// For example, when we insert a text in wasm, users use the utf16 index to send the
+/// command. However, internally loro will convert it to unicode index. But the users
+/// still need events that are in utf16 index. To avoid the round trip, we record the
+/// events here.
 #[derive(Debug, Clone, EnumAsInner)]
 pub(super) enum EventHint {
     Mark {
@@ -66,7 +74,8 @@ pub(super) enum EventHint {
     InsertText {
         /// pos is a Unicode index. If wasm, it's a UTF-16 index.
         pos: u32,
-        len: u32,
+        event_len: u32,
+        unicode_len: u32,
         styles: StyleMeta,
     },
     /// pos is a Unicode index. If wasm, it's a UTF-16 index.
@@ -90,7 +99,9 @@ impl generic_btree::rle::HasLength for EventHint {
     fn rle_len(&self) -> usize {
         match self {
             EventHint::Mark { .. } => 1,
-            EventHint::InsertText { len, .. } => *len as usize,
+            EventHint::InsertText {
+                unicode_len: len, ..
+            } => *len as usize,
             EventHint::DeleteText { unicode_len, .. } => *unicode_len,
             EventHint::InsertList { len, .. } => *len as usize,
             EventHint::DeleteList(d) => d.len(),
@@ -105,18 +116,25 @@ impl generic_btree::rle::Mergeable for EventHint {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (
-                EventHint::InsertText { pos, len, styles },
+                EventHint::InsertText {
+                    pos,
+                    unicode_len: len,
+                    event_len,
+                    styles,
+                },
                 EventHint::InsertText {
                     pos: r_pos,
                     styles: r_styles,
                     ..
                 },
-            ) => *pos + *len == *r_pos && styles == r_styles,
+            ) => *pos + *event_len == *r_pos && styles == r_styles,
             (EventHint::InsertList { .. }, EventHint::InsertList { .. }) => true,
             // We don't merge delete text because it's hard to infer the correct pos to split:
             // `range` param is in unicode range, but the delete text event is in UTF-16 range.
             // Without the original text, it's impossible to convert the range.
-            (EventHint::DeleteText { .. }, EventHint::DeleteText { .. }) => false,
+            (EventHint::DeleteText { span, .. }, EventHint::DeleteText { span: r, .. }) => {
+                span.is_mergable(r, &())
+            }
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
             _ => false,
         }
@@ -124,45 +142,39 @@ impl generic_btree::rle::Mergeable for EventHint {
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
-            (EventHint::InsertText { len, .. }, EventHint::InsertText { len: r_len, .. }) => {
+            (
+                EventHint::InsertText {
+                    event_len,
+                    unicode_len: len,
+                    ..
+                },
+                EventHint::InsertText {
+                    event_len: r_event_len,
+                    unicode_len: r_len,
+                    ..
+                },
+            ) => {
                 *len += *r_len;
+                *event_len += *r_event_len;
             }
             (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => *len += *r_len,
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
+            (
+                EventHint::DeleteText { span, unicode_len },
+                EventHint::DeleteText {
+                    span: r_span,
+                    unicode_len: r_len,
+                },
+            ) => {
+                *unicode_len += *r_len;
+                span.merge(r_span, &());
+            }
             _ => unreachable!(),
         }
     }
 
     fn merge_left(&mut self, _: &Self) {
         unreachable!()
-    }
-}
-
-impl generic_btree::rle::Sliceable for EventHint {
-    fn _slice(&self, range: std::ops::Range<usize>) -> Self {
-        match self {
-            EventHint::InsertText {
-                pos,
-                len: _,
-                styles,
-            } => EventHint::InsertText {
-                pos: *pos + range.start as u32,
-                len: range.len() as u32,
-                styles: styles.clone(),
-            },
-            // It's not implemented because it's hard to infer the correct pos to split:
-            // `range` param is in unicode range, but the delete text event is in UTF-16 range.
-            // Without the original text, it's impossible to convert the range.
-            EventHint::DeleteText { .. } => unreachable!(),
-            EventHint::DeleteList(d) => EventHint::DeleteList(d.slice(range.start, range.end)),
-            EventHint::InsertList { .. } => EventHint::InsertList {
-                len: range.len() as u32,
-            },
-            a => {
-                assert_eq!(a.rle_len(), range.len());
-                a.clone()
-            }
-        }
     }
 }
 
@@ -456,17 +468,26 @@ fn change_to_diff(
     let mut lamport = change.lamport;
     let mut event_hint_iter = event_hints.into_iter();
     let mut o_hint = event_hint_iter.next();
-
-    for op in change.ops.iter() {
+    let mut op_iter = change.ops.iter();
+    while let Some(op) = op_iter.next() {
         let Some(hint) = o_hint.as_mut() else {
             unreachable!()
         };
 
+        let mut ops: SmallVec<[&Op; 1]> = smallvec![op];
         let hint = match op.atom_len().cmp(&hint.rle_len()) {
             std::cmp::Ordering::Less => {
-                let ans = hint.slice(..op.atom_len());
-                hint.slice_(op.atom_len()..);
-                ans
+                let mut len = op.atom_len();
+                while len < hint.rle_len() {
+                    let next = op_iter.next().unwrap();
+                    len += next.atom_len();
+                    ops.push(next);
+                }
+                assert!(len == hint.rle_len());
+                match event_hint_iter.next() {
+                    Some(n) => o_hint.replace(n).unwrap(),
+                    None => o_hint.take().unwrap(),
+                }
             }
             std::cmp::Ordering::Equal => match event_hint_iter.next() {
                 Some(n) => o_hint.replace(n).unwrap(),
@@ -477,8 +498,16 @@ fn change_to_diff(
             }
         };
 
+        match &hint {
+            EventHint::InsertText { .. }
+            | EventHint::InsertList { .. }
+            | EventHint::DeleteText { .. } => {}
+            _ => {
+                assert_eq!(ops.len(), 1);
+            }
+        }
         'outer: {
-            let diff: Diff = match hint {
+            match hint {
                 EventHint::Mark {
                     start,
                     end,
@@ -514,56 +543,83 @@ fn change_to_diff(
                     let diff = Delta::new()
                         .retain(start as usize)
                         .retain_with_meta((end - start) as usize, meta);
-                    Diff::Text(diff)
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::Text(diff),
+                    });
                 }
-                EventHint::InsertText { pos, styles, .. } => {
-                    let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;
-                    Diff::Text(
-                        Delta::new()
-                            .retain(pos as usize)
-                            .insert_with_meta(slice.clone(), styles),
-                    )
+                EventHint::InsertText { styles, pos, .. } => {
+                    let mut delta = Delta::new().retain(pos as usize);
+                    for op in ops.iter() {
+                        let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
+                        else {
+                            unreachable!()
+                        };
+
+                        delta = delta.insert_with_meta(slice.clone(), styles.clone());
+                    }
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::Text(delta),
+                    })
                 }
                 EventHint::DeleteText {
                     span,
                     unicode_len: _,
-                } => Diff::Text(
-                    Delta::new()
-                        .retain(span.start() as usize)
-                        .delete(span.len()),
-                ),
+                    // we don't need to iter over ops here, because we already
+                    // know what the events should be
+                } => ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::Text(
+                        Delta::new()
+                            .retain(span.start() as usize)
+                            .delete(span.len()),
+                    ),
+                }),
                 EventHint::InsertList { .. } => {
-                    let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
-                    let values = arena.get_values(range.to_range());
-                    Diff::List(Delta::new().retain(*pos).insert(values))
+                    for op in ops.iter() {
+                        let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
+                        let values = arena.get_values(range.to_range());
+                        ans.push(TxnContainerDiff {
+                            idx: op.container,
+                            diff: Diff::List(Delta::new().retain(*pos).insert(values)),
+                        })
+                    }
                 }
                 EventHint::DeleteList(s) => {
-                    Diff::List(Delta::new().retain(s.start() as usize).delete(s.len()))
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::List(Delta::new().retain(s.start() as usize).delete(s.len())),
+                    });
                 }
-                EventHint::Map { key, value } => {
-                    Diff::NewMap(crate::delta::MapDelta::new().with_entry(
+                EventHint::Map { key, value } => ans.push(TxnContainerDiff {
+                    idx: op.container,
+                    diff: Diff::NewMap(crate::delta::MapDelta::new().with_entry(
                         key,
                         MapValue {
                             counter: op.counter,
                             value,
                             lamport: (lamport, peer),
                         },
-                    ))
+                    )),
+                }),
+                EventHint::Tree(tree_diff) => {
+                    ans.push(TxnContainerDiff {
+                        idx: op.container,
+                        diff: Diff::Tree(TreeDelta::default().push(tree_diff)),
+                    });
                 }
-                EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
                 EventHint::MarkEnd => {
                     // do nothing
                     break 'outer;
                 }
             };
-
-            ans.push(TxnContainerDiff {
-                idx: op.container,
-                diff,
-            });
         }
 
-        lamport += op.content_len() as Lamport;
+        lamport += ops
+            .iter()
+            .map(|x| x.content_len() as Lamport)
+            .sum::<Lamport>();
     }
 
     ans

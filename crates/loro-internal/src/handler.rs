@@ -297,6 +297,11 @@ impl TextHandler {
             });
 
         let unicode_len = s.chars().count();
+        let event_len = if cfg!(feature = "wasm") {
+            count_utf16_len(s.as_bytes())
+        } else {
+            unicode_len
+        };
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
@@ -308,9 +313,9 @@ impl TextHandler {
             }),
             EventHint::InsertText {
                 pos: pos as u32,
-                // FIXME: this is wrong
                 styles,
-                len: unicode_len as u32,
+                unicode_len: unicode_len as u32,
+                event_len: event_len as u32,
             },
             &self.state,
         )
