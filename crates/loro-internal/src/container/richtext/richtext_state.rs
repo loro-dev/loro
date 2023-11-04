@@ -312,32 +312,41 @@ pub(crate) fn utf16_to_utf8_index(s: &str, utf16_index: usize) -> Option<usize> 
     None
 }
 
-pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Option<usize> {
+/// Returns the unicode index of the character at the given utf16 index.
+///
+/// If the given utf16 index is not at the correct boundary, returns the unicode index of the
+/// character before the given utf16 index.
+pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usize, usize> {
     if utf16_index == 0 {
-        return Some(0);
+        return Ok(0);
     }
 
     let mut current_utf16_index = 0;
+    let mut current_unicode_index = 0;
     for (i, c) in s.chars().enumerate() {
         let len = c.len_utf16();
         current_utf16_index += len;
         if current_utf16_index == utf16_index {
-            return Some(i + 1);
+            return Ok(i + 1);
         }
+        if current_utf16_index > utf16_index {
+            return Err(i);
+        }
+        current_unicode_index = i + 1;
     }
 
-    None
+    Err(current_unicode_index)
 }
 
 fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
     match kind {
         PosType::Bytes => todo!(),
         PosType::Unicode => Some(pos),
-        PosType::Utf16 => utf16_to_unicode_index(s, pos),
+        PosType::Utf16 => utf16_to_unicode_index(s, pos).ok(),
         PosType::Entity => Some(pos),
         PosType::Event => {
             if cfg!(feature = "wasm") {
-                utf16_to_unicode_index(s, pos)
+                utf16_to_unicode_index(s, pos).ok()
             } else {
                 Some(pos)
             }
@@ -575,8 +584,12 @@ mod query {
                         return (0, true);
                     }
 
-                    let s = std::str::from_utf8(text).unwrap();
-                    let offset = utf16_to_unicode_index(s, left).unwrap();
+                    // TODO: extract this behavior to a dedicated type
+                    // SAFETY: we know that `text` is valid utf8
+                    let s = unsafe { std::str::from_utf8_unchecked(text) };
+                    // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
+                    // TODO: if we remove the use of query(pos-1), we won't need this fallback behaviro
+                    let offset = utf16_to_unicode_index(s, left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
@@ -890,7 +903,6 @@ impl RichtextState {
             return pos;
         }
 
-        // TODO: use cache
         let (c, entity_index) = match pos_type {
             PosType::Bytes => todo!(),
             PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
