@@ -231,21 +231,6 @@ impl ContainerState for TreeState {
             q.extend(node.children);
         }
 
-        let mut q = VecDeque::from(forest.deleted);
-        while let Some(node) = q.pop_front() {
-            let action = if let Some(parent) = node.parent {
-                TreeDiffItem::CreateMove(parent)
-            } else {
-                unreachable!()
-            };
-            let diff = TreeDiff {
-                target: node.id,
-                action,
-            };
-            diffs.push(diff);
-            q.extend(node.children);
-        }
-
         Diff::Tree(TreeDelta { diff: diffs })
     }
 

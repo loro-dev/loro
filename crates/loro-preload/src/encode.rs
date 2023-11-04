@@ -135,7 +135,7 @@ pub enum EncodedContainerState<'a> {
     List(Vec<usize>),
     #[serde(borrow)]
     Richtext(Box<EncodedRichtextState<'a>>),
-    Tree(Vec<(usize, Option<usize>)>),
+    Tree((Vec<(usize, Option<usize>)>, Vec<usize>)),
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

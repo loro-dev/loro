@@ -415,7 +415,7 @@ impl DocState {
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
-                    bring_back: true,
+                    bring_back: false,
                     diff: Some(state.to_diff().into()),
                 })
                 .collect();
