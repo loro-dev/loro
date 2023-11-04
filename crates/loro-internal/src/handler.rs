@@ -10,7 +10,7 @@ use crate::{
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
-    utils::utf16::count_utf16_chars,
+    utils::utf16::count_utf16_len,
 };
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
@@ -350,10 +350,8 @@ impl TextHandler {
             .lock()
             .unwrap()
             .with_state_mut(self.container_idx, |state| {
-                state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .get_text_entity_ranges_in_event_index_range(pos, len)
+                let richtext_state = state.as_richtext_state_mut().unwrap();
+                richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
             });
 
         debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
@@ -520,7 +518,7 @@ impl TextHandler {
 
 fn event_len(s: &str) -> usize {
     if cfg!(feature = "wasm") {
-        count_utf16_chars(s.as_bytes())
+        count_utf16_len(s.as_bytes())
     } else {
         s.chars().count()
     }

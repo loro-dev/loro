@@ -8,7 +8,7 @@ use crate::{
     delta::DeltaValue,
 };
 
-use super::utf16::{count_unicode_chars, count_utf16_chars};
+use super::utf16::{count_unicode_chars, count_utf16_len};
 
 #[derive(Clone)]
 pub struct StringSlice {
@@ -91,6 +91,10 @@ impl StringSlice {
 
     pub fn len_unicode(&self) -> usize {
         count_unicode_chars(self.bytes())
+    }
+
+    pub fn len_utf16(&self) -> usize {
+        count_utf16_len(self.bytes())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -181,7 +185,7 @@ impl DeltaValue for StringSlice {
     /// Utf16 length when in WASM
     fn length(&self) -> usize {
         if cfg!(feature = "wasm") {
-            count_utf16_chars(self.bytes())
+            count_utf16_len(self.bytes())
         } else {
             count_unicode_chars(self.bytes())
         }

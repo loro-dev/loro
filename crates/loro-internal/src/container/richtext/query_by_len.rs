@@ -2,11 +2,7 @@ use std::marker::PhantomData;
 
 use generic_btree::{BTreeTrait, FindResult, Query};
 
-use crate::utils::utf16::count_utf16_chars;
-
-use super::richtext_state::{
-    unicode_to_utf16_index, RichtextStateChunk, RichtextTreeTrait,
-};
+use super::richtext_state::{RichtextStateChunk, RichtextTreeTrait};
 
 /// An easy way to implement [Query] by using key index
 ///
@@ -175,21 +171,13 @@ impl Query<RichtextTreeTrait> for EntityIndexQueryWithEventIndex {
     fn confirm_elem(&mut self, _q: &Self::QueryArg, elem: &RichtextStateChunk) -> (usize, bool) {
         let left = self.left;
         match elem {
-            RichtextStateChunk::Text { unicode_len, text } => {
-                if *unicode_len as usize >= left {
-                    self.event_index += if cfg!(feature = "wasm") {
-                        unicode_to_utf16_index(std::str::from_utf8(text).unwrap(), left).unwrap()
-                    } else {
-                        left
-                    };
+            RichtextStateChunk::Text(s) => {
+                if s.len() as usize >= left {
+                    self.event_index += s.convert_unicode_offset_to_event_offset(left);
                     return (left, true);
                 }
 
-                self.event_index += if cfg!(feature = "wasm") {
-                    count_utf16_chars(text)
-                } else {
-                    *unicode_len as usize
-                };
+                self.event_index += s.event_len() as usize;
                 (left, false)
             }
             RichtextStateChunk::Style { .. } => {
