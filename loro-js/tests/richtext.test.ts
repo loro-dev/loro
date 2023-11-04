@@ -91,7 +91,7 @@ describe("richtext", () => {
     expect(called).toBeTruthy();
   })
 
-  it.only("Delete emoji", async () => {
+  it("Delete emoji", async () => {
     const doc = new Loro();
     const text = doc.getText("text");
     text.insert(0, "012345👨‍👩‍👦6789");
