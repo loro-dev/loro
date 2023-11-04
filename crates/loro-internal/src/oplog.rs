@@ -177,6 +177,10 @@ impl OpLog {
         self.latest_timestamp
     }
 
+    pub fn dag(&self) -> &AppDag {
+        &self.dag
+    }
+
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
@@ -474,6 +478,11 @@ impl OpLog {
         }
 
         None
+    }
+
+    pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
+        let change = self.get_change_at(id)?;
+        Some(self.convert_change_to_remote(change))
     }
 
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {
