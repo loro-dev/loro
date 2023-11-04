@@ -261,8 +261,9 @@ impl OpLog {
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
             if let crate::op::InnerContent::Tree(tree) = op.content {
+                let diff = op.counter - change.id.counter;
                 let node = MoveLamportAndID {
-                    lamport: change.lamport,
+                    lamport: change.lamport + diff as Lamport,
                     id: ID {
                         peer: change.id.peer,
                         counter: op.counter,

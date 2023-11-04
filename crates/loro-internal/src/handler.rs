@@ -6,7 +6,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    delta::{MapValue, TreeDeltaItem, TreeDiffItem, TreeExternalDiff, TreeInternalDiff},
+    delta::{MapValue, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,

@@ -754,7 +754,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         to: &crate::VersionVector,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> InternalDiff {
-        // debug_log::debug_log!("from {:?} to {:?}", from, to);
+        debug_log::debug_log!("from {:?} to {:?}", from, to);
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         let from_frontiers = from.to_frontiers(&oplog.dag);
@@ -764,7 +764,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             .find_common_ancestor(&from_frontiers, &to_frontiers);
         let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
         let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
-        // debug_log::debug_log!("lca vv {:?}", lca_vv);
+        debug_log::debug_log!("lca vv {:?}", lca_vv);
 
         let mut tree_cache = oplog.tree_parent_cache.lock().unwrap();
         let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
