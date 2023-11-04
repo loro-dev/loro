@@ -27,6 +27,14 @@ describe("richtext", () => {
     ] as Delta<string>[])
   })
 
+  it("insert after emoji", () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "👨‍👩‍👦");
+    text.insert(8, "a");
+    expect(text.toString()).toBe("👨‍👩‍👦a")
+  })
+
   it("emit event correctly", () => {
     const doc = new Loro();
     const text = doc.getText("text");
