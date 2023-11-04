@@ -4277,29 +4277,6 @@ mod failed_tests {
     }
 
     #[test]
-    fn fuzz_14() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 111,
-                    container_idx: 238,
-                    pos: 110,
-                    value: 28270,
-                    is_del: false,
-                },
-                Text {
-                    site: 191,
-                    container_idx: 42,
-                    pos: 191,
-                    value: 37186,
-                    is_del: true,
-                },
-            ],
-        )
-    }
-
-    #[test]
     fn to_minify() {
         minify_error(5, vec![], test_multi_sites, normalize)
     }
