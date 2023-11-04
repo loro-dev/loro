@@ -1,4 +1,4 @@
-pub fn count_utf16_chars(utf8_str: &[u8]) -> usize {
+pub fn count_utf16_len(utf8_str: &[u8]) -> usize {
     let mut utf16_count = 0;
 
     let mut iter = utf8_str.iter();
@@ -48,69 +48,69 @@ mod tests {
     fn test_ascii() {
         let input = "Hello, world!";
         let expected = 13;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_2_byte() {
         let input = "Привет, мир!";
         let expected = 12;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_3_byte() {
         let input = "こんにちは世界";
         let expected = 7;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_4_byte() {
         let input = "👋🌍";
         let expected = 4;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_crazy_emoji_bytes() {
         let input = "👩‍👩‍👧‍👧👨‍👨‍👧";
         let expected = 19;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_empty_string() {
         let input = "";
         let expected = 0;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_single_char() {
         let input = "a";
         let expected = 1;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_utf8_with_bom() {
         let input = "\u{FEFF}Hello, world!"; // UTF-8 with BOM
         let expected = 14;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_long_string() {
         let input = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let expected = 52;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 
     #[test]
     fn test_utf8_with_null_char() {
         let input = "Hello\u{0000}world!";
         let expected = 12;
-        assert_eq!(count_utf16_chars(input.as_bytes()), expected);
+        assert_eq!(count_utf16_len(input.as_bytes()), expected);
     }
 }

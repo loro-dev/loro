@@ -18,7 +18,7 @@ use crate::{
     delta::{Delta, DeltaItem, StyleMeta},
     event::{Diff, InternalDiff},
     op::{Op, RawOp},
-    utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice, utf16::count_utf16_chars},
+    utils::{bitmap::BitMap, lazy::LazyLoad, string_slice::StringSlice},
     InternalString,
 };
 
@@ -157,27 +157,21 @@ impl ContainerState for RichtextState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     match value {
-                        RichtextStateChunk::Text { unicode_len, text } => {
+                        RichtextStateChunk::Text(s) => {
                             let (pos, styles) = self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
-                                RichtextStateChunk::Text {
-                                    unicode_len: *unicode_len,
-                                    text: text.clone(),
-                                },
+                                RichtextStateChunk::Text(s.clone()),
                             );
                             let insert_styles = styles.clone().into();
 
                             if pos > event_index {
                                 ans = ans.retain(pos - event_index);
                             }
-                            event_index = pos
-                                + (if cfg!(feature = "wasm") {
-                                    count_utf16_chars(text)
-                                } else {
-                                    *unicode_len as usize
-                                });
-                            ans = ans
-                                .insert_with_meta(StringSlice::from(text.clone()), insert_styles);
+                            event_index = pos + s.event_len() as usize;
+                            ans = ans.insert_with_meta(
+                                StringSlice::from(s.bytes().clone()),
+                                insert_styles,
+                            );
                         }
                         RichtextStateChunk::Style { anchor_type, style } => {
                             let (new_event_index, _) =
@@ -282,13 +276,10 @@ impl ContainerState for RichtextState {
                     attributes: _,
                 } => {
                     match value {
-                        RichtextStateChunk::Text { unicode_len, text } => {
+                        RichtextStateChunk::Text(s) => {
                             self.state.get_mut().insert_elem_at_entity_index(
                                 entity_index,
-                                RichtextStateChunk::Text {
-                                    unicode_len: *unicode_len,
-                                    text: text.clone(),
-                                },
+                                RichtextStateChunk::Text(s.clone()),
                             );
                         }
                         RichtextStateChunk::Style { style, anchor_type } => {
@@ -611,18 +602,15 @@ impl RichtextState {
 
         for chunk in self.iter_chunk() {
             match chunk {
-                RichtextStateChunk::Text {
-                    text,
-                    unicode_len: _,
-                } => {
+                RichtextStateChunk::Text(s) => {
                     if lengths.len() % 2 == 0 {
                         lengths.push(0);
                     }
 
                     *lengths.last_mut().unwrap() += 1;
                     text_ranges.ranges.push(loro_preload::TextRange {
-                        start: text.start(),
-                        len: text.len(),
+                        start: s.bytes().start(),
+                        len: s.bytes().len(),
                     });
                 }
                 RichtextStateChunk::Style { style, anchor_type } => {

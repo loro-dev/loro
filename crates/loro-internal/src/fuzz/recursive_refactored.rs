@@ -121,15 +121,29 @@ impl Actor {
                                     attributes: _,
                                 } => {
                                     let utf8_index = if cfg!(feature = "wasm") {
+                                        let ans = utf16_to_utf8_index(&text, index).unwrap();
+                                        index += value.len_utf16();
+                                        ans
+                                    } else {
+                                        let ans = unicode_to_utf8_index(&text, index).unwrap();
+                                        index += value.len_unicode();
+                                        ans
+                                    };
+                                    text.insert_str(utf8_index, value.as_str());
+                                }
+                                DeltaItem::Delete { delete: len, .. } => {
+                                    let utf8_index = if cfg!(feature = "wasm") {
                                         utf16_to_utf8_index(&text, index).unwrap()
                                     } else {
                                         unicode_to_utf8_index(&text, index).unwrap()
                                     };
-                                    text.insert_str(utf8_index, value.as_str());
-                                    index += value.len_unicode();
-                                }
-                                DeltaItem::Delete { delete: len, .. } => {
-                                    text.drain(index..index + *len);
+
+                                    let utf8_end = if cfg!(feature = "wasm") {
+                                        utf16_to_utf8_index(&text, index + *len).unwrap()
+                                    } else {
+                                        unicode_to_utf8_index(&text, index + *len).unwrap()
+                                    };
+                                    text.drain(utf8_index..utf8_end);
                                 }
                             }
                         }
@@ -4257,6 +4271,29 @@ mod failed_tests {
                     pos: 116,
                     value: 116,
                     is_del: false,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_14() {
+        test_multi_sites(
+            5,
+            &mut [
+                Text {
+                    site: 111,
+                    container_idx: 238,
+                    pos: 110,
+                    value: 28270,
+                    is_del: false,
+                },
+                Text {
+                    site: 191,
+                    container_idx: 42,
+                    pos: 191,
+                    value: 37186,
+                    is_del: true,
                 },
             ],
         )

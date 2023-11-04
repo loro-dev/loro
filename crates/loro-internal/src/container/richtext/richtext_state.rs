@@ -18,7 +18,6 @@ use crate::{
         EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex,
     },
     delta::{DeltaValue, Meta, StyleMeta},
-    utils::{string_slice::unicode_range_to_byte_range, utf16::count_utf16_chars},
 };
 
 // FIXME: Check splice and other things are using unicode index
@@ -50,8 +49,8 @@ impl Display for RichtextState {
         for span in self.tree.iter() {
             match span {
                 RichtextStateChunk::Style { .. } => {}
-                RichtextStateChunk::Text { text, .. } => {
-                    f.write_str(std::str::from_utf8(text).unwrap())?;
+                RichtextStateChunk::Text(s) => {
+                    f.write_str(s.as_str())?;
                 }
             }
         }
@@ -60,13 +59,256 @@ impl Display for RichtextState {
     }
 }
 
+pub(crate) use text_chunk::TextChunk;
+mod text_chunk {
+    use std::ops::Range;
+
+    use append_only_bytes::BytesSlice;
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct TextChunk {
+        unicode_len: i32,
+        bytes: BytesSlice,
+        // TODO: make this field only available in wasm mode
+        utf16_len: i32,
+    }
+
+    impl TextChunk {
+        pub fn from_bytes(bytes: BytesSlice) -> Self {
+            let mut utf16_len = 0;
+            let mut unicode_len = 0;
+            for c in std::str::from_utf8(&bytes).unwrap().chars() {
+                utf16_len += c.len_utf16();
+                unicode_len += 1;
+            }
+
+            Self {
+                unicode_len,
+                bytes,
+                utf16_len: utf16_len as i32,
+            }
+        }
+
+        pub fn bytes(&self) -> &BytesSlice {
+            &self.bytes
+        }
+
+        pub fn as_str(&self) -> &str {
+            // SAFETY: We know that the text is valid UTF-8
+            unsafe { std::str::from_utf8_unchecked(&self.bytes) }
+        }
+
+        pub fn len(&self) -> i32 {
+            self.unicode_len
+        }
+
+        pub fn unicode_len(&self) -> i32 {
+            self.unicode_len
+        }
+
+        pub fn utf16_len(&self) -> i32 {
+            self.utf16_len
+        }
+
+        pub fn event_len(&self) -> i32 {
+            if cfg!(feature = "wasm") {
+                self.utf16_len
+            } else {
+                self.unicode_len
+            }
+        }
+
+        /// Convert a unicode index on this text to an event index
+        pub fn convert_unicode_offset_to_event_offset(&self, offset: usize) -> usize {
+            if cfg!(feature = "wasm") {
+                let mut event_offset = 0;
+                for (i, c) in self.as_str().chars().enumerate() {
+                    if i == offset {
+                        return event_offset;
+                    }
+                    event_offset += c.len_utf16();
+                }
+                event_offset
+            } else {
+                offset
+            }
+        }
+
+        pub fn new_empty() -> Self {
+            Self {
+                unicode_len: 0,
+                bytes: BytesSlice::empty(),
+                utf16_len: 0,
+            }
+        }
+
+        pub(crate) fn delete_by_entity_index(
+            &mut self,
+            unicode_offset: usize,
+            unicode_len: usize,
+        ) -> (Option<Self>, usize) {
+            let s = self.as_str();
+            let mut start_byte = 0;
+            let mut end_byte = self.bytes().len();
+            let start_unicode_index = unicode_offset;
+            let end_unicode_index = unicode_offset + unicode_len;
+            let mut start_utf16_index = 0;
+            let mut current_utf16_index = 0;
+            let mut current_utf8_index = 0;
+            for (current_unicode_index, c) in s.chars().enumerate() {
+                if current_unicode_index == start_unicode_index {
+                    start_utf16_index = current_utf16_index;
+                    start_byte = current_utf8_index;
+                }
+
+                if current_unicode_index == end_unicode_index {
+                    end_byte = current_utf8_index;
+                    break;
+                }
+
+                current_utf16_index += c.len_utf16();
+                current_utf8_index += c.len_utf8();
+            }
+
+            self.utf16_len -= (current_utf16_index - start_utf16_index) as i32;
+
+            let event_len = if cfg!(feature = "wasm") {
+                current_utf16_index - start_utf16_index
+            } else {
+                unicode_len
+            };
+
+            self.unicode_len -= unicode_len as i32;
+            let next = match (start_byte == 0, end_byte == self.bytes.len()) {
+                (true, true) => {
+                    self.bytes = BytesSlice::empty();
+                    None
+                }
+                (true, false) => {
+                    self.bytes.slice_(end_byte..);
+                    None
+                }
+                (false, true) => {
+                    self.bytes.slice_(..start_byte);
+                    None
+                }
+                (false, false) => {
+                    let next = self.bytes.slice_clone(end_byte..);
+                    let next = Self::from_bytes(next);
+                    self.unicode_len -= next.unicode_len;
+                    self.utf16_len -= next.utf16_len;
+                    self.bytes.slice_(..start_byte);
+                    Some(next)
+                }
+            };
+
+            self.check();
+            if let Some(next) = next.as_ref() {
+                next.check();
+            }
+            (next, event_len)
+        }
+
+        fn check(&self) {
+            if cfg!(debug_assertions) {
+                assert_eq!(self.unicode_len, self.as_str().chars().count() as i32);
+                assert_eq!(
+                    self.utf16_len,
+                    self.as_str().chars().map(|c| c.len_utf16()).sum::<usize>() as i32
+                );
+            }
+        }
+    }
+
+    impl generic_btree::rle::HasLength for TextChunk {
+        fn rle_len(&self) -> usize {
+            self.unicode_len as usize
+        }
+    }
+
+    impl generic_btree::rle::Sliceable for TextChunk {
+        fn _slice(&self, range: Range<usize>) -> Self {
+            assert!(range.start < range.end);
+            let mut utf16_len = 0;
+            let mut start = 0;
+            let mut end = 0;
+            let mut started = false;
+            for (unicode_index, (i, c)) in self.as_str().char_indices().enumerate() {
+                if unicode_index == range.start {
+                    start = i;
+                    started = true;
+                }
+                if unicode_index == range.end {
+                    end = i;
+                    break;
+                }
+                if started {
+                    utf16_len += c.len_utf16();
+                }
+            }
+
+            let ans = Self {
+                unicode_len: range.len() as i32,
+                bytes: self.bytes.slice_clone(start..end),
+                utf16_len: utf16_len as i32,
+            };
+            ans.check();
+            ans
+        }
+
+        fn split(&mut self, pos: usize) -> Self {
+            let mut utf16_len = 0;
+            let mut byte_offset = 0;
+            for (unicode_index, (i, c)) in self.as_str().char_indices().enumerate() {
+                if unicode_index == pos {
+                    byte_offset = i;
+                    break;
+                }
+
+                utf16_len += c.len_utf16();
+            }
+            let right = Self {
+                unicode_len: self.unicode_len - pos as i32,
+                bytes: self.bytes.slice_clone(byte_offset..),
+                utf16_len: self.utf16_len - utf16_len as i32,
+            };
+
+            self.unicode_len = pos as i32;
+            self.utf16_len = utf16_len as i32;
+            self.bytes.slice_(..byte_offset);
+            right.check();
+            self.check();
+            right
+        }
+    }
+
+    impl generic_btree::rle::Mergeable for TextChunk {
+        fn can_merge(&self, rhs: &Self) -> bool {
+            self.bytes.can_merge(&rhs.bytes)
+        }
+
+        fn merge_right(&mut self, rhs: &Self) {
+            self.bytes.try_merge(&rhs.bytes).unwrap();
+            self.utf16_len += rhs.utf16_len;
+            self.unicode_len += rhs.unicode_len;
+            self.check();
+        }
+
+        fn merge_left(&mut self, left: &Self) {
+            let mut new = left.bytes.clone();
+            new.try_merge(&self.bytes).unwrap();
+            self.bytes = new;
+            self.utf16_len += left.utf16_len;
+            self.unicode_len += left.unicode_len;
+            self.check();
+        }
+    }
+}
+
 // TODO: change visibility back to crate after #116 is done
 #[derive(Clone, Debug)]
-pub enum RichtextStateChunk {
-    Text {
-        unicode_len: i32,
-        text: BytesSlice,
-    },
+pub(crate) enum RichtextStateChunk {
+    Text(TextChunk),
     Style {
         style: Arc<StyleOp>,
         anchor_type: AnchorType,
@@ -75,10 +317,7 @@ pub enum RichtextStateChunk {
 
 impl RichtextStateChunk {
     pub fn new_text(s: BytesSlice) -> Self {
-        Self::Text {
-            unicode_len: std::str::from_utf8(&s).unwrap().chars().count() as i32,
-            text: s,
-        }
+        Self::Text(TextChunk::from_bytes(s))
     }
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -108,11 +347,11 @@ impl Serialize for RichtextStateChunk {
         S: serde::Serializer,
     {
         match self {
-            RichtextStateChunk::Text { unicode_len, .. } => {
+            RichtextStateChunk::Text(text) => {
                 let mut state = serializer.serialize_struct("RichtextStateChunk", 3)?;
                 state.serialize_field("type", "Text")?;
-                state.serialize_field("unicode_len", unicode_len)?;
-                state.serialize_field("text", self.as_str().unwrap())?;
+                state.serialize_field("unicode_len", &text.unicode_len())?;
+                state.serialize_field("text", text.as_str())?;
                 state.end()
             }
             RichtextStateChunk::Style { style, anchor_type } => {
@@ -128,10 +367,8 @@ impl Serialize for RichtextStateChunk {
 
 impl RichtextStateChunk {
     pub fn try_from_bytes(s: BytesSlice) -> Result<Self, Utf8Error> {
-        Ok(RichtextStateChunk::Text {
-            unicode_len: std::str::from_utf8(&s)?.chars().count() as i32,
-            text: s,
-        })
+        std::str::from_utf8(&s)?;
+        Ok(RichtextStateChunk::Text(TextChunk::from_bytes(s)))
     }
 
     pub fn from_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -140,10 +377,7 @@ impl RichtextStateChunk {
 
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            RichtextStateChunk::Text { text, .. } => {
-                // SAFETY: We know that the text is valid UTF-8
-                Some(unsafe { std::str::from_utf8_unchecked(text) })
-            }
+            RichtextStateChunk::Text(text) => Some(text.as_str()),
             _ => None,
         }
     }
@@ -152,7 +386,7 @@ impl RichtextStateChunk {
 impl HasLength for RichtextStateChunk {
     fn rle_len(&self) -> usize {
         match self {
-            RichtextStateChunk::Text { unicode_len, .. } => *unicode_len as usize,
+            RichtextStateChunk::Text(s) => s.rle_len(),
             RichtextStateChunk::Style { .. } => 1,
         }
     }
@@ -161,44 +395,22 @@ impl HasLength for RichtextStateChunk {
 impl Mergeable for RichtextStateChunk {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
-            (
-                RichtextStateChunk::Text { text: l, .. },
-                RichtextStateChunk::Text { text: r, .. },
-            ) => l.can_merge(r),
+            (RichtextStateChunk::Text(l), RichtextStateChunk::Text(r)) => l.can_merge(r),
             _ => false,
         }
     }
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
-            (
-                RichtextStateChunk::Text { unicode_len, text },
-                RichtextStateChunk::Text {
-                    unicode_len: rhs_len,
-                    text: rhs_text,
-                },
-            ) => {
-                *unicode_len += *rhs_len;
-                text.try_merge(rhs_text).unwrap();
-            }
+            (RichtextStateChunk::Text(l), RichtextStateChunk::Text(r)) => l.merge_right(r),
             _ => unreachable!(),
         }
     }
 
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
-            (
-                RichtextStateChunk::Text { unicode_len, text },
-                RichtextStateChunk::Text {
-                    unicode_len: left_len,
-                    text: left_text,
-                },
-            ) => {
-                *unicode_len += *left_len;
-                // TODO: small PERF improvement
-                let mut new_text = left_text.clone();
-                new_text.try_merge(text).unwrap();
-                *text = new_text;
+            (RichtextStateChunk::Text(this), RichtextStateChunk::Text(left)) => {
+                this.merge_left(left)
             }
             _ => unreachable!(),
         }
@@ -207,48 +419,22 @@ impl Mergeable for RichtextStateChunk {
 
 impl Sliceable for RichtextStateChunk {
     fn _slice(&self, range: Range<usize>) -> Self {
-        let start_index = range.start;
-        let end_index = range.end;
-
-        let text = match self {
-            RichtextStateChunk::Text {
-                unicode_len: _,
-                text,
-            } => text,
+        match self {
+            RichtextStateChunk::Text(s) => RichtextStateChunk::Text(s._slice(range)),
             RichtextStateChunk::Style { style, anchor_type } => {
-                assert_eq!(start_index, 0);
-                assert_eq!(end_index, 1);
-                return RichtextStateChunk::Style {
+                assert_eq!(range.start, 0);
+                assert_eq!(range.end, 1);
+                RichtextStateChunk::Style {
                     style: style.clone(),
                     anchor_type: *anchor_type,
-                };
+                }
             }
-        };
-
-        let s = std::str::from_utf8(text).unwrap();
-        let from = unicode_to_utf8_index(s, start_index).unwrap();
-        let len = unicode_to_utf8_index(&s[from..], end_index - start_index).unwrap();
-        let to = from + len;
-        RichtextStateChunk::Text {
-            unicode_len: (end_index - start_index) as i32,
-            text: text.slice_clone(from..to),
         }
     }
 
     fn split(&mut self, pos: usize) -> Self {
         match self {
-            RichtextStateChunk::Text { unicode_len, text } => {
-                let s = std::str::from_utf8(text).unwrap();
-                let byte_pos = unicode_to_utf8_index(s, pos).unwrap();
-                let right = text.slice_clone(byte_pos..);
-                let ans = RichtextStateChunk::Text {
-                    unicode_len: *unicode_len - pos as i32,
-                    text: right,
-                };
-                *text = text.slice_clone(..byte_pos);
-                *unicode_len = pos as i32;
-                ans
-            }
+            RichtextStateChunk::Text(s) => RichtextStateChunk::Text(s.split(pos)),
             RichtextStateChunk::Style { .. } => {
                 unreachable!()
             }
@@ -330,11 +516,13 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
             return Ok(i + 1);
         }
         if current_utf16_index > utf16_index {
+            debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
             return Err(i);
         }
         current_unicode_index = i + 1;
     }
 
+    debug_log::debug_log!("WARNING: UTF16 MISMATCHED!");
     Err(current_unicode_index)
 }
 
@@ -454,11 +642,11 @@ impl BTreeTrait for RichtextTreeTrait {
     #[inline]
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         match elem {
-            RichtextStateChunk::Text { unicode_len, text } => PosCache {
-                bytes: text.len() as i32,
-                unicode_len: *unicode_len,
-                utf16_len: count_utf16_chars(text) as i32,
-                entity_len: *unicode_len,
+            RichtextStateChunk::Text(s) => PosCache {
+                bytes: s.bytes().len() as i32,
+                unicode_len: s.unicode_len(),
+                utf16_len: s.utf16_len(),
+                entity_len: s.unicode_len(),
             },
             RichtextStateChunk::Style { .. } => PosCache {
                 bytes: 0,
@@ -521,10 +709,7 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len,
-                    text: _,
-                } => *unicode_len as usize,
+                RichtextStateChunk::Text(s) => s.rle_len(),
                 RichtextStateChunk::Style { .. } => 0,
             }
         }
@@ -534,11 +719,8 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len,
-                    text: _,
-                } => {
-                    if *unicode_len as usize >= left {
+                RichtextStateChunk::Text(s) => {
+                    if s.rle_len() >= left {
                         return (left, true);
                     }
 
@@ -563,10 +745,7 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len: _,
-                    text,
-                } => count_utf16_chars(text),
+                RichtextStateChunk::Text(s) => s.utf16_len() as usize,
                 RichtextStateChunk::Style { .. } => 0,
             }
         }
@@ -576,20 +755,14 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len: _,
-                    text,
-                } => {
+                RichtextStateChunk::Text(s) => {
                     if left == 0 {
                         return (0, true);
                     }
 
-                    // TODO: extract this behavior to a dedicated type
-                    // SAFETY: we know that `text` is valid utf8
-                    let s = unsafe { std::str::from_utf8_unchecked(text) };
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
                     // TODO: if we remove the use of query(pos-1), we won't need this fallback behaviro
-                    let offset = utf16_to_unicode_index(s, left).unwrap_or_else(|e| e);
+                    let offset = utf16_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
@@ -611,10 +784,7 @@ mod query {
 
         fn get_elem_len(elem: &<RichtextTreeTrait as BTreeTrait>::Elem) -> usize {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len,
-                    text: _,
-                } => *unicode_len as usize,
+                RichtextStateChunk::Text(s) => s.rle_len(),
                 RichtextStateChunk::Style { .. } => 1,
             }
         }
@@ -624,11 +794,8 @@ mod query {
             elem: &<RichtextTreeTrait as BTreeTrait>::Elem,
         ) -> (usize, bool) {
             match elem {
-                RichtextStateChunk::Text {
-                    unicode_len,
-                    text: _,
-                } => {
-                    if *unicode_len as usize >= left {
+                RichtextStateChunk::Text(s) => {
+                    if s.rle_len() >= left {
                         return (left, true);
                     }
 
@@ -1035,26 +1202,18 @@ impl RichtextState {
             self.tree
                 .visit_previous_caches(cursor, |cache| match cache {
                     generic_btree::PreviousCache::NodeCache(c) => {
-                        ans += c.unicode_len as usize;
+                        ans += c.utf16_len as usize;
                     }
                     generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
-                        RichtextStateChunk::Text { text, .. } => {
-                            ans += count_utf16_chars(text);
+                        RichtextStateChunk::Text(s) => {
+                            ans += s.utf16_len() as usize;
                         }
                         RichtextStateChunk::Style { .. } => {}
                     },
                     generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
                         match elem {
-                            RichtextStateChunk::Text {
-                                unicode_len: _,
-                                text,
-                            } => {
-                                ans += unicode_to_utf16_index(
-                                    // SAFETY: we're sure that the text is valid utf8
-                                    unsafe { std::str::from_utf8_unchecked(text) },
-                                    offset,
-                                )
-                                .unwrap();
+                            RichtextStateChunk::Text(s) => {
+                                ans += s.convert_unicode_offset_to_event_offset(offset);
                             }
                             RichtextStateChunk::Style { .. } => {}
                         }
@@ -1070,8 +1229,8 @@ impl RichtextState {
                         ans += c.unicode_len;
                     }
                     generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
-                        RichtextStateChunk::Text { unicode_len, .. } => {
-                            ans += *unicode_len;
+                        RichtextStateChunk::Text(s) => {
+                            ans += s.unicode_len();
                         }
                         RichtextStateChunk::Style { .. } => {}
                     },
@@ -1290,6 +1449,7 @@ impl RichtextState {
                     .cursor,
             ),
         };
+
         // TODO: assert end cursor is valid
         let mut entity_index = self.get_entity_index_from_path(start);
         for span in self.tree.iter_range(start..end) {
@@ -1335,7 +1495,7 @@ impl RichtextState {
             "pos: {}, len: {}, self.len(): {}",
             pos,
             len,
-            self
+            &self.to_string()
         );
         // PERF: may use cache to speed up
         self.cursor_cache.invalidate();
@@ -1351,77 +1511,13 @@ impl RichtextState {
             // drop in place
             let mut event_len = 0;
             self.tree.update_leaf(start_cursor.leaf, |elem| match elem {
-                RichtextStateChunk::Text { unicode_len, text } => {
-                    // SAFETY: we're sure this is a valid utf8 string
-                    let s = unsafe { std::str::from_utf8_unchecked(text.as_ref()) };
-                    let mut start_byte = 0;
-                    let mut end_byte = text.len();
-                    if cfg!(feature = "wasm") {
-                        event_len = len;
-                        let (s, e) = unicode_range_to_byte_range(
-                            text,
-                            start_cursor.offset,
-                            start_cursor.offset + len,
-                        );
-                        start_byte = s;
-                        end_byte = e;
-                    } else {
-                        event_len = 'e: {
-                            let start_unicode_index = start_cursor.offset;
-                            let end_unicode_index = start_cursor.offset + len;
-                            let mut start_utf16_index = 0;
-                            let mut current_utf16_index = 0;
-                            let mut current_utf8_index = 0;
-                            for (current_unicode_index, c) in s.chars().enumerate() {
-                                if current_unicode_index == start_unicode_index {
-                                    start_utf16_index = current_utf16_index;
-                                    start_byte = current_utf8_index;
-                                }
-
-                                if current_unicode_index == end_unicode_index {
-                                    end_byte = current_utf8_index;
-                                    break 'e current_utf16_index - start_utf16_index;
-                                }
-
-                                current_utf16_index += c.len_utf16();
-                                current_utf8_index += c.len_utf8();
-                            }
-
-                            current_utf16_index - start_utf16_index
-                        }
-                    }
-
-                    *unicode_len -= len as i32;
-                    let next = match (start_byte == 0, end_byte == text.len()) {
-                        (true, true) => {
-                            *text = BytesSlice::empty();
-                            None
-                        }
-                        (true, false) => {
-                            *text = text.slice_clone(end_byte..);
-                            None
-                        }
-                        (false, true) => {
-                            *text = text.slice_clone(..start_byte);
-                            None
-                        }
-                        (false, false) => {
-                            let next = text.slice_clone(end_byte..);
-                            let next = RichtextStateChunk::new_text(next);
-                            *unicode_len -= next.rle_len() as i32;
-                            *text = text.slice_clone(..start_byte);
-                            Some(next)
-                        }
-                    };
-
-                    (true, next, None)
+                RichtextStateChunk::Text(text) => {
+                    let (next, event_len_) = text.delete_by_entity_index(start_cursor.offset, len);
+                    event_len = event_len_;
+                    (true, next.map(RichtextStateChunk::Text), None)
                 }
                 RichtextStateChunk::Style { .. } => {
-                    *elem = RichtextStateChunk::Text {
-                        unicode_len: 0,
-                        text: BytesSlice::empty(),
-                    };
-
+                    *elem = RichtextStateChunk::Text(TextChunk::new_empty());
                     (true, None, None)
                 }
             });
@@ -1469,7 +1565,7 @@ impl RichtextState {
             cur_style_range.as_ref().map(|x| x.1.clone().into());
 
         self.tree.iter().filter_map(move |x| match x {
-            RichtextStateChunk::Text { unicode_len, text } => {
+            RichtextStateChunk::Text(s) => {
                 let mut styles = Default::default();
                 while let Some((inner_cur_range, _)) = cur_style_range.as_ref() {
                     if entity_index < inner_cur_range.start {
@@ -1485,9 +1581,9 @@ impl RichtextState {
                     }
                 }
 
-                entity_index += *unicode_len as usize;
+                entity_index += s.rle_len();
                 Some(RichtextSpan {
-                    text: text.clone().into(),
+                    text: s.bytes().clone().into(),
                     attributes: styles,
                 })
             }

@@ -70,7 +70,6 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
-        debug_log::debug_dbg!(&self, op_id, pos, &content);
         if self.applied_vv.includes_id(op_id) {
             let last_id = op_id.inc(content.len() as Counter - 1);
             assert!(self.applied_vv.includes_id(last_id));
@@ -129,7 +128,6 @@ impl Tracker {
 
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, op_id: ID, pos: usize, len: usize, reverse: bool) {
-        debug_log::debug_dbg!(&self, op_id, pos, len);
         if self.applied_vv.includes_id(op_id) {
             let last_id = op_id.inc(len as Counter - 1);
             assert!(self.applied_vv.includes_id(last_id));
@@ -275,7 +273,6 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
-        debug_log::debug_dbg!(from, to, &self);
         // self.id_to_cursor.diagnose();
         self.rope.get_diff()
     }

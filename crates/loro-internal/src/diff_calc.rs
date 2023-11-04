@@ -15,8 +15,8 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            richtext_state::RichtextStateChunk, AnchorType, CrdtRopeDelta, RichtextChunk,
-            RichtextChunkValue, RichtextTracker, StyleOp,
+            richtext_state::{RichtextStateChunk, TextChunk},
+            AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
         },
         text::tracker::Tracker,
         tree::tree_op::TreeOp,
@@ -325,7 +325,7 @@ impl DiffCalculator {
 /// So there may be some ops that cannot be seen by the container.
 ///
 #[enum_dispatch]
-pub trait DiffCalculatorTrait {
+pub(crate) trait DiffCalculatorTrait {
     fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector);
     fn apply_change(
         &mut self,
@@ -670,13 +670,14 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 }
                 CrdtRopeDelta::Insert(value) => match value.value() {
                     RichtextChunkValue::Text(text) => {
-                        delta = delta.insert(RichtextStateChunk::Text {
-                            unicode_len: text.len() as i32,
+                        delta = delta.insert(RichtextStateChunk::Text(
                             // PERF: can be speedup by acquiring lock on arena
-                            text: oplog
-                                .arena
-                                .slice_by_unicode(text.start as usize..text.end as usize),
-                        });
+                            TextChunk::from_bytes(
+                                oplog
+                                    .arena
+                                    .slice_by_unicode(text.start as usize..text.end as usize),
+                            ),
+                        ));
                     }
                     RichtextChunkValue::StyleAnchor { id, anchor_type } => {
                         delta = delta.insert(RichtextStateChunk::Style {

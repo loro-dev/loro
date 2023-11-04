@@ -3,12 +3,21 @@
  */
 
 import { Delta, Loro, LoroText, setDebug } from "loro-crdt";
-import Quill, { DeltaStatic, Sources } from "quill";
+import Quill, { DeltaOperation, DeltaStatic, Sources } from "quill";
 // @ts-ignore
 import isEqual from "is-equal";
 
 // setDebug("*");
 const Delta = Quill.import("delta");
+// setDebug("*");
+
+const EXPAND_CONFIG: { [key in string]: 'before' | 'after' | 'both' | 'none' } = {
+  bold: 'after',
+  italic: 'after',
+  underline: 'after',
+  link: 'none',
+  header: 'none',
+}
 
 export class QuillBinding {
   private richtext: LoroText;
@@ -19,15 +28,6 @@ export class QuillBinding {
     this.quill = quill;
     this.richtext = doc.getText("text");
     this.richtext.subscribe(doc, (event) => {
-      // Promise.resolve().then(() => {
-      //   let delta: DeltaType = new Delta(
-      //     richtext.getAnnSpans(),
-      //   );
-      //   quill.setContents(
-      //     delta,
-      //     "this" as any,
-      //   );
-      // });
       Promise.resolve().then(() => {
         if (!event.local && event.diff.type == "text") {
           console.log(doc.peerId, "CRDT_EVENT", event);
@@ -57,6 +57,7 @@ export class QuillBinding {
             delta.push(d);
             index += length;
           }
+
           quill.updateContents(new Delta(delta), "this" as any);
           const a = this.richtext.toDelta();
           const b = this.quill.getContents().ops;
@@ -89,17 +90,63 @@ export class QuillBinding {
       // update content
       const ops = delta.ops;
       if (origin !== ("this" as any)) {
-        this.richtext.applyDelta(ops);
+        this.applyDelta(ops);
         const a = this.richtext.toDelta();
         const b = this.quill.getContents().ops;
         console.log(this.doc.peerId, "COMPARE AFTER QUILL_EVENT");
         assertEqual(a, b as any);
-        console.log(this.doc.peerId, "CHECK_MATCH", { delta }, a, b);
         console.log("SIZE", this.doc.exportFrom().length);
         this.doc.debugHistory();
       }
     }
   };
+
+  applyDelta(delta: DeltaOperation[]) {
+    let index = 0;
+    for (const op of delta) {
+      if (op.retain != null) {
+        let end = index + op.retain;
+        if (op.attributes) {
+          if (index == this.richtext.length) {
+            this.richtext.insert(index, "\n");
+          }
+          for (const key of Object.keys(op.attributes)) {
+            let value = op.attributes[key];
+            if (value == null) {
+              this.richtext.unmark({ start: index, end, expand: EXPAND_CONFIG[key] }, key)
+            } else {
+              this.richtext.mark({ start: index, end, expand: EXPAND_CONFIG[key] }, key, value,)
+            }
+          }
+        }
+        index += op.retain;
+      } else if (op.insert != null) {
+        if (typeof op.insert == "string") {
+          let end = index + op.insert.length;
+          this.richtext.insert(index, op.insert);
+          if (op.attributes) {
+            for (const key of Object.keys(op.attributes)) {
+              let value = op.attributes[key];
+              if (value == null) {
+                this.richtext.unmark({ start: index, end, expand: EXPAND_CONFIG[key] }, key)
+              } else {
+                this.richtext.mark({ start: index, end, expand: EXPAND_CONFIG[key] }, key, value)
+              }
+            }
+          }
+          index = end;
+        } else {
+          throw new Error("Not implemented")
+        }
+      } else if (op.delete != null) {
+        this.richtext.delete(index, op.delete);
+      } else {
+        throw new Error("Unreachable")
+      }
+    }
+    this.doc.commit();
+  }
+
   destroy() {
     // TODO: unobserve
     this.quill.off("editor-change", this.quillObserver);
@@ -115,7 +162,9 @@ function assertEqual(a: Delta<string>[], b: Delta<string>[]): boolean {
 }
 
 /**
- * Removes the pending '\n's if it has no attributes.
+ * Removes the ending '\n's if it has no attributes.
+ * 
+ * Extract line-break to a single op
  *
  * Normalize attributes field
  */
@@ -151,8 +200,37 @@ export const normQuillDelta = (delta: Delta<string>[]) => {
       if (ins.length === 0) {
         delta.pop();
       }
-      return delta;
     }
   }
-  return delta;
+
+  const ans: Delta<string>[] = []
+  for (const span of delta) {
+    if (span.insert != null && span.insert.includes("\n")) {
+      const lines = span.insert.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.length !== 0) {
+          ans.push({ ...span, insert: line });
+        }
+        if (i < lines.length - 1) {
+          const attr = { ...span.attributes };
+          const v: Delta<string> = { insert: "\n" };
+          for (const style of ['bold', 'link', 'italic', 'underline']) {
+            if (attr && attr[style]) {
+              delete attr[style];
+            }
+          }
+
+          if (Object.keys(attr || {}).length > 0) {
+            v.attributes = attr;
+          }
+          ans.push(v);
+        }
+      }
+    } else {
+      ans.push(span);
+    }
+  }
+
+  return ans;
 };

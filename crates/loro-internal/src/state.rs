@@ -49,7 +49,7 @@ pub struct DocState {
 }
 
 #[enum_dispatch]
-pub trait ContainerState: Clone {
+pub(crate) trait ContainerState: Clone {
     fn apply_diff_and_convert(&mut self, diff: InternalDiff, arena: &SharedArena) -> Diff;
 
     fn apply_diff(&mut self, diff: InternalDiff, arena: &SharedArena) {
