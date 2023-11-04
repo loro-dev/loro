@@ -9,13 +9,14 @@ import isEqual from "is-equal";
 
 // setDebug("*");
 const Delta = Quill.import("delta");
-setDebug("*");
+// setDebug("*");
 
 const EXPAND_CONFIG: { [key in string]: 'before' | 'after' | 'both' | 'none' } = {
   bold: 'after',
   italic: 'after',
   underline: 'after',
   link: 'none',
+  header: 'none',
 }
 
 export class QuillBinding {
@@ -57,10 +58,6 @@ export class QuillBinding {
             index += length;
           }
 
-          if (this.doc.peerId == BigInt(0)) {
-            console.log("delta", delta);
-          }
-
           quill.updateContents(new Delta(delta), "this" as any);
           const a = this.richtext.toDelta();
           const b = this.quill.getContents().ops;
@@ -98,7 +95,6 @@ export class QuillBinding {
         const b = this.quill.getContents().ops;
         console.log(this.doc.peerId, "COMPARE AFTER QUILL_EVENT");
         assertEqual(a, b as any);
-        console.log(this.doc.peerId, "CHECK_MATCH", { delta }, a, b);
         console.log("SIZE", this.doc.exportFrom().length);
         this.doc.debugHistory();
       }
@@ -106,12 +102,14 @@ export class QuillBinding {
   };
 
   applyDelta(delta: DeltaOperation[]) {
-    console.log("apply delta", delta);
     let index = 0;
     for (const op of delta) {
       if (op.retain != null) {
         let end = index + op.retain;
         if (op.attributes) {
+          if (index == this.richtext.length) {
+            this.richtext.insert(index, "\n");
+          }
           for (const key of Object.keys(op.attributes)) {
             let value = op.attributes[key];
             if (value == null) {
@@ -129,7 +127,6 @@ export class QuillBinding {
           if (op.attributes) {
             for (const key of Object.keys(op.attributes)) {
               let value = op.attributes[key];
-              console.log(key, value)
               if (value == null) {
                 this.richtext.unmark({ start: index, end, expand: EXPAND_CONFIG[key] }, key)
               } else {
@@ -165,7 +162,9 @@ function assertEqual(a: Delta<string>[], b: Delta<string>[]): boolean {
 }
 
 /**
- * Removes the pending '\n's if it has no attributes.
+ * Removes the ending '\n's if it has no attributes.
+ * 
+ * Extract line-break to a single op
  *
  * Normalize attributes field
  */
@@ -201,8 +200,37 @@ export const normQuillDelta = (delta: Delta<string>[]) => {
       if (ins.length === 0) {
         delta.pop();
       }
-      return delta;
     }
   }
-  return delta;
+
+  const ans: Delta<string>[] = []
+  for (const span of delta) {
+    if (span.insert != null && span.insert.includes("\n")) {
+      const lines = span.insert.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.length !== 0) {
+          ans.push({ ...span, insert: line });
+        }
+        if (i < lines.length - 1) {
+          const attr = { ...span.attributes };
+          const v: Delta<string> = { insert: "\n" };
+          for (const style of ['bold', 'link', 'italic', 'underline']) {
+            if (attr && attr[style]) {
+              delete attr[style];
+            }
+          }
+
+          if (Object.keys(attr || {}).length > 0) {
+            v.attributes = attr;
+          }
+          ans.push(v);
+        }
+      }
+    } else {
+      ans.push(span);
+    }
+  }
+
+  return ans;
 };

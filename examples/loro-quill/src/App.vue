@@ -70,7 +70,6 @@
             versionObj[key.toString()] = value;
           }
           const versionStr = JSON.stringify(versionObj, null, 2);
-          console.log(map, versionStr);
           editorVersions[this_index] = versionStr;
         });
       });
