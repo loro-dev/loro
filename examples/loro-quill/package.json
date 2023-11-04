@@ -17,7 +17,7 @@
   "devDependencies": {
     "@types/quill": "^1.3.7",
     "@vitejs/plugin-vue": "^4.1.0",
-    "typescript": "^5.0.2",
+    "typescript": "^5.2.0",
     "vite": "^4.3.2",
     "vite-plugin-top-level-await": "^1.3.0",
     "vite-plugin-wasm": "^3.2.2",

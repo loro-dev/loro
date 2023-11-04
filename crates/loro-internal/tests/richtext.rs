@@ -305,3 +305,27 @@ fn case9() {
         ]),
     );
 }
+
+#[test]
+fn insert_after_link() {
+    let doc_a = init("The fox jumped.");
+    let doc_b = clone(&doc_a, 2);
+    mark(&doc_a, 0..3, Kind::Link);
+    merge(&doc_a, &doc_b);
+    insert(&doc_a, 3, "a");
+    merge(&doc_a, &doc_b);
+    expect_result(
+        &doc_a,
+        serde_json::json!([
+            {"insert": "The", "attributes": {"link": true}},
+            {"insert": "a fox jumped."},
+        ]),
+    );
+    expect_result(
+        &doc_b,
+        serde_json::json!([
+            {"insert": "The", "attributes": {"link": true}},
+            {"insert": "a fox jumped."},
+        ]),
+    );
+}
