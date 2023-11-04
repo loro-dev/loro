@@ -2,16 +2,20 @@
  *  The skeleton of this binding is learned from https://github.com/yjs/y-quill
  */
 
-import { Delta, Loro, LoroText } from "loro-crdt";
+import { Delta, Loro, LoroText, setDebug } from "loro-crdt";
 import Quill, { DeltaStatic, Sources } from "quill";
 // @ts-ignore
 import isEqual from "is-equal";
 
+// setDebug("*");
 const Delta = Quill.import("delta");
 
 export class QuillBinding {
   private richtext: LoroText;
-  constructor(public doc: Loro, public quill: Quill) {
+  constructor(
+    public doc: Loro,
+    public quill: Quill,
+  ) {
     this.quill = quill;
     this.richtext = doc.getText("text");
     this.richtext.subscribe(doc, (event) => {
@@ -26,11 +30,7 @@ export class QuillBinding {
       // });
       Promise.resolve().then(() => {
         if (!event.local && event.diff.type == "text") {
-          console.log(
-            doc.peerId,
-            "CRDT_EVENT",
-            event,
-          );
+          console.log(doc.peerId, "CRDT_EVENT", event);
           const eventDelta = event.diff.diff;
           const delta: Delta<string>[] = [];
           let index = 0;
@@ -39,9 +39,11 @@ export class QuillBinding {
             const length = d.delete || d.retain || d.insert!.length;
             // skip the last newline that quill automatically appends
             if (
-              d.insert && d.insert === "\n" &&
+              d.insert &&
+              d.insert === "\n" &&
               index === quill.getLength() - 1 &&
-              i === eventDelta.length - 1 && d.attributes != null &&
+              i === eventDelta.length - 1 &&
+              d.attributes != null &&
               Object.keys(d.attributes).length > 0
             ) {
               delta.push({
@@ -86,20 +88,15 @@ export class QuillBinding {
     if (delta && delta.ops) {
       // update content
       const ops = delta.ops;
-      if (origin !== "this" as any) {
+      if (origin !== ("this" as any)) {
         this.richtext.applyDelta(ops);
         const a = this.richtext.toDelta();
         const b = this.quill.getContents().ops;
         console.log(this.doc.peerId, "COMPARE AFTER QUILL_EVENT");
         assertEqual(a, b as any);
-        console.log(
-          this.doc.peerId,
-          "CHECK_MATCH",
-          { delta },
-          a,
-          b,
-        );
+        console.log(this.doc.peerId, "CHECK_MATCH", { delta }, a, b);
         console.log("SIZE", this.doc.exportFrom().length);
+        this.doc.debugHistory();
       }
     }
   };
@@ -141,7 +138,8 @@ export const normQuillDelta = (delta: Delta<string>[]) => {
     const d = delta[delta.length - 1];
     const insert = d.insert;
     if (
-      d.attributes === undefined && insert !== undefined &&
+      d.attributes === undefined &&
+      insert !== undefined &&
       insert.slice(-1) === "\n"
     ) {
       delta = delta.slice();

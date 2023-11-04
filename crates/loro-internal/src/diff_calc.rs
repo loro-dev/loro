@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub(super) mod tree;
+use debug_log::debug_dbg;
 use itertools::Itertools;
 pub(super) use tree::TreeDiffCache;
 
@@ -75,6 +76,7 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: Option<&Frontiers>,
     ) -> Vec<InternalContainerDiff> {
+        debug_dbg!(&before, &after, &oplog);
         if self.has_all {
             let include_before = self.last_vv.includes_vv(before);
             let include_after = self.last_vv.includes_vv(after);
@@ -126,16 +128,24 @@ impl DiffCalculator {
                     self.last_vv.extend_to_include_end_id(change.id_end());
                 }
 
-                let iter_start = if change.ops.len() < 64 {
-                    0
-                } else {
-                    change
-                        .ops
-                        .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
-                        .unwrap_or_else(|e| e)
-                };
+                let iter_start = change
+                    .ops
+                    .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                    .unwrap_or_else(|e| e);
                 let mut visited = FxHashSet::default();
-                for op in &change.ops.vec()[iter_start..] {
+                debug_log::debug_dbg!(&change, iter_start);
+                for mut op in &change.ops.vec()[iter_start..] {
+                    // slice the op if needed
+                    let stack_sliced_op;
+                    if op.counter < start_counter {
+                        if op.ctr_last() < start_counter {
+                            continue;
+                        }
+
+                        stack_sliced_op =
+                            Some(op.slice((start_counter - op.counter) as usize, op.atom_len()));
+                        op = stack_sliced_op.as_ref().unwrap();
+                    }
                     let depth = oplog.arena.get_depth(op.container).unwrap_or(u16::MAX);
                     let (_, calculator) =
                         self.calculators.entry(op.container).or_insert_with(|| {
@@ -442,7 +452,7 @@ impl HasId for CompactMapValue {
 }
 
 use compact_register::CompactRegister;
-use rle::HasLength;
+use rle::{HasLength, Sliceable};
 
 mod compact_register {
     use std::collections::BTreeSet;
@@ -604,7 +614,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         op.id_start(),
                         del.start() as usize,
                         del.atom_len(),
-                        del.pos < 0,
+                        del.is_reversed(),
                     );
                 }
                 crate::container::list::list_op::InnerListOp::StyleStart {

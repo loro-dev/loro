@@ -1,5 +1,6 @@
 use generic_btree::LeafIndex;
-use loro_common::{Counter, PeerID, ID};
+use loro_common::{Counter, IdSpan, PeerID, ID};
+use rle::HasLength;
 
 use crate::VersionVector;
 
@@ -69,10 +70,23 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, op_id: ID, pos: usize, content: RichtextChunk) {
+        debug_log::debug_dbg!(&self, op_id, pos, &content);
         if self.applied_vv.includes_id(op_id) {
-            assert!(self
-                .applied_vv
-                .includes_id(op_id.inc(content.len() as Counter - 1)));
+            let last_id = op_id.inc(content.len() as Counter - 1);
+            assert!(self.applied_vv.includes_id(last_id));
+            if !self.current_vv.includes_id(last_id) {
+                // PERF: may be slow
+                let mut updates = Default::default();
+                self.forward(
+                    IdSpan::new(
+                        op_id.peer,
+                        op_id.counter,
+                        op_id.counter + content.len() as Counter,
+                    ),
+                    &mut updates,
+                );
+                self.batch_update(updates, false);
+            }
             return;
         }
 
@@ -115,21 +129,43 @@ impl Tracker {
 
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     pub(crate) fn delete(&mut self, op_id: ID, pos: usize, len: usize, reverse: bool) {
+        debug_log::debug_dbg!(&self, op_id, pos, len);
         if self.applied_vv.includes_id(op_id) {
-            assert!(self.applied_vv.includes_id(op_id.inc(len as Counter - 1)));
+            let last_id = op_id.inc(len as Counter - 1);
+            assert!(self.applied_vv.includes_id(last_id));
+            if !self.current_vv.includes_id(last_id) {
+                // PERF: may be slow
+                let mut updates = Default::default();
+                self.forward(
+                    IdSpan::new(op_id.peer, op_id.counter, op_id.counter + len as Counter),
+                    &mut updates,
+                );
+                self.batch_update(updates, false);
+            }
             return;
         }
 
-        let mut cur_id = op_id;
+        let mut ans = Vec::new();
         let split = self.rope.delete(pos, len, |span| {
             let mut id_span = span.id_span();
             if reverse {
                 id_span.reverse();
             }
+            ans.push(id_span);
+        });
+
+        if reverse {
+            ans.reverse();
+        }
+
+        let mut cur_id = op_id;
+        for id_span in ans {
+            debug_log::debug_dbg!(&cur_id, id_span, reverse);
+            let len = id_span.atom_len();
             self.id_to_cursor
                 .push(cur_id, id_to_cursor::Cursor::Delete(id_span));
-            cur_id = cur_id.inc(span.content.len() as Counter);
-        });
+            cur_id = cur_id.inc(len as Counter);
+        }
 
         debug_assert_eq!(cur_id.counter - op_id.counter, len as Counter);
         self.update_insert_by_split(&split.arr);
@@ -150,7 +186,8 @@ impl Tracker {
             self.rope.clear_diff_status();
         }
 
-        let (retreat, forward) = self.current_vv.diff_iter(vv);
+        let current_vv = std::mem::take(&mut self.current_vv);
+        let (retreat, forward) = current_vv.diff_iter(vv);
         let mut updates = Vec::new();
 
         for span in retreat {
@@ -184,40 +221,51 @@ impl Tracker {
         }
 
         for span in forward {
-            for c in self.id_to_cursor.iter(span) {
-                match c {
-                    id_to_cursor::IterCursor::Insert { leaf, id_span } => {
-                        updates.push(crdt_rope::LeafUpdate {
-                            leaf,
-                            id_span,
-                            set_future: Some(false),
-                            delete_times_diff: 0,
-                        })
-                    }
-                    id_to_cursor::IterCursor::Delete(span) => {
-                        for to_del in self.id_to_cursor.iter(span) {
-                            match to_del {
-                                id_to_cursor::IterCursor::Insert { leaf, id_span } => {
-                                    updates.push(crdt_rope::LeafUpdate {
-                                        leaf,
-                                        id_span,
-                                        set_future: None,
-                                        delete_times_diff: 1,
-                                    })
-                                }
-                                id_to_cursor::IterCursor::Delete(_) => unreachable!(),
+            self.forward(span, &mut updates);
+        }
+
+        if !on_diff_status {
+            self.current_vv = vv.clone();
+        } else {
+            self.current_vv = current_vv;
+        }
+
+        self.batch_update(updates, on_diff_status);
+    }
+
+    fn batch_update(&mut self, updates: Vec<crdt_rope::LeafUpdate>, on_diff_status: bool) {
+        let leaf_indexes = self.rope.update(updates, on_diff_status);
+        self.update_insert_by_split(&leaf_indexes);
+    }
+
+    fn forward(&mut self, span: loro_common::IdSpan, updates: &mut Vec<crdt_rope::LeafUpdate>) {
+        for c in self.id_to_cursor.iter(span) {
+            match c {
+                id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                    updates.push(crdt_rope::LeafUpdate {
+                        leaf,
+                        id_span,
+                        set_future: Some(false),
+                        delete_times_diff: 0,
+                    })
+                }
+                id_to_cursor::IterCursor::Delete(span) => {
+                    for to_del in self.id_to_cursor.iter(span) {
+                        match to_del {
+                            id_to_cursor::IterCursor::Insert { leaf, id_span } => {
+                                updates.push(crdt_rope::LeafUpdate {
+                                    leaf,
+                                    id_span,
+                                    set_future: None,
+                                    delete_times_diff: 1,
+                                })
                             }
+                            id_to_cursor::IterCursor::Delete(_) => unreachable!(),
                         }
                     }
                 }
             }
         }
-
-        if !on_diff_status {
-            self.current_vv = vv.clone();
-        }
-        let leaf_indexes = self.rope.update(updates, on_diff_status);
-        self.update_insert_by_split(&leaf_indexes);
     }
 
     pub(crate) fn diff(
@@ -227,7 +275,7 @@ impl Tracker {
     ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
         self._checkout(from, false);
         self._checkout(to, true);
-        // debug_log::debug_dbg!(from, to, &self);
+        debug_log::debug_dbg!(from, to, &self);
         // self.id_to_cursor.diagnose();
         self.rope.get_diff()
     }
