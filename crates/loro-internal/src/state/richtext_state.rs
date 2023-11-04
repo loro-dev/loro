@@ -10,8 +10,8 @@ use crate::{
     container::{
         idx::ContainerIdx,
         richtext::{
-            richtext_state::PosType, AnchorType, RichtextState as InnerState, StyleOp,
-            TextStyleInfoFlag,
+            richtext_state::{EntityRangeInfo, PosType},
+            AnchorType, RichtextState as InnerState, StyleOp, TextStyleInfoFlag,
         },
     },
     container::{list::list_op, richtext::richtext_state::RichtextStateChunk},
@@ -501,7 +501,7 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> Vec<Range<usize>> {
+    ) -> Vec<EntityRangeInfo> {
         self.state
             .get_mut()
             .get_text_entity_ranges(pos, len, PosType::Event)

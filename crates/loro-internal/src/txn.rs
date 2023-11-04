@@ -70,7 +70,10 @@ pub(super) enum EventHint {
         styles: StyleMeta,
     },
     /// pos is a Unicode index. If wasm, it's a UTF-16 index.
-    DeleteText(DeleteSpan),
+    DeleteText {
+        span: DeleteSpan,
+        unicode_len: usize,
+    },
     InsertList {
         len: u32,
     },
@@ -88,7 +91,7 @@ impl generic_btree::rle::HasLength for EventHint {
         match self {
             EventHint::Mark { .. } => 1,
             EventHint::InsertText { len, .. } => *len as usize,
-            EventHint::DeleteText(d) => d.len(),
+            EventHint::DeleteText { unicode_len, .. } => *unicode_len,
             EventHint::InsertList { len, .. } => *len as usize,
             EventHint::DeleteList(d) => d.len(),
             EventHint::Map { .. } => 1,
@@ -110,7 +113,10 @@ impl generic_btree::rle::Mergeable for EventHint {
                 },
             ) => *pos + *len == *r_pos && styles == r_styles,
             (EventHint::InsertList { .. }, EventHint::InsertList { .. }) => true,
-            (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.is_mergable(r, &()),
+            // We don't merge delete text because it's hard to infer the correct pos to split:
+            // `range` param is in unicode range, but the delete text event is in UTF-16 range.
+            // Without the original text, it's impossible to convert the range.
+            (EventHint::DeleteText { .. }, EventHint::DeleteText { .. }) => false,
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
             _ => false,
         }
@@ -122,7 +128,6 @@ impl generic_btree::rle::Mergeable for EventHint {
                 *len += *r_len;
             }
             (EventHint::InsertList { len }, EventHint::InsertList { len: r_len }) => *len += *r_len,
-            (EventHint::DeleteText(l), EventHint::DeleteText(r)) => l.merge(r, &()),
             (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
             _ => unreachable!(),
         }
@@ -145,7 +150,10 @@ impl generic_btree::rle::Sliceable for EventHint {
                 len: range.len() as u32,
                 styles: styles.clone(),
             },
-            EventHint::DeleteText(d) => EventHint::DeleteText(d.slice(range.start, range.end)),
+            // It's not implemented because it's hard to infer the correct pos to split:
+            // `range` param is in unicode range, but the delete text event is in UTF-16 range.
+            // Without the original text, it's impossible to convert the range.
+            EventHint::DeleteText { .. } => unreachable!(),
             EventHint::DeleteList(d) => EventHint::DeleteList(d.slice(range.start, range.end)),
             EventHint::InsertList { .. } => EventHint::InsertList {
                 len: range.len() as u32,
@@ -516,9 +524,14 @@ fn change_to_diff(
                             .insert_with_meta(slice.clone(), styles),
                     )
                 }
-                EventHint::DeleteText(s) => {
-                    Diff::Text(Delta::new().retain(s.start() as usize).delete(s.len()))
-                }
+                EventHint::DeleteText {
+                    span,
+                    unicode_len: _,
+                } => Diff::Text(
+                    Delta::new()
+                        .retain(span.start() as usize)
+                        .delete(span.len()),
+                ),
                 EventHint::InsertList { .. } => {
                     let (range, pos) = op.content.as_list().unwrap().as_insert().unwrap();
                     let values = arena.get_values(range.to_range());

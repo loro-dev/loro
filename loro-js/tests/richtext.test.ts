@@ -5,6 +5,7 @@ import {
   Loro,
   setPanicHook,
 } from "../src";
+import { setDebug } from "loro-wasm";
 
 setPanicHook();
 
@@ -89,4 +90,24 @@ describe("richtext", () => {
     doc.import(docB.exportFrom());
     expect(called).toBeTruthy();
   })
+
+  it.only("Delete emoji", async () => {
+    const doc = new Loro();
+    const text = doc.getText("text");
+    text.insert(0, "012345👨‍👩‍👦6789");
+    doc.commit();
+    text.mark({ start: 0, end: 18 }, "bold", true);
+    doc.commit();
+    expect(text.toDelta()).toStrictEqual([{
+      insert: "012345👨‍👩‍👦6789",
+      attributes: { bold: true }
+    }]);
+    text.delete(6, 8);
+    doc.commit();
+    expect(text.toDelta()).toStrictEqual([{
+      insert: "0123456789",
+      attributes: { bold: true }
+    }]);
+  });
+
 })
