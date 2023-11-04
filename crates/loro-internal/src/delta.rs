@@ -8,4 +8,6 @@ mod text;
 pub use text::{StyleMeta, StyleMetaItem};
 mod tree;
 pub(crate) use tree::TreeValue;
-pub use tree::{TreeDelta, TreeDiff, TreeDiffItem};
+pub use tree::{
+    TreeDelta, TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff, TreeInternalDiff,
+};

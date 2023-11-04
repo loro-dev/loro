@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
 
-use crate::delta::{TreeDelta, TreeDiff};
+use crate::delta::{TreeDelta, TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::TreeDeletedSetTrait;
 use crate::event::InternalDiff;
 use crate::DocState;
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
-    delta::TreeDiffItem,
+    delta::TreeInternalDiff,
     event::{Diff, Index},
     op::RawOp,
 };
@@ -174,12 +174,14 @@ impl ContainerState for TreeState {
             for diff in tree.diff.iter() {
                 let target = diff.target;
                 let parent = match diff.action {
-                    TreeDiffItem::Create | TreeDiffItem::Restore | TreeDiffItem::AsRoot => None,
-                    TreeDiffItem::Move(parent)
-                    | TreeDiffItem::CreateMove(parent)
-                    | TreeDiffItem::RestoreMove(parent) => Some(parent),
-                    TreeDiffItem::Delete => TreeID::delete_root(),
-                    TreeDiffItem::UnCreate => {
+                    TreeInternalDiff::Create
+                    | TreeInternalDiff::Restore
+                    | TreeInternalDiff::AsRoot => None,
+                    TreeInternalDiff::Move(parent)
+                    | TreeInternalDiff::CreateMove(parent)
+                    | TreeInternalDiff::RestoreMove(parent) => Some(parent),
+                    TreeInternalDiff::Delete => TreeID::delete_root(),
+                    TreeInternalDiff::UnCreate => {
                         // delete it from state
                         self.trees.remove(&target);
                         continue;
@@ -194,7 +196,15 @@ impl ContainerState for TreeState {
                 }
             }
         }
-        Diff::Tree(diff.into_tree().unwrap())
+        let ans = diff
+            .into_tree()
+            .unwrap()
+            .diff
+            .into_iter()
+            .map(|diff| TreeDiffItem::from_delta_item(diff))
+            .flatten()
+            .collect_vec();
+        Diff::Tree(TreeDiff { diff: ans })
     }
 
     fn apply_op(
@@ -219,11 +229,15 @@ impl ContainerState for TreeState {
         let mut q = VecDeque::from(forest.roots);
         while let Some(node) = q.pop_front() {
             let action = if let Some(parent) = node.parent {
-                TreeDiffItem::CreateMove(parent)
+                diffs.push(TreeDiffItem {
+                    target: node.id,
+                    action: TreeExternalDiff::Create,
+                });
+                TreeExternalDiff::Move(Some(parent))
             } else {
-                TreeDiffItem::Create
+                TreeExternalDiff::Create
             };
-            let diff = TreeDiff {
+            let diff = TreeDiffItem {
                 target: node.id,
                 action,
             };
@@ -231,7 +245,7 @@ impl ContainerState for TreeState {
             q.extend(node.children);
         }
 
-        Diff::Tree(TreeDelta { diff: diffs })
+        Diff::Tree(TreeDiff { diff: diffs })
     }
 
     fn start_txn(&mut self) {

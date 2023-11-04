@@ -9,7 +9,7 @@ use loro_common::{CounterSpan, IdSpan, TreeID, ID};
 
 use crate::{
     change::Lamport,
-    delta::{TreeDelta, TreeDiff, TreeDiffItem},
+    delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     VersionVector,
 };
 
@@ -155,7 +155,7 @@ impl TreeDiffCache {
             let effected = self.apply(op);
             if effected {
                 // we need to know whether op.parent is deleted
-                let this_diff = TreeDiff::new(
+                let this_diff = TreeDeltaItem::new(
                     op.target,
                     op.parent,
                     old_parent,
@@ -166,15 +166,15 @@ impl TreeDiffCache {
                 diff.push(this_diff);
                 if matches!(
                     this_diff.action,
-                    TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_)
+                    TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
                 ) {
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
                         let children = self.get_children(t);
                         children.iter().for_each(|c| {
-                            diff.push(TreeDiff {
+                            diff.push(TreeDeltaItem {
                                 target: *c,
-                                action: TreeDiffItem::CreateMove(t),
+                                action: TreeInternalDiff::CreateMove(t),
                             })
                         });
                         s.extend(children);
@@ -257,7 +257,7 @@ impl TreeDiffCache {
         }
     }
 
-    fn retreat_for_diff(&mut self, vv: &VersionVector, min_lamport: Lamport) -> Vec<TreeDiff> {
+    fn retreat_for_diff(&mut self, vv: &VersionVector, min_lamport: Lamport) -> Vec<TreeDeltaItem> {
         let mut diffs = vec![];
         // remove ops from cache, and then insert to pending
         let mut retreat_ops = Vec::new();
@@ -286,7 +286,7 @@ impl TreeDiffCache {
                     op.parent.is_some() && self.is_deleted(op.parent.as_ref().unwrap());
                 let is_old_parent_deleted =
                     old_parent.is_some() && self.is_deleted(old_parent.as_ref().unwrap());
-                let this_diff = TreeDiff::new(
+                let this_diff = TreeDeltaItem::new(
                     op.target,
                     old_parent,
                     op.parent,
@@ -297,15 +297,15 @@ impl TreeDiffCache {
                 diffs.push(this_diff);
                 if matches!(
                     this_diff.action,
-                    TreeDiffItem::Restore | TreeDiffItem::RestoreMove(_)
+                    TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
                 ) {
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
                         let children = self.get_children(t);
                         children.iter().for_each(|c| {
-                            diffs.push(TreeDiff {
+                            diffs.push(TreeDeltaItem {
                                 target: *c,
-                                action: TreeDiffItem::CreateMove(t),
+                                action: TreeInternalDiff::CreateMove(t),
                             })
                         });
                         s.extend(children);

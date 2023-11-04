@@ -6,7 +6,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    delta::{MapValue, TreeDiff, TreeDiffItem},
+    delta::{MapValue, TreeDeltaItem, TreeDiffItem, TreeExternalDiff, TreeInternalDiff},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
@@ -18,6 +18,7 @@ use loro_common::{
     ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
 use serde::{Deserialize, Serialize};
+use smallvec::smallvec;
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -963,10 +964,10 @@ impl TreeHandler {
                 target: tree_id,
                 parent: None,
             }),
-            EventHint::Tree(TreeDiff {
+            EventHint::Tree(smallvec![TreeDiffItem {
                 target: tree_id,
-                action: TreeDiffItem::Create,
-            }),
+                action: TreeExternalDiff::Create,
+            }]),
             &self.state,
         )?;
         Ok(tree_id)
@@ -983,10 +984,10 @@ impl TreeHandler {
                 target,
                 parent: TreeID::delete_root(),
             }),
-            EventHint::Tree(TreeDiff {
+            EventHint::Tree(smallvec![TreeDiffItem {
                 target,
-                action: TreeDiffItem::Delete,
-            }),
+                action: TreeExternalDiff::Delete,
+            }]),
             &self.state,
         )
     }
@@ -1006,10 +1007,16 @@ impl TreeHandler {
                 target: tree_id,
                 parent: Some(parent),
             }),
-            EventHint::Tree(TreeDiff {
-                target: tree_id,
-                action: TreeDiffItem::Move(parent),
-            }),
+            EventHint::Tree(smallvec![
+                TreeDiffItem {
+                    target: tree_id,
+                    action: TreeExternalDiff::Create,
+                },
+                TreeDiffItem {
+                    target: tree_id,
+                    action: TreeExternalDiff::Move(Some(parent)),
+                }
+            ]),
             &self.state,
         )?;
         Ok(tree_id)
@@ -1026,10 +1033,10 @@ impl TreeHandler {
                 target,
                 parent: None,
             }),
-            EventHint::Tree(TreeDiff {
+            EventHint::Tree(smallvec![TreeDiffItem {
                 target,
-                action: TreeDiffItem::AsRoot,
-            }),
+                action: TreeExternalDiff::Move(None),
+            }]),
             &self.state,
         )
     }
@@ -1045,10 +1052,10 @@ impl TreeHandler {
                 target,
                 parent: Some(parent),
             }),
-            EventHint::Tree(TreeDiff {
+            EventHint::Tree(smallvec![TreeDiffItem {
                 target,
-                action: TreeDiffItem::Move(parent),
-            }),
+                action: TreeExternalDiff::Move(Some(parent)),
+            }]),
             &self.state,
         )
     }

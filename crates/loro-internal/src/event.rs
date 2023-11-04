@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, StyleMeta, TreeDelta},
+    delta::{Delta, MapDelta, StyleMeta, TreeDelta, TreeDiff},
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString, LoroValue,
@@ -175,7 +175,7 @@ pub enum Diff {
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),
     NewMap(MapDelta),
-    Tree(TreeDelta),
+    Tree(TreeDiff),
 }
 
 impl InternalDiff {
@@ -238,7 +238,7 @@ impl Diff {
                 Diff::NewMap(a)
             }
 
-            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b)),
+            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff.into_iter())),
             _ => unreachable!(),
         }
     }

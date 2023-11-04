@@ -21,7 +21,7 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     dag::DagUtils,
-    delta::{Delta, MapDelta, MapValue, TreeDiffItem},
+    delta::{Delta, MapDelta, MapValue, TreeInternalDiff},
     event::InternalDiff,
     id::Counter,
     op::RichOp,
@@ -775,10 +775,10 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
             // create -> maybe in a diff calc  uncreate and then create back
             if matches!(
                 d.action,
-                TreeDiffItem::Restore
-                    | TreeDiffItem::RestoreMove(_)
-                    | TreeDiffItem::Create
-                    | TreeDiffItem::CreateMove(_)
+                TreeInternalDiff::Restore
+                    | TreeInternalDiff::RestoreMove(_)
+                    | TreeInternalDiff::Create
+                    | TreeInternalDiff::CreateMove(_)
             ) {
                 on_new_container(&d.target.associated_meta_container())
             }

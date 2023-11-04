@@ -319,7 +319,10 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDelta, TreeDiffItem},
+        delta::{
+            Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDelta, TreeDiff,
+            TreeDiffItem, TreeExternalDiff, TreeInternalDiff,
+        },
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
@@ -436,11 +439,11 @@ pub mod wasm {
         }
     }
 
-    impl From<TreeDiffItem> for JsValue {
-        fn from(value: TreeDiffItem) -> Self {
+    impl From<TreeExternalDiff> for JsValue {
+        fn from(value: TreeExternalDiff) -> Self {
             let obj = Object::new();
             match value {
-                TreeDiffItem::Delete | TreeDiffItem::UnCreate => {
+                TreeExternalDiff::Delete => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -448,7 +451,7 @@ pub mod wasm {
                     )
                     .unwrap();
                 }
-                TreeDiffItem::Move(parent) => {
+                TreeExternalDiff::Move(parent) => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -459,26 +462,8 @@ pub mod wasm {
                     js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
                         .unwrap();
                 }
-                TreeDiffItem::CreateMove(parent) | TreeDiffItem::RestoreMove(parent) => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("createMove"),
-                    )
-                    .unwrap();
 
-                    js_sys::Reflect::set(&obj, &JsValue::from_str("parent"), &parent.into())
-                        .unwrap();
-                }
-                TreeDiffItem::AsRoot => {
-                    js_sys::Reflect::set(
-                        &obj,
-                        &JsValue::from_str("type"),
-                        &JsValue::from_str("asRoot"),
-                    )
-                    .unwrap();
-                }
-                TreeDiffItem::Create | TreeDiffItem::Restore => {
+                TreeExternalDiff::Create => {
                     js_sys::Reflect::set(
                         &obj,
                         &JsValue::from_str("type"),
@@ -491,8 +476,8 @@ pub mod wasm {
         }
     }
 
-    impl From<TreeDelta> for JsValue {
-        fn from(value: TreeDelta) -> Self {
+    impl From<TreeDiff> for JsValue {
+        fn from(value: TreeDiff) -> Self {
             let obj = Object::new();
             for diff in value.diff.into_iter() {
                 js_sys::Reflect::set(&obj, &"target".into(), &diff.target.into()).unwrap();
