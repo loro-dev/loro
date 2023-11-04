@@ -503,11 +503,10 @@ fn change_to_diff(
                             },
                         )
                     }
-                    Diff::Text(
-                        Delta::new()
-                            .retain(start as usize)
-                            .retain_with_meta((end - start) as usize, meta),
-                    )
+                    let diff = Delta::new()
+                        .retain(start as usize)
+                        .retain_with_meta((end - start) as usize, meta);
+                    Diff::Text(diff)
                 }
                 EventHint::InsertText { pos, styles, .. } => {
                     let slice = op.content.as_list().unwrap().as_insert_text().unwrap().0;

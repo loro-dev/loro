@@ -198,7 +198,6 @@ impl OpLog {
 
     /// This is the only place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, mut change: Change, _: EnsureChangeDepsAreAtTheEnd) {
-        debug_log::debug_log!("importing {} ", change.id);
         let entry = self.changes.entry(change.id.peer).or_default();
         match entry.last_mut() {
             Some(last) => {

@@ -647,9 +647,10 @@ pub mod wasm {
 
     impl From<StyleMeta> for JsValue {
         fn from(value: StyleMeta) -> Self {
+            // TODO: refactor: should we extract the common code of ToJson and ToJsValue
             let obj = Object::new();
             for (key, style) in value.iter() {
-                let value = if matches!(style.data, LoroValue::Null | LoroValue::Bool(_)) {
+                let value = if !key.contains_id() {
                     JsValue::from(style.data)
                 } else {
                     let value = Object::new();
