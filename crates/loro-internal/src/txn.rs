@@ -18,9 +18,7 @@ use crate::{
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
-    delta::{
-        Delta, MapValue, StyleMeta, StyleMetaItem, TreeDelta, TreeDeltaItem, TreeDiff, TreeDiffItem,
-    },
+    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
     event::Diff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},

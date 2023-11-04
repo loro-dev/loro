@@ -319,10 +319,7 @@ pub mod wasm {
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
 
     use crate::{
-        delta::{
-            Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDelta, TreeDiff,
-            TreeDiffItem, TreeExternalDiff, TreeInternalDiff,
-        },
+        delta::{Delta, DeltaItem, MapDelta, MapDiff, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
         event::{Diff, Index},
         utils::string_slice::StringSlice,
         LoroValue,
