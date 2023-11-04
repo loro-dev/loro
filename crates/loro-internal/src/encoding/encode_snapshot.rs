@@ -236,6 +236,7 @@ pub fn decode_oplog(
             timestamp,
             id: ID::new(peer_id, start_counter),
             lamport: 0, // calculate lamport when importing
+            has_dependents: false,
         });
     }
 
@@ -862,7 +863,7 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
     let mut styles = Vec::new();
     // Add all changes
     let mut changes: Vec<&Change> = Vec::with_capacity(oplog.len_changes());
-    for (_, peer_changes) in oplog.changes.iter() {
+    for (_, peer_changes) in oplog.changes().iter() {
         for change in peer_changes.iter() {
             changes.push(change);
         }

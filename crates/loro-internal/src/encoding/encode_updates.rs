@@ -161,6 +161,7 @@ fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<Remot
             timestamp: last_timestamp + encoded.timestamp_delta,
             ops,
             deps,
+            has_dependents: false,
         };
         last_lamport = change.lamport;
         last_timestamp = change.timestamp;

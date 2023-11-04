@@ -211,30 +211,6 @@ impl StyleRangeMap {
         })
     }
 
-    pub fn iter_from(
-        &self,
-        start_entity_index: usize,
-    ) -> impl Iterator<Item = (Range<usize>, &Styles)> + '_ {
-        let start = self
-            .tree
-            .query::<LengthFinder>(&start_entity_index)
-            .unwrap();
-        let mut index = start_entity_index - start.offset();
-        self.tree
-            .iter_range(start.cursor()..)
-            .filter_map(move |elem| {
-                let len = elem.elem.len;
-                let value = &elem.elem.styles;
-                let range = index.max(start_entity_index)..index + len;
-                index += len;
-                if elem.elem.styles.is_empty() {
-                    return None;
-                }
-
-                Some((range, value))
-            })
-    }
-
     pub fn delete(&mut self, range: Range<usize>) {
         if !self.has_style {
             return;
@@ -252,11 +228,6 @@ impl StyleRangeMap {
         }
 
         self.tree.drain(start..end);
-    }
-
-    #[allow(unused)]
-    pub fn len(&self) -> usize {
-        *self.tree.root_cache() as usize
     }
 
     pub(crate) fn has_style(&self) -> bool {
