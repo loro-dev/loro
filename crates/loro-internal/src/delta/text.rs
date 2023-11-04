@@ -120,7 +120,7 @@ impl ToJson for StyleMeta {
     fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         for (key, style) in self.iter() {
-            let value = if matches!(style.data, LoroValue::Null | LoroValue::Bool(_)) {
+            let value = if !key.contains_id() {
                 serde_json::to_value(&style.data).unwrap()
             } else {
                 let mut value = serde_json::Map::new();

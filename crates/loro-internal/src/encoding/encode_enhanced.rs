@@ -4,7 +4,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasIdSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec, Sliceable};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
-use std::{borrow::Cow, cmp::Ordering, ops::Deref, sync::Arc};
+use std::{borrow::Cow, ops::Deref, sync::Arc};
 use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
