@@ -601,6 +601,9 @@ impl DocState {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
                 if container.get_type() == ContainerType::Tree {
+                    // Each tree node has an associated map container to represent
+                    // the metadata of this node. When the user get the deep value,
+                    // we need to add a field named `meta` to the tree node.
                     get_meta_value(Arc::make_mut(&mut list), self);
                 } else {
                     if list.iter().all(|x| !x.is_container()) {
