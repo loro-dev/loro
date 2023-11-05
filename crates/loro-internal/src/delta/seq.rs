@@ -605,7 +605,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
         delta.chop()
     }
 
-    fn concat(mut self, mut other: Self) -> Self {
+    pub(crate) fn concat(mut self, mut other: Self) -> Self {
         if !other.vec.is_empty() {
             let other_first = other.vec.remove(0);
             self.push(other_first);

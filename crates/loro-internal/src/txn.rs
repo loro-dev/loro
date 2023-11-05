@@ -8,6 +8,7 @@ use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable, Sliceable as GBSliceable};
 use loro_common::{ContainerType, LoroResult};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
+use smallvec::SmallVec;
 
 use crate::{
     change::{get_sys_timestamp, Change, Lamport, Timestamp},
@@ -17,7 +18,7 @@ use crate::{
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
-    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDelta, TreeDiff},
+    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
     event::Diff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
@@ -79,7 +80,7 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
-    Tree(TreeDiff),
+    Tree(SmallVec<[TreeDiffItem; 2]>),
     MarkEnd,
 }
 
@@ -279,7 +280,7 @@ impl Transaction {
         };
 
         let last_id = change.id_last();
-        if let Err(err) = oplog.import_local_change(change) {
+        if let Err(err) = oplog.import_local_change(change, true) {
             drop(state);
             drop(oplog);
             self._abort();
@@ -295,9 +296,9 @@ impl Transaction {
                     arr.into_iter()
                         .map(|x| InternalContainerDiff {
                             idx: x.idx,
-                            reset: false,
+                            bring_back: false,
                             is_container_deleted: false,
-                            diff: x.diff.into(),
+                            diff: Some(x.diff.into()),
                         })
                         .collect(),
                 ),
@@ -537,7 +538,7 @@ fn change_to_diff(
                         },
                     ))
                 }
-                EventHint::Tree(tree_diff) => Diff::Tree(TreeDelta::default().push(tree_diff)),
+                EventHint::Tree(tree_diff) => Diff::Tree(TreeDiff::default().extend(tree_diff)),
                 EventHint::MarkEnd => {
                     // do nothing
                     break 'outer;

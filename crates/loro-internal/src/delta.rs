@@ -7,4 +7,7 @@ pub use map_delta::{MapDelta, MapValue};
 mod text;
 pub use text::{StyleMeta, StyleMetaItem};
 mod tree;
-pub use tree::{TreeDelta, TreeDiff, TreeDiffItem};
+pub(crate) use tree::TreeValue;
+pub use tree::{
+    TreeDelta, TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff, TreeInternalDiff,
+};

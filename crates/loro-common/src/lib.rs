@@ -3,7 +3,6 @@ use std::{fmt::Display, sync::Arc};
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 
-use fxhash::FxHashMap;
 use serde::{Deserialize, Serialize};
 mod error;
 mod id;
@@ -95,12 +94,7 @@ impl ContainerType {
             ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
             ContainerType::List => LoroValue::List(Arc::new(Default::default())),
             ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
-            ContainerType::Tree => {
-                let mut map: FxHashMap<String, LoroValue> = FxHashMap::default();
-                map.insert("roots".to_string(), LoroValue::List(vec![].into()));
-                map.insert("deleted".to_string(), LoroValue::List(vec![].into()));
-                map.into()
-            }
+            ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
         }
     }
 
@@ -333,6 +327,10 @@ impl TreeID {
             peer: self.peer,
             counter: self.counter,
         }
+    }
+
+    pub fn associated_meta_container(&self) -> ContainerID {
+        ContainerID::new_normal(self.id(), ContainerType::Map)
     }
 }
 

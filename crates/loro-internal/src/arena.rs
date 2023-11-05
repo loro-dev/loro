@@ -7,7 +7,6 @@ use std::{
 
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
-use loro_common::ContainerType;
 use loro_common::PeerID;
 
 use crate::{
@@ -165,7 +164,7 @@ impl<'a> OpConverter<'a> {
             crate::op::RawOpContent::Tree(tree) => {
                 // we need create every meta container associated with target TreeID
                 let id = tree.target;
-                let meta_container_id = ContainerID::new_normal(id.id(), ContainerType::Map);
+                let meta_container_id = id.associated_meta_container();
 
                 if self.container_id_to_idx.get(&meta_container_id).is_none() {
                     let container_idx_to_id = &mut self.container_idx_to_id;
