@@ -218,6 +218,38 @@ mod text_chunk {
                 );
             }
         }
+
+        pub(crate) fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
+            if cfg!(feature = "wasm") {
+                assert!(range.start < range.end);
+                if range.start == 0 && range.end == self.unicode_len as usize {
+                    return 0..self.utf16_len as usize;
+                }
+
+                let mut start = 0;
+                let mut end = 0;
+                let mut utf16_index = 0;
+                for (unicode_index, c) in self.as_str().chars().enumerate() {
+                    if unicode_index == range.start {
+                        start = utf16_index;
+                    }
+                    if unicode_index == range.end {
+                        end = utf16_index;
+                        break;
+                    }
+
+                    utf16_index += c.len_utf16();
+                }
+
+                if end == 0 {
+                    end = utf16_index;
+                }
+
+                start..end
+            } else {
+                range
+            }
+        }
     }
 
     impl generic_btree::rle::HasLength for TextChunk {
@@ -607,6 +639,18 @@ impl Sub for PosCache {
 }
 
 pub(crate) struct RichtextTreeTrait;
+
+pub(crate) struct EntityRangeInfo {
+    pub entity_start: usize,
+    pub entity_end: usize,
+    pub event_len: usize,
+}
+
+impl EntityRangeInfo {
+    pub fn entity_len(&self) -> usize {
+        self.entity_end - self.entity_start
+    }
+}
 
 impl BTreeTrait for RichtextTreeTrait {
     type Elem = RichtextStateChunk;
@@ -1414,7 +1458,7 @@ impl RichtextState {
         pos: usize,
         len: usize,
         pos_type: PosType,
-    ) -> Vec<Range<usize>> {
+    ) -> Vec<EntityRangeInfo> {
         if self.tree.is_empty() {
             return Vec::new();
         }
@@ -1423,7 +1467,7 @@ impl RichtextState {
             return Vec::new();
         }
 
-        let mut ans: Vec<Range<usize>> = Vec::new();
+        let mut ans: Vec<EntityRangeInfo> = Vec::new();
         let (start, end) = match pos_type {
             PosType::Bytes => todo!(),
             PosType::Unicode => (
@@ -1459,15 +1503,23 @@ impl RichtextState {
                 break;
             }
 
+            debug_log::debug_dbg!(start, end, &span.elem);
             let len = end - start;
             match span.elem {
-                RichtextStateChunk::Text { .. } => {
+                RichtextStateChunk::Text(s) => {
+                    let event_len = s.entity_range_to_event_range(start..end).len();
+                    debug_log::debug_dbg!(event_len);
                     match ans.last_mut() {
-                        Some(last) if last.end == entity_index => {
-                            last.end += len;
+                        Some(last) if last.entity_end == entity_index => {
+                            last.entity_end += len;
+                            last.event_len += event_len;
                         }
                         _ => {
-                            ans.push(entity_index..entity_index + len);
+                            ans.push(EntityRangeInfo {
+                                entity_start: entity_index,
+                                entity_end: entity_index + len,
+                                event_len,
+                            });
                         }
                     }
                     entity_index += len;
@@ -1714,8 +1766,11 @@ mod test {
                 .state
                 .get_text_entity_ranges(pos, len, PosType::Unicode);
             for range in ranges {
-                self.state
-                    .drain_by_entity_index(range.start, range.end - range.start, |_| {});
+                self.state.drain_by_entity_index(
+                    range.entity_start,
+                    range.entity_end - range.entity_start,
+                    |_| {},
+                );
             }
         }
 

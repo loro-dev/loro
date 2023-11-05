@@ -298,6 +298,11 @@ impl TextHandler {
             });
 
         let unicode_len = s.chars().count();
+        let event_len = if cfg!(feature = "wasm") {
+            count_utf16_len(s.as_bytes())
+        } else {
+            unicode_len
+        };
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
@@ -309,9 +314,9 @@ impl TextHandler {
             }),
             EventHint::InsertText {
                 pos: pos as u32,
-                // FIXME: this is wrong
                 styles,
-                len: unicode_len as u32,
+                unicode_len: unicode_len as u32,
+                event_len: event_len as u32,
             },
             &self.state,
         )
@@ -355,24 +360,26 @@ impl TextHandler {
                 richtext_state.get_text_entity_ranges_in_event_index_range(pos, len)
             });
 
-        debug_assert_eq!(ranges.iter().map(|x| x.len()).sum::<usize>(), len);
-        let mut end = (pos + len) as isize;
+        debug_assert_eq!(ranges.iter().map(|x| x.event_len).sum::<usize>(), len);
+        let mut event_end = (pos + len) as isize;
         for range in ranges.iter().rev() {
-            let len = (range.end - range.start) as isize;
-            let start = end - len;
+            let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
                 self.container_idx,
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpan {
-                    pos: range.start as isize,
-                    signed_len: len,
+                    pos: range.entity_start as isize,
+                    signed_len: range.entity_len() as isize,
                 })),
-                EventHint::DeleteText(DeleteSpan {
-                    pos: start,
-                    signed_len: len,
-                }),
+                EventHint::DeleteText {
+                    span: DeleteSpan {
+                        pos: event_start,
+                        signed_len: range.event_len as isize,
+                    },
+                    unicode_len: range.entity_len(),
+                },
                 &self.state,
             )?;
-            end = start;
+            event_end = event_start;
         }
 
         debug_log::group_end!();
