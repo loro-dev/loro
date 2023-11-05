@@ -234,57 +234,66 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-
+        let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
         let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
+
         let mut idx2state_diff = FxHashMap::default();
-        let mut diff_queue = vec![];
-        let mut need_bring_back = FxHashSet::default();
-        let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
-        for mut diff in inner {
-            let idx = diff.idx;
-            if need_bring_back.contains(&idx) {
-                diff.bring_back = true;
-            }
-            if diff.bring_back {
-                let state = self
-                    .states
-                    .entry(diff.idx)
-                    .or_insert_with(|| create_state(idx));
-                let state_diff = state.to_diff();
-                if diff.diff.is_none() && state_diff.is_empty() {
-                    continue;
+        let mut diffs = if is_recording {
+            // To handle the `bring_back`, we need cache the state diff of current version first,
+            // because the state that is applied diffs could be also set to `bring_back` later.
+            // We recursively determine one by one whether we need to bring back and push the diff to the queue.
+            let mut diff_queue = vec![];
+            let mut need_bring_back = FxHashSet::default();
+            let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
+            for mut diff in inner {
+                let idx = diff.idx;
+                if need_bring_back.contains(&idx) {
+                    diff.bring_back = true;
                 }
-                diff_queue.push(diff);
-                if !state_diff.is_empty() {
-                    bring_back_sub_container(
-                        &state_diff,
-                        &mut diff_queue,
-                        &mut need_bring_back,
-                        &all_idx,
-                        &mut self.states,
-                        &mut idx2state_diff,
-                        &self.arena,
-                    );
-                    idx2state_diff.insert(idx, state_diff);
+                if diff.bring_back {
+                    let state = self
+                        .states
+                        .entry(diff.idx)
+                        .or_insert_with(|| create_state(idx));
+                    let state_diff = state.to_diff();
+                    if diff.diff.is_none() && state_diff.is_empty() {
+                        // empty diff, skip it
+                        continue;
+                    }
+                    diff_queue.push(diff);
+                    if !state_diff.is_empty() {
+                        bring_back_sub_container(
+                            &state_diff,
+                            &mut diff_queue,
+                            &mut need_bring_back,
+                            &all_idx,
+                            &mut self.states,
+                            &mut idx2state_diff,
+                            &self.arena,
+                        );
+                        idx2state_diff.insert(idx, state_diff);
+                    }
+                } else {
+                    diff_queue.push(diff);
                 }
-            } else {
-                diff_queue.push(diff);
             }
-        }
-        let mut inner = diff_queue;
+            diff_queue
+        } else {
+            inner
+        };
 
         // apply diff
-        let is_recording = self.is_recording();
-
-        for diff in &mut inner {
+        for diff in &mut diffs {
             let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
                 // only bring_back
-                if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
-                    diff.diff = Some(state_diff.into());
-                };
+                if is_recording {
+                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
+                        diff.diff = Some(state_diff.into());
+                    };
+                }
                 continue;
             };
             let idx = diff.idx;
@@ -302,6 +311,7 @@ impl DocState {
                         &self.arena,
                     );
                     if let Some(state_diff) = idx2state_diff.remove(&idx) {
+                        // use `concat`(hierarchical and relative order) rather than `compose`
                         state_diff.concat(external_diff)
                     } else {
                         // empty state
@@ -317,7 +327,7 @@ impl DocState {
             }
         }
 
-        diff.diff = inner.into();
+        diff.diff = diffs.into();
         self.frontiers = (*diff.new_version).to_owned();
         if self.is_recording() {
             self.record_diff(diff)
@@ -603,7 +613,8 @@ impl DocState {
                 if container.get_type() == ContainerType::Tree {
                     // Each tree node has an associated map container to represent
                     // the metadata of this node. When the user get the deep value,
-                    // we need to add a field named `meta` to the tree node.
+                    // we need to add a field named `meta` to the tree node,
+                    // whose value is deep value of map container.
                     get_meta_value(Arc::make_mut(&mut list), self);
                 } else {
                     if list.iter().all(|x| !x.is_container()) {
@@ -755,8 +766,13 @@ fn bring_back_sub_container(
                         if v.is_container() {
                             let idx = arena.id_to_idx(v.as_container().unwrap()).unwrap();
                             if all_idx.contains(&idx) {
+                                // There is one in subsequent elements that require applying the diff
                                 mark_bring_back.insert(idx);
                             } else if let Some(state) = states.get_mut(&idx) {
+                                // only bring back
+                                // If the state is not empty, add this to queue and check
+                                // whether there are sub-containers created by it recursively
+                                // and finally cache the state
                                 let diff = state.to_diff();
                                 if !diff.is_empty() {
                                     queue.push(InternalContainerDiff {

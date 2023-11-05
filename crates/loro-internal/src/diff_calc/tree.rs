@@ -168,6 +168,7 @@ impl TreeDiffCache {
                     this_diff.action,
                     TreeInternalDiff::Restore | TreeInternalDiff::RestoreMove(_)
                 ) {
+                    // TODO: perf how to get children faster
                     let mut s = vec![op.target];
                     while let Some(t) = s.pop() {
                         let children = self.get_children(t);

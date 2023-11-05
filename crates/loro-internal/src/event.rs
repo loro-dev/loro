@@ -49,6 +49,7 @@ pub struct DocDiff {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
+    // If true, this event is created by the container which was resurrected by another container
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
     pub(crate) diff: Option<DiffVariant>,

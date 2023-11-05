@@ -783,7 +783,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
         diff.diff.iter().for_each(|d| {
             // the metadata could be modified before, so (re)create a node need emit the map container diffs
-            // create -> maybe in a diff calc  uncreate and then create back
+            // `Create` here is because maybe in a diff calc uncreate and then create back
             if matches!(
                 d.action,
                 TreeInternalDiff::Restore

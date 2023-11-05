@@ -1,8 +1,6 @@
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{
-    ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
-};
+use loro_common::{ContainerID, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Iter, VecDeque};
 use std::sync::Arc;
@@ -382,10 +380,7 @@ impl Forest {
                 TreeNode {
                     id: root,
                     parent: None,
-                    meta: LoroValue::Container(ContainerID::new_normal(
-                        root.id(),
-                        ContainerType::Map,
-                    )),
+                    meta: LoroValue::Container(root.associated_meta_container()),
                     children: vec![],
                 },
             )];
