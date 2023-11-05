@@ -244,7 +244,7 @@ pub fn decode_oplog(
     for mut change in changes {
         let lamport = oplog.dag.frontiers_to_next_lamport(&change.deps);
         change.lamport = lamport;
-        oplog.import_local_change(change)?;
+        oplog.import_local_change(change, false)?;
     }
     Ok(())
 }
@@ -312,7 +312,7 @@ pub fn decode_state<'b>(
                 richtext.decode_snapshot(*richtext_data, &state_arena, &common, &arena);
                 container_states.insert(idx, State::RichtextState(richtext));
             }
-            loro_preload::EncodedContainerState::Tree(tree_data) => {
+            loro_preload::EncodedContainerState::Tree((tree_data, deleted)) => {
                 let mut tree = TreeState::new();
                 for (target, parent) in tree_data {
                     let (peer, counter) = state_arena.tree_ids[target - 1];
@@ -333,6 +333,17 @@ pub fn decode_state<'b>(
                     };
                     tree.trees.insert(target, parent);
                 }
+
+                for target in deleted {
+                    let (peer, counter) = state_arena.tree_ids[target - 1];
+                    let target_peer = common.peer_ids[peer as usize];
+                    let target = TreeID {
+                        peer: target_peer,
+                        counter,
+                    };
+                    tree.deleted.insert(target);
+                }
+
                 container_states.insert(idx, State::TreeState(tree));
             }
         }
@@ -688,9 +699,9 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
                 loro_common::ContainerType::Map => {
                     encoded.states.push(EncodedContainerState::Map(Vec::new()))
                 }
-                loro_common::ContainerType::Tree => {
-                    encoded.states.push(EncodedContainerState::Tree(Vec::new()))
-                }
+                loro_common::ContainerType::Tree => encoded
+                    .states
+                    .push(EncodedContainerState::Tree((Vec::new(), Vec::new()))),
                 loro_common::ContainerType::Text => encoded
                     .states
                     .push(EncodedContainerState::Richtext(Default::default())),
@@ -716,7 +727,15 @@ fn encode_app_state(app_state: &DocState) -> PreEncodedState {
                         (t, p)
                     })
                     .collect::<Vec<_>>();
-                encoded.states.push(EncodedContainerState::Tree(v))
+                let d = tree
+                    .deleted
+                    .iter()
+                    .map(|target| {
+                        let peer_idx = record_peer(target.peer);
+                        record_tree_id(*target, peer_idx)
+                    })
+                    .collect::<Vec<_>>();
+                encoded.states.push(EncodedContainerState::Tree((v, d)))
             }
             State::ListState(list) => {
                 let v = list.iter().map(&mut record_value).collect();

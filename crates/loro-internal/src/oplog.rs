@@ -177,6 +177,10 @@ impl OpLog {
         self.latest_timestamp
     }
 
+    pub fn dag(&self) -> &AppDag {
+        &self.dag
+    }
+
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
@@ -228,7 +232,7 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub fn import_local_change(&mut self, change: Change, from_txn: bool) -> Result<(), LoroError> {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -260,8 +264,9 @@ impl OpLog {
         let mut tree_cache = self.tree_parent_cache.lock().unwrap();
         for op in change.ops().iter() {
             if let crate::op::InnerContent::Tree(tree) = op.content {
+                let diff = op.counter - change.id.counter;
                 let node = MoveLamportAndID {
-                    lamport: change.lamport,
+                    lamport: change.lamport + diff as Lamport,
                     id: ID {
                         peer: change.id.peer,
                         counter: op.counter,
@@ -270,7 +275,11 @@ impl OpLog {
                     parent: tree.parent,
                     effected: true,
                 };
-                tree_cache.add_node_uncheck(node);
+                if from_txn {
+                    tree_cache.add_node_uncheck(node);
+                } else {
+                    tree_cache.add_node(node);
+                }
             }
         }
 
@@ -474,6 +483,11 @@ impl OpLog {
         }
 
         None
+    }
+
+    pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp>> {
+        let change = self.get_change_at(id)?;
+        Some(self.convert_change_to_remote(change))
     }
 
     fn convert_change_to_remote(&self, change: &Change) -> Change<RemoteOp> {

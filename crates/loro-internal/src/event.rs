@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{Delta, MapDelta, StyleMeta, TreeDelta},
+    delta::{Delta, MapDelta, StyleMeta, TreeDelta, TreeDiff},
     op::SliceRanges,
     utils::string_slice::StringSlice,
     InternalString, LoroValue,
@@ -49,9 +49,10 @@ pub struct DocDiff {
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,
-    pub(crate) reset: bool,
+    // If true, this event is created by the container which was resurrected by another container
+    pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
-    pub(crate) diff: DiffVariant,
+    pub(crate) diff: Option<DiffVariant>,
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -175,7 +176,7 @@ pub enum Diff {
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(Delta<StringSlice, StyleMeta>),
     NewMap(MapDelta),
-    Tree(TreeDelta),
+    Tree(TreeDiff),
 }
 
 impl InternalDiff {
@@ -184,7 +185,7 @@ impl InternalDiff {
             InternalDiff::SeqRaw(s) => s.is_empty(),
             InternalDiff::RichtextRaw(t) => t.is_empty(),
             InternalDiff::Map(m) => m.updated.is_empty(),
-            InternalDiff::Tree(t) => t.diff.is_empty(),
+            InternalDiff::Tree(t) => t.is_empty(),
         }
     }
 
@@ -214,6 +215,32 @@ impl Diff {
 
             (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
             (a, _) => Err(a),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Diff::List(s) => s.is_empty(),
+            Diff::Text(t) => t.is_empty(),
+            Diff::NewMap(m) => m.updated.is_empty(),
+            Diff::Tree(t) => t.diff.is_empty(),
+        }
+    }
+
+    pub(crate) fn concat(self, diff: Diff) -> Diff {
+        match (self, diff) {
+            (Diff::List(a), Diff::List(b)) => Diff::List(a.compose(b)),
+            (Diff::Text(a), Diff::Text(b)) => Diff::Text(a.compose(b)),
+            (Diff::NewMap(a), Diff::NewMap(b)) => {
+                let mut a = a;
+                for (k, v) in b.updated {
+                    a = a.with_entry(k, v);
+                }
+                Diff::NewMap(a)
+            }
+
+            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
+            _ => unreachable!(),
         }
     }
 }

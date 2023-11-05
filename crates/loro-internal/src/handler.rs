@@ -6,7 +6,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    delta::MapValue,
+    delta::{MapValue, TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
@@ -18,6 +18,7 @@ use loro_common::{
     ContainerID, ContainerType, LoroError, LoroResult, LoroTreeError, LoroValue, TreeID,
 };
 use serde::{Deserialize, Serialize};
+use smallvec::smallvec;
 use std::{
     borrow::Cow,
     sync::{Mutex, Weak},
@@ -959,7 +960,7 @@ impl TreeHandler {
 
     pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = self.meta_container_id(tree_id);
+        let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
@@ -968,7 +969,10 @@ impl TreeHandler {
                 target: tree_id,
                 parent: None,
             }),
-            EventHint::Tree((tree_id, None).into()),
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target: tree_id,
+                action: TreeExternalDiff::Create,
+            }]),
             &self.state,
         )?;
         Ok(tree_id)
@@ -985,7 +989,10 @@ impl TreeHandler {
                 target,
                 parent: TreeID::delete_root(),
             }),
-            EventHint::Tree((target, TreeID::delete_root()).into()),
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Delete,
+            }]),
             &self.state,
         )
     }
@@ -996,7 +1003,7 @@ impl TreeHandler {
 
     pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = self.meta_container_id(tree_id);
+        let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
         txn.apply_local_op(
@@ -1005,7 +1012,16 @@ impl TreeHandler {
                 target: tree_id,
                 parent: Some(parent),
             }),
-            EventHint::Tree((tree_id, Some(parent)).into()),
+            EventHint::Tree(smallvec![
+                TreeDiffItem {
+                    target: tree_id,
+                    action: TreeExternalDiff::Create,
+                },
+                TreeDiffItem {
+                    target: tree_id,
+                    action: TreeExternalDiff::Move(Some(parent)),
+                }
+            ]),
             &self.state,
         )?;
         Ok(tree_id)
@@ -1022,7 +1038,10 @@ impl TreeHandler {
                 target,
                 parent: None,
             }),
-            EventHint::Tree((target, None).into()),
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move(None),
+            }]),
             &self.state,
         )
     }
@@ -1038,7 +1057,10 @@ impl TreeHandler {
                 target,
                 parent: Some(parent),
             }),
-            EventHint::Tree((target, Some(parent)).into()),
+            EventHint::Tree(smallvec![TreeDiffItem {
+                target,
+                action: TreeExternalDiff::Move(Some(parent)),
+            }]),
             &self.state,
         )
     }
@@ -1047,7 +1069,7 @@ impl TreeHandler {
         if !self.contains(target) {
             return Err(LoroTreeError::TreeNodeNotExist(target).into());
         }
-        let map_container_id = self.meta_container_id(target);
+        let map_container_id = target.associated_meta_container();
         let idx = self
             .state
             .upgrade()
@@ -1123,10 +1145,6 @@ impl TreeHandler {
                 let a = state.as_tree_state().unwrap();
                 a.nodes()
             })
-    }
-
-    fn meta_container_id(&self, target: TreeID) -> ContainerID {
-        ContainerID::new_normal(target.id(), ContainerType::Map)
     }
 
     #[cfg(feature = "test_utils")]
@@ -1360,7 +1378,7 @@ mod test {
             .unwrap();
         assert_eq!(meta, 123.into());
         assert_eq!(
-            r#"{"roots":[{"parent":null,"meta":{"a":123},"id":"0@1","children":[]}],"deleted":[]}"#,
+            r#"[{"parent":null,"meta":{"a":123},"id":"0@1"}]"#,
             tree.get_deep_value().to_json()
         );
         let bytes = loro.export_snapshot();

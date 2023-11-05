@@ -15,6 +15,7 @@ console_error_panic_hook = { version = "0.1.6", optional = true }
 getrandom = { version = "0.2.10", features = ["js"] }
 debug-log = { version = "0.2.2", features = ["wasm"] }
 serde = { version = "1", features = ["derive"] }
+rle = { path = "../rle" }
 
 [features]
 default = ["console_error_panic_hook"]

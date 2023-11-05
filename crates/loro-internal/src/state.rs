@@ -8,8 +8,7 @@ use loro_common::{ContainerID, LoroResult};
 use crate::{
     configure::{DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, ContainerIdRaw},
-    delta::Delta,
-    event::{Diff, DiffVariant, Index},
+    event::{Diff, Index},
     event::{InternalContainerDiff, InternalDiff},
     fx_map,
     id::PeerID,
@@ -26,7 +25,7 @@ mod tree_state;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub(crate) use tree_state::{get_meta_value, Forest, TreeState};
+pub(crate) use tree_state::{get_meta_value, TreeState};
 
 use super::{
     arena::SharedArena,
@@ -235,43 +234,101 @@ impl DocState {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
-
+        let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.local);
-        let Cow::Owned(inner) = &mut diff.diff else {
+        let Cow::Owned(inner) = std::mem::take(&mut diff.diff) else {
             unreachable!()
         };
-        for diff in inner.iter_mut() {
-            let is_recording = self.is_recording();
-            let state = self
-                .states
-                .entry(diff.idx)
-                .or_insert_with(|| create_state(diff.idx));
+
+        let mut idx2state_diff = FxHashMap::default();
+        let mut diffs = if is_recording {
+            // To handle the `bring_back`, we need cache the state diff of current version first,
+            // because the state that is applied diffs could be also set to `bring_back` later.
+            // We recursively determine one by one whether we need to bring back and push the diff to the queue.
+            let mut diff_queue = vec![];
+            let mut need_bring_back = FxHashSet::default();
+            let all_idx: FxHashSet<ContainerIdx> = inner.iter().map(|d| d.idx).collect();
+            for mut diff in inner {
+                let idx = diff.idx;
+                if need_bring_back.contains(&idx) {
+                    diff.bring_back = true;
+                }
+                if diff.bring_back {
+                    let state = self
+                        .states
+                        .entry(diff.idx)
+                        .or_insert_with(|| create_state(idx));
+                    let state_diff = state.to_diff();
+                    if diff.diff.is_none() && state_diff.is_empty() {
+                        // empty diff, skip it
+                        continue;
+                    }
+                    diff_queue.push(diff);
+                    if !state_diff.is_empty() {
+                        bring_back_sub_container(
+                            &state_diff,
+                            &mut diff_queue,
+                            &mut need_bring_back,
+                            &all_idx,
+                            &mut self.states,
+                            &mut idx2state_diff,
+                            &self.arena,
+                        );
+                        idx2state_diff.insert(idx, state_diff);
+                    }
+                } else {
+                    diff_queue.push(diff);
+                }
+            }
+            diff_queue
+        } else {
+            inner
+        };
+
+        // apply diff
+        for diff in &mut diffs {
+            let Some(internal_diff) = std::mem::take(&mut diff.diff) else {
+                // only bring_back
+                if is_recording {
+                    if let Some(state_diff) = idx2state_diff.remove(&diff.idx) {
+                        diff.diff = Some(state_diff.into());
+                    };
+                }
+                continue;
+            };
+            let idx = diff.idx;
+            let state = self.states.entry(idx).or_insert_with(|| create_state(idx));
 
             if self.in_txn {
                 state.start_txn();
-                self.changed_idx_in_txn.insert(diff.idx);
+                self.changed_idx_in_txn.insert(idx);
             }
-
-            let internal_diff = std::mem::replace(
-                &mut diff.diff,
-                DiffVariant::External(Diff::List(Delta::default())),
-            );
-
-            if diff.reset {
-                *state = create_state(diff.idx);
-            }
-
             if is_recording {
-                let external_diff = state
-                    .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena);
-                diff.diff = external_diff.into();
+                // process bring_back before apply
+                let external_diff = if diff.bring_back {
+                    let external_diff = state.apply_diff_and_convert(
+                        internal_diff.into_internal().unwrap(),
+                        &self.arena,
+                    );
+                    if let Some(state_diff) = idx2state_diff.remove(&idx) {
+                        // use `concat`(hierarchical and relative order) rather than `compose`
+                        state_diff.concat(external_diff)
+                    } else {
+                        // empty state
+                        external_diff
+                    }
+                } else {
+                    state
+                        .apply_diff_and_convert(internal_diff.into_internal().unwrap(), &self.arena)
+                };
+                diff.diff = Some(external_diff.into());
             } else {
                 state.apply_diff(internal_diff.into_internal().unwrap(), &self.arena);
             }
         }
 
+        diff.diff = diffs.into();
         self.frontiers = (*diff.new_version).to_owned();
-
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -288,7 +345,6 @@ impl DocState {
             self.changed_idx_in_txn.insert(op.container);
         }
 
-        // TODO: make apply_op return a result
         state.apply_op(raw_op, op, &self.arena)?;
         Ok(())
     }
@@ -365,9 +421,9 @@ impl DocState {
                 .iter_mut()
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
-                    reset: true,
+                    bring_back: false,
                     is_container_deleted: false,
-                    diff: state.to_diff().into(),
+                    diff: Some(state.to_diff().into()),
                 })
                 .collect();
             self.record_diff(InternalDocDiff {
@@ -554,45 +610,44 @@ impl DocState {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
-                if list.iter().all(|x| !x.is_container()) {
-                    return LoroValue::List(list);
-                }
+                if container.get_type() == ContainerType::Tree {
+                    // Each tree node has an associated map container to represent
+                    // the metadata of this node. When the user get the deep value,
+                    // we need to add a field named `meta` to the tree node,
+                    // whose value is deep value of map container.
+                    get_meta_value(Arc::make_mut(&mut list), self);
+                } else {
+                    if list.iter().all(|x| !x.is_container()) {
+                        return LoroValue::List(list);
+                    }
 
-                let list_mut = Arc::make_mut(&mut list);
-                for item in list_mut.iter_mut() {
-                    if item.is_container() {
-                        let container = item.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let value = self.get_container_deep_value(container_idx);
-                        *item = value;
+                    let list_mut = Arc::make_mut(&mut list);
+                    for item in list_mut.iter_mut() {
+                        if item.is_container() {
+                            let container = item.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let value = self.get_container_deep_value(container_idx);
+                            *item = value;
+                        }
                     }
                 }
-
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if container.get_type() == ContainerType::Tree {
-                    // get tree's meta
-                    for nodes in Arc::make_mut(&mut map).values_mut() {
-                        get_meta_value(nodes, self);
-                    }
-                    LoroValue::Map(map)
-                } else {
-                    if map.iter().all(|x| !x.1.is_container()) {
-                        return LoroValue::Map(map);
-                    }
-
-                    let map_mut = Arc::make_mut(&mut map);
-                    for (_key, value) in map_mut.iter_mut() {
-                        if value.is_container() {
-                            let container = value.as_container().unwrap();
-                            let container_idx = self.arena.register_container(container);
-                            let new_value = self.get_container_deep_value(container_idx);
-                            *value = new_value;
-                        }
-                    }
-                    LoroValue::Map(map)
+                if map.iter().all(|x| !x.1.is_container()) {
+                    return LoroValue::Map(map);
                 }
+
+                let map_mut = Arc::make_mut(&mut map);
+                for (_key, value) in map_mut.iter_mut() {
+                    if value.is_container() {
+                        let container = value.as_container().unwrap();
+                        let container_idx = self.arena.register_container(container);
+                        let new_value = self.get_container_deep_value(container_idx);
+                        *value = new_value;
+                    }
+                }
+                LoroValue::Map(map)
             }
             _ => value,
         }
@@ -616,10 +671,9 @@ impl DocState {
                     // omit event form deleted container
                     continue;
                 }
-
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
-                        containers.insert(container_diff.idx, (container_diff.diff, path));
+                        containers.insert(container_diff.idx, (container_diff.diff.unwrap(), path));
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
@@ -635,7 +689,7 @@ impl DocState {
                 // TODO: PERF avoid this clone
                 *last_container_diff = last_container_diff
                     .clone()
-                    .compose(container_diff.diff)
+                    .compose(container_diff.diff.unwrap())
                     .unwrap();
             }
         }
@@ -693,6 +747,89 @@ impl DocState {
         debug_log::group_end!();
         Some(ans)
     }
+}
+
+fn bring_back_sub_container(
+    state_diff: &Diff,
+    queue: &mut Vec<InternalContainerDiff>,
+    mark_bring_back: &mut FxHashSet<ContainerIdx>,
+    all_idx: &FxHashSet<ContainerIdx>,
+    states: &mut FxHashMap<ContainerIdx, State>,
+    idx2state: &mut FxHashMap<ContainerIdx, Diff>,
+    arena: &SharedArena,
+) {
+    match state_diff {
+        Diff::List(list) => {
+            for delta in list.iter() {
+                if delta.is_insert() {
+                    for v in delta.as_insert().unwrap().0.iter() {
+                        if v.is_container() {
+                            let idx = arena.id_to_idx(v.as_container().unwrap()).unwrap();
+                            if all_idx.contains(&idx) {
+                                // There is one in subsequent elements that require applying the diff
+                                mark_bring_back.insert(idx);
+                            } else if let Some(state) = states.get_mut(&idx) {
+                                // only bring back
+                                // If the state is not empty, add this to queue and check
+                                // whether there are sub-containers created by it recursively
+                                // and finally cache the state
+                                let diff = state.to_diff();
+                                if !diff.is_empty() {
+                                    queue.push(InternalContainerDiff {
+                                        idx,
+                                        bring_back: true,
+                                        is_container_deleted: false,
+                                        diff: None,
+                                    });
+                                    bring_back_sub_container(
+                                        &diff,
+                                        queue,
+                                        mark_bring_back,
+                                        all_idx,
+                                        states,
+                                        idx2state,
+                                        arena,
+                                    );
+                                    idx2state.insert(idx, diff);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Diff::NewMap(map) => {
+            for (_, v) in map.updated.iter() {
+                if let Some(LoroValue::Container(id)) = &v.value {
+                    let idx = arena.id_to_idx(id).unwrap();
+                    if all_idx.contains(&idx) {
+                        mark_bring_back.insert(idx);
+                    } else if let Some(state) = states.get_mut(&idx) {
+                        let diff = state.to_diff();
+                        if !diff.is_empty() {
+                            queue.push(InternalContainerDiff {
+                                idx,
+                                bring_back: true,
+                                is_container_deleted: false,
+                                diff: None,
+                            });
+                            bring_back_sub_container(
+                                &diff,
+                                queue,
+                                mark_bring_back,
+                                all_idx,
+                                states,
+                                idx2state,
+                                arena,
+                            );
+                            idx2state.insert(idx, diff);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    };
 }
 
 pub fn create_state(idx: ContainerIdx) -> State {

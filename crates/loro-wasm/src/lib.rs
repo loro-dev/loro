@@ -1,16 +1,18 @@
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
+    change::{Lamport, Timestamp},
     container::{
         richtext::{ExpandType, TextStyleInfoFlag},
         ContainerID,
     },
     event::{Diff, Index},
     handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler},
-    id::{Counter, TreeID, ID},
+    id::{Counter, PeerID, TreeID, ID},
     obs::SubID,
     version::Frontiers,
     ContainerType, DiffEvent, LoroDoc, LoroError, LoroValue, VersionVector,
 };
+use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, cmp::Ordering, ops::Deref, panic, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*};
@@ -71,6 +73,12 @@ extern "C" {
     pub type JsStringDelta;
     #[wasm_bindgen(typescript_type = "Map<bigint, number>")]
     pub type JsVersionVectorMap;
+    #[wasm_bindgen(typescript_type = "Map<BigInt, Change[]>")]
+    pub type JsChanges;
+    #[wasm_bindgen(typescript_type = "Change")]
+    pub type JsChange;
+    #[wasm_bindgen(typescript_type = "Map<bigint, number> | Uint8Array")]
+    pub type JsVersionVector;
 }
 
 mod observer {
@@ -114,12 +122,18 @@ mod observer {
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
     let mut frontiers = Frontiers::default();
     for id in ids {
-        let peer: u64 = Reflect::get(&id, &"peer".into())?.try_into()?;
-        let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
-        frontiers.push(ID::new(peer, counter));
+        let id = js_id_to_id(id)?;
+        frontiers.push(id);
     }
 
     Ok(frontiers)
+}
+
+fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
+    let peer: u64 = Reflect::get(&id, &"peer".into())?.try_into()?;
+    let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
+    let id = ID::new(peer, counter);
+    Ok(id)
 }
 
 fn frontiers_to_ids(frontiers: &Frontiers) -> Vec<JsID> {
@@ -163,6 +177,16 @@ fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
     };
 
     Ok(vv)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ChangeMeta {
+    lamport: Lamport,
+    length: usize,
+    peer: PeerID,
+    counter: Counter,
+    deps: Vec<ID>,
+    timestamp: Timestamp,
 }
 
 #[wasm_bindgen]
@@ -434,6 +458,111 @@ impl Loro {
         let oplog = self.0.oplog().lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
+
+    #[wasm_bindgen(js_name = "getAllChanges")]
+    pub fn get_all_changes(&self) -> JsChanges {
+        let oplog = self.0.oplog().lock().unwrap();
+        let changes = oplog.changes();
+        let ans = js_sys::Map::new();
+        for (peer_id, changes) in changes {
+            let row = js_sys::Array::new_with_length(changes.len() as u32);
+            for (i, change) in changes.iter().enumerate() {
+                let change = ChangeMeta {
+                    lamport: change.lamport,
+                    length: change.atom_len(),
+                    peer: change.peer(),
+                    counter: change.id.counter,
+                    deps: change.deps.iter().cloned().collect(),
+                    timestamp: change.timestamp,
+                };
+                row.set(i as u32, serde_wasm_bindgen::to_value(&change).unwrap());
+            }
+            ans.set(&js_sys::BigInt::from(*peer_id).into(), &row);
+        }
+
+        let value: JsValue = ans.into();
+        value.into()
+    }
+
+    #[wasm_bindgen(js_name = "getChangeAt")]
+    pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
+        let id = js_id_to_id(id)?;
+        let oplog = self.0.oplog().lock().unwrap();
+        let change = oplog
+            .get_change_at(id)
+            .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
+        let change = ChangeMeta {
+            lamport: change.lamport,
+            length: change.atom_len(),
+            peer: change.peer(),
+            counter: change.id.counter,
+            deps: change.deps.iter().cloned().collect(),
+            timestamp: change.timestamp,
+        };
+        Ok(serde_wasm_bindgen::to_value(&change).unwrap().into())
+    }
+
+    #[wasm_bindgen(js_name = "getOpsInChange")]
+    pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
+        let id = js_id_to_id(id)?;
+        let oplog = self.0.oplog().lock().unwrap();
+        let change = oplog
+            .get_remote_change_at(id)
+            .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
+        let ops = change
+            .ops()
+            .iter()
+            .map(|op| serde_wasm_bindgen::to_value(op).unwrap())
+            .collect::<Vec<_>>();
+        Ok(ops)
+    }
+
+    /// Convert frontiers to a readable version vector
+    #[wasm_bindgen(js_name = "frontiersToVV")]
+    pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<JsVersionVectorMap> {
+        let frontiers = ids_to_frontiers(frontiers)?;
+        let oplog = self.0.oplog().try_lock().unwrap();
+        oplog
+            .dag()
+            .frontiers_to_vv(&frontiers)
+            .map(|vv| {
+                let ans: JsVersionVectorMap = vv_to_js_value(vv).into();
+                ans
+            })
+            .ok_or_else(|| JsError::new("Frontiers not found").into())
+    }
+
+    /// Convert a version vector to frontiers
+    #[wasm_bindgen(js_name = "vvToFrontiers")]
+    pub fn vv_to_frontiers(&self, vv: &JsVersionVector) -> JsResult<Vec<JsID>> {
+        let value: JsValue = vv.into();
+        let is_bytes = value.is_instance_of::<js_sys::Uint8Array>();
+        let vv = if is_bytes {
+            let bytes = js_sys::Uint8Array::try_from(value.clone()).unwrap_throw();
+            let bytes = bytes.to_vec();
+            VersionVector::decode(&bytes)?
+        } else {
+            let map = js_sys::Map::try_from(value).unwrap_throw();
+            js_map_to_vv(map)?
+        };
+
+        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv);
+        Ok(frontiers_to_ids(&f))
+    }
+}
+
+fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
+    let mut vv = VersionVector::new();
+    for pair in map.entries() {
+        let pair = pair.unwrap_throw();
+        let key = Reflect::get(&pair, &0.into()).unwrap_throw();
+        let peer_id = u64::try_from(key.clone()).expect_throw("PeerID must be u64");
+        let value = Reflect::get(&pair, &1.into()).unwrap_throw();
+        let counter = value.as_f64().expect_throw("Invalid counter") as Counter;
+        vv.insert(peer_id, counter);
+    }
+
+    Ok(vv)
 }
 
 #[allow(unused)]
@@ -946,18 +1075,31 @@ impl LoroTree {
 /// const readableVersion = convertVersionToReadableObj(version);
 /// console.log(readableVersion); // Map(1) { 100n => 1 }
 /// ```
-#[wasm_bindgen(js_name = "convertVersionToReadableMap")]
-pub fn convert_version_to_readable_map(version: &[u8]) -> Result<JsVersionVectorMap, JsValue> {
+#[wasm_bindgen(js_name = "toReadableVersion")]
+pub fn to_readable_version(version: &[u8]) -> Result<JsVersionVectorMap, JsValue> {
     let version_vector = VersionVector::decode(version)?;
+    let map = vv_to_js_value(version_vector);
+    Ok(JsVersionVectorMap::from(map))
+}
+
+#[wasm_bindgen(js_name = "toEncodedVersion")]
+pub fn to_encoded_version(version: JsVersionVectorMap) -> Result<Vec<u8>, JsValue> {
+    let map: JsValue = version.into();
+    let map: js_sys::Map = map.try_into().unwrap_throw();
+    let vv = js_map_to_vv(map)?;
+    let encoded = vv.encode();
+    Ok(encoded)
+}
+
+fn vv_to_js_value(vv: VersionVector) -> JsValue {
     let map = js_sys::Map::new();
-    for (k, v) in version_vector.iter() {
+    for (k, v) in vv.iter() {
         let k = js_sys::BigInt::from(*k);
         let v = JsValue::from(*v);
         map.set(&k.to_owned(), &v);
     }
 
-    let map: JsValue = map.into();
-    Ok(JsVersionVectorMap::from(map))
+    map.into()
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -991,4 +1133,16 @@ export type Delta<T> =
     delete?: undefined;
     insert?: undefined;
   };
+
+export type OpId = { peer: bigint, counter: number };
+/**
+ * Change is a group of continuous operations
+ */
+export interface Change {
+    peer: BigInt,
+    counter: number,
+    lamport: number,
+    length: number,
+    deps: OpId[],
+}
 "#;

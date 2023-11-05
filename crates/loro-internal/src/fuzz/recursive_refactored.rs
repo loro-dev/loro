@@ -2758,7 +2758,297 @@ mod failed_tests {
     }
 
     #[test]
+    fn fuzz_map_bring_back() {
+        test_multi_sites(
+            5,
+            &mut [
+                Map {
+                    site: 6,
+                    container_idx: 63,
+                    key: 255,
+                    value: Container(C::Tree),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 96,
+                    container_idx: 96,
+                    key: 96,
+                    value: Null,
+                },
+                SyncAll,
+                Map {
+                    site: 223,
+                    container_idx: 255,
+                    key: 96,
+                    value: I32(1616928864),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_sub_sub_bring_back() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 65,
+                    container_idx: 65,
+                    key: 65,
+                    value: Container(C::Map),
+                },
+                Map {
+                    site: 50,
+                    container_idx: 7,
+                    key: 7,
+                    value: Container(C::Text),
+                },
+                Sync { from: 0, to: 112 },
+                Text {
+                    site: 0,
+                    container_idx: 13,
+                    pos: 0,
+                    value: 47712,
+                    is_del: false,
+                },
+                Sync { from: 50, to: 50 },
+                SyncAll,
+                Map {
+                    site: 59,
+                    container_idx: 0,
+                    key: 0,
+                    value: Container(C::Map),
+                },
+                List {
+                    site: 65,
+                    container_idx: 65,
+                    key: 112,
+                    value: Null,
+                },
+                List {
+                    site: 67,
+                    container_idx: 65,
+                    key: 65,
+                    value: Null,
+                },
+                Map {
+                    site: 7,
+                    container_idx: 50,
+                    key: 7,
+                    value: Container(C::Text),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_bring_back_sub_is_other_bring_back() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 255,
+                    container_idx: 255,
+                    key: 90,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 255,
+                    container_idx: 255,
+                    key: 199,
+                    value: Container(C::Text),
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                SyncAll,
+                Text {
+                    site: 147,
+                    container_idx: 33,
+                    pos: 251,
+                    value: 37779,
+                    is_del: false,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 68,
+                    key: 68,
+                    value: Null,
+                },
+                List {
+                    site: 75,
+                    container_idx: 0,
+                    key: 75,
+                    value: Null,
+                },
+                Text {
+                    site: 0,
+                    container_idx: 177,
+                    pos: 0,
+                    value: 53883,
+                    is_del: true,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_sub_sub_is_has_diff() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 251,
+                    container_idx: 251,
+                    key: 123,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 255,
+                    container_idx: 251,
+                    key: 123,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 91,
+                    container_idx: 33,
+                    key: 126,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 255,
+                    container_idx: 63,
+                    key: 251,
+                    value: Container(C::Tree),
+                },
+                Map {
+                    site: 255,
+                    container_idx: 148,
+                    key: 255,
+                    value: Container(C::Text),
+                },
+                SyncAll,
+                Sync { from: 14, to: 140 },
+                Map {
+                    site: 126,
+                    container_idx: 0,
+                    key: 58,
+                    value: Null,
+                },
+                List {
+                    site: 251,
+                    container_idx: 63,
+                    key: 255,
+                    value: Container(C::Tree),
+                },
+                List {
+                    site: 56,
+                    container_idx: 40,
+                    key: 255,
+                    value: Null,
+                },
+            ],
+        )
+    }
+
+    #[test]
     fn fuzz_12() {
+        test_multi_sites(
+            5,
+            &mut [
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 69,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 69,
+                    value: Container(C::List),
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 4,
+                    value: Container(C::Text),
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 69,
+                    value: Null,
+                },
+                List {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 4,
+                    container_idx: 255,
+                    key: 47,
+                    value: Null,
+                },
+                Map {
+                    site: 0,
+                    container_idx: 0,
+                    key: 0,
+                    value: Null,
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 69,
+                    value: Null,
+                },
+                Map {
+                    site: 47,
+                    container_idx: 38,
+                    key: 250,
+                    value: Null,
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 69,
+                    value: Container(C::Tree),
+                },
+                Text {
+                    site: 0,
+                    container_idx: 0,
+                    pos: 255,
+                    value: 17919,
+                    is_del: true,
+                },
+                List {
+                    site: 69,
+                    container_idx: 69,
+                    key: 4,
+                    value: I32(553672192),
+                },
+                List {
+                    site: 69,
+                    container_idx: 14,
+                    key: 255,
+                    value: Container(C::Tree),
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn fuzz_14() {
         test_multi_sites(
             5,
             &mut [
@@ -3981,29 +4271,6 @@ mod failed_tests {
                     pos: 116,
                     value: 116,
                     is_del: false,
-                },
-            ],
-        )
-    }
-
-    #[test]
-    fn fuzz_14() {
-        test_multi_sites(
-            5,
-            &mut [
-                Text {
-                    site: 111,
-                    container_idx: 238,
-                    pos: 110,
-                    value: 28270,
-                    is_del: false,
-                },
-                Text {
-                    site: 191,
-                    container_idx: 42,
-                    pos: 191,
-                    value: 37186,
-                    is_del: true,
                 },
             ],
         )

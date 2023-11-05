@@ -18,7 +18,7 @@ use crate::{
         richtext::{Style, StyleKey, TextStyleInfoFlag},
         IntoContainerId,
     },
-    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDelta, TreeDiff},
+    delta::{Delta, MapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
     event::Diff,
     id::{Counter, PeerID, ID},
     op::{Op, RawOp, RawOpContent},
@@ -91,7 +91,7 @@ pub(super) enum EventHint {
         key: InternalString,
         value: Option<LoroValue>,
     },
-    Tree(TreeDiff),
+    Tree(SmallVec<[TreeDiffItem; 2]>),
     MarkEnd,
 }
 
@@ -299,7 +299,7 @@ impl Transaction {
         };
 
         let last_id = change.id_last();
-        if let Err(err) = oplog.import_local_change(change) {
+        if let Err(err) = oplog.import_local_change(change, true) {
             drop(state);
             drop(oplog);
             self._abort();
@@ -315,9 +315,9 @@ impl Transaction {
                     arr.into_iter()
                         .map(|x| InternalContainerDiff {
                             idx: x.idx,
-                            reset: false,
+                            bring_back: false,
                             is_container_deleted: false,
-                            diff: x.diff.into(),
+                            diff: Some(x.diff.into()),
                         })
                         .collect(),
                 ),
@@ -337,7 +337,7 @@ impl Transaction {
         container: ContainerIdx,
         content: RawOpContent,
         event: EventHint,
-        // check whther context and txn are refering to the same state context
+        // check whether context and txn are referring to the same state context
         state_ref: &Weak<Mutex<DocState>>,
     ) -> LoroResult<()> {
         if Arc::as_ptr(&self.state) != Weak::as_ptr(state_ref) {
@@ -606,7 +606,7 @@ fn change_to_diff(
                 EventHint::Tree(tree_diff) => {
                     ans.push(TxnContainerDiff {
                         idx: op.container,
-                        diff: Diff::Tree(TreeDelta::default().push(tree_diff)),
+                        diff: Diff::Tree(TreeDiff::default().extend(tree_diff)),
                     });
                 }
                 EventHint::MarkEnd => {

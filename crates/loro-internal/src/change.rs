@@ -1,9 +1,8 @@
 //! [Change]s are merged ops.
 //!
 //! Every [Change] has deps on other [Change]s. All [Change]s in the document thus form a DAG.
-//! Note, `dep` may point to the middle of the other [Change].
 //!
-//! In future, we may also use [Change] to represent a transaction. But this decision is postponed.
+//! Note: `dep` can only point to the end of the other [Change]. This is the invariant of [Change]s.
 
 use crate::{
     dag::DagNode,
@@ -12,7 +11,7 @@ use crate::{
     span::{HasId, HasLamport},
     version::Frontiers,
 };
-use loro_common::{HasCounter, HasCounterSpan};
+use loro_common::{HasCounter, HasCounterSpan, PeerID};
 use num::traits::AsPrimitive;
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
 use smallvec::SmallVec;
@@ -26,17 +25,17 @@ pub type Lamport = u32;
 // PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 1]>,
-    pub(crate) deps: Frontiers,
+    pub ops: RleVec<[O; 1]>,
+    pub deps: Frontiers,
     /// id of the first op in the change
-    pub(crate) id: ID,
+    pub id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
-    pub(crate) lamport: Lamport,
+    pub lamport: Lamport,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
-    pub(crate) timestamp: Timestamp,
+    pub timestamp: Timestamp,
     /// if it has dependents, it cannot merge with new changes
-    pub(crate) has_dependents: bool,
+    pub has_dependents: bool,
 }
 
 impl<O> Change<O> {
@@ -59,6 +58,10 @@ impl<O> Change<O> {
 
     pub fn ops(&self) -> &RleVec<[O; 1]> {
         &self.ops
+    }
+
+    pub fn peer(&self) -> PeerID {
+        self.id.peer
     }
 
     pub fn lamport(&self) -> Lamport {
