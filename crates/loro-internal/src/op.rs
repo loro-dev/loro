@@ -24,7 +24,7 @@ pub struct Op {
     pub(crate) content: InnerContent,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerID,
