@@ -273,7 +273,7 @@ impl ListState {
     pub fn get(&self, index: usize) -> Option<&LoroValue> {
         let result = self.list.query::<LengthFinder>(&index)?;
         if result.found {
-            Some(&result.elem(&self.list).unwrap().v[result.offset()])
+            Some(&result.elem(&self.list).unwrap().v)
         } else {
             None
         }
@@ -404,6 +404,7 @@ impl ContainerState for ListState {
                 crate::container::list::list_op::ListOp::StyleEnd { .. } => unreachable!(),
             },
         }
+        debug_log::debug_dbg!(&self);
         Ok(())
     }
 
