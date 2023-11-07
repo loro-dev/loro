@@ -620,6 +620,13 @@ impl ListHandler {
         pos: usize,
         c_type: ContainerType,
     ) -> LoroResult<Handler> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, c_type);
         let child_idx = txn.arena.register_container(&container_id);

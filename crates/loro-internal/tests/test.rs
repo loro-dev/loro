@@ -7,6 +7,37 @@ use loro_internal::{
 use serde_json::json;
 
 #[test]
+fn out_of_bound_test() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_list("list").insert_(0, "Hello".into()).unwrap();
+    a.get_list("list").insert_(1, "Hello".into()).unwrap();
+    // expect out of bound err
+    let err = a.get_text("text").insert_(6, "Hello").unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+    let err = a.get_text("text").delete_(3, 5).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+    let err = a
+        .get_text("text")
+        .mark_(0, 8, "h", 5.into(), TextStyleInfoFlag::BOLD)
+        .unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+    let _err = a
+        .get_text("text")
+        .mark_(3, 0, "h", 5.into(), TextStyleInfoFlag::BOLD)
+        .unwrap_err();
+    let err = a.get_list("list").insert_(6, "Hello".into()).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+    let err = a.get_list("list").delete_(3, 2).unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+    let err = a
+        .get_list("list")
+        .insert_container_(3, ContainerType::Map)
+        .unwrap_err();
+    assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
+}
+
+#[test]
 fn list() {
     let a = LoroDoc::new_auto_commit();
     a.get_list("list").insert_(0, "Hello".into()).unwrap();
