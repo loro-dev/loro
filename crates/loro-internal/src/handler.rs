@@ -284,6 +284,13 @@ impl TextHandler {
             return Ok(());
         }
 
+        if pos > self.len_event() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len_event(),
+            });
+        }
+
         let (entity_index, styles) = self
             .state
             .upgrade()
@@ -424,6 +431,11 @@ impl TextHandler {
             ));
         }
 
+        let len = self.len_event();
+        if end > len {
+            return Err(LoroError::OutOfBound { pos: end, len });
+        }
+
         let (entity_start, entity_end) = self
             .state
             .upgrade()
@@ -551,6 +563,13 @@ impl ListHandler {
     }
 
     pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) -> LoroResult<()> {
+        if pos > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len: self.len(),
+            });
+        }
+
         if let Some(container) = v.as_container() {
             self.insert_container(txn, pos, container.container_type())?;
             return Ok(());
@@ -629,6 +648,13 @@ impl ListHandler {
     pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
+        }
+
+        if pos + len > self.len() {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len(),
+            });
         }
 
         txn.apply_local_op(

@@ -18,9 +18,26 @@ fn list() {
         .into_map()
         .unwrap();
     map.insert_("Hello", LoroValue::from("u")).unwrap();
+    let pos = map
+        .insert_container_("pos", ContainerType::Map)
+        .unwrap()
+        .into_map()
+        .unwrap();
+    pos.insert_("x", 0.into()).unwrap();
+    pos.insert_("y", 100.into()).unwrap();
+
     let cid = map.id();
     let id = a.get_list("list").get(1);
-    assert_eq!(id.unwrap().as_container().unwrap(), &cid);
+    assert_eq!(id.as_ref().unwrap().as_container().unwrap(), &cid);
+    let map = a.get_map(id.unwrap().into_container().unwrap());
+    let new_pos = a.get_map(map.get("pos").unwrap().into_container().unwrap());
+    assert_eq!(
+        new_pos.get_deep_value().to_json_value(),
+        json!({
+            "x": 0,
+            "y": 100,
+        })
+    );
 }
 
 #[test]

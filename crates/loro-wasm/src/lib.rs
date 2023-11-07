@@ -154,7 +154,10 @@ fn js_value_to_container_id(
     kind: ContainerType,
 ) -> Result<ContainerID, JsValue> {
     if !cid.is_string() {
-        return Err(JsValue::from_str("ContainerID must be a string"));
+        return Err(JsValue::from_str(&format!(
+            "ContainerID must be a string, but found {}",
+            cid.js_typeof().as_string().unwrap(),
+        )));
     }
 
     let s = cid.as_string().unwrap();
