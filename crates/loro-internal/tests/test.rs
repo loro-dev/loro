@@ -7,6 +7,23 @@ use loro_internal::{
 use serde_json::json;
 
 #[test]
+fn list() {
+    let a = LoroDoc::new_auto_commit();
+    a.get_list("list").insert_(0, "Hello".into()).unwrap();
+    assert_eq!(a.get_list("list").get(0).unwrap(), LoroValue::from("Hello"));
+    let map = a
+        .get_list("list")
+        .insert_container_(1, ContainerType::Map)
+        .unwrap()
+        .into_map()
+        .unwrap();
+    map.insert_("Hello", LoroValue::from("u")).unwrap();
+    let cid = map.id();
+    let id = a.get_list("list").get(1);
+    assert_eq!(id.unwrap().as_container().unwrap(), &cid);
+}
+
+#[test]
 fn richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
     a.subscribe(

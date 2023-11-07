@@ -902,7 +902,11 @@ impl LoroList {
     }
 
     pub fn get(&self, index: usize) -> JsValue {
-        self.0.get(index).into()
+        let Some(v) = self.0.get(index) else {
+            return JsValue::UNDEFINED;
+        };
+
+        JsValue::from(v)
     }
 
     #[wasm_bindgen(js_name = "id", method, getter)]
