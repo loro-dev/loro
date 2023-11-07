@@ -5,7 +5,7 @@
   import "quill/dist/quill.bubble.css";
   import "quill/dist/quill.snow.css";
   import { QuillBinding } from "./binding";
-  import { Loro, setPanicHook, convertVersionToReadableMap } from "loro-crdt";
+  import { Loro, setPanicHook, toReadableVersion } from "loro-crdt";
 
   setPanicHook();
 
@@ -64,7 +64,7 @@
         }
         Promise.resolve().then(() => {
           const version = text.version();
-          const map = convertVersionToReadableMap(version);
+          const map = toReadableVersion(version);
           const versionObj = {};
           for (const [key, value] of map) {
             versionObj[key.toString()] = value;
