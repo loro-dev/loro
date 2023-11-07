@@ -552,6 +552,12 @@ impl Loro {
         let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv);
         Ok(frontiers_to_ids(&f))
     }
+
+    #[wasm_bindgen(js_name = "getDeepValue")]
+    pub fn get_deep_value(&self) -> JsValue {
+        let value = self.0.get_deep_value();
+        JsValue::from(value)
+    }
 }
 
 fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
@@ -852,7 +858,7 @@ impl LoroMap {
         self.0.get_deep_value().into()
     }
 
-    #[wasm_bindgen(js_name = "insertContainer")]
+    #[wasm_bindgen(js_name = "setContainer")]
     pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
