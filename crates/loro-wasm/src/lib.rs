@@ -592,6 +592,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
         origin: e.doc.origin.to_string(),
         target: e.container.id.clone(),
         diff: e.container.diff.to_owned(),
+        from_checkout: e.doc.from_checkout,
     }
     // PERF: converting the events into js values may hurt performance
     .into_js();
@@ -609,6 +610,7 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
     let copy = drop_handler.clone();
     let event = Event {
         from_children: e.from_children,
+        from_checkout: e.doc.from_checkout,
         local: e.doc.local,
         origin: e.doc.origin.to_string(),
         target: e.container.id.clone(),
@@ -643,6 +645,7 @@ pub struct Event {
     pub from_children: bool,
     origin: String,
     target: ContainerID,
+    from_checkout: bool,
     diff: Diff,
     path: JsValue,
 }
@@ -651,6 +654,7 @@ impl Event {
     fn into_js(self) -> JsValue {
         let obj = js_sys::Object::new();
         Reflect::set(&obj, &"local".into(), &self.local.into()).unwrap();
+        Reflect::set(&obj, &"fromCheckout".into(), &self.from_checkout.into()).unwrap();
         Reflect::set(&obj, &"fromChildren".into(), &self.from_children.into()).unwrap();
         Reflect::set(&obj, &"origin".into(), &self.origin.into()).unwrap();
         Reflect::set(&obj, &"target".into(), &self.target.to_string().into()).unwrap();
