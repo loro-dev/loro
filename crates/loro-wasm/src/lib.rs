@@ -284,6 +284,7 @@ impl Loro {
         self.0.commit_with(origin.map(|x| x.into()), None, true);
     }
 
+    /// Get a LoroText by container id
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
         let text = self
@@ -292,6 +293,7 @@ impl Loro {
         Ok(LoroText(text))
     }
 
+    /// Get a LoroMap by container id
     #[wasm_bindgen(js_name = "getMap")]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let map = self
@@ -300,6 +302,7 @@ impl Loro {
         Ok(LoroMap(map))
     }
 
+    /// Get a LoroList by container id
     #[wasm_bindgen(js_name = "getList")]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let list = self
@@ -308,6 +311,7 @@ impl Loro {
         Ok(LoroList(list))
     }
 
+    /// Get a LoroTree by container id
     #[wasm_bindgen(js_name = "getTree")]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let tree = self
@@ -316,6 +320,7 @@ impl Loro {
         Ok(LoroTree(tree))
     }
 
+    /// Get the container corresponding to the container id
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
@@ -331,7 +336,7 @@ impl Loro {
             }
             ContainerType::Text => {
                 let richtext = self.0.get_text(container_id);
-                LoroRichtext(richtext).into()
+                LoroText(richtext).into()
             }
             ContainerType::Tree => {
                 let tree = self.0.get_tree(container_id);
@@ -399,11 +404,14 @@ impl Loro {
         })
     }
 
+    /// Export the snapshot of current version, it's include all content of
+    /// operations and states
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.export_snapshot())
     }
 
+    /// Export updates from the specific version to the current version
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         // `version` may be null or undefined
@@ -411,6 +419,7 @@ impl Loro {
         Ok(self.0.export_from(&vv))
     }
 
+    /// Import a snapshot or a update
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
         self.0.import(update_or_snapshot)?;
         Ok(())
@@ -440,6 +449,10 @@ impl Loro {
         Ok(json.into())
     }
 
+    /// Subscribe to the changes of the loro document. The function will be called when the
+    /// transaction is committed or updates from remote are imported.
+    ///
+    /// Returns a subscription ID, which can be used to unsubscribe.
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
@@ -451,6 +464,7 @@ impl Loro {
             .into_u32()
     }
 
+    /// Unsubscribe by the subscription
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
@@ -462,6 +476,7 @@ impl Loro {
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
+    /// Get all of changes in the oplog
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let oplog = self.0.oplog().lock().unwrap();
@@ -669,6 +684,7 @@ impl Event {
     }
 }
 
+/// The handler of a text or richtext container.
 #[wasm_bindgen]
 pub struct LoroText(TextHandler);
 
@@ -681,12 +697,14 @@ struct MarkRange {
 
 #[wasm_bindgen]
 impl LoroText {
+    /// Insert some string at index.
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
         debug_log::debug_log!("InsertLogWasm");
         self.0.insert_(index, content)?;
         Ok(())
     }
 
+    /// Delete elements from index to index + len
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.0.delete_(index, len)?;
         Ok(())
@@ -763,6 +781,7 @@ impl LoroText {
         Ok(())
     }
 
+    /// Convert the state to string
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
@@ -786,6 +805,7 @@ impl LoroText {
         value.into()
     }
 
+    /// Get the length of text
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.0.len_utf16()
@@ -806,11 +826,13 @@ impl LoroText {
         Ok(ans.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
     pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
+    /// Change the state of this text by delta format.
     #[wasm_bindgen(js_name = "applyDelta")]
     pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
         let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
@@ -820,50 +842,62 @@ impl LoroText {
     }
 }
 
+/// The handler of a map container.
 #[wasm_bindgen]
 pub struct LoroMap(MapHandler);
-const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List";
+const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List, Tree";
 
 #[wasm_bindgen]
 impl LoroMap {
+    /// Set the key with the value.
+    ///
+    /// If the value of the key is exist, the old value will be updated.
     #[wasm_bindgen(js_name = "set")]
     pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
         self.0.insert_(key, value.into())?;
         Ok(())
     }
 
+    /// Remove the key from the map.
     pub fn delete(&mut self, key: &str) -> JsResult<()> {
         self.0.delete_(key)?;
         Ok(())
     }
 
+    /// Get the value of the key.
     pub fn get(&self, key: &str) -> JsValue {
         self.0.get(key).into()
     }
 
+    /// Get the keys and values.
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&self) -> JsValue {
         let value = self.0.get_value();
         value.into()
     }
 
+    /// The container id of this handler.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get the keys and the values. If the type of value is a container, it will be
+    /// resolved recursively.
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_value_deep(&self) -> JsValue {
         self.0.get_deep_value().into()
     }
 
+    /// Set the key with a container.
     #[wasm_bindgen(js_name = "setContainer")]
     pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
+            "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
         let c = self.0.insert_container_(key, type_)?;
@@ -877,6 +911,9 @@ impl LoroMap {
         Ok(container)
     }
 
+    /// Subscribe to the changes of the map.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let id = loro.0.subscribe(
@@ -889,27 +926,38 @@ impl LoroMap {
         Ok(id.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
+
+    /// Get the size of the map.
     #[wasm_bindgen(js_name = "size", method, getter)]
     pub fn size(&self) -> usize {
         self.0.len()
     }
 }
 
+/// The handler of a list container.
 #[wasm_bindgen]
 pub struct LoroList(ListHandler);
 
 #[wasm_bindgen]
 impl LoroList {
+    /// Insert a value at index.
     pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
         self.0.insert_(index, value.into())?;
         Ok(())
     }
 
+    /// Delete elements from index to index + len.
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.0.delete_(index, len)?;
         Ok(())
     }
 
+    /// Get the value at the index.
     pub fn get(&self, index: usize) -> JsValue {
         let Some(v) = self.0.get(index) else {
             return JsValue::UNDEFINED;
@@ -918,32 +966,38 @@ impl LoroList {
         JsValue::from(v)
     }
 
+    /// Get the id of this container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get elements of the list.
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&mut self) -> JsValue {
         self.0.get_value().into()
     }
 
+    /// Get elements of the list. If the type of a element is a container, it will be
+    /// resolved recursively.
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_deep_value(&self) -> JsValue {
         let value = self.0.get_deep_value();
         value.into()
     }
 
+    /// Insert a container at the index.
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(&mut self, pos: usize, container: &str) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
         let _type = match container {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
+            "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let c = self.0.insert_container_(pos, _type)?;
+        let c = self.0.insert_container_(index, _type)?;
         let container = match _type {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
@@ -953,6 +1007,9 @@ impl LoroList {
         Ok(container)
     }
 
+    /// Subscribe to the changes of the list.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -964,20 +1021,27 @@ impl LoroList {
         Ok(ans.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
+
+    /// Get the length of list.
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.0.len()
     }
 }
 
-#[wasm_bindgen]
-pub struct LoroRichtext(TextHandler);
-
+/// The handler of a tree(forest) container.
 #[wasm_bindgen]
 pub struct LoroTree(TreeHandler);
 
 #[wasm_bindgen]
 impl LoroTree {
+    /// Create a new tree node as the child of parent and return an unique tree id.
+    /// If the parent is undefined, the tree node will be a root node.
     pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
@@ -989,6 +1053,9 @@ impl LoroTree {
         Ok(js_id.into())
     }
 
+    /// Move the target tree node to be a child of the parent.
+    /// It's not allowed that the target is an ancestor of the parent
+    /// or the target and the parent are the same node.
     pub fn mov(&mut self, target: JsTreeID, parent: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).unwrap();
@@ -998,42 +1065,51 @@ impl LoroTree {
         Ok(())
     }
 
+    /// Delete a tree node from the forest.
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.0.delete_(target.try_into().unwrap())?;
         Ok(())
     }
 
+    /// Set the tree node as root.
     pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.0.as_root_(target.try_into().unwrap())?;
         Ok(())
     }
 
+    /// Get the associated metadata map container of a tree node.
     #[wasm_bindgen(js_name = "getMeta")]
     pub fn get_meta(&mut self, target: JsTreeID) -> JsResult<LoroMap> {
         let target: JsValue = target.into();
         let meta = self.0.get_meta(target.try_into().unwrap())?;
-        // .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
         Ok(LoroMap(meta))
     }
 
+    /// Get the id of the container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get the flat array of the forest.
+    ///
+    /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
+    /// but also the metatdata, you should use `getDeepValue`.
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&mut self) -> JsValue {
         self.0.get_value().into()
     }
 
+    /// Get the flat array with metadata of the forest.
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_value_deep(&self) -> JsValue {
         self.0.get_deep_value().into()
     }
 
+    /// Get all tree ids of the forest.
     #[wasm_bindgen(js_name = "nodes", method, getter)]
     pub fn nodes(&mut self) -> Vec<JsTreeID> {
         self.0
@@ -1046,6 +1122,8 @@ impl LoroTree {
             .collect()
     }
 
+    /// Get the parent of the specific node.
+    /// Return undefined if the target is a root node.
     #[wasm_bindgen(js_name = "parent")]
     pub fn parent(&mut self, target: JsTreeID) -> JsResult<Option<JsTreeID>> {
         let target: JsValue = target.into();
@@ -1063,6 +1141,9 @@ impl LoroTree {
             .ok_or(format!("Tree node `{}` doesn't exist", id).into())
     }
 
+    /// Subscribe to the changes of the tree.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -1072,6 +1153,12 @@ impl LoroTree {
             }),
         );
         Ok(ans.into_u32())
+    }
+
+    /// Unsubscribe by the subscription.
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
     }
 }
 

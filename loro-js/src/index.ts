@@ -1,8 +1,7 @@
 export * from "loro-wasm";
-import { Delta, PrelimMap } from "loro-wasm";
-import { PrelimText } from "loro-wasm";
-import { PrelimList } from "loro-wasm";
-import { ContainerID, Loro, LoroList, LoroMap, LoroText } from "loro-wasm";
+import { Delta } from "loro-wasm";
+import { PrelimText,PrelimList,PrelimMap } from "loro-wasm";
+import { ContainerID, Loro, LoroList, LoroMap, LoroText , LoroTree, TreeID} from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -37,6 +36,7 @@ export type Value =
   | ContainerID
   | string
   | number
+  | boolean
   | null
   | { [key: string]: Value }
   | Uint8Array
@@ -61,7 +61,12 @@ export type MapDiff = {
   updated: Record<string, Value | undefined>;
 };
 
-export type Diff = ListDiff | TextDiff | MapDiff;
+export type TreeDiff = {
+  type: "tree";
+  diff: {target: TreeID, action: "create"|"delete" } | {target: TreeID; action:"move"; parent: TreeID};
+}
+
+export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 
 export interface LoroEvent {
   local: boolean;
@@ -75,7 +80,7 @@ interface Listener {
   (event: LoroEvent): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
@@ -101,6 +106,7 @@ declare module "loro-wasm" {
     insertContainer(pos: number, container: "Map"): LoroMap;
     insertContainer(pos: number, container: "List"): LoroList;
     insertContainer(pos: number, container: "Text"): LoroText;
+    insertContainer(pos: number, container: "Tree"): LoroTree;
     insertContainer(pos: number, container: string): never;
 
     get(index: number): Value;
@@ -115,6 +121,7 @@ declare module "loro-wasm" {
     setContainer(key: string, container_type: "Map"): LoroMap;
     setContainer(key: string, container_type: "List"): LoroList;
     setContainer(key: string, container_type: "Text"): LoroText;
+    setContainer(key: string, container_type: "Tree"): LoroTree;
     setContainer(key: string, container_type: string): never;
 
     get(key: string): Value;
