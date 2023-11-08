@@ -112,10 +112,10 @@ declare module "loro-wasm" {
   }
 
   interface LoroMap<T extends Record<string, any> = Record<string, any>> {
-    insertContainer(key: string, container_type: "Map"): LoroMap;
-    insertContainer(key: string, container_type: "List"): LoroList;
-    insertContainer(key: string, container_type: "Text"): LoroText;
-    insertContainer(key: string, container_type: string): never;
+    setContainer(key: string, container_type: "Map"): LoroMap;
+    setContainer(key: string, container_type: "List"): LoroList;
+    setContainer(key: string, container_type: "Text"): LoroText;
+    setContainer(key: string, container_type: string): never;
 
     get(key: string): Value;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];

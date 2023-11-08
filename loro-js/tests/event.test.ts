@@ -31,12 +31,12 @@ describe("event", () => {
       lastEvent = event;
     });
     const map = loro.getMap("map");
-    const subMap = map.insertContainer("sub", "Map");
+    const subMap = map.setContainer("sub", "Map");
     subMap.set("0", "1");
     loro.commit();
 
     expect(lastEvent?.path).toStrictEqual(["map", "sub"]);
-    const list = subMap.insertContainer("list", "List");
+    const list = subMap.setContainer("list", "List");
     list.insert(0, "2");
     const text = list.insertContainer(1, "Text");
     loro.commit();
@@ -155,10 +155,10 @@ describe("event", () => {
         times += 1;
       });
 
-      const subMap = map.insertContainer("sub", "Map");
+      const subMap = map.setContainer("sub", "Map");
       loro.commit();
       expect(times).toBe(1);
-      const text = subMap.insertContainer("k", "Text");
+      const text = subMap.setContainer("k", "Text");
       loro.commit();
       expect(times).toBe(2);
       text.insert(0, "123");

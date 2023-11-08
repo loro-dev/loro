@@ -250,7 +250,7 @@ describe("wasm", () => {
   b.set("ab", 123);
   loro.commit();
 
-  const bText = b.insertContainer("hh", "Text");
+  const bText = b.setContainer("hh", "Text");
   loro.commit();
 
   it("map get", () => {
@@ -284,7 +284,7 @@ describe("type", () => {
   it("test recursive map type", () => {
     const loro = new Loro<{ map: LoroMap<{ map: LoroMap<{ name: "he" }> }> }>();
     const map = loro.getTypedMap("map");
-    map.insertContainer("map", "Map");
+    map.setContainer("map", "Map");
 
     const subMap = map.getTyped(loro, "map");
     const name = subMap.getTyped(loro, "name");
