@@ -429,6 +429,7 @@ impl DocState {
             self.record_diff(InternalDocDiff {
                 origin: Default::default(),
                 local: false,
+                from_checkout: false,
                 diff,
                 new_version: Cow::Borrowed(&frontiers),
             });
@@ -664,6 +665,7 @@ impl DocState {
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
         let local = diffs[0].local;
+        let from_checkout = diffs[0].from_checkout;
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
@@ -714,6 +716,7 @@ impl DocState {
             from,
             to,
             origin,
+            from_checkout,
             local,
             diff,
         }

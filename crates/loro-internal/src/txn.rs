@@ -321,6 +321,7 @@ impl Transaction {
                         })
                         .collect(),
                 ),
+                from_checkout: false,
                 new_version: Cow::Borrowed(oplog.frontiers()),
             }),
         );
