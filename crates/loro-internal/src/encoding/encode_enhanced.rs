@@ -5,7 +5,6 @@ use loro_common::{HasCounterSpan, HasIdSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec, Sliceable};
 use serde_columnar::{columnar, iter_from_bytes, to_vec};
 use std::{borrow::Cow, ops::Deref, sync::Arc};
-use zerovec::{vecs::Index32, VarZeroVec};
 
 use crate::{
     change::{Change, Timestamp},
@@ -27,12 +26,9 @@ use crate::{
 
 type PeerIdx = u32;
 
-#[zerovec::make_varule(RootContainerULE)]
-#[zerovec::derive(Serialize, Deserialize)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-struct RootContainer<'a> {
-    #[serde(borrow)]
-    name: Cow<'a, str>,
+struct RootContainer {
+    name: InternalString,
     type_: ContainerType,
 }
 
@@ -149,8 +145,7 @@ struct DocEncoding<'a> {
     style_info: Cow<'a, [u8]>,
     style_key: Vec<usize>,
     style_values: Vec<LoroValue>,
-    #[columnar(borrow)]
-    root_containers: VarZeroVec<'a, RootContainerULE, Index32>,
+    root_containers: Vec<RootContainer>,
     start_counter: Vec<Counter>,
     values: Vec<Option<LoroValue>>,
     clients: Vec<PeerID>,
@@ -379,7 +374,7 @@ pub fn encode_oplog_v2(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
         clients: peers,
         keys,
         start_counter,
-        root_containers: VarZeroVec::from(&root_containers),
+        root_containers,
         normal_containers,
         values,
         style_key: style_key_idx,
@@ -401,7 +396,7 @@ fn extract_containers(
     peer_id_to_idx: &mut FxHashMap<PeerID, PeerIdx>,
     peers: &mut Vec<PeerID>,
 ) -> (
-    Vec<RootContainer<'static>>,
+    Vec<RootContainer>,
     FxHashMap<ContainerIdx, usize>,
     Vec<NormalContainer>,
 ) {
@@ -427,7 +422,7 @@ fn extract_containers(
                     } => {
                         container_idx2index.insert(container, root_containers.len());
                         root_containers.push(RootContainer {
-                            name: Cow::Owned(name.to_string()),
+                            name,
                             type_: container_type,
                         });
                     }
@@ -505,8 +500,8 @@ pub fn decode_oplog_v2(oplog: &mut OpLog, input: &[u8]) -> Result<(), LoroError>
                 return None;
             };
             Some(ContainerID::Root {
-                name: container.name.into(),
-                container_type: ContainerType::from_u8(container.type_),
+                name: container.name.clone(),
+                container_type: container.type_,
             })
         } else {
             let Some(container) = normal_containers.get(idx - root_containers.len()) else {
