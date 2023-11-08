@@ -52,9 +52,16 @@ pub struct LoroDoc {
     arena: SharedArena,
     observer: Arc<Observer>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
+    // when dropping the doc, the txn will be commited
     txn: Arc<Mutex<Option<Transaction>>>,
     auto_commit: bool,
     detached: bool,
+}
+
+impl Default for LoroDoc {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LoroDoc {
@@ -662,18 +669,6 @@ fn parse_encode_header(bytes: &[u8]) -> Result<(&[u8], EncodeMode), LoroError> {
     }
     let mode: EncodeMode = input[0].try_into()?;
     Ok((&input[1..], mode))
-}
-
-impl Default for LoroDoc {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for LoroDoc {
-    fn drop(&mut self) {
-        self.abort_txn();
-    }
 }
 
 #[cfg(test)]
