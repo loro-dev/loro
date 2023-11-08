@@ -1,4 +1,5 @@
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHasher64;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -10,7 +11,10 @@ use crate::{
     InternalString, LoroValue,
 };
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    hash::{Hash, Hasher},
+};
 
 use loro_common::{ContainerID, TreeID};
 
@@ -43,7 +47,19 @@ pub struct DocDiff {
     pub to: Frontiers,
     pub origin: InternalString,
     pub local: bool,
+    /// Whether the diff is created from the checkout operation.
+    pub from_checkout: bool,
     pub diff: Vec<ContainerDiff>,
+}
+
+impl DocDiff {
+    /// Get the unique id of the diff.
+    pub fn id(&self) -> u64 {
+        let mut hasher = FxHasher64::default();
+        self.from.hash(&mut hasher);
+        self.to.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +87,7 @@ pub(crate) enum DiffVariant {
 pub(crate) struct InternalDocDiff<'a> {
     pub(crate) origin: InternalString,
     pub(crate) local: bool,
+    pub(crate) from_checkout: bool,
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
 }
@@ -80,6 +97,7 @@ impl<'a> InternalDocDiff<'a> {
         InternalDocDiff {
             origin: self.origin,
             local: self.local,
+            from_checkout: self.from_checkout,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
         }

@@ -404,6 +404,7 @@ impl LoroDoc {
                         origin,
                         local: false,
                         diff: (diff).into(),
+                        from_checkout: false,
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     });
                 }
@@ -627,6 +628,7 @@ impl LoroDoc {
             origin: "checkout".into(),
             local: true,
             diff: Cow::Owned(diff),
+            from_checkout: true,
             new_version: Cow::Owned(frontiers.clone()),
         });
         let events = state.take_events();
