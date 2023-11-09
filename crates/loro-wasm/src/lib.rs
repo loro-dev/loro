@@ -35,9 +35,22 @@ pub fn set_debug(filter: &str) {
 
 type JsResult<T> = Result<T, JsValue>;
 
-/// The CRDT document.
+/// The CRDTs document. Loro supports different CRDTs include [**List**](LoroList),
+/// [**RichText**](LoroText), [**Map**](LoroMap) and [**Movable Tree**](LoroTree),
+/// you could build all kind of applications by these.
 ///
-/// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
+/// @example
+/// ```ts
+/// import { Loro } import "loro-crdt"
+///
+/// const loro = new Loro();
+/// const text = loro.getText("text");
+/// const list = loro.getList("list");
+/// const map = loro.getMap("Map");
+/// const tree = loro.getTree("tree");
+/// ```
+///
+// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
 pub struct Loro(LoroDoc);
 
@@ -194,6 +207,7 @@ struct ChangeMeta {
 
 #[wasm_bindgen]
 impl Loro {
+    /// Create a new loro document.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let mut doc = LoroDoc::new();
@@ -201,6 +215,18 @@ impl Loro {
         Self(doc)
     }
 
+    /// Get a loro document from the snapshot.
+    ///
+    /// @see You can check out what is the snapshot [here](#).
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } import "loro-crdt"
+    ///
+    /// const bytes = /* The bytes encoded from other loro document *\/;
+    /// const loro = Loro.fromSnapshot(bytes);
+    /// ```
+    ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
         let doc = LoroDoc::from_snapshot(snapshot)?;
@@ -215,6 +241,20 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This method has the same effect as invoking `checkout_to_latest`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// // you need call `attach()` or `checkoutToLatest()` before changing the doc.
+    /// loro.attach();
+    /// text.insert(0, "Hi");
+    /// ```
     pub fn attach(&mut self) {
         self.0.attach();
     }
@@ -227,6 +267,21 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// When `detached`, the document is not editable.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// console.log(doc.is_detached());  // false
+    /// loro.checkout(frontiers);
+    /// console.log(doc.is_detached());  // true
+    /// loro.attach();
+    /// console.log(doc.is_detached());  // false
+    /// ```
     pub fn is_detached(&self) -> bool {
         self.0.is_detached()
     }
@@ -239,6 +294,21 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// // you need call `checkoutToLatest()` or `attach()` before changing the doc.
+    /// loro.checkoutToLatest();
+    /// text.insert(0, "Hi");
+    /// ```
+    #[wasm_bindgen(js_name = "checkoutToLatest")]
     pub fn checkout_to_latest(&mut self) -> JsResult<()> {
         self.0.checkout_to_latest();
         Ok(())
@@ -252,6 +322,20 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    ///
+    /// @param frontiers - the specific frontiers
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// console.log(doc.toJson()); // {"text": ""}
+    /// ```
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.0.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
@@ -285,6 +369,14 @@ impl Loro {
     }
 
     /// Get a LoroText by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// ```
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
         let text = self
@@ -294,6 +386,14 @@ impl Loro {
     }
 
     /// Get a LoroMap by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// ```
     #[wasm_bindgen(js_name = "getMap")]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let map = self
@@ -303,6 +403,14 @@ impl Loro {
     }
 
     /// Get a LoroList by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// ```
     #[wasm_bindgen(js_name = "getList")]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let list = self
@@ -312,6 +420,14 @@ impl Loro {
     }
 
     /// Get a LoroTree by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// ```
     #[wasm_bindgen(js_name = "getTree")]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let tree = self
@@ -321,6 +437,17 @@ impl Loro {
     }
 
     /// Get the container corresponding to the container id
+    ///
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// let text = doc.getText("text");
+    /// const textId = text.id;
+    /// text = doc.getContainerById(textId);
+    /// ```
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
@@ -357,8 +484,9 @@ impl Loro {
     ///
     /// If you checkout to a specific version, the version vector will not change.
     #[inline(always)]
+    #[wasm_bindgen(js_name = "oplogVersion")]
     pub fn oplog_version(&self) -> Vec<u8> {
-        self.0.state_vv().encode()
+        self.0.oplog_vv().encode()
     }
 
     /// Get the frontiers of the current document.
@@ -412,6 +540,21 @@ impl Loro {
     }
 
     /// Export updates from the specific version to the current version
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // get all updates of the doc
+    /// const updates = doc.exportFrom();
+    /// const version = doc.oplogVersion();
+    /// text.insert(5, " World");
+    /// // get updates from specific version to the latest version
+    /// const updates2 = doc.exportFrom(version);
+    /// ```
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         // `version` may be null or undefined
@@ -419,7 +562,28 @@ impl Loro {
         Ok(self.0.export_from(&vv))
     }
 
-    /// Import a snapshot or a update
+    /// Import a snapshot or a update to current doc.
+    ///
+    /// Note:
+    /// - Updates within the current version will be ignored
+    /// - Updates with missing dependencies will be pending until the dependencies are received
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // get all updates of the doc
+    /// const updates = doc.exportFrom();
+    /// const snapshot = doc.exportSnapshot();
+    /// const doc2 = new Loro();
+    /// // import snapshot
+    /// doc2.import(snapshot);
+    /// // or import updates
+    /// doc2.import(updates);
+    /// ```
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
         self.0.import(update_or_snapshot)?;
         Ok(())
@@ -428,6 +592,19 @@ impl Loro {
     /// Import a batch of updates.
     ///
     /// It's more efficient than importing updates one by one.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const updates = doc.exportFrom();
+    /// const snapshot = doc.exportSnapshot();
+    /// const doc2 = new Loro();
+    /// doc2.importUpdateBatch([snapshot, updates]);
+    /// ```
     #[wasm_bindgen(js_name = "importUpdateBatch")]
     pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
         let data = data
@@ -443,6 +620,23 @@ impl Loro {
         Ok(self.0.import_batch(&data)?)
     }
 
+    /// Get the json format of the document state.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, "Hello");
+    /// const text = list.insertContainer(0, "Text");
+    /// text.insert(0, "Hello");
+    /// const map = list.insertContainer(1, "Map");
+    /// map.set("foo", "boo");    
+    /// /*
+    /// {"list": ["Hello", {"foo": "boo"}]}
+    ///  *\/
+    /// console.log(doc.toJson());
     #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
         let json = self.0.get_deep_value();
@@ -453,6 +647,20 @@ impl Loro {
     /// transaction is committed or updates from remote are imported.
     ///
     /// Returns a subscription ID, which can be used to unsubscribe.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// doc.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// text.insert(0, "Hello");
+    /// // the events will be emitted when `commit()` is called.
+    /// doc.commit();
+    /// ```
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
@@ -465,6 +673,21 @@ impl Loro {
     }
 
     /// Unsubscribe by the subscription
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const subscription = doc.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// text.insert(0, "Hello");
+    /// // the events will be emitted when `commit()` is called.
+    /// doc.commit();
+    /// doc.unsubscribe(subscription);
+    /// ```
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
@@ -477,6 +700,23 @@ impl Loro {
     }
 
     /// Get all of changes in the oplog
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const changes = doc.getAllChanges();
+    ///
+    /// for (let [peer, changes] of changes.entries()){
+    ///     console.log("peer: ", peer);
+    ///     for (let change in changes){
+    ///         console.log("change: ", change);
+    ///     }
+    /// }
+    /// ```
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let oplog = self.0.oplog().lock().unwrap();
@@ -502,6 +742,7 @@ impl Loro {
         value.into()
     }
 
+    /// Get the change of a specific ID
     #[wasm_bindgen(js_name = "getChangeAt")]
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
@@ -520,6 +761,7 @@ impl Loro {
         Ok(serde_wasm_bindgen::to_value(&change).unwrap().into())
     }
 
+    /// Get all ops of the change of a specific ID
     #[wasm_bindgen(js_name = "getOpsInChange")]
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
@@ -536,6 +778,17 @@ impl Loro {
     }
 
     /// Convert frontiers to a readable version vector
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const frontiers = doc.frontiers();
+    /// const version = doc.frontiersToVV(frontiers);
+    /// ```
     #[wasm_bindgen(js_name = "frontiersToVV")]
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<JsVersionVectorMap> {
         let frontiers = ids_to_frontiers(frontiers)?;
@@ -551,6 +804,17 @@ impl Loro {
     }
 
     /// Convert a version vector to frontiers
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const version = doc.version();
+    /// const frontiers = doc.vvToFrontiers(version);
+    /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &JsVersionVector) -> JsResult<Vec<JsID>> {
         let value: JsValue = vv.into();
@@ -568,6 +832,7 @@ impl Loro {
         Ok(frontiers_to_ids(&f))
     }
 
+    /// same as `toJson`
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_deep_value(&self) -> JsValue {
         let value = self.0.get_deep_value();
@@ -698,6 +963,15 @@ struct MarkRange {
 #[wasm_bindgen]
 impl LoroText {
     /// Insert some string at index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// ```
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
         debug_log::debug_log!("InsertLogWasm");
         self.0.insert_(index, content)?;
@@ -705,6 +979,18 @@ impl LoroText {
     }
 
     /// Delete elements from index to index + len
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.delete(1, 3);
+    /// const s = text.toString();
+    /// console.log(s); // "Ho"
+    /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.0.delete_(index, len)?;
         Ok(())
@@ -724,6 +1010,16 @@ impl LoroText {
     /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: this is not suitable for unmergeable annotations like comments.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// ```
     pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
         let value: LoroValue = LoroValue::try_from(value)?;
@@ -760,6 +1056,17 @@ impl LoroText {
     /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: you cannot delete unmergeable annotations like comments by this method.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// text.unmark({ start: 0, end: 5 }, "bold");
+    /// ```
     pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
         // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
@@ -791,6 +1098,17 @@ impl LoroText {
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
     ///
     /// The returned value will include the rich text information.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// console.log(text.toDelta());
+    /// ```
     #[wasm_bindgen(js_name = "toDelta")]
     pub fn to_delta(&self) -> JsStringDelta {
         let delta = self.0.get_richtext_value();
@@ -832,7 +1150,20 @@ impl LoroText {
         Ok(())
     }
 
-    /// Change the state of this text by delta format.
+    /// Change the state of this text by delta.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// const delta = text.toDelta();
+    /// const text2 = doc.getText("text2");
+    /// text2.applyDelta(delta);
+    /// ```
     #[wasm_bindgen(js_name = "applyDelta")]
     pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
         let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;

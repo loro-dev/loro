@@ -14,7 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "loro-wasm": "workspace:*"
+    "loro-wasm": "0.3.0"
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.0.1",
