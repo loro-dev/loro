@@ -44,24 +44,6 @@ export type Value =
 
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
-export type Path = (number | string)[];
-
-export type ListDiff = {
-  type: "list";
-  diff: Delta<Value[]>[];
-};
-
-export type TextDiff = {
-  type: "text";
-  diff: Delta<string>[];
-};
-
-export type MapDiff = {
-  type: "map";
-  updated: Record<string, Value | undefined>;
-};
-
-export type Diff = ListDiff | TextDiff | MapDiff;
 
 export interface LoroEvent {
   /**
@@ -81,6 +63,25 @@ export interface LoroEvent {
   target: ContainerID;
   path: Path;
 }
+
+export type Path = (number | string)[];
+
+export type Diff = ListDiff | TextDiff | MapDiff;
+
+export type ListDiff = {
+  type: "list";
+  diff: Delta<Value[]>[];
+};
+
+export type TextDiff = {
+  type: "text";
+  diff: Delta<string>[];
+};
+
+export type MapDiff = {
+  type: "map";
+  updated: Record<string, Value | undefined>;
+};
 
 interface Listener {
   (event: LoroEvent): void;

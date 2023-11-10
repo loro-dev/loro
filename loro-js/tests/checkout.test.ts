@@ -8,23 +8,19 @@ setPanicHook();
 describe("Checkout", () => {
   it("simple checkout", () => {
     const doc = new Loro();
+    doc.setPeerId(0n);
     const text = doc.getText("text");
-    text.insert(0, "hello world");
+    text.insert(0, "H");
     doc.commit();
     const v = doc.frontiers();
-    text.insert(0, "000");
+    text.insert(1, "i");
     expect(doc.toJson()).toStrictEqual({
-      text: "000hello world"
+      text: "Hi"
     });
 
-    doc.checkout(v);
+    doc.checkout([{ peer: 0n, counter: 0 }]);
     expect(doc.toJson()).toStrictEqual({
-      text: "hello world"
-    });
-    v[0].counter -= 1;
-    doc.checkout(v);
-    expect(doc.toJson()).toStrictEqual({
-      text: "hello worl"
+      text: "H"
     });
   });
 
