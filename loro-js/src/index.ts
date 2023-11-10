@@ -94,6 +94,13 @@ export type TreeDiff = {
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 
+export interface LoroEvent {
+  local: boolean;
+  origin?: string;
+  diff: Diff;
+  target: ContainerID;
+  path: Path;
+}
 
 interface Listener {
   (event: LoroEvent): void;

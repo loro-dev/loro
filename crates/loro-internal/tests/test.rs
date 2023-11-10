@@ -1,10 +1,32 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use loro_common::{ContainerID, ContainerType, LoroValue, ID};
 use loro_internal::{
     container::richtext::TextStyleInfoFlag, version::Frontiers, ApplyDiff, LoroDoc, ToJson,
 };
 use serde_json::json;
+
+#[test]
+fn event_from_checkout() {
+    let mut a = LoroDoc::new_auto_commit();
+    let sub_id = a.subscribe_root(Arc::new(|event| {
+        assert!(!event.doc.from_checkout);
+    }));
+    a.get_text("text").insert_(0, "hello").unwrap();
+    a.commit_then_renew();
+    let version = a.oplog_frontiers();
+    a.get_text("text").insert_(0, "hello").unwrap();
+    a.commit_then_renew();
+    a.unsubscribe(sub_id);
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_cloned = ran.clone();
+    a.subscribe_root(Arc::new(move |event| {
+        assert!(event.doc.from_checkout);
+        ran.store(true, std::sync::atomic::Ordering::Relaxed);
+    }));
+    a.checkout(&version).unwrap();
+    assert!(ran_cloned.load(std::sync::atomic::Ordering::Relaxed));
+}
 
 #[test]
 fn out_of_bound_test() {

@@ -1,43 +1,49 @@
-use std::time::Instant;
-
 use bench_utils::TextAction;
 use loro_internal::LoroDoc;
 
 fn main() {
     let actions = bench_utils::get_automerge_actions();
 
-    let loro = LoroDoc::default();
-    let loro_b = LoroDoc::default();
-    let text = loro.get_text("text");
-    let mut i = 0;
-    let start = Instant::now();
-    for TextAction { pos, ins, del } in actions.iter() {
-        {
-            let mut txn = loro.txn().unwrap();
-            text.delete(&mut txn, *pos, *del).unwrap();
-            text.insert(&mut txn, *pos, ins).unwrap();
-        }
+    // let loro = LoroDoc::default();
+    // let loro_b = LoroDoc::default();
+    // let text = loro.get_text("text");
+    // let mut i = 0;
+    // let start = Instant::now();
+    // for TextAction { pos, ins, del } in actions.iter() {
+    //     {
+    //         let mut txn = loro.txn().unwrap();
+    //         text.delete(&mut txn, *pos, *del).unwrap();
+    //         text.insert(&mut txn, *pos, ins).unwrap();
+    //     }
 
-        loro_b
-            .import(&loro.export_from(&loro_b.oplog_vv()))
-            .unwrap();
-        i += 1;
-        if i == 30000 {
-            break;
-        }
+    //     loro_b
+    //         .import(&loro.export_from(&loro_b.oplog_vv()))
+    //         .unwrap();
+    //     i += 1;
+    //     if i == 30000 {
+    //         break;
+    //     }
+    // }
+
+    // println!("{}ms", start.elapsed().as_millis());
+
+    let loro = LoroDoc::default();
+    let text = loro.get_text("text");
+
+    for TextAction { pos, ins, del } in actions.iter() {
+        let mut txn = loro.txn().unwrap();
+        text.delete(&mut txn, *pos, *del).unwrap();
+        text.insert(&mut txn, *pos, ins).unwrap();
+        txn.commit().unwrap();
     }
 
-    println!("{}ms", start.elapsed().as_millis());
-
-    // let loro = LoroDoc::default();
-    // let text = loro.get_text("text");
-
-    // for TextAction { pos, ins, del } in actions.iter() {
-    //     let mut txn = loro.txn().unwrap();
-    //     text.delete(&mut txn, *pos, *del).unwrap();
-    //     text.insert(&mut txn, *pos, ins).unwrap();
-    //     txn.commit().unwrap();
-    // }
+    let snapshot = loro.export_snapshot();
+    let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
+    println!(
+        "snapshot size {} after compression {}",
+        snapshot.len(),
+        output.len()
+    );
 
     // {
     //     // Delta encoding
