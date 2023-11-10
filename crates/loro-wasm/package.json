@@ -1,11 +1,19 @@
 {
   "name": "loro-wasm",
-  "version": "0.3.0",
-  "description": "",
+  "version": "0.4.0",
+  "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
+  "keywords": [
+    "crdt",
+    "CRDTs",
+    "realtime",
+    "collaboration",
+    "sync",
+    "p2p"
+  ],
   "main": "nodejs/loro_wasm.js",
   "module": "bundler/loro_wasm.js",
   "scripts": {},
-  "keywords": [],
+  "homepage": "https://loro.dev",
   "author": "",
   "license": "ISC",
   "devDependencies": {
