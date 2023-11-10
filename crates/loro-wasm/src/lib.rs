@@ -35,9 +35,22 @@ pub fn set_debug(filter: &str) {
 
 type JsResult<T> = Result<T, JsValue>;
 
-/// The CRDT document.
+/// The CRDTs document. Loro supports different CRDTs include [**List**](LoroList),
+/// [**RichText**](LoroText), [**Map**](LoroMap) and [**Movable Tree**](LoroTree),
+/// you could build all kind of applications by these.
 ///
-/// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
+/// @example
+/// ```ts
+/// import { Loro } import "loro-crdt"
+///
+/// const loro = new Loro();
+/// const text = loro.getText("text");
+/// const list = loro.getList("list");
+/// const map = loro.getMap("Map");
+/// const tree = loro.getTree("tree");
+/// ```
+///
+// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
 pub struct Loro(LoroDoc);
 
@@ -194,6 +207,7 @@ struct ChangeMeta {
 
 #[wasm_bindgen]
 impl Loro {
+    /// Create a new loro document.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let mut doc = LoroDoc::new();
@@ -201,6 +215,18 @@ impl Loro {
         Self(doc)
     }
 
+    /// Get a loro document from the snapshot.
+    ///
+    /// @see You can check out what is the snapshot [here](#).
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } import "loro-crdt"
+    ///
+    /// const bytes = /* The bytes encoded from other loro document *\/;
+    /// const loro = Loro.fromSnapshot(bytes);
+    /// ```
+    ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
         let doc = LoroDoc::from_snapshot(snapshot)?;
@@ -215,6 +241,20 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This method has the same effect as invoking `checkout_to_latest`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// // you need call `attach()` or `checkoutToLatest()` before changing the doc.
+    /// loro.attach();
+    /// text.insert(0, "Hi");
+    /// ```
     pub fn attach(&mut self) {
         self.0.attach();
     }
@@ -227,6 +267,21 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// When `detached`, the document is not editable.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// console.log(doc.is_detached());  // false
+    /// loro.checkout(frontiers);
+    /// console.log(doc.is_detached());  // true
+    /// loro.attach();
+    /// console.log(doc.is_detached());  // false
+    /// ```
     pub fn is_detached(&self) -> bool {
         self.0.is_detached()
     }
@@ -239,6 +294,21 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// // you need call `checkoutToLatest()` or `attach()` before changing the doc.
+    /// loro.checkoutToLatest();
+    /// text.insert(0, "Hi");
+    /// ```
+    #[wasm_bindgen(js_name = "checkoutToLatest")]
     pub fn checkout_to_latest(&mut self) -> JsResult<()> {
         self.0.checkout_to_latest();
         Ok(())
@@ -252,6 +322,20 @@ impl Loro {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    ///
+    /// @param frontiers - the specific frontiers
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const frontiers = doc.frontiers();
+    /// text.insert(0, "Hello World!");
+    /// loro.checkout(frontiers);
+    /// console.log(doc.toJson()); // {"text": ""}
+    /// ```
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.0.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
@@ -284,6 +368,15 @@ impl Loro {
         self.0.commit_with(origin.map(|x| x.into()), None, true);
     }
 
+    /// Get a LoroText by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// ```
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
         let text = self
@@ -292,6 +385,15 @@ impl Loro {
         Ok(LoroText(text))
     }
 
+    /// Get a LoroMap by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// ```
     #[wasm_bindgen(js_name = "getMap")]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let map = self
@@ -300,6 +402,15 @@ impl Loro {
         Ok(LoroMap(map))
     }
 
+    /// Get a LoroList by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// ```
     #[wasm_bindgen(js_name = "getList")]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let list = self
@@ -308,6 +419,15 @@ impl Loro {
         Ok(LoroList(list))
     }
 
+    /// Get a LoroTree by container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// ```
     #[wasm_bindgen(js_name = "getTree")]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let tree = self
@@ -316,6 +436,18 @@ impl Loro {
         Ok(LoroTree(tree))
     }
 
+    /// Get the container corresponding to the container id
+    ///
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// let text = doc.getText("text");
+    /// const textId = text.id;
+    /// text = doc.getContainerById(textId);
+    /// ```
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
@@ -331,7 +463,7 @@ impl Loro {
             }
             ContainerType::Text => {
                 let richtext = self.0.get_text(container_id);
-                LoroRichtext(richtext).into()
+                LoroText(richtext).into()
             }
             ContainerType::Tree => {
                 let tree = self.0.get_tree(container_id);
@@ -352,8 +484,9 @@ impl Loro {
     ///
     /// If you checkout to a specific version, the version vector will not change.
     #[inline(always)]
+    #[wasm_bindgen(js_name = "oplogVersion")]
     pub fn oplog_version(&self) -> Vec<u8> {
-        self.0.state_vv().encode()
+        self.0.oplog_vv().encode()
     }
 
     /// Get the frontiers of the current document.
@@ -399,11 +532,29 @@ impl Loro {
         })
     }
 
+    /// Export the snapshot of current version, it's include all content of
+    /// operations and states
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.export_snapshot())
     }
 
+    /// Export updates from the specific version to the current version
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // get all updates of the doc
+    /// const updates = doc.exportFrom();
+    /// const version = doc.oplogVersion();
+    /// text.insert(5, " World");
+    /// // get updates from specific version to the latest version
+    /// const updates2 = doc.exportFrom(version);
+    /// ```
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, version: &JsValue) -> JsResult<Vec<u8>> {
         // `version` may be null or undefined
@@ -411,6 +562,28 @@ impl Loro {
         Ok(self.0.export_from(&vv))
     }
 
+    /// Import a snapshot or a update to current doc.
+    ///
+    /// Note:
+    /// - Updates within the current version will be ignored
+    /// - Updates with missing dependencies will be pending until the dependencies are received
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // get all updates of the doc
+    /// const updates = doc.exportFrom();
+    /// const snapshot = doc.exportSnapshot();
+    /// const doc2 = new Loro();
+    /// // import snapshot
+    /// doc2.import(snapshot);
+    /// // or import updates
+    /// doc2.import(updates);
+    /// ```
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
         self.0.import(update_or_snapshot)?;
         Ok(())
@@ -419,6 +592,19 @@ impl Loro {
     /// Import a batch of updates.
     ///
     /// It's more efficient than importing updates one by one.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const updates = doc.exportFrom();
+    /// const snapshot = doc.exportSnapshot();
+    /// const doc2 = new Loro();
+    /// doc2.importUpdateBatch([snapshot, updates]);
+    /// ```
     #[wasm_bindgen(js_name = "importUpdateBatch")]
     pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
         let data = data
@@ -434,12 +620,48 @@ impl Loro {
         Ok(self.0.import_batch(&data)?)
     }
 
+    /// Get the json format of the document state.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, "Hello");
+    /// const text = list.insertContainer(0, "Text");
+    /// text.insert(0, "Hello");
+    /// const map = list.insertContainer(1, "Map");
+    /// map.set("foo", "bar");    
+    /// /*
+    /// {"list": ["Hello", {"foo": "bar"}]}
+    ///  *\/
+    /// console.log(doc.toJson());
+    /// ```
     #[wasm_bindgen(js_name = "toJson")]
     pub fn to_json(&self) -> JsResult<JsValue> {
         let json = self.0.get_deep_value();
         Ok(json.into())
     }
 
+    /// Subscribe to the changes of the loro document. The function will be called when the
+    /// transaction is committed or updates from remote are imported.
+    ///
+    /// Returns a subscription ID, which can be used to unsubscribe.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// doc.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// text.insert(0, "Hello");
+    /// // the events will be emitted when `commit()` is called.
+    /// doc.commit();
+    /// ```
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> u32 {
         let observer = observer::Observer::new(f);
@@ -451,6 +673,22 @@ impl Loro {
             .into_u32()
     }
 
+    /// Unsubscribe by the subscription
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// const subscription = doc.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// text.insert(0, "Hello");
+    /// // the events will be emitted when `commit()` is called.
+    /// doc.commit();
+    /// doc.unsubscribe(subscription);
+    /// ```
     pub fn unsubscribe(&self, subscription: u32) {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
@@ -462,6 +700,24 @@ impl Loro {
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
+    /// Get all of changes in the oplog
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const changes = doc.getAllChanges();
+    ///
+    /// for (let [peer, changes] of changes.entries()){
+    ///     console.log("peer: ", peer);
+    ///     for (let change in changes){
+    ///         console.log("change: ", change);
+    ///     }
+    /// }
+    /// ```
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let oplog = self.0.oplog().lock().unwrap();
@@ -487,6 +743,7 @@ impl Loro {
         value.into()
     }
 
+    /// Get the change of a specific ID
     #[wasm_bindgen(js_name = "getChangeAt")]
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
@@ -505,6 +762,7 @@ impl Loro {
         Ok(serde_wasm_bindgen::to_value(&change).unwrap().into())
     }
 
+    /// Get all ops of the change of a specific ID
     #[wasm_bindgen(js_name = "getOpsInChange")]
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
@@ -521,6 +779,17 @@ impl Loro {
     }
 
     /// Convert frontiers to a readable version vector
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const frontiers = doc.frontiers();
+    /// const version = doc.frontiersToVV(frontiers);
+    /// ```
     #[wasm_bindgen(js_name = "frontiersToVV")]
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<JsVersionVectorMap> {
         let frontiers = ids_to_frontiers(frontiers)?;
@@ -536,6 +805,17 @@ impl Loro {
     }
 
     /// Convert a version vector to frontiers
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const version = doc.version();
+    /// const frontiers = doc.vvToFrontiers(version);
+    /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &JsVersionVector) -> JsResult<Vec<JsID>> {
         let value: JsValue = vv.into();
@@ -553,6 +833,7 @@ impl Loro {
         Ok(frontiers_to_ids(&f))
     }
 
+    /// same as `toJson`
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_deep_value(&self) -> JsValue {
         let value = self.0.get_deep_value();
@@ -673,6 +954,7 @@ impl Event {
     }
 }
 
+/// The handler of a text or richtext container.
 #[wasm_bindgen]
 pub struct LoroText(TextHandler);
 
@@ -685,12 +967,35 @@ struct MarkRange {
 
 #[wasm_bindgen]
 impl LoroText {
+    /// Insert some string at index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// ```
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
         debug_log::debug_log!("InsertLogWasm");
         self.0.insert_(index, content)?;
         Ok(())
     }
 
+    /// Delete elements from index to index + len
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.delete(1, 3);
+    /// const s = text.toString();
+    /// console.log(s); // "Ho"
+    /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.0.delete_(index, len)?;
         Ok(())
@@ -710,6 +1015,16 @@ impl LoroText {
     /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: this is not suitable for unmergeable annotations like comments.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// ```
     pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
         let value: LoroValue = LoroValue::try_from(value)?;
@@ -746,6 +1061,17 @@ impl LoroText {
     /// *You should make sure that a key is always associated with the same expand type.*
     ///
     /// Note: you cannot delete unmergeable annotations like comments by this method.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// text.unmark({ start: 0, end: 5 }, "bold");
+    /// ```
     pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
         // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
@@ -767,6 +1093,7 @@ impl LoroText {
         Ok(())
     }
 
+    /// Convert the state to string
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
@@ -776,6 +1103,17 @@ impl LoroText {
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
     ///
     /// The returned value will include the rich text information.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// console.log(text.toDelta());  // [ { insert: 'Hello', attributes: { bold: true } } ]
+    /// ```
     #[wasm_bindgen(js_name = "toDelta")]
     pub fn to_delta(&self) -> JsStringDelta {
         let delta = self.0.get_richtext_value();
@@ -790,6 +1128,7 @@ impl LoroText {
         value.into()
     }
 
+    /// Get the length of text
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.0.len_utf16()
@@ -810,11 +1149,26 @@ impl LoroText {
         Ok(ans.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
     pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
         loro.0.unsubscribe(SubID::from_u32(subscription));
         Ok(())
     }
 
+    /// Change the state of this text by delta.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// text.mark({ start: 0, end: 5 }, "bold", true);
+    /// const delta = text.toDelta();
+    /// const text2 = doc.getText("text2");
+    /// text2.applyDelta(delta);
+    /// ```
     #[wasm_bindgen(js_name = "applyDelta")]
     pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
         let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
@@ -824,50 +1178,129 @@ impl LoroText {
     }
 }
 
+/// The handler of a map container.
 #[wasm_bindgen]
 pub struct LoroMap(MapHandler);
-const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List";
+const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Map, List, Tree";
 
 #[wasm_bindgen]
 impl LoroMap {
+    /// Set the key with the value.
+    ///
+    /// If the value of the key is exist, the old value will be updated.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// map.set("foo", "baz");
+    /// ```
     #[wasm_bindgen(js_name = "set")]
     pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
         self.0.insert_(key, value.into())?;
         Ok(())
     }
 
+    /// Remove the key from the map.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// map.delete("foo");
+    /// ```
     pub fn delete(&mut self, key: &str) -> JsResult<()> {
         self.0.delete_(key)?;
         Ok(())
     }
 
+    /// Get the value of the key.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const bar = map.get("foo");
+    /// ```
     pub fn get(&self, key: &str) -> JsValue {
         self.0.get(key).into()
     }
 
+    /// Get the keys and values without being resolved recursively.
+    ///
+    /// {@link LoroMap.getDeepValue}
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const text = map.setContainer("text", "Text");
+    /// text.insert(0, "Hello");
+    /// console.log(map.value);  // {foo: "bar", text: "cid:1@74CAF43A01FF0725:Text"}
+    /// ```
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&self) -> JsValue {
         let value = self.0.get_value();
         value.into()
     }
 
+    /// The container id of this handler.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get the keys and the values. If the type of value is a container, it will be
+    /// resolved recursively.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const text = map.setContainer("text", "Text");
+    /// text.insert(0, "Hello");
+    /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
+    /// ```
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_value_deep(&self) -> JsValue {
         self.0.get_deep_value().into()
     }
 
+    /// Set the key with a container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const text = map.setContainer("text", "Text");
+    /// const list = map.setContainer("list", "List");
+    /// ```
     #[wasm_bindgen(js_name = "setContainer")]
     pub fn insert_container(&mut self, key: &str, container_type: &str) -> JsResult<JsValue> {
         let type_ = match container_type {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
+            "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
         let c = self.0.insert_container_(key, type_)?;
@@ -881,6 +1314,24 @@ impl LoroMap {
         Ok(container)
     }
 
+    /// Subscribe to the changes of the map.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// @param {Listener} f - Event listener
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// map.set("foo", "bar");
+    /// doc.commit();
+    /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let id = loro.0.subscribe(
@@ -893,27 +1344,96 @@ impl LoroMap {
         Ok(id.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// const subscription = map.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// map.set("foo", "bar");
+    /// doc.commit();
+    /// map.unsubscribe(doc, subscription);
+    /// ```
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
+
+    /// Get the size of the map.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// console.log(map.size);   // 1
+    /// ```
     #[wasm_bindgen(js_name = "size", method, getter)]
     pub fn size(&self) -> usize {
         self.0.len()
     }
 }
 
+/// The handler of a list container.
 #[wasm_bindgen]
 pub struct LoroList(ListHandler);
 
 #[wasm_bindgen]
 impl LoroList {
+    /// Insert a value at index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// console.log(list.value);  // [100, "foo", true];
+    /// ```
     pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
         self.0.insert_(index, value.into())?;
         Ok(())
     }
 
+    /// Delete elements from index to index + len.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.delete(0, 1);
+    /// console.log(list.value);  // []
+    /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
         self.0.delete_(index, len)?;
         Ok(())
     }
 
+    /// Get the value at the index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// console.log(list.get(0));  // 100
+    /// console.log(list.get(1));  // undefined
+    /// ```
     pub fn get(&self, index: usize) -> JsValue {
         let Some(v) = self.0.get(index) else {
             return JsValue::UNDEFINED;
@@ -922,32 +1442,74 @@ impl LoroList {
         JsValue::from(v)
     }
 
+    /// Get the id of this container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get elements of the list.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// console.log(list.value);  // [100, "foo", true];
+    /// ```
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&mut self) -> JsValue {
         self.0.get_value().into()
     }
 
+    /// Get elements of the list. If the type of a element is a container, it will be
+    /// resolved recursively.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, "Text");
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// ```
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_deep_value(&self) -> JsValue {
         let value = self.0.get_deep_value();
         value.into()
     }
 
+    /// Insert a container at the index.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, "Text");
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// ```
     #[wasm_bindgen(js_name = "insertContainer")]
-    pub fn insert_container(&mut self, pos: usize, container: &str) -> JsResult<JsValue> {
+    pub fn insert_container(&mut self, index: usize, container: &str) -> JsResult<JsValue> {
         let _type = match container {
             "text" | "Text" => ContainerType::Text,
             "map" | "Map" => ContainerType::Map,
             "list" | "List" => ContainerType::List,
+            "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let c = self.0.insert_container_(pos, _type)?;
+        let c = self.0.insert_container_(index, _type)?;
         let container = match _type {
             ContainerType::Map => LoroMap(c.into_map().unwrap()).into(),
             ContainerType::List => LoroList(c.into_list().unwrap()).into(),
@@ -957,6 +1519,22 @@ impl LoroList {
         Ok(container)
     }
 
+    /// Subscribe to the changes of the list.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// list.insert(0, 100);
+    /// doc.commit();
+    /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -968,20 +1546,78 @@ impl LoroList {
         Ok(ans.into_u32())
     }
 
+    /// Unsubscribe by the subscription.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// const subscription = list.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// list.insert(0, 100);
+    /// doc.commit();
+    /// list.unsubscribe(doc, subscription);
+    /// ```
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
+
+    /// Get the length of list.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// list.insert(1, "foo");
+    /// list.insert(2, true);
+    /// console.log(list.length);  // 3
+    /// ```
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.0.len()
     }
 }
 
-#[wasm_bindgen]
-pub struct LoroRichtext(TextHandler);
-
+/// The handler of a tree(forest) container.
 #[wasm_bindgen]
 pub struct LoroTree(TreeHandler);
 
 #[wasm_bindgen]
 impl LoroTree {
+    /// Create a new tree node as the child of parent and return an unique tree id.
+    /// If the parent is undefined, the tree node will be a root node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// /*
+    /// [
+    ///   {
+    ///     id: '1@45D9F599E6B4209B',
+    ///     parent: '0@45D9F599E6B4209B',
+    ///     meta: 'cid:1@45D9F599E6B4209B:Map'
+    ///   },
+    ///   {
+    ///     id: '0@45D9F599E6B4209B',
+    ///     parent: null,
+    ///     meta: 'cid:0@45D9F599E6B4209B:Map'
+    ///   }
+    /// ]
+    ///  *\/
+    /// console.log(tree.value);
+    /// ```
     pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
@@ -993,6 +1629,23 @@ impl LoroTree {
         Ok(js_id.into())
     }
 
+    /// Move the target tree node to be a child of the parent.
+    /// It's not allowed that the target is an ancestor of the parent
+    /// or the target and the parent are the same node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// const node2 = tree.create(node);
+    /// tree.mov(node2, root);
+    /// // Error wiil be thrown if move operation creates a cycle
+    /// tree.mov(root, node);
+    /// ```
     pub fn mov(&mut self, target: JsTreeID, parent: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).unwrap();
@@ -1002,42 +1655,137 @@ impl LoroTree {
         Ok(())
     }
 
+    /// Delete a tree node from the forest.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// tree.delete(node);
+    /// /*
+    /// [
+    ///   {
+    ///     id: '0@40553779E43298C6',
+    ///     parent: null,
+    //     meta: 'cid:0@40553779E43298C6:Map'
+    ///   }
+    /// ]
+    ///  *\/
+    /// console.log(tree.value);
+    /// ```
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.0.delete_(target.try_into().unwrap())?;
         Ok(())
     }
 
+    /// Set the tree node as root.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// tree.root(node);
+    /// /*
+    /// [
+    ///   {
+    ///     id: '1@40553779E43298C6',
+    ///     parent: null,
+    //     meta: 'cid:1@40553779E43298C6:Map'
+    ///   },
+    ///   {
+    ///     id: '0@40553779E43298C6',
+    ///     parent: null,
+    ///     meta: 'cid:0@40553779E43298C6:Map'
+    ///   }
+    /// ]
+    ///  *\/
+    /// ```
     pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.0.as_root_(target.try_into().unwrap())?;
         Ok(())
     }
 
+    /// Get the associated metadata map container of a tree node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const rootMeta = tree.getMeta(root);
+    /// rootMeta.set("color", "red");
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
+    /// console.log(tree.getDeepValue());
+    /// ```
     #[wasm_bindgen(js_name = "getMeta")]
     pub fn get_meta(&mut self, target: JsTreeID) -> JsResult<LoroMap> {
         let target: JsValue = target.into();
         let meta = self.0.get_meta(target.try_into().unwrap())?;
-        // .insert_meta(txn.as_mut()?, target.try_into().unwrap(), key, value.into())?;
         Ok(LoroMap(meta))
     }
 
+    /// Get the id of the container.
     #[wasm_bindgen(js_name = "id", method, getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = self.0.id().into();
         value.into()
     }
 
+    /// Get the flat array of the forest.
+    ///
+    /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
+    /// but also the metatdata, you should use `getDeepValue`.
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&mut self) -> JsValue {
         self.0.get_value().into()
     }
 
+    /// Get the flat array with metadata of the forest.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const rootMeta = tree.getMeta(root);
+    /// rootMeta.set("color", "red");
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: 'cid:0@F2462C4159C4C8D1:Map' } ]
+    /// console.log(tree.value);
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
+    /// console.log(tree.getDeepValue());
+    /// ```
     #[wasm_bindgen(js_name = "getDeepValue")]
     pub fn get_value_deep(&self) -> JsValue {
         self.0.get_deep_value().into()
     }
 
+    /// Get all tree ids of the forest.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// const node2 = tree.create(node);
+    /// console.log(tree.nodes) // [ '1@A5024AE0E00529D2', '2@A5024AE0E00529D2', '0@A5024AE0E00529D2' ]
+    /// ```
     #[wasm_bindgen(js_name = "nodes", method, getter)]
     pub fn nodes(&mut self) -> Vec<JsTreeID> {
         self.0
@@ -1050,7 +1798,21 @@ impl LoroTree {
             .collect()
     }
 
-    #[wasm_bindgen(js_name = "parent")]
+    /// Get the parent of the specific node.
+    /// Return undefined if the target is a root node.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// const node2 = tree.create(node);
+    /// console.log(tree.parent(node2)) // '1@B75DEC6222870A0'
+    /// console.log(tree.parent(root))  // undefined
+    /// ```
     pub fn parent(&mut self, target: JsTreeID) -> JsResult<Option<JsTreeID>> {
         let target: JsValue = target.into();
         let id = target
@@ -1067,6 +1829,23 @@ impl LoroTree {
             .ok_or(format!("Tree node `{}` doesn't exist", id).into())
     }
 
+    /// Subscribe to the changes of the tree.
+    ///
+    /// returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// tree.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// doc.commit();
+    /// ```
     pub fn subscribe(&self, loro: &Loro, f: js_sys::Function) -> JsResult<u32> {
         let observer = observer::Observer::new(f);
         let ans = loro.0.subscribe(
@@ -1077,18 +1856,40 @@ impl LoroTree {
         );
         Ok(ans.into_u32())
     }
+
+    /// Unsubscribe by the subscription.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const tree = doc.getTree("tree");
+    /// const subscription = tree.subscribe((event)=>{
+    ///     console.log(event);
+    /// });
+    /// const root = tree.create();
+    /// const node = tree.create(root);
+    /// doc.commit();
+    /// tree.unsubscribe(doc, subscription);
+    /// ```
+    pub fn unsubscribe(&self, loro: &Loro, subscription: u32) -> JsResult<()> {
+        loro.0.unsubscribe(SubID::from_u32(subscription));
+        Ok(())
+    }
 }
 
 /// Convert a encoded version vector to a readable js Map.
 ///
-/// # Example
+/// @example
+/// ```ts
+/// import { Loro } from "loro-crdt";
 ///
-/// ```js
-/// const loro = new Loro();
-/// loro.setPeerId('100');
-/// loro.getText("t").insert(0, 'a');
-/// loro.commit();
-/// const version = loro.getVersion();
+/// const doc = new Loro();
+/// doc.setPeerId('100');
+/// doc.getText("t").insert(0, 'a');
+/// doc.commit();
+/// const version = doc.getVersion();
 /// const readableVersion = convertVersionToReadableObj(version);
 /// console.log(readableVersion); // Map(1) { 100n => 1 }
 /// ```
@@ -1099,6 +1900,21 @@ pub fn to_readable_version(version: &[u8]) -> Result<JsVersionVectorMap, JsValue
     Ok(JsVersionVectorMap::from(map))
 }
 
+/// Convert a readable js Map to a encoded version vector.
+///
+/// @example
+/// ```ts
+/// import { Loro } from "loro-crdt";
+///
+/// const doc = new Loro();
+/// doc.setPeerId('100');
+/// doc.getText("t").insert(0, 'a');
+/// doc.commit();
+/// const version = doc.getVersion();
+/// const readableVersion = convertVersionToReadableObj(version);
+/// console.log(readableVersion); // Map(1) { 100n => 1 }
+/// const encodedVersion = toEncodedVersion(readableVersion);
+/// ```
 #[wasm_bindgen(js_name = "toEncodedVersion")]
 pub fn to_encoded_version(version: JsVersionVectorMap) -> Result<Vec<u8>, JsValue> {
     let map: JsValue = version.into();
@@ -1121,16 +1937,66 @@ fn vv_to_js_value(vv: VersionVector) -> JsValue {
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
+/**
+* Container types supported by loro.
+* 
+* It is most commonly used to specify the type of subcontainer to be created.
+* @example
+* ```ts
+* import { Loro } from "loro-crdt";
+* 
+* const doc = new Loro();
+* const list = doc.getList("list");
+* list.insert(0, 100);
+* const containerType = "Text";
+* const text = list.insertContainer(1, containerType);
+* ```
+*/
 export type ContainerType = "Text" | "Map" | "List"| "Tree";
+
+/**
+* The unique id of each container.
+* 
+* @example
+* ```ts
+* import { Loro } from "loro-crdt";
+* 
+* const doc = new Loro();
+* const list = doc.getList("list");
+* const containerId = list.id;
+* ```
+*/
 export type ContainerID =
   | `cid:root-${string}:${ContainerType}`
   | `cid:${number}@${string}:${ContainerType}`;
+
+/**
+ * The unique id of each tree node.
+ */
 export type TreeID = `${number}@${string}`;
 
 interface Loro {
     exportFrom(version?: Uint8Array): Uint8Array;
     getContainerById(id: ContainerID): LoroText | LoroMap | LoroList;
 }
+/**
+ * Represents a `Delta` type which is a union of different operations that can be performed.
+ *
+ * @typeparam T - The data type for the `insert` operation.
+ *
+ * The `Delta` type can be one of three distinct shapes:
+ * 
+ * 1. Insert Operation:
+ *    - `insert`: The item to be inserted, of type T.
+ *    - `attributes`: (Optional) A dictionary of attributes, describing styles in richtext
+ * 
+ * 2. Delete Operation:
+ *    - `delete`: The number of elements to delete.
+ * 
+ * 3. Retain Operation:
+ *    - `retain`: The number of elements to retain.
+ *    - `attributes`: (Optional) A dictionary of attributes, describing styles in richtext
+ */
 export type Delta<T> =
   | {
     insert: T;
@@ -1150,7 +2016,9 @@ export type Delta<T> =
     delete?: undefined;
     insert?: undefined;
   };
-
+/**
+ * The unique id of each operation.
+ */
 export type OpId = { peer: bigint, counter: number };
 /**
  * Change is a group of continuous operations

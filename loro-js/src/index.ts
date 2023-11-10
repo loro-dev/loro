@@ -1,8 +1,7 @@
 export * from "loro-wasm";
-import { Delta, PrelimMap } from "loro-wasm";
-import { PrelimText } from "loro-wasm";
-import { PrelimList } from "loro-wasm";
-import { ContainerID, Loro, LoroList, LoroMap, LoroText } from "loro-wasm";
+import { Delta } from "loro-wasm";
+import { PrelimText,PrelimList,PrelimMap } from "loro-wasm";
+import { ContainerID, Loro, LoroList, LoroMap, LoroText , LoroTree, TreeID} from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -33,22 +32,39 @@ LoroMap.prototype.setTyped = function (...args) {
   return this.set(...args);
 };
 
+/**
+ * Data types supported by loro
+ */
 export type Value =
   | ContainerID
   | string
   | number
+  | boolean
   | null
   | { [key: string]: Value }
   | Uint8Array
   | Value[];
 
+
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
+/**
+ * Represents a path to identify the exact location of an event's target.
+ * The path is composed of numbers (e.g., indices of a list container) and strings 
+ * (e.g., keys of a map container), indicating the absolute position of the event's source
+ * within a loro document.
+ */
+export type Path = (number | string)[];
 
+/**
+ * The event of Loro.
+ * @prop local - Indicates whether the event is local.
+ * @prop origin - (Optional) Provides information about the origin of the event.
+ * @prop diff - Contains the differential information related to the event.
+ * @prop target - Identifies the container ID of the event's target.
+ * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
+ */
 export interface LoroEvent {
-  /**
-   * If true, this event was triggered by a local change.
-   */
   local: boolean;
   origin?: string;
   /**
@@ -63,10 +79,6 @@ export interface LoroEvent {
   target: ContainerID;
   path: Path;
 }
-
-export type Path = (number | string)[];
-
-export type Diff = ListDiff | TextDiff | MapDiff;
 
 export type ListDiff = {
   type: "list";
@@ -83,11 +95,18 @@ export type MapDiff = {
   updated: Record<string, Value | undefined>;
 };
 
+export type TreeDiff = {
+  type: "tree";
+  diff: {target: TreeID, action: "create"|"delete" } | {target: TreeID; action:"move"; parent: TreeID};
+}
+
+export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
+
 interface Listener {
   (event: LoroEvent): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List"];
+const CONTAINER_TYPES = ["Map", "Text", "List", "Tree"];
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
@@ -113,6 +132,7 @@ declare module "loro-wasm" {
     insertContainer(pos: number, container: "Map"): LoroMap;
     insertContainer(pos: number, container: "List"): LoroList;
     insertContainer(pos: number, container: "Text"): LoroText;
+    insertContainer(pos: number, container: "Tree"): LoroTree;
     insertContainer(pos: number, container: string): never;
 
     get(index: number): Value;
@@ -127,6 +147,7 @@ declare module "loro-wasm" {
     setContainer(key: string, container_type: "Map"): LoroMap;
     setContainer(key: string, container_type: "List"): LoroList;
     setContainer(key: string, container_type: "Text"): LoroText;
+    setContainer(key: string, container_type: "Tree"): LoroTree;
     setContainer(key: string, container_type: string): never;
 
     get(key: string): Value;
