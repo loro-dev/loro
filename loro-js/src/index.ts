@@ -95,8 +95,19 @@ export type TreeDiff = {
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 
 export interface LoroEvent {
+  /**
+   * If true, this event was triggered by a local change.
+   */
   local: boolean;
   origin?: string;
+  /**
+   * If true, this event was triggered by a child container.
+   */
+  fromChildren: boolean;
+  /**
+   * If true, this event was triggered by a checkout.
+   */
+  fromCheckout: boolean;
   diff: Diff;
   target: ContainerID;
   path: Path;
