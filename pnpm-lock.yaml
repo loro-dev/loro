@@ -57,7 +57,7 @@ importers:
   loro-js:
     dependencies:
       loro-wasm:
-        specifier: 0.3.0
+        specifier: workspace:*
         version: link:../crates/loro-wasm
     devDependencies:
       '@rollup/plugin-node-resolve':
