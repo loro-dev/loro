@@ -32,6 +32,9 @@ LoroMap.prototype.setTyped = function (...args) {
   return this.set(...args);
 };
 
+/**
+ * Data types supported by loro
+ */
 export type Value =
   | ContainerID
   | string
@@ -42,9 +45,32 @@ export type Value =
   | Uint8Array
   | Value[];
 
+
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
+/**
+ * Represents a path to identify the exact location of an event's target.
+ * The path is composed of numbers (e.g., indices of a list container) and strings 
+ * (e.g., keys of a map container), indicating the absolute position of the event's source
+ * within a loro document.
+ */
 export type Path = (number | string)[];
+
+/**
+ * The event of Loro.
+ * @prop local - Indicates whether the event is local.
+ * @prop origin - (Optional) Provides information about the origin of the event.
+ * @prop diff - Contains the differential information related to the event.
+ * @prop target - Identifies the container ID of the event's target.
+ * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
+ */
+export interface LoroEvent {
+  local: boolean;
+  origin?: string;
+  diff: Diff;
+  target: ContainerID;
+  path: Path;
+}
 
 export type ListDiff = {
   type: "list";
@@ -68,13 +94,6 @@ export type TreeDiff = {
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 
-export interface LoroEvent {
-  local: boolean;
-  origin?: string;
-  diff: Diff;
-  target: ContainerID;
-  path: Path;
-}
 
 interface Listener {
   (event: LoroEvent): void;
