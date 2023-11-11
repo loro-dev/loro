@@ -7,10 +7,8 @@
 </p>
 <h1 align="center">
 <a href="https://loro.dev" alt="loro-site">Loro</a><br/>
-</h1>
-<h2 align="center">
 Reimagine state management with CRDTs
-</h2>
+</h1>
 <p align="center">
 Make your app state synchronized and collaborative effortlessly.
 </p>
@@ -27,8 +25,9 @@ Make your app state synchronized and collaborative effortlessly.
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to persist and sync state easily. It is designed to make building [local-first apps][local-first] easier. 
 
-**You can build time travel feature easily with Loro**
+**You can build time travel feature easily with Loro**. 
 
+[![202311072214(2)](https://github.com/loro-dev/loro/assets/18425020/5f9b5f50-d6d8-4557-a95f-9050b8027e22)](https://github.com/zxch3n/loro-react-flow-example)
 
 # Features
 
