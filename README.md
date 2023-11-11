@@ -6,11 +6,11 @@
   </a>
 </p>
 <h1 align="center">
-<a href="https://loro.dev" alt="loro-site">Loro</a><br/>
+<a href="https://loro.dev" alt="loro-site">Loro</a>
 </h1>
 <p align="center">
-<b>Reimagine state management with CRDTs 🦜</b><br/>
-Make your app state synchronized and collaborative effortlessly.
+  <b>Reimagine state management with CRDTs 🦜</b><br/>
+  Make your app state synchronized and collaborative effortlessly.
 </p>
 <p align="center">
   <a aria-label="X" href="https://x.com/loro_dev" target="_blank">
