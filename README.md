@@ -7,8 +7,11 @@
 </p>
 <h1 align="center">
 <a href="https://loro.dev" alt="loro-site">Loro</a><br/>
-Sync state easily with CRDTs
 </h1>
+<p align="center">
+<b>Reimagine state management with CRDTs 🦜</b><br/>
+Make your app state synchronized and collaborative effortlessly.
+</p>
 <p align="center">
   <a aria-label="X" href="https://x.com/loro_dev" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Twitter-black?style=for-the-badge&logo=Twitter">
@@ -18,13 +21,15 @@ Sync state easily with CRDTs
   </a>
 </p>
 
-> **Notice**: The current API and encoding schema of Loro are subject to change. It is not recommended for use in production environments at this time.
+> **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. 
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to persist and sync state easily. It is designed to make building [local-first apps][local-first] easier. 
 
-**What are CRDTs**? Conflict-free Replicated Data Types (CRDTs) are data structures that enable automatic conflict resolution. It allows users to make changes together, in real-time or asynchronously, without conflicting or relying on a central server. 
-
 # Features
+
+> **You can build time travel feature easily with Loro**. 
+
+[![202311072214(2)](https://github.com/loro-dev/loro/assets/18425020/5f9b5f50-d6d8-4557-a95f-9050b8027e22)](https://github.com/zxch3n/loro-react-flow-example)
 
 ## Supported CRDT Algorithms
 
@@ -33,22 +38,23 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 - **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Details on this will be explored further in an upcoming blog post.
 - **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
 
-## Special Powers of Loro
+## Advanced Features in Loro
 
 - **Preserve Editing History**
   - With Loro, you can track changes effortlessly as it records the editing history with low overhead. 
   - This feature is essential for audit trails, undo/redo functionality, and understanding the evolution of your data over time.
 - **Time Travel Through History**
   - It allows users to compare and merge manually when needed, although CRDTs typically resolve conflicts well.
+- **High Performance**
+  - [See benchmarks](https://www.loro.dev/docs/performance).
 
 ## Features Provided by CRDTs
 
-- **High Performance**
-- **Decentralized Synchronization**: Loro allows your app's state can be synced via p2p connections.
-- **Automatic Merging**: Say goodbye to merge conflicts. Loro guarantees eventual consistency, automating the merging of concurrent changes.
-- **Local Availability**: Data is persistently available on users' devices, ensuring offline functionality and real-time responsiveness.
+- **Decentralized Synchronization**: Loro allows your app's state synced via p2p connections.
+- **Automatic Merging**: CRDTs guarantee strong eventual consistency by automating the merging of concurrent changes.
+- **Local Availability**: Data can be persisted on users' devices, supporting offline functionality and real-time responsiveness. 
 - **Scalability**: Effortlessly scale your application horizontally thanks to the inherently distributed nature of CRDTs.
-- **Delta Updates**: Loro has out-of-the-box support for delta updates.
+- **Delta Updates**
 
 # Credits
 

@@ -24,7 +24,7 @@ it("basic example", () => {
     map: { key: "value" }
   });
 
-  // delete 1 element at index 0
+  // delete 2 elements at index 0
   list.delete(0, 2)
   expect(doc.toJson()).toStrictEqual({
     list: ["C"],
