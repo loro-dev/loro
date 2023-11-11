@@ -21,15 +21,13 @@
   </a>
 </p>
 
+![Rich text example](https://github.com/loro-dev/loro/assets/18425020/54b6975d-ea9e-4c77-9423-c7733b12a251)
+
 > **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. 
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to persist and sync state easily. It is designed to make building [local-first apps][local-first] easier. 
 
 # Features
-
-> **You can build time travel feature easily with Loro**.
-
-[![Time travel example](https://github.com/loro-dev/loro/assets/18425020/41e10cbc-4940-4bc7-83d5-3cad99783740)](https://github.com/zxch3n/loro-react-flow-example)
 
 ## Supported CRDT Algorithms
 
@@ -37,9 +35,6 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 - **Text Editing with Fugue**: Loro integrates [Fugue](https://arxiv.org/abs/2305.00583), a CRDT algorithm designed to minimize interleaving anomalies in concurrent text editing.
 - **Peritext-like Rich Text CRDT**: Drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/), Loro manages rich text CRDTs that excel at merging concurrent rich text style edits, maintaining the original intent of users input as much as possible. Details on this will be explored further in an upcoming blog post.
 - **Moveable Tree**: For applications requiring directory-like data manipulation, Loro utilizes the algorithm from [*A Highly-Available Move Operation for Replicated Trees*](https://ieeexplore.ieee.org/document/9563274), which simplifies the process of moving hierarchical data structures.
-
-![Rich Text Example](https://github.com/loro-dev/loro/assets/18425020/e1ce3952-c071-40e2-a9b6-51eac78e7622)
-
 
 ## Advanced Features in Loro
 
@@ -50,6 +45,10 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
   - It allows users to compare and merge manually when needed, although CRDTs typically resolve conflicts well.
 - **High Performance**
   - [See benchmarks](https://www.loro.dev/docs/performance).
+
+> **You can build time travel feature easily with Loro**.
+
+[![Time travel example](https://github.com/loro-dev/loro/assets/18425020/41e10cbc-4940-4bc7-83d5-3cad99783740)](https://github.com/zxch3n/loro-react-flow-example)
 
 ## Features Provided by CRDTs
 
