@@ -7,8 +7,13 @@
 </p>
 <h1 align="center">
 <a href="https://loro.dev" alt="loro-site">Loro</a><br/>
-Sync state easily with CRDTs
 </h1>
+<h2 align="center">
+Reimagine state management with CRDTs
+</h2>
+<p align="center">
+Make your app state synchronized and collaborative effortlessly.
+</p>
 <p align="center">
   <a aria-label="X" href="https://x.com/loro_dev" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Twitter-black?style=for-the-badge&logo=Twitter">
@@ -18,11 +23,12 @@ Sync state easily with CRDTs
   </a>
 </p>
 
-> **Notice**: The current API and encoding schema of Loro are subject to change. It is not recommended for use in production environments at this time.
+> **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. 
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to persist and sync state easily. It is designed to make building [local-first apps][local-first] easier. 
 
-**What are CRDTs**? Conflict-free Replicated Data Types (CRDTs) are data structures that enable automatic conflict resolution. It allows users to make changes together, in real-time or asynchronously, without conflicting or relying on a central server. 
+**You can build time travel feature easily with Loro**
+
 
 # Features
 
