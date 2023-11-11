@@ -27,9 +27,9 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 
 # Features
 
-> **You can build time travel feature easily with Loro**. 
+> **You can build time travel feature easily with Loro**.
 
-[![202311072214(2)](https://github.com/loro-dev/loro/assets/18425020/5f9b5f50-d6d8-4557-a95f-9050b8027e22)](https://github.com/zxch3n/loro-react-flow-example)
+[![202311111620(1)](https://github.com/loro-dev/loro/assets/18425020/41e10cbc-4940-4bc7-83d5-3cad99783740)](https://github.com/zxch3n/loro-react-flow-example)
 
 ## Supported CRDT Algorithms
 
