@@ -1,6 +1,6 @@
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
-    change::{Lamport, Timestamp},
+    change::Lamport,
     container::{
         richtext::{ExpandType, TextStyleInfoFlag},
         ContainerID,
@@ -198,11 +198,18 @@ fn js_value_to_version(version: &JsValue) -> Result<VersionVector, JsValue> {
 #[derive(Debug, Clone, Serialize)]
 struct ChangeMeta {
     lamport: Lamport,
-    length: usize,
+    length: u32,
     peer: PeerID,
     counter: Counter,
     deps: Vec<ID>,
-    timestamp: Timestamp,
+    timestamp: f64,
+}
+
+impl ChangeMeta {
+    fn to_js(&self) -> JsValue {
+        let s = serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
+        self.serialize(&s).unwrap()
+    }
 }
 
 #[wasm_bindgen]
@@ -632,7 +639,7 @@ impl Loro {
     /// const text = list.insertContainer(0, "Text");
     /// text.insert(0, "Hello");
     /// const map = list.insertContainer(1, "Map");
-    /// map.set("foo", "bar");    
+    /// map.set("foo", "bar");
     /// /*
     /// {"list": ["Hello", {"foo": "bar"}]}
     ///  *\/
@@ -728,13 +735,13 @@ impl Loro {
             for (i, change) in changes.iter().enumerate() {
                 let change = ChangeMeta {
                     lamport: change.lamport,
-                    length: change.atom_len(),
+                    length: change.atom_len() as u32,
                     peer: change.peer(),
                     counter: change.id.counter,
                     deps: change.deps.iter().cloned().collect(),
-                    timestamp: change.timestamp,
+                    timestamp: change.timestamp as f64,
                 };
-                row.set(i as u32, serde_wasm_bindgen::to_value(&change).unwrap());
+                row.set(i as u32, change.to_js());
             }
             ans.set(&js_sys::BigInt::from(*peer_id).into(), &row);
         }
@@ -753,13 +760,13 @@ impl Loro {
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
         let change = ChangeMeta {
             lamport: change.lamport,
-            length: change.atom_len(),
+            length: change.atom_len() as u32,
             peer: change.peer(),
             counter: change.id.counter,
             deps: change.deps.iter().cloned().collect(),
-            timestamp: change.timestamp,
+            timestamp: change.timestamp as f64,
         };
-        Ok(serde_wasm_bindgen::to_value(&change).unwrap().into())
+        Ok(change.to_js().into())
     }
 
     /// Get all ops of the change of a specific ID
@@ -1939,12 +1946,12 @@ fn vv_to_js_value(vv: VersionVector) -> JsValue {
 const TYPES: &'static str = r#"
 /**
 * Container types supported by loro.
-* 
+*
 * It is most commonly used to specify the type of subcontainer to be created.
 * @example
 * ```ts
 * import { Loro } from "loro-crdt";
-* 
+*
 * const doc = new Loro();
 * const list = doc.getList("list");
 * list.insert(0, 100);
@@ -1956,11 +1963,11 @@ export type ContainerType = "Text" | "Map" | "List"| "Tree";
 
 /**
 * The unique id of each container.
-* 
+*
 * @example
 * ```ts
 * import { Loro } from "loro-crdt";
-* 
+*
 * const doc = new Loro();
 * const list = doc.getList("list");
 * const containerId = list.id;
@@ -1985,14 +1992,14 @@ interface Loro {
  * @typeparam T - The data type for the `insert` operation.
  *
  * The `Delta` type can be one of three distinct shapes:
- * 
+ *
  * 1. Insert Operation:
  *    - `insert`: The item to be inserted, of type T.
  *    - `attributes`: (Optional) A dictionary of attributes, describing styles in richtext
- * 
+ *
  * 2. Delete Operation:
  *    - `delete`: The number of elements to delete.
- * 
+ *
  * 3. Retain Operation:
  *    - `retain`: The number of elements to retain.
  *    - `attributes`: (Optional) A dictionary of attributes, describing styles in richtext
@@ -2024,7 +2031,7 @@ export type OpId = { peer: bigint, counter: number };
  * Change is a group of continuous operations
  */
 export interface Change {
-    peer: BigInt,
+    peer: bigint,
     counter: number,
     lamport: number,
     length: number,
