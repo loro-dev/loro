@@ -21,7 +21,7 @@
   },
   "author": "Loro",
   "homepage": "https://loro.dev",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "loro-wasm": "workspace:*"
   },
