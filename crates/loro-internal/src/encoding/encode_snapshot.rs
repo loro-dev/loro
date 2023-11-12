@@ -927,16 +927,16 @@ fn encode_oplog(oplog: &OpLog, state_ref: Option<PreEncodedState>) -> FinalPhase
                         loro_common::ContainerType::Tree => unreachable!(),
                     },
                     InnerListOp::InsertText {
-                        slice,
+                        slice: _,
                         unicode_len: len,
-                        unicode_start: _,
+                        unicode_start: start,
                         pos,
                     } => match op.container.get_type() {
                         loro_common::ContainerType::Text => {
                             encoded_ops.push(EncodedSnapshotOp::from(
                                 SnapshotOp::RichtextInsert {
                                     pos: *pos as usize,
-                                    start: slice.start(),
+                                    start: *start as usize,
                                     len: *len as usize,
                                 },
                                 op.container.to_index(),
