@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  Loro,
-  toReadableVersion,
-  setPanicHook,
-  OpId,
-} from "../src";
+import { Loro, toReadableVersion, setPanicHook, OpId } from "../src";
 
 setPanicHook();
 describe("Frontiers", () => {
@@ -52,23 +47,27 @@ describe("Version", () => {
       expect(toReadableVersion(a.version())).toStrictEqual(vv);
       expect(a.vvToFrontiers(vv)).toStrictEqual(a.frontiers());
       expect(a.vvToFrontiers(a.version())).toStrictEqual(a.frontiers());
-      expect(a.frontiers()).toStrictEqual([{ peer: 0n, counter: 2 }] as OpId[])
+      expect(a.frontiers()).toStrictEqual([{ peer: 0n, counter: 2 }] as OpId[]);
     }
-  })
+  });
 
   it("get changes", () => {
     const changes = a.getAllChanges();
+    expect(typeof changes.get(0n)?.[0].peer == "bigint").toBeTruthy();
     expect(changes.size).toBe(2);
     expect(changes.get(0n)?.length).toBe(2);
     expect(changes.get(0n)?.[0].length).toBe(2);
     expect(changes.get(0n)?.[1].lamport).toBe(2);
-    expect(changes.get(0n)?.[1].deps).toStrictEqual([{ peer: 0, counter: 1 }, { peer: 1, counter: 1 }]);
+    expect(changes.get(0n)?.[1].deps).toStrictEqual([
+      { peer: 0n, counter: 1 },
+      { peer: 1n, counter: 1 },
+    ]);
     expect(changes.get(1n)?.length).toBe(1);
-  })
+  });
 
   it("get ops inside changes", () => {
     const change = a.getOpsInChange({ peer: 0n, counter: 2 });
     expect(change.length).toBe(1);
-    console.dir(change, { depth: 100 })
-  })
-})
+    console.dir(change, { depth: 100 });
+  });
+});
