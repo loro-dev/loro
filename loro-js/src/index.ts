@@ -1,7 +1,15 @@
 export * from "loro-wasm";
 import { Delta } from "loro-wasm";
-import { PrelimText,PrelimList,PrelimMap } from "loro-wasm";
-import { ContainerID, Loro, LoroList, LoroMap, LoroText , LoroTree, TreeID} from "loro-wasm";
+import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
+import {
+  ContainerID,
+  Loro,
+  LoroList,
+  LoroMap,
+  LoroText,
+  LoroTree,
+  TreeID,
+} from "loro-wasm";
 
 Loro.prototype.getTypedMap = function (...args) {
   return this.getMap(...args);
@@ -45,12 +53,11 @@ export type Value =
   | Uint8Array
   | Value[];
 
-
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
 /**
  * Represents a path to identify the exact location of an event's target.
- * The path is composed of numbers (e.g., indices of a list container) and strings 
+ * The path is composed of numbers (e.g., indices of a list container) and strings
  * (e.g., keys of a map container), indicating the absolute position of the event's source
  * within a loro document.
  */
@@ -65,6 +72,10 @@ export type Path = (number | string)[];
  * @prop path - Specifies the absolute path of the event's emitter, which can be an index of a list container or a key of a map container.
  */
 export interface LoroEvent {
+  /**
+   * The unique ID of the event.
+   */
+  id: bigint;
   local: boolean;
   origin?: string;
   /**
@@ -97,8 +108,10 @@ export type MapDiff = {
 
 export type TreeDiff = {
   type: "tree";
-  diff: {target: TreeID, action: "create"|"delete" } | {target: TreeID; action:"move"; parent: TreeID};
-}
+  diff:
+  | { target: TreeID; action: "create" | "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID };
+};
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
 

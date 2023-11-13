@@ -871,6 +871,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
     let event = Event {
+        id: e.doc.id(),
         path: Event::get_path(
             e.container.path.len() as u32,
             e.container.path.iter().map(|x| &x.1),
@@ -897,6 +898,7 @@ fn call_after_micro_task(ob: observer::Observer, e: DiffEvent) {
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
     let event = Event {
+        id: e.doc.id(),
         from_children: e.from_children,
         from_checkout: e.doc.from_checkout,
         local: e.doc.local,
@@ -931,6 +933,7 @@ impl Default for Loro {
 pub struct Event {
     pub local: bool,
     pub from_children: bool,
+    id: u64,
     origin: String,
     target: ContainerID,
     from_checkout: bool,
@@ -948,6 +951,7 @@ impl Event {
         Reflect::set(&obj, &"target".into(), &self.target.to_string().into()).unwrap();
         Reflect::set(&obj, &"diff".into(), &self.diff.into()).unwrap();
         Reflect::set(&obj, &"path".into(), &self.path).unwrap();
+        Reflect::set(&obj, &"id".into(), &self.id.into()).unwrap();
         obj.into()
     }
 

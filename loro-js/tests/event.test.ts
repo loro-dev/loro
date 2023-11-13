@@ -24,6 +24,34 @@ describe("event", () => {
     expect(lastEvent?.target).toEqual(id);
   });
 
+  it("event id", async () => {
+    const loro = new Loro();
+    let lastEventId: bigint = 0n;
+    let uniqueEvent = 0;
+    loro.subscribe((event) => {
+      console.log(event.id);
+      if (event.id === lastEventId) {
+        return;
+      }
+
+      lastEventId = event.id;
+      uniqueEvent += 1;
+    });
+
+    const map = loro.getMap("map");
+    map.set("0", 100);
+    loro.commit();
+    expect(uniqueEvent).toBe(1);
+    const bDoc = new Loro();
+    bDoc.getText("text").insert(0, "1");
+    bDoc.getText("text").insert(1, "1");
+    bDoc.commit();
+    bDoc.getMap("map").set("0", "1");
+    bDoc.commit();
+    loro.import(bDoc.exportFrom());
+    expect(uniqueEvent).toBe(2);
+  });
+
   it("path", async () => {
     const loro = new Loro();
     let lastEvent: undefined | LoroEvent;
