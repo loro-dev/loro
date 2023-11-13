@@ -46,9 +46,10 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 - **High Performance**
   - [See benchmarks](https://www.loro.dev/docs/performance).
 
-> **You can build time travel feature easily with Loro**.
+> **Build time travel feature easily for large documents**.
 
-[![Time travel example](https://github.com/loro-dev/loro/assets/18425020/41e10cbc-4940-4bc7-83d5-3cad99783740)](https://github.com/zxch3n/loro-react-flow-example)
+![TimeTravel](https://github.com/loro-dev/loro/assets/18425020/52a34c9d-0d3b-496f-a75d-3c1e01ff139f)
+
 
 ## Features Provided by CRDTs
 
