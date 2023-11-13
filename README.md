@@ -27,6 +27,8 @@
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to persist and sync state easily. It is designed to make building [local-first apps][local-first] easier. 
 
+✏️ We have published a [blog](https://loro.dev/blog/loro-now-open-source) about Loro's philosophy.
+
 # Features
 
 ## Supported CRDT Algorithms
@@ -58,6 +60,10 @@ Loro is a CRDTs(Conflict-free Replicated Data Types) library that allows you to 
 - **Local Availability**: Data can be persisted on users' devices, supporting offline functionality and real-time responsiveness. 
 - **Scalability**: Effortlessly scale your application horizontally thanks to the inherently distributed nature of CRDTs.
 - **Delta Updates**
+
+# Get started
+
+You can follow our [documents](https://loro.dev/docs/tutorial/get_started) to build your first application with Loro. And you can also find more example in [loro-example](https://github.com/loro-dev/loro-examples-deno).
 
 # Credits
 
