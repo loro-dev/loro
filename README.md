@@ -21,7 +21,7 @@
   </a>
 </p>
 
-![Rich text example](https://github.com/loro-dev/loro/assets/18425020/54b6975d-ea9e-4c77-9423-c7733b12a251)
+![Rich text example](https://i.postimg.cc/nr2SLHQB/202311120101-2.gif)
 
 > **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. 
 
@@ -50,7 +50,7 @@ Explore our vision for the local-first development paradigm in our blog post: [*
 
 > **Build time travel feature easily for large documents**.
 
-![TimeTravel](https://github.com/loro-dev/loro/assets/18425020/52a34c9d-0d3b-496f-a75d-3c1e01ff139f)
+![TimeTravel](https://i.postimg.cc/bJBjw9cq/Untitled.gif)
 
 
 ## Features Provided by CRDTs
