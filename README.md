@@ -50,8 +50,6 @@ Explore our vision for the local-first development paradigm in our blog post: [*
 
 > **Build time travel feature easily for large documents**.
 
-![TimeTravel](https://i.postimg.cc/bJBjw9cq/Untitled.gif)
-
 
 ## Features Provided by CRDTs
 
