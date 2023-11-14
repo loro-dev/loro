@@ -50,7 +50,9 @@ Explore our vision for the local-first development paradigm in our blog post: [*
 
 > **Build time travel feature easily for large documents**.
 
-![TimeTravel](https://i.postimg.cc/bJBjw9cq/Untitled.gif)
+
+https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243c9792
+
 
 
 ## Features Provided by CRDTs
