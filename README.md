@@ -63,6 +63,26 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 - **Scalability**: Effortlessly scale your application horizontally thanks to the inherently distributed nature of CRDTs.
 - **Delta Updates**
 
+# Development
+
+### Environment
+
+- Rust
+- Deno
+- `rustup target add wasm32-unknown-unknown`
+- `cargo install wasm-bindgen-cli --version 0.2.86`
+- `cargo install cargo-nextest --locked`
+- `cargo install cargo-fuzz`
+
+### Test
+
+```bash
+deno task test
+
+# Build and test WASM
+deno task test-wasm
+```
+
 # Credits
 
 Loro draws inspiration from the innovative work of the following projects and individuals:
