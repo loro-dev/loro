@@ -71,8 +71,11 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 - Deno
 - `rustup target add wasm32-unknown-unknown`
 - `cargo install wasm-bindgen-cli --version 0.2.86`
+- `cargo install wasm-opt --locked`
 - `cargo install cargo-nextest --locked`
 - `cargo install cargo-fuzz`
+
+> You can run the `scripts/install-dev-tools.sh`.
 
 ### Test
 
