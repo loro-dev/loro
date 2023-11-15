@@ -65,14 +65,16 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 
 # Development
 
-### Environment
+### Development Environment Setup
 
-- Rust
-- Deno
-- `rustup target add wasm32-unknown-unknown`
-- `cargo install wasm-bindgen-cli --version 0.2.86`
-- `cargo install cargo-nextest --locked`
-- `cargo install cargo-fuzz`
+1. **Rust**: Install from the official Rust website.
+2. **Deno**: Download and install from Deno's website.
+3. **Node**: Install from the Node.js website.
+4. **pnpm**: Run `npm i -g pnpm` for global installation.
+5. **Rust Target**: Add with `rustup target add wasm32-unknown-unknown`.
+6. **wasm-bindgen-cli**: Install version 0.2.86 via `cargo install wasm-bindgen-cli --version 0.2.86`.
+7. **cargo-nextest**: Install using `cargo install cargo-nextest --locked`.
+8. **cargo-fuzz**: Run `cargo install cargo-fuzz`.
 
 ### Test
 
