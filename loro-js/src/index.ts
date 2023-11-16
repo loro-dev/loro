@@ -53,6 +53,7 @@ export type Value =
   | Uint8Array
   | Value[];
 
+export type Container = LoroList | LoroMap | LoroText | LoroTree;
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 
 /**
@@ -109,8 +110,8 @@ export type MapDiff = {
 export type TreeDiff = {
   type: "tree";
   diff:
-  | { target: TreeID; action: "create" | "delete" }
-  | { target: TreeID; action: "move"; parent: TreeID };
+    | { target: TreeID; action: "create" | "delete" }
+    | { target: TreeID; action: "move"; parent: TreeID };
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
@@ -148,7 +149,7 @@ declare module "loro-wasm" {
     insertContainer(pos: number, container: "Tree"): LoroTree;
     insertContainer(pos: number, container: string): never;
 
-    get(index: number): Value;
+    get(index: number): undefined | Value | Container;
     getTyped<Key extends keyof T & number>(loro: Loro, index: Key): T[Key];
     insertTyped<Key extends keyof T & number>(pos: Key, value: T[Key]): void;
     insert(pos: number, value: Value | Prelim): void;
@@ -163,7 +164,7 @@ declare module "loro-wasm" {
     setContainer(key: string, container_type: "Tree"): LoroTree;
     setContainer(key: string, container_type: string): never;
 
-    get(key: string): Value;
+    get(key: string): undefined | Value | Container;
     getTyped<Key extends keyof T & string>(txn: Loro, key: Key): T[Key];
     set(key: string, value: Value | Prelim): void;
     setTyped<Key extends keyof T & string>(key: Key, value: T[Key]): void;
