@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.4.3](https://github.com/loro-dev/loro/compare/v0.4.2...v0.4.3) (2023-11-16)
+
+
+### Bug Fixes
+
+* avoid i32 overflow ([f799da9](https://github.com/loro-dev/loro/commit/f799da9abbdf369ea1f120c700078bb87f27212b))
+
 ### [0.4.2](https://github.com/loro-dev/loro/compare/v0.4.1...v0.4.2) (2023-11-16)
 
 
