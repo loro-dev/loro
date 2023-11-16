@@ -72,7 +72,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -82,7 +82,7 @@ describe("list", () => {
     const list = doc.getList("list");
     const map = list.insertContainer(0, "Map");
     map.set("key", "value");
-    const v = list.get(0);
+    const v = list.get(0) as LoroMap;
     console.log(v);
     expect(v instanceof LoroMap).toBeTruthy();
     expect(v.getDeepValue()).toStrictEqual({ key: "value" });
@@ -98,8 +98,15 @@ describe("map", () => {
     const list = map.setContainer("key", "List");
     list.insert(0, 1);
     expect(map.get("key") instanceof LoroList).toBeTruthy();
-    expect(map.get("key").getDeepValue()).toStrictEqual([1]);
+    expect((map.get("key") as LoroList).getDeepValue()).toStrictEqual([1]);
   });
+
+  it("set large int", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.set("key", 2147483699);
+    expect(map.get("key")).toBe(2147483699);
+  })
 });
 
 describe("import", () => {

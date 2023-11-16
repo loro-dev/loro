@@ -328,7 +328,7 @@ pub mod wasm {
                 LoroValue::Bool(js_value.as_bool().unwrap())
             } else if js_value.as_f64().is_some() {
                 let num = js_value.as_f64().unwrap();
-                if num.fract() == 0.0 {
+                if num.fract() == 0.0 && num <= i32::MAX as f64 && num >= i32::MIN as f64 {
                     LoroValue::I32(num as i32)
                 } else {
                     LoroValue::Double(num)
