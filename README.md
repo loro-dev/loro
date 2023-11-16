@@ -23,7 +23,7 @@
 
 ![Rich text example](https://i.postimg.cc/nr2SLHQB/202311120101-2.gif)
 
-> **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. 
+> ⚠️ **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. You should not use it in production.
 
 Loro is a CRDTs(Conflict-free Replicated Data Types) library that makes building [local-first apps][local-first] easier. 
 
