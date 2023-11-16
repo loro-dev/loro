@@ -674,8 +674,8 @@ impl Loro {
         let observer = observer::Observer::new(f);
         self.0
             .subscribe_root(Arc::new(move |e| {
-                // call_after_micro_task(observer.clone(), e)
-                call_subscriber(observer.clone(), e);
+                call_after_micro_task(observer.clone(), e)
+                // call_subscriber(observer.clone(), e);
             }))
             .into_u32()
     }
