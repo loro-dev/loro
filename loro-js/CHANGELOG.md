@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.4.2](https://github.com/loro-dev/loro/compare/v0.4.1...v0.4.2) (2023-11-16)
+
+
+### Features
+
+* get sub container directly when getting value ([#175](https://github.com/loro-dev/loro/issues/175)) ([1ff1505](https://github.com/loro-dev/loro/commit/1ff1505933198be8f3b7aefc32e1698007e21c25))
+* **wasm:** add event id ([e54d2ac](https://github.com/loro-dev/loro/commit/e54d2ac21b02ad6b161336b0b9a99a0a85ca5a02))
+
+
+### Bug Fixes
+
+* loro-wasm typo ([#171](https://github.com/loro-dev/loro/issues/171)) ([c4b9cb4](https://github.com/loro-dev/loro/commit/c4b9cb4b2b77c3c83b99b51153cd8dd19a948dc0))
+
 ### 0.4.1 (2023-11-12)
 
 
