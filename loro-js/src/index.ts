@@ -1,5 +1,5 @@
 export * from "loro-wasm";
-import { Delta } from "loro-wasm";
+import { Delta, OpId } from "loro-wasm";
 import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
 import {
   ContainerID,
@@ -55,6 +55,7 @@ export type Value =
 
 export type Container = LoroList | LoroMap | LoroText | LoroTree;
 export type Prelim = PrelimList | PrelimMap | PrelimText;
+export type Frontiers = OpId[];
 
 /**
  * Represents a path to identify the exact location of an event's target.
@@ -110,8 +111,8 @@ export type MapDiff = {
 export type TreeDiff = {
   type: "tree";
   diff:
-    | { target: TreeID; action: "create" | "delete" }
-    | { target: TreeID; action: "move"; parent: TreeID };
+  | { target: TreeID; action: "create" | "delete" }
+  | { target: TreeID; action: "move"; parent: TreeID };
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff;
