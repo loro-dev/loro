@@ -6,7 +6,9 @@ use loro_internal::{
         ContainerID,
     },
     event::{Diff, Index},
-    handler::{ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler},
+    handler::{
+        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrContainer,
+    },
     id::{Counter, PeerID, TreeID, ID},
     obs::SubID,
     version::Frontiers,
@@ -1231,7 +1233,7 @@ impl LoroMap {
         Ok(())
     }
 
-    /// Get the value of the key.
+    /// Get the value of the key. If the value is a container, the corresponding handler will be returned.
     ///
     /// @example
     /// ```ts
@@ -1243,7 +1245,12 @@ impl LoroMap {
     /// const bar = map.get("foo");
     /// ```
     pub fn get(&self, key: &str) -> JsValue {
-        self.0.get(key).into()
+        let v = self.0.get_(key);
+        match v {
+            Some(ValueOrContainer::Container(c)) => handler_to_js_value(c),
+            Some(ValueOrContainer::Value(v)) => v.into(),
+            None => JsValue::UNDEFINED,
+        }
     }
 
     /// Get the keys of the map.
@@ -1461,6 +1468,15 @@ impl LoroMap {
     }
 }
 
+fn handler_to_js_value(handler: Handler) -> JsValue {
+    match handler {
+        Handler::Text(t) => LoroText(t).into(),
+        Handler::Map(m) => LoroMap(m).into(),
+        Handler::List(l) => LoroList(l).into(),
+        Handler::Tree(t) => LoroTree(t).into(),
+    }
+}
+
 /// The handler of a list container.
 #[wasm_bindgen]
 pub struct LoroList(ListHandler);
@@ -1502,7 +1518,7 @@ impl LoroList {
         Ok(())
     }
 
-    /// Get the value at the index.
+    /// Get the value at the index. If the value is a container, the corresponding handler will be returned.
     ///
     /// @example
     /// ```ts
@@ -1515,11 +1531,14 @@ impl LoroList {
     /// console.log(list.get(1));  // undefined
     /// ```
     pub fn get(&self, index: usize) -> JsValue {
-        let Some(v) = self.0.get(index) else {
+        let Some(v) = self.0.get_(index) else {
             return JsValue::UNDEFINED;
         };
 
-        JsValue::from(v)
+        match v {
+            ValueOrContainer::Value(v) => v.into(),
+            ValueOrContainer::Container(h) => handler_to_js_value(h),
+        }
     }
 
     /// Get the id of this container.

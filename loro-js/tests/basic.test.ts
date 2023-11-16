@@ -84,12 +84,22 @@ describe("list", () => {
     map.set("key", "value");
     const v = list.get(0);
     console.log(v);
-    expect(typeof v).toBe("string");
-    const m = doc.getMap(v as ContainerID);
-    expect(m.getDeepValue()).toStrictEqual({ key: "value" });
+    expect(v instanceof LoroMap).toBeTruthy();
+    expect(v.getDeepValue()).toStrictEqual({ key: "value" });
   });
 
   it.todo("iterate");
+});
+
+describe("map", () => {
+  it("get child container", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    const list = map.setContainer("key", "List");
+    list.insert(0, 1);
+    expect(map.get("key") instanceof LoroList).toBeTruthy();
+    expect(map.get("key").getDeepValue()).toStrictEqual([1]);
+  });
 });
 
 describe("import", () => {
