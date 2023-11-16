@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  ContainerID,
-  Loro,
-  LoroList,
-  LoroMap,
-  setPanicHook,
-} from "../src";
+import { ContainerID, Loro, LoroList, LoroMap, setPanicHook } from "../src";
 
 setPanicHook();
 
@@ -21,25 +15,25 @@ it("basic example", () => {
   map.set("key", "value");
   expect(doc.toJson()).toStrictEqual({
     list: ["A", "B", "C"],
-    map: { key: "value" }
+    map: { key: "value" },
   });
 
   // delete 2 elements at index 0
-  list.delete(0, 2)
+  list.delete(0, 2);
   expect(doc.toJson()).toStrictEqual({
     list: ["C"],
-    map: { key: "value" }
+    map: { key: "value" },
   });
 
   // Insert a text container to the list
   const text = list.insertContainer(0, "Text");
   text.insert(0, "Hello");
-  text.insert(0, "Hi! ")
+  text.insert(0, "Hi! ");
 
   // delete 1 element at index 0
   expect(doc.toJson()).toStrictEqual({
     list: ["Hi! Hello", "C"],
-    map: { key: "value" }
+    map: { key: "value" },
   });
 
   // Insert a list container to the map
@@ -47,9 +41,9 @@ it("basic example", () => {
   list2.insert(0, 1);
   expect(doc.toJson()).toStrictEqual({
     list: ["Hi! Hello", "C"],
-    map: { key: "value", test: [1] }
+    map: { key: "value", test: [1] },
   });
-})
+});
 
 it("basic sync example", () => {
   const docA = new Loro();
@@ -61,28 +55,26 @@ it("basic sync example", () => {
   // B import the ops from A
   docB.import(docA.exportFrom());
   expect(docB.toJson()).toStrictEqual({
-    list: ["A", "B", "C"]
-  })
+    list: ["A", "B", "C"],
+  });
 
   const listB: LoroList = docB.getList("list");
   // delete 1 element at index 1
   listB.delete(1, 1);
   // A import the ops from B
-  docA.import(docB.exportFrom(docA.version()))
+  docA.import(docB.exportFrom(docA.version()));
   // list at A is now ["A", "C"], with the same state as B
   expect(docA.toJson()).toStrictEqual({
-    list: ["A", "C"]
+    list: ["A", "C"],
   });
   expect(docA.toJson()).toStrictEqual(docB.toJson());
-})
+});
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe(event => {
-
-  });
+  doc.subscribe((event) => {});
   const list = doc.getList("list");
-})
+});
 
 describe("list", () => {
   it("insert containers", () => {
@@ -95,13 +87,13 @@ describe("list", () => {
     expect(typeof v).toBe("string");
     const m = doc.getMap(v as ContainerID);
     expect(m.getDeepValue()).toStrictEqual({ key: "value" });
-  })
+  });
 
   it.todo("iterate");
-})
+});
 
 describe("import", () => {
-  it('pending', () => {
+  it("pending", () => {
     const a = new Loro();
     a.getText("text").insert(0, "a");
     const b = new Loro();
@@ -111,13 +103,47 @@ describe("import", () => {
     c.import(b.exportFrom());
     c.getText("text").insert(2, "c");
 
-    // c export from b's version, which cannot be imported directly to a. 
+    // c export from b's version, which cannot be imported directly to a.
     // This operation is pending.
-    a.import(c.exportFrom(b.version()))
+    a.import(c.exportFrom(b.version()));
     expect(a.getText("text").toString()).toBe("a");
 
     // a import the missing ops from b. It makes the pending operation from c valid.
-    a.import(b.exportFrom(a.version()))
+    a.import(b.exportFrom(a.version()));
     expect(a.getText("text").toString()).toBe("abc");
-  })
-})
+  });
+});
+
+describe("map", () => {
+  it("keys", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.set("foo", "bar");
+    map.set("baz", "bar");
+    const entries = map.keys();
+    expect(entries).toStrictEqual(["foo", "baz"]);
+  });
+
+  it("values", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.set("foo", "bar");
+    map.set("baz", "bar");
+    const entries = map.values();
+    expect(entries).toStrictEqual(["bar", "bar"]);
+  });
+
+  it("entries", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.set("foo", "bar");
+    map.set("baz", "bar");
+    map.set("new", 11);
+    map.delete("new");
+    const entries = map.entries();
+    expect(entries).toStrictEqual([
+      ["foo", "bar"],
+      ["baz", "bar"],
+    ]);
+  });
+});

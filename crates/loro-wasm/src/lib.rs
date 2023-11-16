@@ -1246,7 +1246,76 @@ impl LoroMap {
         self.0.get(key).into()
     }
 
-    /// Get the keys and values without being resolved recursively.
+    /// Get the keys of the map.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// map.set("baz", "bar");
+    /// const keys = map.keys(); // ["foo", "baz"]
+    /// ```
+    pub fn keys(&self) -> Vec<JsValue> {
+        let mut ans = Vec::with_capacity(self.0.len());
+        self.0.for_each(|k, v| {
+            if v.value.is_some() {
+                ans.push(k.to_string().into());
+            }
+        });
+        ans
+    }
+
+    /// Get the values of the map.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// map.set("baz", "bar");
+    /// const values = map.values(); // ["bar", "bar"]
+    /// ```
+    pub fn values(&self) -> Vec<JsValue> {
+        let mut ans: Vec<JsValue> = Vec::with_capacity(self.0.len());
+        self.0.for_each(|_, v| {
+            if let Some(v) = &v.value {
+                ans.push(v.clone().into());
+            }
+        });
+        ans
+    }
+
+    /// Get the entries of the map.
+    ///
+    /// @example
+    /// ```ts
+    /// import { Loro } from "loro-crdt";
+    ///
+    /// const doc = new Loro();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// map.set("baz", "bar");
+    /// const entries = map.entries(); // [["foo", "bar"], ["baz", "bar"]]
+    /// ```
+    pub fn entries(&self) -> Vec<JsValue> {
+        let mut ans: Vec<JsValue> = Vec::with_capacity(self.0.len());
+        self.0.for_each(|k, v| {
+            if let Some(v) = &v.value {
+                let array = Array::new();
+                array.push(&k.to_string().into());
+                array.push(&v.clone().into());
+                ans.push(array.into());
+            }
+        });
+        ans
+    }
+
+    /// Get the keys and values shallowly
     ///
     /// {@link LoroMap.getDeepValue}
     ///
