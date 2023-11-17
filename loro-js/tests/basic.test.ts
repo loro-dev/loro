@@ -129,6 +129,15 @@ describe("import", () => {
     a.import(b.exportFrom(a.version()));
     expect(a.getText("text").toString()).toBe("abc");
   });
+
+  it("from snapshot", () => {
+    const a = new Loro();
+    a.getText("text").insert(0, "hello");
+    const bytes = a.exportSnapshot();
+    const b = Loro.fromSnapshot(bytes);
+    b.getText("text").insert(0, "123");
+    expect(b.toJson()).toStrictEqual({ "text": "123hello" })
+  })
 });
 
 describe("map", () => {
