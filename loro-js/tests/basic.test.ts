@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ContainerID, Loro, LoroList, LoroMap, setPanicHook } from "../src";
+import { ContainerID, Loro, LoroList, LoroMap, setPanicHook, toEncodedVersion } from "../src";
 
 setPanicHook();
 
@@ -128,6 +128,18 @@ describe("import", () => {
     // a import the missing ops from b. It makes the pending operation from c valid.
     a.import(b.exportFrom(a.version()));
     expect(a.getText("text").toString()).toBe("abc");
+  });
+
+  it("import by frontiers", () => {
+    const a = new Loro();
+    a.getText("text").insert(0, "a");
+    const b = new Loro();
+    b.import(a.exportFrom());
+    b.getText("text").insert(1, "b");
+    b.getList("list").insert(0, [1, 2]);
+    const updates = b.exportFrom(toEncodedVersion(b.frontiersToVV(a.frontiers())));
+    a.import(updates);
+    expect(a.toJson()).toStrictEqual(b.toJson());
   });
 
   it("from snapshot", () => {
