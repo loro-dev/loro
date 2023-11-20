@@ -1,5 +1,5 @@
-import __ from "https://deno.land/x/dirname@1.1.2/mod.ts";
 import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
+import __ from "https://raw.githubusercontent.com/zxch3n/dirname/master/mod.ts";
 const { __dirname } = __(import.meta);
 
 // deno run -A build.ts debug
