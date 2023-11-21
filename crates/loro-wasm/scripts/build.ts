@@ -1,6 +1,5 @@
-import { resolve } from "https://deno.land/std@0.105.0/path/mod.ts";
-import __ from "https://raw.githubusercontent.com/zxch3n/dirname/master/mod.ts";
-const { __dirname } = __(import.meta);
+import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
+const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
 // deno run -A build.ts release
@@ -14,7 +13,7 @@ if (Deno.args[0] == "release") {
 }
 const TARGETS = ["bundler", "nodejs"];
 const startTime = performance.now();
-const LoroWasmDir = resolve(__dirname, "..");
+const LoroWasmDir = path.resolve(__dirname, "..");
 
 console.log(LoroWasmDir);
 async function build() {
@@ -73,7 +72,7 @@ async function cargoBuild() {
 
 async function buildTarget(target: string) {
   console.log("🏗️  Building target", `[${target}]`);
-  const targetDirPath = resolve(LoroWasmDir, target);
+  const targetDirPath = path.resolve(LoroWasmDir, target);
   try {
     await Deno.remove(targetDirPath, { recursive: true });
     console.log("Clear directory " + targetDirPath);
@@ -90,13 +89,13 @@ async function buildTarget(target: string) {
   if (target === "nodejs") {
     console.log("🔨  Patching nodejs target");
     const patch = await Deno.readTextFile(
-      resolve(__dirname, "./nodejs_patch.js"),
+      path.resolve(__dirname, "./nodejs_patch.js"),
     );
     const wasm = await Deno.readTextFile(
-      resolve(targetDirPath, "loro_wasm.js"),
+      path.resolve(targetDirPath, "loro_wasm.js"),
     );
     await Deno.writeTextFile(
-      resolve(targetDirPath, "loro_wasm.js"),
+      path.resolve(targetDirPath, "loro_wasm.js"),
       wasm + "\n" + patch,
     );
   }
