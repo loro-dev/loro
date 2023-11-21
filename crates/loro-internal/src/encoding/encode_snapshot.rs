@@ -65,7 +65,7 @@ pub fn decode_oplog(
     arena: Option<(SharedArena, TempArena, CommonArena)>,
 ) -> Result<(), LoroError> {
     let (arena, state_arena, common) = arena.unwrap_or_else(|| {
-        let arena = SharedArena::default();
+        let arena = oplog.arena.clone();
         let state_arena = TempArena::decode_state_arena(data).unwrap();
         debug_assert!(arena.can_import_snapshot());
         arena.alloc_str_fast(&state_arena.text);

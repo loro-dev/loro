@@ -150,6 +150,16 @@ describe("import", () => {
     b.getText("text").insert(0, "123");
     expect(b.toJson()).toStrictEqual({ "text": "123hello" })
   })
+
+  it("importBatch Error #181", () => {
+    const docA = new Loro();
+    const updateA = docA.exportSnapshot();
+    const docB = new Loro();
+    docB.importUpdateBatch([updateA]);
+    docB.getText('text').insert(0, 'hello');
+    docB.commit();
+    console.log(docB.exportFrom());
+  })
 });
 
 describe("map", () => {

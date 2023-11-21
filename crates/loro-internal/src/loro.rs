@@ -729,4 +729,18 @@ mod test {
             );
         }
     }
+
+    #[test]
+    fn import_batch_err_181() {
+        let a = LoroDoc::new_auto_commit();
+        let update_a = a.export_snapshot();
+        let mut b = LoroDoc::new_auto_commit();
+        b.import_batch(&[update_a]).unwrap();
+        b.get_text("text").insert_(0, "hello").unwrap();
+        b.commit_then_renew();
+        let oplog = b.oplog().lock().unwrap();
+        dbg!(&oplog.arena);
+        drop(oplog);
+        b.export_from(&Default::default());
+    }
 }
