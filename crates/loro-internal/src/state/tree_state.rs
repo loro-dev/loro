@@ -272,7 +272,12 @@ impl ContainerState for TreeState {
 
     fn get_value(&mut self) -> LoroValue {
         let mut ans = vec![];
-        for (target, parent) in self.trees.iter() {
+        #[cfg(feature = "test_utils")]
+        // The order keep consistent
+        let iter = self.trees.iter().sorted();
+        #[cfg(not(feature = "test_utils"))]
+        let iter = self.trees.iter();
+        for (target, parent) in iter {
             if !self.deleted.contains(target) && !TreeID::is_unexist_root(Some(*target)) {
                 let mut t = FxHashMap::default();
                 t.insert("id".to_string(), target.id().to_string().into());
