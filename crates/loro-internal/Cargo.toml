@@ -28,7 +28,7 @@ js-sys = { version = "0.3.60", optional = true }
 serde_json = { version = "1" }
 arref = "0.1.0"
 debug-log = { version = "0.2.2", features = [] }
-serde_columnar = { version = "0.3.2" }
+serde_columnar = { version="0.3.3" }
 tracing = { version = "0.1.37" }
 append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 itertools = "0.11.0"
@@ -62,7 +62,6 @@ bench = false
 
 [features]
 default = []
-compress = ["serde_columnar/compress"]
 # "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
 wasm = ["wasm-bindgen", "js-sys", "serde-wasm-bindgen", "loro-common/wasm"]
 # whether to use list slice instead of raw str in text container
