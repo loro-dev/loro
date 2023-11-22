@@ -490,7 +490,7 @@ impl Loro {
         self.0.state_vv().encode()
     }
 
-    /// Get the encoded version vector of the lastest verison in OpLog.
+    /// Get the encoded version vector of the lastest version in OpLog.
     ///
     /// If you checkout to a specific version, the version vector will not change.
     #[inline(always)]
