@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ContainerID, Loro, LoroList, LoroMap, setPanicHook, toEncodedVersion } from "../src";
+import {
+  ContainerID,
+  Loro,
+  LoroList,
+  LoroMap,
+  setPanicHook,
+  toEncodedVersion,
+} from "../src";
 
 setPanicHook();
 
@@ -72,7 +79,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => { });
+  doc.subscribe((event) => {});
   const list = doc.getList("list");
 });
 
@@ -106,7 +113,7 @@ describe("map", () => {
     const map = doc.getMap("map");
     map.set("key", 2147483699);
     expect(map.get("key")).toBe(2147483699);
-  })
+  });
 });
 
 describe("import", () => {
@@ -137,7 +144,9 @@ describe("import", () => {
     b.import(a.exportFrom());
     b.getText("text").insert(1, "b");
     b.getList("list").insert(0, [1, 2]);
-    const updates = b.exportFrom(toEncodedVersion(b.frontiersToVV(a.frontiers())));
+    const updates = b.exportFrom(
+      toEncodedVersion(b.frontiersToVV(a.frontiers())),
+    );
     a.import(updates);
     expect(a.toJson()).toStrictEqual(b.toJson());
   });
@@ -148,18 +157,18 @@ describe("import", () => {
     const bytes = a.exportSnapshot();
     const b = Loro.fromSnapshot(bytes);
     b.getText("text").insert(0, "123");
-    expect(b.toJson()).toStrictEqual({ "text": "123hello" })
-  })
+    expect(b.toJson()).toStrictEqual({ text: "123hello" });
+  });
 
   it("importBatch Error #181", () => {
     const docA = new Loro();
     const updateA = docA.exportSnapshot();
     const docB = new Loro();
     docB.importUpdateBatch([updateA]);
-    docB.getText('text').insert(0, 'hello');
+    docB.getText("text").insert(0, "hello");
     docB.commit();
     console.log(docB.exportFrom());
-  })
+  });
 });
 
 describe("map", () => {
@@ -194,4 +203,18 @@ describe("map", () => {
       ["baz", "bar"],
     ]);
   });
+});
+
+it("handlers should still be usable after doc is dropped", () => {
+  const doc = new Loro();
+  const text = doc.getText("text");
+  const list = doc.getList("list");
+  const map = doc.getMap("map");
+  doc.free();
+  text.insert(0, "123");
+  expect(text.toString()).toBe("123");
+  list.insert(0, 1);
+  expect(list.getDeepValue()).toStrictEqual([1]);
+  map.set("k", 8);
+  expect(map.getDeepValue()).toStrictEqual({ k: 8 });
 });
