@@ -1,13 +1,11 @@
 export * from "loro-wasm";
-import { Delta, OpId } from "loro-wasm";
+import { Container, ContainerType, Delta, OpId, Value } from "loro-wasm";
 import { PrelimText, PrelimList, PrelimMap } from "loro-wasm";
 import {
   ContainerID,
   Loro,
   LoroList,
   LoroMap,
-  LoroText,
-  LoroTree,
   TreeID,
 } from "loro-wasm";
 
@@ -40,20 +38,6 @@ LoroMap.prototype.setTyped = function (...args) {
   return this.set(...args);
 };
 
-/**
- * Data types supported by loro
- */
-export type Value =
-  | ContainerID
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Value }
-  | Uint8Array
-  | Value[];
-
-export type Container = LoroList | LoroMap | LoroText | LoroTree;
 export type Prelim = PrelimList | PrelimMap | PrelimText;
 export type Frontiers = OpId[];
 
@@ -128,6 +112,23 @@ export function isContainerId(s: string): s is ContainerID {
 }
 
 export { Loro };
+
+export function isContainer(value: any): value is Container {
+  if (typeof value !== "object" || value == null) {
+    return false;
+  }
+
+  const p = value.__proto__;
+  return p.hasOwnProperty("kind") && CONTAINER_TYPES.includes(value.kind());
+}
+
+export function valueType(value: any): "Json" | ContainerType {
+  if (isContainer(value)) {
+    return value.kind();
+  }
+
+  return "Json";
+}
 
 declare module "loro-wasm" {
   interface Loro {

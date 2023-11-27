@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  ContainerID,
   Loro,
   LoroList,
   LoroMap,
+  isContainer,
   setPanicHook,
   toEncodedVersion,
+  valueType,
 } from "../src";
+import { Container } from "../dist/loro";
 
 setPanicHook();
 
@@ -79,7 +81,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new Loro();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -92,10 +94,21 @@ describe("list", () => {
     const v = list.get(0) as LoroMap;
     console.log(v);
     expect(v instanceof LoroMap).toBeTruthy();
-    expect(v.getDeepValue()).toStrictEqual({ key: "value" });
+    expect(v.toJson()).toStrictEqual({ key: "value" });
   });
 
-  it.todo("iterate");
+  it("toArray", () => {
+    const doc = new Loro();
+    const list = doc.getList("list");
+    list.insert(0, 1);
+    list.insert(1, 2);
+    expect(list.toArray()).toStrictEqual([1, 2]);
+    list.insertContainer(2, "Text");
+    const t = list.toArray()[2];
+    expect(isContainer(t)).toBeTruthy();
+    expect(valueType(t)).toBe("Text");
+    expect(valueType(123)).toBe("Json");
+  });
 });
 
 describe("map", () => {
@@ -105,7 +118,7 @@ describe("map", () => {
     const list = map.setContainer("key", "List");
     list.insert(0, 1);
     expect(map.get("key") instanceof LoroList).toBeTruthy();
-    expect((map.get("key") as LoroList).getDeepValue()).toStrictEqual([1]);
+    expect((map.get("key") as LoroList).toJson()).toStrictEqual([1]);
   });
 
   it("set large int", () => {
@@ -203,6 +216,15 @@ describe("map", () => {
       ["baz", "bar"],
     ]);
   });
+
+  it("entries should return container handlers", () => {
+    const doc = new Loro();
+    const map = doc.getMap("map");
+    map.setContainer("text", "Text");
+    map.set("foo", "bar");
+    const entries = map.entries();
+    expect((entries[0][1]! as Container).kind() === "Text").toBeTruthy();
+  })
 });
 
 it("handlers should still be usable after doc is dropped", () => {
@@ -214,7 +236,8 @@ it("handlers should still be usable after doc is dropped", () => {
   text.insert(0, "123");
   expect(text.toString()).toBe("123");
   list.insert(0, 1);
-  expect(list.getDeepValue()).toStrictEqual([1]);
+  expect(list.toJson()).toStrictEqual([1]);
   map.set("k", 8);
-  expect(map.getDeepValue()).toStrictEqual({ k: 8 });
+  expect(map.toJson()).toStrictEqual({ k: 8 });
 });
+

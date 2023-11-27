@@ -6,7 +6,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    delta::{MapValue, TreeDiffItem, TreeExternalDiff},
+    delta::{TreeDiffItem, TreeExternalDiff},
     op::ListSlice,
     state::RichtextState,
     txn::EventHint,
@@ -790,19 +790,29 @@ impl ListHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(&LoroValue),
+        I: FnMut(ValueOrContainer),
     {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_list_state().unwrap();
-                for v in a.iter() {
-                    f(v);
+        let mutex = &self.state.upgrade().unwrap();
+        let doc_state = &mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
+        doc_state.with_state(self.container_idx, |state| {
+            let a = state.as_list_state().unwrap();
+            for v in a.iter() {
+                match v {
+                    LoroValue::Container(c) => {
+                        let idx = arena.register_container(c);
+                        f(ValueOrContainer::Container(Handler::new(
+                            self.txn.clone(),
+                            idx,
+                            self.state.clone(),
+                        )));
+                    }
+                    value => {
+                        f(ValueOrContainer::Value(value.clone()));
+                    }
                 }
-            })
+            }
+        })
     }
 }
 
@@ -904,19 +914,33 @@ impl MapHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(&str, &MapValue),
+        I: FnMut(&str, ValueOrContainer),
     {
-        self.state
-            .upgrade()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .with_state(self.container_idx, |state| {
-                let a = state.as_map_state().unwrap();
-                for (k, v) in a.iter() {
-                    f(k, v);
+        let mutex = &self.state.upgrade().unwrap();
+        let doc_state = mutex.lock().unwrap();
+        let arena = doc_state.arena.clone();
+        doc_state.with_state(self.container_idx, |state| {
+            let a = state.as_map_state().unwrap();
+            for (k, v) in a.iter() {
+                match &v.value {
+                    Some(v) => match v {
+                        LoroValue::Container(c) => {
+                            let idx = arena.register_container(c);
+                            f(
+                                k,
+                                ValueOrContainer::Container(Handler::new(
+                                    self.txn.clone(),
+                                    idx,
+                                    self.state.clone(),
+                                )),
+                            )
+                        }
+                        value => f(k, ValueOrContainer::Value(value.clone())),
+                    },
+                    None => {}
                 }
-            })
+            }
+        })
     }
 
     pub fn get_value(&self) -> LoroValue {
