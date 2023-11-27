@@ -218,7 +218,7 @@ describe("prelim", () => {
       map.set("list", prelim_list);
       loro.commit();
 
-      assertEquals(map.getDeepValue(), {
+      assertEquals(map.toJson(), {
         text: "hello everyone",
         map: { a: 1, ab: 123 },
         list: [0, { a: 4 }],
@@ -234,7 +234,7 @@ describe("prelim", () => {
       list.insert(2, prelim_list);
       loro.commit();
 
-      assertEquals(list.getDeepValue(), [
+      assertEquals(list.toJson(), [
         "ttt",
         { a: 1, b: 2 },
         [
@@ -270,17 +270,17 @@ describe("wasm", () => {
 
   it("getValueDeep", () => {
     bText.insert(0, "hello world Text");
-    assertEquals(b.getDeepValue(), { ab: 123, hh: "hello world Text" });
+    assertEquals(b.toJson(), { ab: 123, hh: "hello world Text" });
   });
 
   it("get container by id", () => {
     const id = b.id;
     const b2 = loro.getContainerById(id) as LoroMap;
-    assertEquals(b2.value, b.value);
+    assertEquals(b2.toJson(), b.toJson());
     assertEquals(b2.id, id);
     b2.set("0", 12);
 
-    assertEquals(b2.value, b.value);
+    assertEquals(b2.toJson(), b.toJson());
   });
 });
 

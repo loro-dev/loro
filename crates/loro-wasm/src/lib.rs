@@ -86,6 +86,12 @@ extern "C" {
     pub type JsChange;
     #[wasm_bindgen(typescript_type = "Map<bigint, number> | Uint8Array")]
     pub type JsVersionVector;
+    #[wasm_bindgen(typescript_type = "Value | Container")]
+    pub type JsValueOrContainer;
+    #[wasm_bindgen(typescript_type = "Value | Container | undefined")]
+    pub type JsValueOrContainerOrUndefined;
+    #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
+    pub type MapEntry;
 }
 
 mod observer {
@@ -885,13 +891,6 @@ impl Loro {
             .vv_to_frontiers(&vv);
         Ok(frontiers_to_ids(&f))
     }
-
-    /// same as `toJson`
-    #[wasm_bindgen(js_name = "getDeepValue")]
-    pub fn get_deep_value(&self) -> JsValue {
-        let value = self.0.borrow_mut().get_deep_value();
-        JsValue::from(value)
-    }
 }
 
 fn js_map_to_vv(map: js_sys::Map) -> JsResult<VersionVector> {
@@ -1027,6 +1026,11 @@ struct MarkRange {
 
 #[wasm_bindgen]
 impl LoroText {
+    /// "Text"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("Text")
+    }
+
     /// Insert some string at index.
     ///
     /// @example
@@ -1251,6 +1255,11 @@ const CONTAINER_TYPE_ERR: &str = "Invalid container type, only supports Text, Ma
 
 #[wasm_bindgen]
 impl LoroMap {
+    /// "Map"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("Map")
+    }
+
     /// Set the key with the value.
     ///
     /// If the value of the key is exist, the old value will be updated.
@@ -1286,7 +1295,8 @@ impl LoroMap {
         Ok(())
     }
 
-    /// Get the value of the key. If the value is a container, the corresponding handler will be returned.
+    /// Get the value of the key. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1297,13 +1307,14 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// const bar = map.get("foo");
     /// ```
-    pub fn get(&self, key: &str) -> JsValue {
+    pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
-        match v {
+        (match v {
             Some(ValueOrContainer::Container(c)) => handler_to_js_value(c, self.doc.clone()),
             Some(ValueOrContainer::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
-        }
+        })
+        .into()
     }
 
     /// Get the keys of the map.
@@ -1320,15 +1331,14 @@ impl LoroMap {
     /// ```
     pub fn keys(&self) -> Vec<JsValue> {
         let mut ans = Vec::with_capacity(self.handler.len());
-        self.handler.for_each(|k, v| {
-            if v.value.is_some() {
-                ans.push(k.to_string().into());
-            }
+        self.handler.for_each(|k, _| {
+            ans.push(k.to_string().into());
         });
         ans
     }
 
-    /// Get the values of the map.
+    /// Get the values of the map. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1343,14 +1353,13 @@ impl LoroMap {
     pub fn values(&self) -> Vec<JsValue> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
         self.handler.for_each(|_, v| {
-            if let Some(v) = &v.value {
-                ans.push(v.clone().into());
-            }
+            ans.push(loro_value_to_js_value_or_container(v, &self.doc));
         });
         ans
     }
 
-    /// Get the entries of the map.
+    /// Get the entries of the map. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1362,38 +1371,16 @@ impl LoroMap {
     /// map.set("baz", "bar");
     /// const entries = map.entries(); // [["foo", "bar"], ["baz", "bar"]]
     /// ```
-    pub fn entries(&self) -> Vec<JsValue> {
-        let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
+    pub fn entries(&self) -> Vec<MapEntry> {
+        let mut ans: Vec<MapEntry> = Vec::with_capacity(self.handler.len());
         self.handler.for_each(|k, v| {
-            if let Some(v) = &v.value {
-                let array = Array::new();
-                array.push(&k.to_string().into());
-                array.push(&v.clone().into());
-                ans.push(array.into());
-            }
+            let array = Array::new();
+            array.push(&k.to_string().into());
+            array.push(&loro_value_to_js_value_or_container(v, &self.doc));
+            let v: JsValue = array.into();
+            ans.push(v.into());
         });
         ans
-    }
-
-    /// Get the keys and values shallowly
-    ///
-    /// {@link LoroMap.getDeepValue}
-    ///
-    /// @example
-    /// ```ts
-    /// import { Loro } from "loro-crdt";
-    ///
-    /// const doc = new Loro();
-    /// const map = doc.getMap("map");
-    /// map.set("foo", "bar");
-    /// const text = map.setContainer("text", "Text");
-    /// text.insert(0, "Hello");
-    /// console.log(map.value);  // {foo: "bar", text: "cid:1@74CAF43A01FF0725:Text"}
-    /// ```
-    #[wasm_bindgen(js_name = "value", method, getter)]
-    pub fn get_value(&self) -> JsValue {
-        let value = self.handler.get_value();
-        value.into()
     }
 
     /// The container id of this handler.
@@ -1403,8 +1390,8 @@ impl LoroMap {
         value.into()
     }
 
-    /// Get the keys and the values. If the type of value is a container, it will be
-    /// resolved recursively.
+    /// Get the keys and the values. If the type of value is a child container,
+    /// it will be resolved recursively.
     ///
     /// @example
     /// ```ts
@@ -1417,8 +1404,8 @@ impl LoroMap {
     /// text.insert(0, "Hello");
     /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
     /// ```
-    #[wasm_bindgen(js_name = "getDeepValue")]
-    pub fn get_value_deep(&self) -> JsValue {
+    #[wasm_bindgen(js_name = "toJson")]
+    pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
     }
 
@@ -1561,6 +1548,11 @@ pub struct LoroList {
 
 #[wasm_bindgen]
 impl LoroList {
+    /// "List"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("List")
+    }
+
     /// Insert a value at index.
     ///
     /// @example
@@ -1608,15 +1600,16 @@ impl LoroList {
     /// console.log(list.get(0));  // 100
     /// console.log(list.get(1));  // undefined
     /// ```
-    pub fn get(&self, index: usize) -> JsValue {
+    pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
         let Some(v) = self.handler.get_(index) else {
-            return JsValue::UNDEFINED;
+            return JsValue::UNDEFINED.into();
         };
 
-        match v {
+        (match v {
             ValueOrContainer::Value(v) => v.into(),
             ValueOrContainer::Container(h) => handler_to_js_value(h, self.doc.clone()),
-        }
+        })
+        .into()
     }
 
     /// Get the id of this container.
@@ -1626,7 +1619,8 @@ impl LoroList {
         value.into()
     }
 
-    /// Get elements of the list.
+    /// Get elements of the list. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1637,11 +1631,25 @@ impl LoroList {
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
     /// list.insert(2, true);
-    /// console.log(list.value);  // [100, "foo", true];
+    /// list.insertContainer(3, "Text");
+    /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
-    #[wasm_bindgen(js_name = "value", method, getter)]
-    pub fn get_value(&mut self) -> JsValue {
-        self.handler.get_value().into()
+    #[wasm_bindgen(js_name = "toArray", method)]
+    pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
+        let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        self.handler.for_each(|x| {
+            arr.push(match x {
+                ValueOrContainer::Value(v) => {
+                    let v: JsValue = v.into();
+                    v.into()
+                }
+                ValueOrContainer::Container(h) => {
+                    let v: JsValue = handler_to_js_value(h, self.doc.clone());
+                    v.into()
+                }
+            });
+        });
+        arr
     }
 
     /// Get elements of the list. If the type of a element is a container, it will be
@@ -1658,8 +1666,8 @@ impl LoroList {
     /// text.insert(0, "Hello");
     /// console.log(list.getDeepValue());  // [100, "Hello"];
     /// ```
-    #[wasm_bindgen(js_name = "getDeepValue")]
-    pub fn get_deep_value(&self) -> JsValue {
+    #[wasm_bindgen(js_name = "toJson")]
+    pub fn to_json(&self) -> JsValue {
         let value = self.handler.get_deep_value();
         value.into()
     }
@@ -1789,6 +1797,11 @@ pub struct LoroTree {
 
 #[wasm_bindgen]
 impl LoroTree {
+    /// "Tree"
+    pub fn kind(&self) -> JsValue {
+        JsValue::from_str("Tree")
+    }
+
     /// Create a new tree node as the child of parent and return an unique tree id.
     /// If the parent is undefined, the tree node will be a root node.
     ///
@@ -1970,8 +1983,8 @@ impl LoroTree {
     /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
     /// console.log(tree.getDeepValue());
     /// ```
-    #[wasm_bindgen(js_name = "getDeepValue")]
-    pub fn get_value_deep(&self) -> JsValue {
+    #[wasm_bindgen(js_name = "toJson")]
+    pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
     }
 
@@ -2139,6 +2152,22 @@ fn vv_to_js_value(vv: VersionVector) -> JsValue {
     map.into()
 }
 
+fn loro_value_to_js_value_or_container(
+    value: ValueOrContainer,
+    doc: &Rc<RefCell<LoroDoc>>,
+) -> JsValue {
+    match value {
+        ValueOrContainer::Value(v) => {
+            let value: JsValue = v.into();
+            value
+        }
+        ValueOrContainer::Container(c) => {
+            let handler: JsValue = handler_to_js_value(c, doc.clone());
+            handler
+        }
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -2234,4 +2263,20 @@ export interface Change {
     length: number,
     deps: OpId[],
 }
+
+
+/**
+ * Data types supported by loro
+ */
+export type Value =
+  | ContainerID
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Value }
+  | Uint8Array
+  | Value[];
+
+export type Container = LoroList | LoroMap | LoroText | LoroTree;
 "#;
