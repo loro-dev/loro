@@ -1295,7 +1295,8 @@ impl LoroMap {
         Ok(())
     }
 
-    /// Get the value of the key. If the value is a container, the corresponding handler will be returned.
+    /// Get the value of the key. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1336,7 +1337,8 @@ impl LoroMap {
         ans
     }
 
-    /// Get the values of the map.
+    /// Get the values of the map. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1346,7 +1348,7 @@ impl LoroMap {
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("baz", "bar");
-    /// const values = map.values(); // [{ type: "Value", value: "bar" }, { type: "Value", value: "bar" }]
+    /// const values = map.values(); // ["bar", "bar"]
     /// ```
     pub fn values(&self) -> Vec<JsValue> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
@@ -1356,7 +1358,8 @@ impl LoroMap {
         ans
     }
 
-    /// Get the entries of the map.
+    /// Get the entries of the map. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1366,7 +1369,7 @@ impl LoroMap {
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("baz", "bar");
-    /// const entries = map.entries(); // [["foo", { type: "Value", value: "bar" }], ["baz", { type: "Value", value: "bar" }]]
+    /// const entries = map.entries(); // [["foo", "bar"], ["baz", "bar"]]
     /// ```
     pub fn entries(&self) -> Vec<MapEntry> {
         let mut ans: Vec<MapEntry> = Vec::with_capacity(self.handler.len());
@@ -1387,8 +1390,8 @@ impl LoroMap {
         value.into()
     }
 
-    /// Get the keys and the values. If the type of value is a container, it will be
-    /// resolved recursively.
+    /// Get the keys and the values. If the type of value is a child container,
+    /// it will be resolved recursively.
     ///
     /// @example
     /// ```ts
@@ -1616,7 +1619,8 @@ impl LoroList {
         value.into()
     }
 
-    /// Get elements of the list.
+    /// Get elements of the list. If the value is a child container, the corresponding
+    /// `Container` will be returned.
     ///
     /// @example
     /// ```ts
@@ -1627,7 +1631,8 @@ impl LoroList {
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
     /// list.insert(2, true);
-    /// console.log(list.value);  // [100, "foo", true];
+    /// list.insertContainer(3, "Text");
+    /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
     #[wasm_bindgen(js_name = "toArray", method)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
