@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.5.0](https://github.com/loro-dev/loro/compare/v0.4.3...v0.5.0) (2023-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* encoding schema is changed
+
+### Bug Fixes
+
+* [#181](https://github.com/loro-dev/loro/issues/181) importing should use inherent arena ([8e901cf](https://github.com/loro-dev/loro/commit/8e901cf00cc8469da136f18f13d2affc78e08e64))
+* deno dirname in windows ([#183](https://github.com/loro-dev/loro/issues/183)) ([c04dc34](https://github.com/loro-dev/loro/commit/c04dc344f5413b5135354c9652a70b5d698f04ac))
+* from snapshot should enable auto commit ([b940214](https://github.com/loro-dev/loro/commit/b94021498571cf7ac42f2896ca0abc82f15d823a))
+* keep strong ref to doc in handlers [#190](https://github.com/loro-dev/loro/issues/190) ([#191](https://github.com/loro-dev/loro/issues/191)) ([e23ef43](https://github.com/loro-dev/loro/commit/e23ef4362d69430601728f40b730e72a183ac4ea))
+* remove compress feature ([#184](https://github.com/loro-dev/loro/issues/184)) ([899270c](https://github.com/loro-dev/loro/commit/899270c6de065852d6e26a07b94b3d923cb83459))
+* typo in lib.rs ([#176](https://github.com/loro-dev/loro/issues/176)) ([83b0e8c](https://github.com/loro-dev/loro/commit/83b0e8cc7f8bccd9d7c152c0e5a59437bebe6c87))
+
 ### [0.4.3](https://github.com/loro-dev/loro/compare/v0.4.2...v0.4.3) (2023-11-16)
 
 
