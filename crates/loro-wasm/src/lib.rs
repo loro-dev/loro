@@ -1833,9 +1833,9 @@ impl LoroTree {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
             self.handler
-                .create_and_mov_(parent.try_into().unwrap_throw())?
+                .create_and_mov(parent.try_into().unwrap_throw())?
         } else {
-            self.handler.create_()?
+            self.handler.create()?
         };
         let js_id: JsValue = id.into();
         Ok(js_id.into())
@@ -1863,7 +1863,7 @@ impl LoroTree {
         let target = TreeID::try_from(target).unwrap();
         let parent: JsValue = parent.into();
         let parent = TreeID::try_from(parent).unwrap();
-        self.handler.mov_(target, parent)?;
+        self.handler.mov(target, parent)?;
         Ok(())
     }
 
@@ -1891,7 +1891,7 @@ impl LoroTree {
     /// ```
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.handler.delete_(target.try_into().unwrap())?;
+        self.handler.delete(target.try_into().unwrap())?;
         Ok(())
     }
 
@@ -1923,7 +1923,7 @@ impl LoroTree {
     /// ```
     pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
-        self.handler.as_root_(target.try_into().unwrap())?;
+        self.handler.as_root(target.try_into().unwrap())?;
         Ok(())
     }
 

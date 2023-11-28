@@ -544,6 +544,11 @@ impl TextHandler {
 
         Ok(())
     }
+
+    #[allow(clippy::inherent_to_string)]
+    pub fn to_string(&self) -> String {
+        self.with_state_mut(|s| s.to_string_mut())
+    }
 }
 
 fn event_len(s: &str) -> usize {
@@ -1083,11 +1088,11 @@ impl TreeHandler {
         }
     }
 
-    pub fn create_(&self) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create(txn))
+    pub fn create(&self) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_with_txn(txn))
     }
 
-    pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
+    pub fn create_with_txn(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
         let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
@@ -1107,11 +1112,11 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
-    pub fn delete_(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete(txn, target))
+    pub fn delete(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, target))
     }
 
-    pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+    pub fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1126,11 +1131,15 @@ impl TreeHandler {
         )
     }
 
-    pub fn create_and_mov_(&self, parent: TreeID) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create_and_mov(txn, parent))
+    pub fn create_and_mov(&self, parent: TreeID) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_and_mov_with_txn(txn, parent))
     }
 
-    pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
+    pub fn create_and_mov_with_txn(
+        &self,
+        txn: &mut Transaction,
+        parent: TreeID,
+    ) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
         let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
@@ -1156,11 +1165,11 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
-    pub fn as_root_(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.as_root(txn, target))
+    pub fn as_root(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.as_root_with_txn(txn, target))
     }
 
-    pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+    pub fn as_root_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1175,11 +1184,16 @@ impl TreeHandler {
         )
     }
 
-    pub fn mov_(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.mov(txn, target, parent))
+    pub fn mov(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.mov_with_txn(txn, target, parent))
     }
 
-    pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
+    pub fn mov_with_txn(
+        &self,
+        txn: &mut Transaction,
+        target: TreeID,
+        parent: TreeID,
+    ) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1495,7 +1509,7 @@ mod test {
         let loro = LoroDoc::new();
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
-        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
+        let id = loro.with_txn(|txn| tree.create_with_txn(txn)).unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 123.into())
@@ -1524,11 +1538,11 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create(txn)?;
+            let id = tree.create_with_txn(txn)?;
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 1.into())?;
             text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create(txn)?;
+            let _id2 = tree.create_with_txn(txn)?;
             meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })

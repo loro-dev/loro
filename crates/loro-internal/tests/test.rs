@@ -641,14 +641,20 @@ fn tree_checkout() {
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
-    let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
-    let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
+    let id1 = doc_a.with_txn(|txn| tree.create_with_txn(txn)).unwrap();
+    let id2 = doc_a
+        .with_txn(|txn| tree.create_and_mov_with_txn(txn, id1))
+        .unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
-    let _id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
+    let _id3 = doc_a
+        .with_txn(|txn| tree.create_and_mov_with_txn(txn, id2))
+        .unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
-    doc_a.with_txn(|txn| tree.delete(txn, id2)).unwrap();
+    doc_a
+        .with_txn(|txn| tree.delete_with_txn(txn, id2))
+        .unwrap();
     let v3_state = tree.get_deep_value();
     let v3 = doc_a.oplog_frontiers();
     doc_a.checkout(&v1).unwrap();
@@ -676,7 +682,7 @@ fn tree_checkout() {
     doc_a.attach();
     doc_a
         .with_txn(|txn| {
-            tree.create(txn)
+            tree.create_with_txn(txn)
             //tree.insert_meta(txn, id1, "a", 1.into())
         })
         .unwrap();

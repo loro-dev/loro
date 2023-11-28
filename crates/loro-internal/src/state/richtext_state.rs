@@ -43,8 +43,11 @@ impl RichtextState {
         }
     }
 
+    /// Get the text content of the richtext
+    ///
+    /// This uses `mut` because we may need to build the state from snapshot
     #[inline]
-    pub fn as_string(&mut self) -> String {
+    pub fn to_string_mut(&mut self) -> String {
         self.state.get_mut().to_string()
     }
 

@@ -1,14 +1,21 @@
+use loro_internal::container::richtext::TextStyleInfoFlag;
 pub use loro_internal::container::{ContainerID, ContainerType};
+use loro_internal::handler::TextDelta;
+pub use loro_internal::handler::ValueOrContainer;
 pub use loro_internal::version::Frontiers;
-pub use loro_internal::{handler::Handler, ListHandler, MapHandler, TextHandler, TreeHandler};
 pub use loro_internal::{LoroError, LoroResult, LoroValue};
 
 use loro_internal::container::IntoContainerId;
+use loro_internal::{
+    handler::Handler as InnerHandler, ListHandler as InnerListHandler,
+    MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
+    TreeHandler as InnerTreeHandler,
+};
 use loro_internal::{LoroDoc as InnerLoroDoc, VersionVector};
 use std::cmp::Ordering;
 
 /// `LoroDoc` is the entry for the whole document.
-/// When it's dropped, all the associated `Container`s will be invalidated.
+/// When it's dropped, all the associated [`Handler`]s will be invalidated.
 pub struct LoroDoc {
     doc: InnerLoroDoc,
 }
@@ -47,19 +54,27 @@ impl LoroDoc {
     }
 
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        self.doc.get_list(id)
+        ListHandler {
+            handler: self.doc.get_list(id),
+        }
     }
 
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        self.doc.get_map(id)
+        MapHandler {
+            handler: self.doc.get_map(id),
+        }
     }
 
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        self.doc.get_text(id)
+        TextHandler {
+            handler: self.doc.get_text(id),
+        }
     }
 
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        self.doc.get_tree(id)
+        TreeHandler {
+            handler: self.doc.get_tree(id),
+        }
     }
 
     pub fn commit(&self) {
@@ -121,5 +136,178 @@ impl LoroDoc {
     /// [Learn more about `Frontiers`]()
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ListHandler {
+    handler: InnerListHandler,
+}
+
+impl ListHandler {
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.insert(pos, v)
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete(pos, len)
+    }
+
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
+        self.handler.get_(index)
+    }
+
+    pub fn get_deep_value(&self) -> LoroValue {
+        self.handler.get_deep_value()
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
+    pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
+        self.handler.pop()
+    }
+
+    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+        self.handler.push(v)
+    }
+
+    pub fn for_each<I>(&self, f: I)
+    where
+        I: FnMut(ValueOrContainer),
+    {
+        self.handler.for_each(f)
+    }
+
+    pub fn len(&self) -> usize {
+        self.handler.len()
+    }
+
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+        Ok(Handler::from(self.handler.insert_container(pos, c_type)?))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MapHandler {
+    handler: InnerMapHandler,
+}
+
+impl MapHandler {
+    pub fn delete(&self, key: &str) -> LoroResult<()> {
+        self.handler.delete(key)
+    }
+
+    pub fn for_each<I>(&self, f: I)
+    where
+        I: FnMut(&str, ValueOrContainer),
+    {
+        self.handler.for_each(f)
+    }
+
+    pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
+        self.handler.insert(key, value)
+    }
+
+    pub fn len(&self) -> usize {
+        self.handler.len()
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.handler.is_empty()
+    }
+
+    pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
+        self.handler.get_(key)
+    }
+
+    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
+        Ok(Handler::from(self.handler.insert_container(key, c_type)?))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextHandler {
+    handler: InnerTextHandler,
+}
+
+impl TextHandler {
+    pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
+        self.handler.insert(pos, s)
+    }
+
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete(pos, len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.handler.is_empty()
+    }
+
+    pub fn len_utf8(&self) -> usize {
+        self.handler.len_utf8()
+    }
+
+    pub fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
+    pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
+        self.handler.apply_delta(delta)
+    }
+
+    pub fn mark(
+        &self,
+        start: usize,
+        end: usize,
+        key: &str,
+        value: LoroValue,
+        flag: TextStyleInfoFlag,
+    ) -> LoroResult<()> {
+        self.handler.mark(start, end, key, value, flag)
+    }
+
+    pub fn get_richtext_value(&self) -> LoroValue {
+        self.handler.get_richtext_value()
+    }
+
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    #[allow(clippy::inherent_to_string)]
+    pub fn to_string(&self) -> String {
+        self.handler.to_string()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TreeHandler {
+    handler: InnerTreeHandler,
+}
+
+use enum_as_inner::EnumAsInner;
+
+#[derive(Clone, Debug, EnumAsInner)]
+pub enum Handler {
+    List(ListHandler),
+    Map(MapHandler),
+    Text(TextHandler),
+    Tree(TreeHandler),
+}
+
+impl From<InnerHandler> for Handler {
+    fn from(value: InnerHandler) -> Self {
+        match value {
+            InnerHandler::Text(x) => Handler::Text(TextHandler { handler: x }),
+            InnerHandler::Map(x) => Handler::Map(MapHandler { handler: x }),
+            InnerHandler::List(x) => Handler::List(ListHandler { handler: x }),
+            InnerHandler::Tree(x) => Handler::Tree(TreeHandler { handler: x }),
+        }
     }
 }
