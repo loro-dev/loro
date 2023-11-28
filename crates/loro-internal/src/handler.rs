@@ -564,8 +564,8 @@ impl ListHandler {
         }
     }
 
-    pub fn insert_(&self, pos: usize, v: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert(txn, pos, v))
+    pub fn insert_(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert(txn, pos, v.into()))
     }
 
     pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) -> LoroResult<()> {
@@ -830,8 +830,8 @@ impl MapHandler {
         }
     }
 
-    pub fn insert_(&self, key: &str, value: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert(txn, key, value))
+    pub fn insert_(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert(txn, key, value.into()))
     }
 
     pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) -> LoroResult<()> {

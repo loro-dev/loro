@@ -873,6 +873,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro"
+version = "0.1.0"
+dependencies = [
+ "loro-internal",
+ "serde_json",
+]
+
+[[package]]
 name = "loro-common"
 version = "0.1.0"
 dependencies = [

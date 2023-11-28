@@ -1275,7 +1275,7 @@ impl LoroMap {
     /// ```
     #[wasm_bindgen(js_name = "set")]
     pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
-        self.handler.insert_(key, value.into())?;
+        self.handler.insert_(key, value)?;
         Ok(())
     }
 
@@ -1567,7 +1567,7 @@ impl LoroList {
     /// console.log(list.value);  // [100, "foo", true];
     /// ```
     pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
-        self.handler.insert_(index, value.into())?;
+        self.handler.insert_(index, value)?;
         Ok(())
     }
 

@@ -1,1 +1,1 @@
-pub use loro_common::LoroError;
+pub use loro_common::{LoroError, LoroResult};

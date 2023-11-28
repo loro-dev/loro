@@ -32,8 +32,8 @@ fn event_from_checkout() {
 fn out_of_bound_test() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert_(0, "Hello").unwrap();
-    a.get_list("list").insert_(0, "Hello".into()).unwrap();
-    a.get_list("list").insert_(1, "Hello".into()).unwrap();
+    a.get_list("list").insert_(0, "Hello").unwrap();
+    a.get_list("list").insert_(1, "Hello").unwrap();
     // expect out of bound err
     let err = a.get_text("text").insert_(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
@@ -48,7 +48,7 @@ fn out_of_bound_test() {
         .get_text("text")
         .mark_(3, 0, "h", 5.into(), TextStyleInfoFlag::BOLD)
         .unwrap_err();
-    let err = a.get_list("list").insert_(6, "Hello".into()).unwrap_err();
+    let err = a.get_list("list").insert_(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a.get_list("list").delete_(3, 2).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
@@ -62,7 +62,7 @@ fn out_of_bound_test() {
 #[test]
 fn list() {
     let a = LoroDoc::new_auto_commit();
-    a.get_list("list").insert_(0, "Hello".into()).unwrap();
+    a.get_list("list").insert_(0, "Hello").unwrap();
     assert_eq!(a.get_list("list").get(0).unwrap(), LoroValue::from("Hello"));
     let map = a
         .get_list("list")
@@ -76,8 +76,8 @@ fn list() {
         .unwrap()
         .into_map()
         .unwrap();
-    pos.insert_("x", 0.into()).unwrap();
-    pos.insert_("y", 100.into()).unwrap();
+    pos.insert_("x", 0).unwrap();
+    pos.insert_("y", 100).unwrap();
 
     let cid = map.id();
     let id = a.get_list("list").get(1);
@@ -285,10 +285,10 @@ fn import_after_init_handlers() {
     );
 
     let b = LoroDoc::new_auto_commit();
-    b.get_list("list").insert_(0, "list".into()).unwrap();
-    b.get_list("list_a").insert_(0, "list_a".into()).unwrap();
+    b.get_list("list").insert_(0, "list").unwrap();
+    b.get_list("list_a").insert_(0, "list_a").unwrap();
     b.get_text("text").insert_(0, "text").unwrap();
-    b.get_map("map").insert_("m", "map".into()).unwrap();
+    b.get_map("map").insert_("m", "map").unwrap();
     a.import(&b.export_snapshot()).unwrap();
     a.commit_then_renew();
 }
