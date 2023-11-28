@@ -179,4 +179,14 @@ declare module "loro-wasm" {
     delete(pos: number, len: number): void;
     subscribe(txn: Loro, listener: Listener): number;
   }
+
+  interface LoroTree{
+    create(parent: TreeID | undefined): TreeID;
+    mov(target: TreeID, parent: TreeID | undefined): void;
+    delete(target: TreeID): void;
+    getMeta(target: TreeID): LoroMap;
+    parent(target: TreeID): TreeID | undefined;
+    contains(target: TreeID): boolean;
+    subscribe(txn: Loro, listener: Listener): number;
+  }
 }

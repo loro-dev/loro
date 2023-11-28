@@ -522,7 +522,7 @@ impl Actionable for Vec<Actor> {
 
                 match action {
                     TreeAction::Create => {
-                        container.create_with_txn(&mut txn).unwrap();
+                        container.create_with_txn(&mut txn, None).unwrap();
                     }
                     TreeAction::Move => {
                         match container.mov_with_txn(
