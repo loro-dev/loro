@@ -1,5 +1,5 @@
 mod string_tree;
-use rle::RleTree;
+use loro_rle::RleTree;
 use string_tree::{CustomString, StringTreeTrait};
 
 pub fn main() {

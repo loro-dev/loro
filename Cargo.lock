@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "enum-as-inner 0.6.0",
  "loro-internal",
@@ -889,7 +889,7 @@ dependencies = [
  "enum-as-inner 0.6.0",
  "fxhash",
  "js-sys",
- "rle",
+ "loro-rle",
  "serde",
  "string_cache",
  "thiserror",
@@ -930,6 +930,7 @@ dependencies = [
  "js-sys",
  "loro-common",
  "loro-preload",
+ "loro-rle",
  "miniz_oxide 0.7.1",
  "num",
  "once_cell",
@@ -937,7 +938,6 @@ dependencies = [
  "proptest",
  "proptest-derive",
  "rand",
- "rle",
  "serde",
  "serde-wasm-bindgen",
  "serde_columnar",
@@ -962,6 +962,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-rle"
+version = "0.1.0"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "bumpalo",
+ "color-backtrace",
+ "crdt-list",
+ "ctor",
+ "debug-log",
+ "enum-as-inner 0.5.1",
+ "fxhash",
+ "heapless",
+ "num",
+ "ouroboros",
+ "proptest",
+ "rand",
+ "smallvec",
+ "smartstring",
+ "static_assertions",
+]
+
+[[package]]
 name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -976,7 +999,7 @@ dependencies = [
  "getrandom",
  "js-sys",
  "loro-internal",
- "rle",
+ "loro-rle",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
@@ -1548,29 +1571,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi",
-]
-
-[[package]]
-name = "rle"
-version = "0.1.0"
-dependencies = [
- "append-only-bytes",
- "arref",
- "bumpalo",
- "color-backtrace",
- "crdt-list",
- "ctor",
- "debug-log",
- "enum-as-inner 0.5.1",
- "fxhash",
- "heapless",
- "num",
- "ouroboros",
- "proptest",
- "rand",
- "smallvec",
- "smartstring",
- "static_assertions",
 ]
 
 [[package]]

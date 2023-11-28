@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use rle::{rle_tree::tree_trait::*, HasLength, Mergable, Sliceable};
+use loro_rle::{rle_tree::tree_trait::*, HasLength, Mergable, Sliceable};
 use smartstring::SmartString;
 
 type SString = SmartString<smartstring::LazyCompact>;
@@ -28,7 +28,7 @@ impl CustomString {
 
 impl HasLength for CustomString {
     fn content_len(&self) -> usize {
-        rle::HasLength::content_len(&self.slice)
+        loro_rle::HasLength::content_len(&self.slice)
     }
 }
 
