@@ -1,21 +1,23 @@
+#![doc = include_str!("../README.md")]
+use either::Either;
 use loro_internal::container::richtext::TextStyleInfoFlag;
 use loro_internal::container::IntoContainerId;
 use loro_internal::handler::TextDelta;
+use loro_internal::handler::ValueOrContainer;
 use loro_internal::id::PeerID;
 use loro_internal::id::TreeID;
+use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
     TreeHandler as InnerTreeHandler,
 };
-use loro_internal::{LoroDoc as InnerLoroDoc, VersionVector};
 use std::cmp::Ordering;
 use std::ops::Range;
 
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType};
-pub use loro_internal::handler::ValueOrContainer;
-pub use loro_internal::version::Frontiers;
+pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.
@@ -82,8 +84,8 @@ impl LoroDoc {
     /// Get a [ListHandler] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
-    pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        ListHandler {
+    pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
+        LoroList {
             handler: self.doc.get_list(id),
         }
     }
@@ -91,8 +93,8 @@ impl LoroDoc {
     /// Get a [MapHandler] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
-    pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        MapHandler {
+    pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
+        LoroMap {
             handler: self.doc.get_map(id),
         }
     }
@@ -100,8 +102,8 @@ impl LoroDoc {
     /// Get a [TextHandler] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
-    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        TextHandler {
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
+        LoroText {
             handler: self.doc.get_text(id),
         }
     }
@@ -109,8 +111,8 @@ impl LoroDoc {
     /// Get a [TreeHandler] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
-    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        TreeHandler {
+    pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
+        LoroTree {
             handler: self.doc.get_tree(id),
         }
     }
@@ -187,12 +189,30 @@ impl LoroDoc {
     }
 }
 
+/// LoroList container. It's used to model array.
+///
+/// It can have sub containers.
+///
+/// ```
+/// # use loro::{LoroDoc, ContainerType, ToJson};
+/// # use serde_json::json;
+/// let doc = LoroDoc::new();
+/// let list = doc.get_list("list");
+/// list.insert(0, 123).unwrap();
+/// list.insert(1, "h").unwrap();
+/// assert_eq!(
+///     doc.get_deep_value().to_json_value(),
+///     json!({
+///         "list": [123, "h"]
+///     })
+/// );
+/// ```
 #[derive(Clone, Debug)]
-pub struct ListHandler {
+pub struct LoroList {
     handler: InnerListHandler,
 }
 
-impl ListHandler {
+impl LoroList {
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
     }
@@ -203,8 +223,12 @@ impl ListHandler {
     }
 
     #[inline]
-    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
-        self.handler.get_(index)
+    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+        match self.handler.get_(index) {
+            Some(ValueOrContainer::Container(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrContainer::Value(v)) => Some(Either::Left(v)),
+            None => None,
+        }
     }
 
     #[inline]
@@ -259,17 +283,49 @@ impl ListHandler {
     /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": ["012"]}));
     /// ```
     #[inline]
-    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
-        Ok(Handler::from(self.handler.insert_container(pos, c_type)?))
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Container> {
+        Ok(Container::from(self.handler.insert_container(pos, c_type)?))
     }
 }
 
+/// LoroMap container.
+///
+/// It's LWW(Last-Write-Win) Map. It can support Multi-Value Map in the future.
+///
+/// # Example
+/// ```
+/// # use loro::{LoroDoc, ToJson, ExpandType, LoroValue};
+/// # use serde_json::json;
+/// let doc = LoroDoc::new();
+/// let map = doc.get_map("map");
+/// map.insert("key", "value").unwrap();
+/// map.insert("true", true).unwrap();
+/// map.insert("null", LoroValue::Null).unwrap();
+/// map.insert("deleted", LoroValue::Null).unwrap();
+/// map.delete("deleted").unwrap();
+/// let text = map
+///    .insert_container("text", loro_internal::ContainerType::Text).unwrap()
+///    .into_text()
+///    .unwrap();
+/// text.insert(0, "Hello world!").unwrap();
+/// assert_eq!(
+///     doc.get_deep_value().to_json_value(),
+///     json!({
+///        "map": {
+///            "key": "value",
+///            "true": true,
+///            "null": null,
+///            "text": "Hello world!"
+///        }
+///    })
+/// );
+/// ```
 #[derive(Clone, Debug)]
-pub struct MapHandler {
+pub struct LoroMap {
     handler: InnerMapHandler,
 }
 
-impl MapHandler {
+impl LoroMap {
     pub fn delete(&self, key: &str) -> LoroResult<()> {
         self.handler.delete(key)
     }
@@ -297,8 +353,12 @@ impl MapHandler {
         self.handler.is_empty()
     }
 
-    pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
-        self.handler.get_(key)
+    pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
+        match self.handler.get_(key) {
+            None => None,
+            Some(ValueOrContainer::Container(c)) => Some(Either::Right(c.into())),
+            Some(ValueOrContainer::Value(v)) => Some(Either::Left(v)),
+        }
     }
 
     /// Insert a container with the given type at the given key.
@@ -315,17 +375,18 @@ impl MapHandler {
     /// text.insert(0, "0");
     /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": {"t": "012"}}));
     /// ```
-    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
-        Ok(Handler::from(self.handler.insert_container(key, c_type)?))
+    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Container> {
+        Ok(Container::from(self.handler.insert_container(key, c_type)?))
     }
 }
 
+/// LoroText container. It's used to model plaintext/richtext.
 #[derive(Clone, Debug)]
-pub struct TextHandler {
+pub struct LoroText {
     handler: InnerTextHandler,
 }
 
-impl TextHandler {
+impl LoroText {
     /// Get the [ContainerID]  of the text container.
     pub fn id(&self) -> ContainerID {
         self.handler.id()
@@ -458,12 +519,15 @@ impl TextHandler {
     }
 }
 
+/// LoroTree container. It's used to model movable trees.
+///
+/// You may use it to model directories, outline or other movable hierarchical data.
 #[derive(Clone, Debug)]
-pub struct TreeHandler {
+pub struct LoroTree {
     handler: InnerTreeHandler,
 }
 
-impl TreeHandler {
+impl LoroTree {
     /// Create a new tree node and return the [`TreeID`].
     ///
     /// If the `parent` is `None`, the created node is the root of a tree.
@@ -536,10 +600,10 @@ impl TreeHandler {
     /// let root_meta = tree.get_meta(root).unwrap();
     /// root_meta.insert("color", "red");
     /// ```
-    pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
+    pub fn get_meta(&self, target: TreeID) -> LoroResult<LoroMap> {
         self.handler
             .get_meta(target)
-            .map(|h| MapHandler { handler: h })
+            .map(|h| LoroMap { handler: h })
     }
 
     /// Return the parent of target node.
@@ -576,21 +640,22 @@ impl TreeHandler {
 
 use enum_as_inner::EnumAsInner;
 
+/// All the CRDT containers supported by loro.
 #[derive(Clone, Debug, EnumAsInner)]
-pub enum Handler {
-    List(ListHandler),
-    Map(MapHandler),
-    Text(TextHandler),
-    Tree(TreeHandler),
+pub enum Container {
+    List(LoroList),
+    Map(LoroMap),
+    Text(LoroText),
+    Tree(LoroTree),
 }
 
-impl From<InnerHandler> for Handler {
+impl From<InnerHandler> for Container {
     fn from(value: InnerHandler) -> Self {
         match value {
-            InnerHandler::Text(x) => Handler::Text(TextHandler { handler: x }),
-            InnerHandler::Map(x) => Handler::Map(MapHandler { handler: x }),
-            InnerHandler::List(x) => Handler::List(ListHandler { handler: x }),
-            InnerHandler::Tree(x) => Handler::Tree(TreeHandler { handler: x }),
+            InnerHandler::Text(x) => Container::Text(LoroText { handler: x }),
+            InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
+            InnerHandler::List(x) => Container::List(LoroList { handler: x }),
+            InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
         }
     }
 }

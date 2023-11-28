@@ -14,6 +14,7 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 loro-internal = { path = "../loro-internal", version = "0.2.1" }
 enum-as-inner = "0.6.0"
+either = "1.9.0"
 
 [dev-dependencies]
 serde_json = "1.0.87"

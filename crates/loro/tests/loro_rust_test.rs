@@ -1,9 +1,9 @@
-use loro::LoroDoc;
-use loro_internal::{LoroResult, LoroValue, ToJson};
-use serde_json::json;
+use loro_internal::LoroResult;
 
 #[test]
 fn list() -> LoroResult<()> {
+    use loro::{LoroDoc, ToJson};
+    use serde_json::json;
     let doc = LoroDoc::new();
     check_sync_send(&doc);
     let list = doc.get_list("list");
@@ -38,6 +38,8 @@ fn list() -> LoroResult<()> {
 
 #[test]
 fn map() -> LoroResult<()> {
+    use loro::{LoroDoc, LoroValue, ToJson};
+    use serde_json::json;
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
     map.insert("key", "value")?;
@@ -68,6 +70,8 @@ fn map() -> LoroResult<()> {
 #[test]
 #[cfg(feature = "test_utils")]
 fn tree() {
+    use loro::{LoroDoc, ToJson};
+
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     let tree = doc.get_tree("tree");
@@ -109,4 +113,44 @@ fn richtext_test() {
              { "insert": " world!" },
         ])
     );
+}
+
+#[test]
+fn sync() {
+    use loro::{LoroDoc, ToJson};
+    use serde_json::json;
+
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello world!").unwrap();
+    let bytes = doc.export_from(&Default::default());
+    let doc_b = LoroDoc::new();
+    doc_b.import(&bytes).unwrap();
+    assert_eq!(doc.get_deep_value(), doc_b.get_deep_value());
+    let text_b = doc_b.get_text("text");
+    text_b
+        .mark(0..5, loro::ExpandType::After, "bold", true)
+        .unwrap();
+    doc.import(&doc_b.export_from(&doc.oplog_vv())).unwrap();
+    assert_eq!(
+        text.to_delta().to_json_value(),
+        json!([
+            { "insert": "Hello", "attributes": {"bold": true} },
+            { "insert": " world!" },
+        ])
+    );
+}
+
+#[test]
+fn save() {
+    use loro::LoroDoc;
+
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "123").unwrap();
+    let snapshot = doc.export_snapshot();
+
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
 }

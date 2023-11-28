@@ -194,6 +194,12 @@ const DELETE_MASK: u8 = 0b0000_1000;
 const CONTAINER_MASK: u8 = 0b0001_0000;
 const ALIVE_MASK: u8 = 0b1000_0000;
 
+/// Whether to expand the style when inserting new text around it.
+///
+/// - Before: when inserting new text before this style, the new text should inherit this style.
+/// - After: when inserting new text after this style, the new text should inherit this style.
+/// - Both: when inserting new text before or after this style, the new text should inherit this style.
+/// - None: when inserting new text before or after this style, the new text should **not** inherit this style.
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub enum ExpandType {
     Before,

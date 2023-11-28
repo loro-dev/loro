@@ -21,11 +21,10 @@ use crate::{
 };
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
+/// is a map from [PeerID] to [Counter]. Its a right-open interval.
 ///
-/// It's a map from [ClientID] to [Counter]. Its a right-open interval.
 /// i.e. a [VersionVector] of `{A: 1, B: 2}` means that A has 1 atomic op and B has 2 atomic ops,
 /// thus ID of `{client: A, counter: 1}` is out of the range.
-///
 #[repr(transparent)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<PeerID, Counter>);

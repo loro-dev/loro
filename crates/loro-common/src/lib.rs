@@ -13,6 +13,7 @@ pub use error::{LoroError, LoroResult, LoroTreeError};
 pub use span::*;
 pub use value::LoroValue;
 
+/// Unique id for each peer. It's usually random
 pub type PeerID = u64;
 pub type Counter = i32;
 pub type Lamport = u32;
