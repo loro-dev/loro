@@ -1,6 +1,6 @@
 [package]
 name = "loro"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 description = "Loro is a high-performance CRDTs framework. Make your app collaborative efforlessly."
