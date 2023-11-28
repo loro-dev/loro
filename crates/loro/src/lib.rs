@@ -502,7 +502,7 @@ impl TreeHandler {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        self.handler.mov(target, parent)
+        self.handler.mov(target, parent.into())
     }
 
     /// Delete a tree node.
