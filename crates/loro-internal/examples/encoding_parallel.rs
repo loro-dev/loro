@@ -69,8 +69,8 @@ fn main() {
     for TextAction { pos, ins, del } in actions.iter() {
         {
             let mut txn = loro.txn().unwrap();
-            text.delete(&mut txn, *pos, *del).unwrap();
-            text.insert(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
         }
 
         loro_b

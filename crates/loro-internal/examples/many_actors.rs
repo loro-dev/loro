@@ -17,7 +17,7 @@ fn import_with_many_actors() {
         let list = store.get_list("list");
         let value: LoroValue = i.to_string().into();
         let mut txn = store.txn().unwrap();
-        list.insert(&mut txn, 0, value).unwrap();
+        list.insert_with_txn(&mut txn, 0, value).unwrap();
         txn.commit().unwrap();
     }
 
@@ -46,7 +46,7 @@ fn with_100k_actors_then_action() {
         let list = store.get_list("list");
         let value: LoroValue = i.to_string().into();
         let mut txn = store.txn().unwrap();
-        list.insert(&mut txn, 0, value).unwrap();
+        list.insert_with_txn(&mut txn, 0, value).unwrap();
         txn.commit().unwrap();
     }
 
@@ -54,7 +54,7 @@ fn with_100k_actors_then_action() {
         let list = store.get_list("list");
         let value: LoroValue = i.to_string().into();
         let mut txn = store.txn().unwrap();
-        list.insert(&mut txn, 0, value).unwrap();
+        list.insert_with_txn(&mut txn, 0, value).unwrap();
         txn.commit().unwrap();
     }
 }

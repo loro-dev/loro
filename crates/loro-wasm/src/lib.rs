@@ -1043,7 +1043,7 @@ impl LoroText {
     /// ```
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
         debug_log::debug_log!("InsertLogWasm");
-        self.handler.insert_(index, content)?;
+        self.handler.insert(index, content)?;
         Ok(())
     }
 
@@ -1061,7 +1061,7 @@ impl LoroText {
     /// console.log(s); // "Ho"
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
-        self.handler.delete_(index, len)?;
+        self.handler.delete(index, len)?;
         Ok(())
     }
 
@@ -1099,7 +1099,7 @@ impl LoroText {
                     .expect_throw("`expand` must be one of `none`, `start`, `end`, `both`")
             })
             .unwrap_or(ExpandType::After);
-        self.handler.mark_(
+        self.handler.mark(
             range.start,
             range.end,
             key,
@@ -1147,7 +1147,7 @@ impl LoroText {
             })
             .unwrap_or(ExpandType::After);
         let expand = expand.reverse();
-        self.handler.mark_(
+        self.handler.mark(
             range.start,
             range.end,
             key,
@@ -1239,7 +1239,7 @@ impl LoroText {
     pub fn apply_delta(&self, delta: JsValue) -> JsResult<()> {
         let delta: Vec<TextDelta> = serde_wasm_bindgen::from_value(delta)?;
         console_log!("apply_delta {:?}", delta);
-        self.handler.apply_delta_(&delta)?;
+        self.handler.apply_delta(&delta)?;
         Ok(())
     }
 }
@@ -1275,7 +1275,7 @@ impl LoroMap {
     /// ```
     #[wasm_bindgen(js_name = "set")]
     pub fn insert(&mut self, key: &str, value: JsValue) -> JsResult<()> {
-        self.handler.insert_(key, value)?;
+        self.handler.insert(key, value)?;
         Ok(())
     }
 
@@ -1291,7 +1291,7 @@ impl LoroMap {
     /// map.delete("foo");
     /// ```
     pub fn delete(&mut self, key: &str) -> JsResult<()> {
-        self.handler.delete_(key)?;
+        self.handler.delete(key)?;
         Ok(())
     }
 
@@ -1430,7 +1430,7 @@ impl LoroMap {
             "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let c = self.handler.insert_container_(key, type_)?;
+        let c = self.handler.insert_container(key, type_)?;
 
         let container = match type_ {
             ContainerType::Map => LoroMap {
@@ -1567,7 +1567,7 @@ impl LoroList {
     /// console.log(list.value);  // [100, "foo", true];
     /// ```
     pub fn insert(&mut self, index: usize, value: JsValue) -> JsResult<()> {
-        self.handler.insert_(index, value)?;
+        self.handler.insert(index, value)?;
         Ok(())
     }
 
@@ -1584,7 +1584,7 @@ impl LoroList {
     /// console.log(list.value);  // []
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
-        self.handler.delete_(index, len)?;
+        self.handler.delete(index, len)?;
         Ok(())
     }
 
@@ -1694,7 +1694,7 @@ impl LoroList {
             "tree" | "Tree" => ContainerType::Tree,
             _ => return Err(JsValue::from_str(CONTAINER_TYPE_ERR)),
         };
-        let c = self.handler.insert_container_(index, _type)?;
+        let c = self.handler.insert_container(index, _type)?;
         let container = match _type {
             ContainerType::Map => LoroMap {
                 handler: c.into_map().unwrap(),

@@ -39,7 +39,7 @@ mod run {
                     if container % 2 == 0 {
                         let text = actor.get_text(container.to_string().as_str());
                         let mut txn = actor.txn().unwrap();
-                        text.insert(
+                        text.insert_with_txn(
                             &mut txn,
                             (action.pos as usize) % text.len_unicode().max(1),
                             action.value.to_string().as_str(),
@@ -48,7 +48,7 @@ mod run {
                     } else {
                         let list = actor.get_list(container.to_string().as_str());
                         let mut txn = actor.txn().unwrap();
-                        list.insert(
+                        list.insert_with_txn(
                             &mut txn,
                             (action.pos as usize) % list.len().max(1),
                             action.value.to_string().as_str().into(),
@@ -86,7 +86,7 @@ mod run {
                     let list = actor.get_list("list");
                     let value: LoroValue = i.to_string().into();
                     let mut txn = actor.txn().unwrap();
-                    list.insert(&mut txn, 0, value).unwrap();
+                    list.insert_with_txn(&mut txn, 0, value).unwrap();
                 }
 
                 for i in 1..actors.len() {

@@ -25,16 +25,16 @@ mod sync {
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
                         let mut txn = c1.txn().unwrap();
-                        t1.delete(&mut txn, *pos, *del).unwrap();
-                        t1.insert(&mut txn, *pos, ins).unwrap();
+                        t1.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        t1.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
 
                         let update = c1.export_from(&c2.oplog_vv());
                         c2.import(&update).unwrap();
                     } else {
                         let mut txn = c2.txn().unwrap();
-                        t2.delete(&mut txn, *pos, *del).unwrap();
-                        t2.insert(&mut txn, *pos, ins).unwrap();
+                        t2.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        t2.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
                         let update = c2.export_from(&c1.oplog_vv());
                         c1.import(&update).unwrap();
@@ -59,8 +59,8 @@ mod run {
                 let text = loro.get_text("text");
                 for TextAction { pos, ins, del } in actions.iter() {
                     let mut txn = loro.txn().unwrap();
-                    text.delete(&mut txn, *pos, *del).unwrap();
-                    text.insert(&mut txn, *pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                 }
                 ran = true;
             }
@@ -128,8 +128,12 @@ mod import {
                 let text1 = c1.get_text("text");
                 let text2 = c2.get_text("text");
                 for _ in 0..500 {
-                    text1.insert(&mut c1.txn().unwrap(), 0, "1").unwrap();
-                    text2.insert(&mut c2.txn().unwrap(), 0, "2").unwrap();
+                    text1
+                        .insert_with_txn(&mut c1.txn().unwrap(), 0, "1")
+                        .unwrap();
+                    text2
+                        .insert_with_txn(&mut c2.txn().unwrap(), 0, "2")
+                        .unwrap();
                 }
 
                 c1.import(&c2.export_from(&c1.oplog_vv())).unwrap();

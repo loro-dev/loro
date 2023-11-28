@@ -11,8 +11,8 @@ pub fn main() {
     for (_, chunks) in actions.chunks(action_length / 10).enumerate() {
         for TextAction { pos, ins, del } in chunks {
             let mut txn = loro.txn().unwrap();
-            text.delete(&mut txn, *pos, *del).unwrap();
-            text.insert(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
             updates.push(loro.export_from(&latest_vv));
             latest_vv = loro.oplog_vv();
         }

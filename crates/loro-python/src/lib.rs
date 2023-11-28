@@ -26,7 +26,7 @@ impl Loro {
 impl LoroText {
     pub fn insert(&mut self, ctx: &Loro, pos: usize, value: &str) -> PyResult<()> {
         self.0
-            .insert(&mut ctx.0.txn().unwrap(), pos, value)
+            .insert_with_txn(&mut ctx.0.txn().unwrap(), pos, value)
             .unwrap();
         Ok(())
     }

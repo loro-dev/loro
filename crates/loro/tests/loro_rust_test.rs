@@ -7,8 +7,8 @@ fn list() -> LoroResult<()> {
     let doc = LoroDoc::new();
     check_sync_send(&doc);
     let list = doc.get_list("list");
-    list.insert_(0, 123)?;
-    list.insert_(1, 123)?;
+    list.insert(0, 123)?;
+    list.insert(1, 123)?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -40,16 +40,16 @@ fn list() -> LoroResult<()> {
 fn map() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
-    map.insert_("key", "value")?;
-    map.insert_("true", true)?;
-    map.insert_("null", LoroValue::Null)?;
-    map.insert_("deleted", LoroValue::Null)?;
-    map.delete_("deleted")?;
+    map.insert("key", "value")?;
+    map.insert("true", true)?;
+    map.insert("null", LoroValue::Null)?;
+    map.insert("deleted", LoroValue::Null)?;
+    map.delete("deleted")?;
     let text = map
-        .insert_container_("text", loro_internal::ContainerType::Text)?
+        .insert_container("text", loro_internal::ContainerType::Text)?
         .into_text()
         .unwrap();
-    text.insert_(0, "Hello world!")?;
+    text.insert(0, "Hello world!")?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({

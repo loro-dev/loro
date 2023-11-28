@@ -17,8 +17,8 @@ fn log_size() {
         let mut txn = loro.txn().unwrap();
 
         for TextAction { pos, ins, del } in actions.iter() {
-            text.delete(&mut txn, *pos, *del);
-            text.insert(&mut txn, *pos, ins);
+            text.delete_with_txn(&mut txn, *pos, *del);
+            text.insert_with_txn(&mut txn, *pos, ins);
         }
         txn.commit().unwrap();
         let snapshot = loro.export_snapshot();
@@ -39,8 +39,8 @@ fn log_size() {
 
         for TextAction { pos, ins, del } in actions.iter() {
             let mut txn = loro.txn().unwrap();
-            text.delete(&mut txn, *pos, *del);
-            text.insert(&mut txn, *pos, ins);
+            text.delete_with_txn(&mut txn, *pos, *del);
+            text.insert_with_txn(&mut txn, *pos, ins);
             txn.commit().unwrap();
         }
         let snapshot = loro.export_snapshot();
@@ -64,8 +64,8 @@ fn bench_decode() {
 
         for _ in 0..10 {
             for TextAction { pos, ins, del } in actions.iter() {
-                text.delete_(*pos, *del);
-                text.insert_(*pos, ins);
+                text.delete(*pos, *del);
+                text.insert(*pos, ins);
             }
         }
         let snapshot = loro.export_snapshot();
@@ -89,8 +89,8 @@ fn bench_decode_updates() {
     #[allow(warnings)]
     for TextAction { pos, ins, del } in actions.iter() {
         let mut txn = loro.txn().unwrap();
-        text.delete(&mut txn, *pos, *del);
-        text.insert(&mut txn, *pos, ins);
+        text.delete_with_txn(&mut txn, *pos, *del);
+        text.insert_with_txn(&mut txn, *pos, ins);
         txn.commit().unwrap();
     }
 
