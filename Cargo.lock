@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "either",
  "enum-as-inner 0.6.0",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "append-only-bytes",
  "arbitrary",

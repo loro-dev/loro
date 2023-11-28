@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
