@@ -1152,7 +1152,7 @@ impl LoroText {
             range.end,
             key,
             LoroValue::Null,
-            TextStyleInfoFlag::new(true, expand, false, false),
+            TextStyleInfoFlag::new(true, expand, true, false),
         )?;
         Ok(())
     }

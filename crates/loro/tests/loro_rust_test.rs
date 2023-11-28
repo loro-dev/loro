@@ -83,3 +83,30 @@ fn tree() {
 }
 
 fn check_sync_send(_doc: impl Sync + Send) {}
+
+#[test]
+fn richtext_test() {
+    use loro::{ExpandType, LoroDoc, ToJson};
+    use serde_json::json;
+
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello world!").unwrap();
+    text.mark(0..5, ExpandType::After, "bold", true).unwrap();
+    assert_eq!(
+        text.to_delta().to_json_value(),
+        json!([
+            { "insert": "Hello", "attributes": {"bold": true} },
+            { "insert": " world!" },
+        ])
+    );
+    text.unmark(3..5, ExpandType::After, "bold").unwrap();
+    assert_eq!(
+        text.to_delta().to_json_value(),
+        json!([
+             { "insert": "Hel", "attributes": {"bold": true} },
+             { "insert": "lo", "attributes": {"bold": null} },
+             { "insert": " world!" },
+        ])
+    );
+}

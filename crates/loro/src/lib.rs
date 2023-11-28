@@ -1,13 +1,8 @@
 use loro_internal::container::richtext::TextStyleInfoFlag;
-pub use loro_internal::container::{ContainerID, ContainerType};
+use loro_internal::container::IntoContainerId;
 use loro_internal::handler::TextDelta;
-pub use loro_internal::handler::ValueOrContainer;
 use loro_internal::id::PeerID;
 use loro_internal::id::TreeID;
-pub use loro_internal::version::Frontiers;
-pub use loro_internal::{LoroError, LoroResult, LoroValue};
-
-use loro_internal::container::IntoContainerId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, TextHandler as InnerTextHandler,
@@ -15,6 +10,13 @@ use loro_internal::{
 };
 use loro_internal::{LoroDoc as InnerLoroDoc, VersionVector};
 use std::cmp::Ordering;
+use std::ops::Range;
+
+pub use loro_internal::container::richtext::ExpandType;
+pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::handler::ValueOrContainer;
+pub use loro_internal::version::Frontiers;
+pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
 
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
@@ -35,10 +37,24 @@ impl LoroDoc {
         LoroDoc { doc }
     }
 
+    /// Attach the document state to the latest known version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
     pub fn attach(&mut self) {
         self.doc.attach()
     }
 
+    /// Checkout the `DocState` to a specific version.
+    ///
+    /// > The document becomes detached during a `checkout` operation.
+    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
     pub fn checkout(&mut self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
     }
@@ -47,38 +63,63 @@ impl LoroDoc {
         self.doc.cmp_frontiers(other)
     }
 
+    /// Force the document enter the detached mode.
+    ///
+    /// In this mode, when you importing new updates, the [loro_internal::DocState] will not be changed.
+    ///
+    /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     pub fn detach(&mut self) {
         self.doc.detach()
     }
 
+    /// Import a batch of updates/snapshot.
+    ///
+    /// The data can be in arbitrary order. The import result will be the same.
     pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
 
+    /// Get a [ListHandler] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         ListHandler {
             handler: self.doc.get_list(id),
         }
     }
 
+    /// Get a [MapHandler] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         MapHandler {
             handler: self.doc.get_map(id),
         }
     }
 
+    /// Get a [TextHandler] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         TextHandler {
             handler: self.doc.get_text(id),
         }
     }
 
+    /// Get a [TreeHandler] by container id.
+    ///
+    /// If the provided id is string, it will be converted into a root container id with the name of the string.
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         TreeHandler {
             handler: self.doc.get_tree(id),
         }
     }
 
+    /// Commit the cumulative auto commit transaction.
+    ///
+    /// There is a transaction behind every operation.
+    /// It will automatically commit when users invoke export or import.
+    /// The event will be sent after a transaction is committed
     pub fn commit(&self) {
         self.doc.commit_then_renew()
     }
@@ -156,26 +197,32 @@ impl ListHandler {
         self.handler.insert(pos, v)
     }
 
+    #[inline]
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete(pos, len)
     }
 
+    #[inline]
     pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         self.handler.get_(index)
     }
 
+    #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
 
+    #[inline]
     pub fn id(&self) -> ContainerID {
         self.handler.id()
     }
 
+    #[inline]
     pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
         self.handler.pop()
     }
 
+    #[inline]
     pub fn push(&self, v: LoroValue) -> LoroResult<()> {
         self.handler.push(v)
     }
@@ -187,10 +234,31 @@ impl ListHandler {
         self.handler.for_each(f)
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.handler.len()
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.handler.is_empty()
+    }
+
+    /// Insert a container with the given type at the given index.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::{LoroDoc, ContainerType, ToJson};
+    /// # use serde_json::json;
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_list("m");
+    /// let text = list.insert_container(0, ContainerType::Text).unwrap().into_text().unwrap();
+    /// text.insert(0, "12");
+    /// text.insert(0, "0");
+    /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": ["012"]}));
+    /// ```
+    #[inline]
     pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
         Ok(Handler::from(self.handler.insert_container(pos, c_type)?))
     }
@@ -233,6 +301,20 @@ impl MapHandler {
         self.handler.get_(key)
     }
 
+    /// Insert a container with the given type at the given key.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::{LoroDoc, ContainerType, ToJson};
+    /// # use serde_json::json;
+    /// let doc = LoroDoc::new();
+    /// let map = doc.get_map("m");
+    /// let text = map.insert_container("t", ContainerType::Text).unwrap().into_text().unwrap();
+    /// text.insert(0, "12");
+    /// text.insert(0, "0");
+    /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": {"t": "012"}}));
+    /// ```
     pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
         Ok(Handler::from(self.handler.insert_container(key, c_type)?))
     }
@@ -244,10 +326,17 @@ pub struct TextHandler {
 }
 
 impl TextHandler {
+    /// Get the [ContainerID]  of the text container.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
+    /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
         self.handler.insert(pos, s)
     }
 
+    /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete(pos, len)
     }
@@ -260,33 +349,109 @@ impl TextHandler {
         self.handler.len_utf8()
     }
 
-    pub fn id(&self) -> ContainerID {
-        self.handler.id()
+    pub fn len_unicode(&self) -> usize {
+        self.handler.len_unicode()
     }
 
+    pub fn len_utf16(&self) -> usize {
+        self.handler.len_utf16()
+    }
+
+    /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
     pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
         self.handler.apply_delta(delta)
     }
 
+    /// Mark a range of text with a key-value pair.
+    ///
+    /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: this is not suitable for unmergeable annotations like comments.
     pub fn mark(
         &self,
-        start: usize,
-        end: usize,
+        range: Range<usize>,
+        expand: ExpandType,
         key: &str,
-        value: LoroValue,
-        flag: TextStyleInfoFlag,
+        value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler.mark(start, end, key, value, flag)
+        self.handler.mark(
+            range.start,
+            range.end,
+            key,
+            value.into(),
+            TextStyleInfoFlag::new(true, expand, false, false),
+        )
     }
 
-    pub fn get_richtext_value(&self) -> LoroValue {
+    /// Unmark a range of text with a key and a value.
+    ///
+    /// You can use it to remove highlights, bolds or links
+    ///
+    /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
+    ///
+    /// **Note: You should specify the same expand type as when you mark the text.**
+    ///
+    /// - `after`(default): when inserting text right after the given range, the mark will be expanded to include the inserted text
+    /// - `before`: when inserting text right before the given range, the mark will be expanded to include the inserted text
+    /// - `none`: the mark will not be expanded to include the inserted text at the boundaries
+    /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
+    ///
+    /// *You should make sure that a key is always associated with the same expand type.*
+    ///
+    /// Note: you cannot delete unmergeable annotations like comments by this method.
+    pub fn unmark(&self, range: Range<usize>, expand: ExpandType, key: &str) -> LoroResult<()> {
+        let expand = expand.reverse();
+        self.handler.mark(
+            range.start,
+            range.end,
+            key,
+            LoroValue::Null,
+            TextStyleInfoFlag::new(true, expand, true, false),
+        )
+    }
+
+    /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// # Example
+    /// ```
+    /// # use loro::{LoroDoc, ToJson, ExpandType};
+    /// # use serde_json::json;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello world!").unwrap();
+    /// text.mark(0..5, ExpandType::After, "bold", true).unwrap();
+    /// assert_eq!(
+    ///     text.to_delta().to_json_value(),
+    ///     json!([
+    ///         { "insert": "Hello", "attributes": {"bold": true} },
+    ///         { "insert": " world!" },
+    ///     ])
+    /// );
+    /// text.unmark(3..5, ExpandType::After, "bold").unwrap();
+    /// assert_eq!(
+    ///     text.to_delta().to_json_value(),
+    ///     json!([
+    ///         { "insert": "Hel", "attributes": {"bold": true} },
+    ///         { "insert": "lo", "attributes": {"bold": null} },
+    ///         { "insert": " world!" },
+    ///    ])
+    /// );
+    /// ```
+    pub fn to_delta(&self) -> LoroValue {
         self.handler.get_richtext_value()
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        self.handler.get_value()
-    }
-
+    /// Get the text content of the text container.
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.handler.to_string()
