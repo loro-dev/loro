@@ -1,5 +1,3 @@
-// allow impl in zerovec macro
-#![allow(clippy::incorrect_partial_ord_impl_on_ord_type)]
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{HasCounterSpan, HasIdSpan, HasLamportSpan, TreeID};
 use rle::{HasLength, RleVec, Sliceable};

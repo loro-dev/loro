@@ -13,7 +13,6 @@ pub use error::{LoroError, LoroResult, LoroTreeError};
 pub use span::*;
 pub use value::LoroValue;
 
-use zerovec::ule::AsULE;
 pub type PeerID = u64;
 pub type Counter = i32;
 pub type Lamport = u32;
@@ -63,29 +62,6 @@ pub enum ContainerType {
     Tree,
     // TODO: Users can define their own container types.
     // Custom(u16),
-}
-
-impl AsULE for ContainerType {
-    type ULE = u8;
-
-    fn to_unaligned(self) -> Self::ULE {
-        match self {
-            ContainerType::Map => 1,
-            ContainerType::List => 2,
-            ContainerType::Text => 3,
-            ContainerType::Tree => 4,
-        }
-    }
-
-    fn from_unaligned(unaligned: Self::ULE) -> Self {
-        match unaligned {
-            1 => ContainerType::Map,
-            2 => ContainerType::List,
-            3 => ContainerType::Text,
-            4 => ContainerType::Tree,
-            _ => unreachable!(),
-        }
-    }
 }
 
 impl ContainerType {
