@@ -1083,7 +1083,7 @@ mod test {
         let app = LoroDoc::new();
         let mut txn = app.txn().unwrap();
         let text = txn.get_text("id");
-        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let snapshot = app.export_snapshot();
         let app2 = LoroDoc::new();
@@ -1094,14 +1094,14 @@ mod test {
             .unwrap()
             .get_text("id")
             .unwrap()
-            .as_string();
+            .to_string_mut();
         assert_eq!("hello", &actual);
         debug_dbg!(&app2.oplog().lock().unwrap());
 
         // test import snapshot to a LoroApp that is already changed
         let mut txn = app2.txn().unwrap();
         let text = txn.get_text("id");
-        text.insert(&mut txn, 2, " ").unwrap();
+        text.insert_with_txn(&mut txn, 2, " ").unwrap();
         txn.commit().unwrap();
         debug_log::group!("app2 export");
         let snapshot = app2.export_snapshot();
@@ -1115,7 +1115,7 @@ mod test {
             .unwrap()
             .get_text("id")
             .unwrap()
-            .as_string();
+            .to_string_mut();
         assert_eq!("he llo", &actual);
     }
 
@@ -1125,13 +1125,17 @@ mod test {
         let b = LoroDoc::default();
         let tree_a = a.get_tree("tree");
         let tree_b = b.get_tree("tree");
-        let id1 = a.with_txn(|txn| tree_a.create(txn)).unwrap();
-        let id2 = a.with_txn(|txn| tree_a.create_and_mov(txn, id1)).unwrap();
+        let id1 = a.with_txn(|txn| tree_a.create_with_txn(txn)).unwrap();
+        let id2 = a
+            .with_txn(|txn| tree_a.create_and_mov_with_txn(txn, id1))
+            .unwrap();
         let bytes = a.export_snapshot();
         b.import(&bytes).unwrap();
         assert_eq!(a.get_deep_value(), b.get_deep_value());
-        let _id3 = b.with_txn(|txn| tree_b.create_and_mov(txn, id1)).unwrap();
-        b.with_txn(|txn| tree_b.delete(txn, id2)).unwrap();
+        let _id3 = b
+            .with_txn(|txn| tree_b.create_and_mov_with_txn(txn, id1))
+            .unwrap();
+        b.with_txn(|txn| tree_b.delete_with_txn(txn, id2)).unwrap();
         let bytes = b.export_snapshot();
         a.import(&bytes).unwrap();
         assert_eq!(a.get_deep_value(), b.get_deep_value());

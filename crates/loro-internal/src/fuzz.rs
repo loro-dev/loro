@@ -215,14 +215,14 @@ impl Actionable for Vec<LoroDoc> {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                text.insert(&mut txn, *pos, &format!("[{}]", content))
+                text.insert_with_txn(&mut txn, *pos, &format!("[{}]", content))
                     .unwrap();
             }
             Action::Del { pos, len, site } => {
                 let site = &mut self[*site as usize];
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
-                text.delete(&mut txn, *pos, *len).unwrap();
+                text.delete_with_txn(&mut txn, *pos, *len).unwrap();
             }
             Action::Sync { from, to } => {
                 if from != to {
@@ -255,7 +255,7 @@ impl Actionable for Vec<LoroDoc> {
                 let mut txn = site.txn().unwrap();
                 let text = txn.get_text("text");
                 let style = STYLES[*style_key as usize];
-                text.mark(
+                text.mark_with_txn(
                     &mut txn,
                     *pos,
                     *pos + *len,

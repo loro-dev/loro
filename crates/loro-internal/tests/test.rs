@@ -12,10 +12,10 @@ fn event_from_checkout() {
     let sub_id = a.subscribe_root(Arc::new(|event| {
         assert!(!event.doc.from_checkout);
     }));
-    a.get_text("text").insert_(0, "hello").unwrap();
+    a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
     let version = a.oplog_frontiers();
-    a.get_text("text").insert_(0, "hello").unwrap();
+    a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
     a.unsubscribe(sub_id);
     let ran = Arc::new(AtomicBool::new(false));
@@ -31,30 +31,30 @@ fn event_from_checkout() {
 #[test]
 fn out_of_bound_test() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert_(0, "Hello").unwrap();
-    a.get_list("list").insert_(0, "Hello".into()).unwrap();
-    a.get_list("list").insert_(1, "Hello".into()).unwrap();
+    a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_list("list").insert(0, "Hello").unwrap();
+    a.get_list("list").insert(1, "Hello").unwrap();
     // expect out of bound err
-    let err = a.get_text("text").insert_(6, "Hello").unwrap_err();
+    let err = a.get_text("text").insert(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let err = a.get_text("text").delete_(3, 5).unwrap_err();
+    let err = a.get_text("text").delete(3, 5).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a
         .get_text("text")
-        .mark_(0, 8, "h", 5.into(), TextStyleInfoFlag::BOLD)
+        .mark(0, 8, "h", 5.into(), TextStyleInfoFlag::BOLD)
         .unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let _err = a
         .get_text("text")
-        .mark_(3, 0, "h", 5.into(), TextStyleInfoFlag::BOLD)
+        .mark(3, 0, "h", 5.into(), TextStyleInfoFlag::BOLD)
         .unwrap_err();
-    let err = a.get_list("list").insert_(6, "Hello".into()).unwrap_err();
+    let err = a.get_list("list").insert(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let err = a.get_list("list").delete_(3, 2).unwrap_err();
+    let err = a.get_list("list").delete(3, 2).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a
         .get_list("list")
-        .insert_container_(3, ContainerType::Map)
+        .insert_container(3, ContainerType::Map)
         .unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
 }
@@ -62,22 +62,22 @@ fn out_of_bound_test() {
 #[test]
 fn list() {
     let a = LoroDoc::new_auto_commit();
-    a.get_list("list").insert_(0, "Hello".into()).unwrap();
+    a.get_list("list").insert(0, "Hello").unwrap();
     assert_eq!(a.get_list("list").get(0).unwrap(), LoroValue::from("Hello"));
     let map = a
         .get_list("list")
-        .insert_container_(1, ContainerType::Map)
+        .insert_container(1, ContainerType::Map)
         .unwrap()
         .into_map()
         .unwrap();
-    map.insert_("Hello", LoroValue::from("u")).unwrap();
+    map.insert("Hello", LoroValue::from("u")).unwrap();
     let pos = map
-        .insert_container_("pos", ContainerType::Map)
+        .insert_container("pos", ContainerType::Map)
         .unwrap()
         .into_map()
         .unwrap();
-    pos.insert_("x", 0.into()).unwrap();
-    pos.insert_("y", 100.into()).unwrap();
+    pos.insert("x", 0).unwrap();
+    pos.insert("y", 100).unwrap();
 
     let cid = map.id();
     let id = a.get_list("list").get(1);
@@ -110,12 +110,12 @@ fn richtext_mark_event() {
             )
         }),
     );
-    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text").insert(0, "Hello").unwrap();
     a.get_text("text")
-        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .mark(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     a.get_text("text")
-        .mark_(
+        .mark(
             2,
             4,
             "bold",
@@ -147,14 +147,14 @@ fn concurrent_richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
     let b = LoroDoc::new_auto_commit();
     let c = LoroDoc::new_auto_commit();
-    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text").insert(0, "Hello").unwrap();
     b.merge(&a).unwrap();
     c.merge(&a).unwrap();
     b.get_text("text")
-        .mark_(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .mark(0, 3, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     c.get_text("text")
-        .mark_(1, 4, "link", true.into(), TextStyleInfoFlag::LINK)
+        .mark(1, 4, "link", true.into(), TextStyleInfoFlag::LINK)
         .unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
@@ -195,7 +195,7 @@ fn concurrent_richtext_mark_event() {
     );
 
     b.get_text("text")
-        .mark_(
+        .mark(
             2,
             3,
             "bold",
@@ -223,16 +223,16 @@ fn concurrent_richtext_mark_event() {
             )
         }),
     );
-    a.get_text("text").insert_(2, "A").unwrap();
+    a.get_text("text").insert(2, "A").unwrap();
     a.commit_then_stop();
 }
 
 #[test]
 fn insert_richtext_event() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert_(0, "Hello").unwrap();
+    a.get_text("text").insert(0, "Hello").unwrap();
     a.get_text("text")
-        .mark_(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+        .mark(0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
         .unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");
@@ -250,7 +250,7 @@ fn insert_richtext_event() {
         }),
     );
 
-    text.insert_(5, " World!").unwrap();
+    text.insert(5, " World!").unwrap();
 }
 
 #[test]
@@ -285,10 +285,10 @@ fn import_after_init_handlers() {
     );
 
     let b = LoroDoc::new_auto_commit();
-    b.get_list("list").insert_(0, "list".into()).unwrap();
-    b.get_list("list_a").insert_(0, "list_a".into()).unwrap();
-    b.get_text("text").insert_(0, "text").unwrap();
-    b.get_map("map").insert_("m", "map".into()).unwrap();
+    b.get_list("list").insert(0, "list").unwrap();
+    b.get_list("list_a").insert(0, "list_a").unwrap();
+    b.get_text("text").insert(0, "text").unwrap();
+    b.get_map("map").insert("m", "map").unwrap();
     a.import(&b.export_snapshot()).unwrap();
     a.commit_then_renew();
 }
@@ -296,7 +296,7 @@ fn import_after_init_handlers() {
 #[test]
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert_(0, "0").unwrap();
+    a.get_text("text").insert(0, "0").unwrap();
     let snapshot = a.export_snapshot();
     let c = LoroDoc::from_snapshot(&snapshot).unwrap();
     assert_eq!(a.get_deep_value(), c.get_deep_value());
@@ -314,15 +314,15 @@ fn test_from_snapshot() {
 fn test_pending() {
     let a = LoroDoc::new_auto_commit();
     a.set_peer_id(0).unwrap();
-    a.get_text("text").insert_(0, "0").unwrap();
+    a.get_text("text").insert(0, "0").unwrap();
     let b = LoroDoc::new_auto_commit();
     b.set_peer_id(1).unwrap();
     b.import(&a.export_from(&Default::default())).unwrap();
-    b.get_text("text").insert_(0, "1").unwrap();
+    b.get_text("text").insert(0, "1").unwrap();
     let c = LoroDoc::new_auto_commit();
     b.set_peer_id(2).unwrap();
     c.import(&b.export_from(&Default::default())).unwrap();
-    c.get_text("text").insert_(0, "2").unwrap();
+    c.get_text("text").insert(0, "2").unwrap();
 
     // c creates a pending change for a, insert "2" cannot be merged into a yet
     a.import(&c.export_from(&b.oplog_vv())).unwrap();
@@ -354,15 +354,15 @@ fn test_checkout() {
     let map = doc_0.get_map("map");
     doc_0
         .with_txn(|txn| {
-            let handler = map.insert_container(txn, "text", ContainerType::Text)?;
+            let handler = map.insert_container_with_txn(txn, "text", ContainerType::Text)?;
             let text = handler.into_text().unwrap();
-            text.insert(txn, 0, "123")
+            text.insert_with_txn(txn, 0, "123")
         })
         .unwrap();
 
     let map = doc_1.get_map("map");
     doc_1
-        .with_txn(|txn| map.insert(txn, "text", LoroValue::Double(1.0)))
+        .with_txn(|txn| map.insert_with_txn(txn, "text", LoroValue::Double(1.0)))
         .unwrap();
 
     doc_0
@@ -402,7 +402,7 @@ fn test_timestamp() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
-    text.insert(&mut txn, 0, "123").unwrap();
+    text.insert_with_txn(&mut txn, 0, "123").unwrap();
     txn.commit().unwrap();
     let op_log = &doc.oplog().lock().unwrap();
     let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
@@ -415,8 +415,8 @@ fn test_text_checkout() {
     doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
-    text.insert(&mut txn, 0, "你界").unwrap();
-    text.insert(&mut txn, 1, "好世").unwrap();
+    text.insert_with_txn(&mut txn, 0, "你界").unwrap();
+    text.insert_with_txn(&mut txn, 1, "好世").unwrap();
     txn.commit().unwrap();
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
@@ -443,9 +443,9 @@ fn test_text_checkout() {
     assert_eq!(text.len_unicode(), 4);
 
     doc.checkout_to_latest();
-    doc.with_txn(|txn| text.delete(txn, 3, 1)).unwrap();
+    doc.with_txn(|txn| text.delete_with_txn(txn, 3, 1)).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
-    doc.with_txn(|txn| text.delete(txn, 2, 1)).unwrap();
+    doc.with_txn(|txn| text.delete_with_txn(txn, 2, 1)).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
         .unwrap();
@@ -484,13 +484,13 @@ fn map_checkout() {
     let meta = doc.get_map("meta");
     let v_empty = doc.oplog_frontiers();
     doc.with_txn(|txn| {
-        meta.insert(txn, "key", 0.into()).unwrap();
+        meta.insert_with_txn(txn, "key", 0.into()).unwrap();
         Ok(())
     })
     .unwrap();
     let v0 = doc.oplog_frontiers();
     doc.with_txn(|txn| {
-        meta.insert(txn, "key", 1.into()).unwrap();
+        meta.insert_with_txn(txn, "key", 1.into()).unwrap();
         Ok(())
     })
     .unwrap();
@@ -511,60 +511,60 @@ fn a_list_of_map_checkout() {
     let (list, sub) = doc
         .with_txn(|txn| {
             let list = entry
-                .insert_container(txn, "list", loro_common::ContainerType::List)?
+                .insert_container_with_txn(txn, "list", loro_common::ContainerType::List)?
                 .into_list()
                 .unwrap();
             let sub_map = list
-                .insert_container(txn, 0, loro_common::ContainerType::Map)?
+                .insert_container_with_txn(txn, 0, loro_common::ContainerType::Map)?
                 .into_map()
                 .unwrap();
-            sub_map.insert(txn, "x", 100.into())?;
-            sub_map.insert(txn, "y", 1000.into())?;
+            sub_map.insert_with_txn(txn, "x", 100.into())?;
+            sub_map.insert_with_txn(txn, "y", 1000.into())?;
             Ok((list, sub_map))
         })
         .unwrap();
     let v0 = doc.oplog_frontiers();
     let d0 = doc.get_deep_value().to_json();
     doc.with_txn(|txn| {
-        list.insert(txn, 0, 3.into())?;
-        list.push(txn, 4.into())?;
-        list.insert_container(txn, 2, loro_common::ContainerType::Map)?;
-        list.insert_container(txn, 3, loro_common::ContainerType::Map)?;
+        list.insert_with_txn(txn, 0, 3.into())?;
+        list.push_with_txn(txn, 4.into())?;
+        list.insert_container_with_txn(txn, 2, loro_common::ContainerType::Map)?;
+        list.insert_container_with_txn(txn, 3, loro_common::ContainerType::Map)?;
         Ok(())
     })
     .unwrap();
     doc.with_txn(|txn| {
-        list.delete(txn, 2, 1)?;
+        list.delete_with_txn(txn, 2, 1)?;
         Ok(())
     })
     .unwrap();
     doc.with_txn(|txn| {
-        sub.insert(txn, "x", 9.into())?;
-        sub.insert(txn, "y", 9.into())?;
+        sub.insert_with_txn(txn, "x", 9.into())?;
+        sub.insert_with_txn(txn, "y", 9.into())?;
         Ok(())
     })
     .unwrap();
     doc.with_txn(|txn| {
-        sub.insert(txn, "z", 9.into())?;
+        sub.insert_with_txn(txn, "z", 9.into())?;
         Ok(())
     })
     .unwrap();
     let v1 = doc.oplog_frontiers();
     let d1 = doc.get_deep_value().to_json();
     doc.with_txn(|txn| {
-        sub.insert(txn, "x", 77.into())?;
+        sub.insert_with_txn(txn, "x", 77.into())?;
         Ok(())
     })
     .unwrap();
     doc.with_txn(|txn| {
-        sub.insert(txn, "y", 88.into())?;
+        sub.insert_with_txn(txn, "y", 88.into())?;
         Ok(())
     })
     .unwrap();
     doc.with_txn(|txn| {
-        list.delete(txn, 0, 1)?;
-        list.insert(txn, 0, 123.into())?;
-        list.push(txn, 99.into())?;
+        list.delete_with_txn(txn, 0, 1)?;
+        list.insert_with_txn(txn, 0, 123.into())?;
+        list.push_with_txn(txn, 99.into())?;
         Ok(())
     })
     .unwrap();
@@ -596,21 +596,21 @@ fn map_concurrent_checkout() {
 
     doc_a
         .with_txn(|txn| {
-            meta_a.insert(txn, "key", 0.into()).unwrap();
+            meta_a.insert_with_txn(txn, "key", 0.into()).unwrap();
             Ok(())
         })
         .unwrap();
     let va = doc_a.oplog_frontiers();
     doc_b
         .with_txn(|txn| {
-            meta_b.insert(txn, "s", 1.into()).unwrap();
+            meta_b.insert_with_txn(txn, "s", 1.into()).unwrap();
             Ok(())
         })
         .unwrap();
     let vb_0 = doc_b.oplog_frontiers();
     doc_b
         .with_txn(|txn| {
-            meta_b.insert(txn, "key", 1.into()).unwrap();
+            meta_b.insert_with_txn(txn, "key", 1.into()).unwrap();
             Ok(())
         })
         .unwrap();
@@ -618,7 +618,7 @@ fn map_concurrent_checkout() {
     doc_a.import(&doc_b.export_snapshot()).unwrap();
     doc_a
         .with_txn(|txn| {
-            meta_a.insert(txn, "key", 2.into()).unwrap();
+            meta_a.insert_with_txn(txn, "key", 2.into()).unwrap();
             Ok(())
         })
         .unwrap();
@@ -641,14 +641,20 @@ fn tree_checkout() {
     doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
-    let id1 = doc_a.with_txn(|txn| tree.create(txn)).unwrap();
-    let id2 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id1)).unwrap();
+    let id1 = doc_a.with_txn(|txn| tree.create_with_txn(txn)).unwrap();
+    let id2 = doc_a
+        .with_txn(|txn| tree.create_and_mov_with_txn(txn, id1))
+        .unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
-    let _id3 = doc_a.with_txn(|txn| tree.create_and_mov(txn, id2)).unwrap();
+    let _id3 = doc_a
+        .with_txn(|txn| tree.create_and_mov_with_txn(txn, id2))
+        .unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
-    doc_a.with_txn(|txn| tree.delete(txn, id2)).unwrap();
+    doc_a
+        .with_txn(|txn| tree.delete_with_txn(txn, id2))
+        .unwrap();
     let v3_state = tree.get_deep_value();
     let v3 = doc_a.oplog_frontiers();
     doc_a.checkout(&v1).unwrap();
@@ -676,7 +682,7 @@ fn tree_checkout() {
     doc_a.attach();
     doc_a
         .with_txn(|txn| {
-            tree.create(txn)
+            tree.create_with_txn(txn)
             //tree.insert_meta(txn, id1, "a", 1.into())
         })
         .unwrap();

@@ -13,7 +13,8 @@ fn main() {
     let mut last_vv = actor.oplog_vv();
     for i in 0..10000 {
         let mut txn = actor.txn().unwrap();
-        list.insert(&mut txn, i, i.to_string().into()).unwrap();
+        list.insert_with_txn(&mut txn, i, i.to_string().into())
+            .unwrap();
         output.push(actor.export_from(&last_vv.clone()));
         last_vv = actor.oplog_vv();
     }

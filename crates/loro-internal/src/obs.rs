@@ -233,14 +233,14 @@ mod test {
             if text.get_value().as_string().unwrap().len() > 10 {
                 return;
             }
-            text.insert(&mut txn, 0, "123").unwrap();
+            text.insert_with_txn(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }));
 
         let loro = loro_cp;
         let mut txn = loro.txn().unwrap();
         let text = loro.get_text("id");
-        text.insert(&mut txn, 0, "123").unwrap();
+        text.insert_with_txn(&mut txn, 0, "123").unwrap();
         txn.commit().unwrap();
         let count = count.load(Ordering::SeqCst);
         assert!(count > 2, "{}", count);
@@ -260,20 +260,20 @@ mod test {
         assert_eq!(count.load(Ordering::SeqCst), 0);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123").unwrap();
+            text.insert_with_txn(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 1);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123").unwrap();
+            text.insert_with_txn(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 2);
         loro.unsubscribe(sub);
         {
             let mut txn = loro.txn().unwrap();
-            text.insert(&mut txn, 0, "123").unwrap();
+            text.insert_with_txn(&mut txn, 0, "123").unwrap();
             txn.commit().unwrap();
         }
         assert_eq!(count.load(Ordering::SeqCst), 2);

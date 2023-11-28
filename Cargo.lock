@@ -873,6 +873,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro"
+version = "0.1.0"
+dependencies = [
+ "enum-as-inner 0.6.0",
+ "loro-internal",
+ "serde_json",
+]
+
+[[package]]
 name = "loro-common"
 version = "0.1.0"
 dependencies = [

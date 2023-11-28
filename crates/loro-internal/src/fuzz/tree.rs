@@ -522,10 +522,10 @@ impl Actionable for Vec<Actor> {
 
                 match action {
                     TreeAction::Create => {
-                        container.create(&mut txn).unwrap();
+                        container.create_with_txn(&mut txn).unwrap();
                     }
                     TreeAction::Move => {
-                        match container.mov(
+                        match container.mov_with_txn(
                             &mut txn,
                             TreeID {
                                 peer: *target_peer,
@@ -549,7 +549,7 @@ impl Actionable for Vec<Actor> {
                     }
                     TreeAction::Delete => {
                         container
-                            .delete(
+                            .delete_with_txn(
                                 &mut txn,
                                 TreeID {
                                     peer: *target_peer,
@@ -567,7 +567,7 @@ impl Actionable for Vec<Actor> {
                                 counter: *target_counter,
                             })
                             .unwrap();
-                        meta.insert(&mut txn, &key, value.into()).unwrap();
+                        meta.insert_with_txn(&mut txn, &key, value.into()).unwrap();
                     }
                 }
 

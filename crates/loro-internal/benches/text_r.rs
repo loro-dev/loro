@@ -21,8 +21,8 @@ mod run {
                 let mut txn = loro.txn().unwrap();
 
                 for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&mut txn, *pos, *del).unwrap();
-                    text.insert(&mut txn, *pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                 }
             })
         });
@@ -34,7 +34,7 @@ mod run {
                 let list = store.get_list("list");
                 let value: LoroValue = i.to_string().into();
                 let mut txn = store.txn().unwrap();
-                list.insert(&mut txn, 0, value).unwrap();
+                list.insert_with_txn(&mut txn, 0, value).unwrap();
                 txn.commit().unwrap();
             }
 
@@ -51,8 +51,8 @@ mod run {
                     let mut txn = loro.txn().unwrap();
 
                     for TextAction { pos, ins, del } in actions.iter() {
-                        text.delete(&mut txn, *pos, *del).unwrap();
-                        text.insert(&mut txn, *pos, ins).unwrap();
+                        text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                     }
                 },
                 criterion::BatchSize::SmallInput,
@@ -68,8 +68,8 @@ mod run {
                 }));
                 let mut txn = loro.txn().unwrap();
                 for TextAction { pos, ins, del } in actions.iter() {
-                    text.delete(&mut txn, *pos, *del).unwrap();
-                    text.insert(&mut txn, *pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                 }
             })
         });
@@ -87,8 +87,8 @@ mod run {
                     txn = loro.txn().unwrap();
                 }
                 n += 1;
-                text.delete(&mut txn, *pos, *del).unwrap();
-                text.insert(&mut txn, *pos, ins).unwrap();
+                text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                text.insert_with_txn(&mut txn, *pos, ins).unwrap();
             }
             txn.commit().unwrap();
 
@@ -110,8 +110,8 @@ mod run {
                     txn = loro.txn().unwrap();
                 }
                 n += 1;
-                text.delete(&mut txn, *pos, *del).unwrap();
-                text.insert(&mut txn, *pos, ins).unwrap();
+                text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                text.insert_with_txn(&mut txn, *pos, ins).unwrap();
             }
             txn.commit().unwrap();
 
@@ -132,8 +132,8 @@ mod run {
                     txn = loro.txn().unwrap();
                 }
                 n += 1;
-                text.delete(&mut txn, *pos, *del).unwrap();
-                text.insert(&mut txn, *pos, ins).unwrap();
+                text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                text.insert_with_txn(&mut txn, *pos, ins).unwrap();
             }
             txn.commit().unwrap();
 
@@ -157,8 +157,8 @@ mod run {
                     txn = loro.txn().unwrap();
                 }
                 n += 1;
-                text.delete(&mut txn, *pos, *del).unwrap();
-                text.insert(&mut txn, *pos, ins).unwrap();
+                text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                text.insert_with_txn(&mut txn, *pos, ins).unwrap();
             }
             txn.commit().unwrap();
 
@@ -195,8 +195,8 @@ mod run {
                         txn = loro.txn().unwrap();
                     }
                     n += 1;
-                    text.delete(&mut txn, *pos, *del).unwrap();
-                    text.insert(&mut txn, *pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                 }
             })
         });
@@ -208,8 +208,8 @@ mod run {
                 {
                     for TextAction { pos, ins, del } in actions.iter() {
                         let mut txn = loro.txn().unwrap();
-                        text.delete(&mut txn, *pos, *del).unwrap();
-                        text.insert(&mut txn, *pos, ins).unwrap();
+                        text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
                     }
                 }
@@ -226,8 +226,8 @@ mod run {
                 {
                     for TextAction { pos, ins, del } in actions.iter() {
                         let mut txn = loro.txn().unwrap();
-                        text.delete(&mut txn, *pos, *del).unwrap();
-                        text.insert(&mut txn, *pos, ins).unwrap();
+                        text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
                     }
                 }
@@ -242,8 +242,8 @@ mod run {
                 for TextAction { pos, ins, del } in actions.iter() {
                     {
                         let mut txn = loro.txn().unwrap();
-                        text.delete(&mut txn, *pos, *del).unwrap();
-                        text.insert(&mut txn, *pos, ins).unwrap();
+                        text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+                        text.insert_with_txn(&mut txn, *pos, ins).unwrap();
                     }
 
                     loro_b
@@ -272,14 +272,14 @@ mod run {
 
                     {
                         let mut txn = loro.txn().unwrap();
-                        text.delete(&mut txn, pos, del).unwrap();
-                        text.insert(&mut txn, pos, ins).unwrap();
+                        text.delete_with_txn(&mut txn, pos, del).unwrap();
+                        text.insert_with_txn(&mut txn, pos, ins).unwrap();
                     }
 
                     {
                         let mut txn = loro_b.txn().unwrap();
-                        text2.delete(&mut txn, pos, del).unwrap();
-                        text2.insert(&mut txn, pos, ins).unwrap();
+                        text2.delete_with_txn(&mut txn, pos, del).unwrap();
+                        text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                     }
                     loro_b
                         .import(&loro.export_from(&loro_b.oplog_vv()))
@@ -300,14 +300,14 @@ mod run {
                 let del = *del;
                 {
                     let mut txn = loro.txn().unwrap();
-                    text.delete(&mut txn, pos, del).unwrap();
-                    text.insert(&mut txn, pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, pos, del).unwrap();
+                    text.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
 
                 {
                     let mut txn = loro_b.txn().unwrap();
-                    text2.delete(&mut txn, pos, del).unwrap();
-                    text2.insert(&mut txn, pos, ins).unwrap();
+                    text2.delete_with_txn(&mut txn, pos, del).unwrap();
+                    text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
                 loro_b
                     .import(&loro.export_from(&loro_b.oplog_vv()))
@@ -330,14 +330,14 @@ mod run {
                 let del = *del;
                 {
                     let mut txn = loro.txn().unwrap();
-                    text.delete(&mut txn, pos, del).unwrap();
-                    text.insert(&mut txn, pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, pos, del).unwrap();
+                    text.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
 
                 {
                     let mut txn = loro_b.txn().unwrap();
-                    text2.delete(&mut txn, pos, del).unwrap();
-                    text2.insert(&mut txn, pos, ins).unwrap();
+                    text2.delete_with_txn(&mut txn, pos, del).unwrap();
+                    text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
                 loro_b
                     .import(&loro.export_from(&loro_b.oplog_vv()))

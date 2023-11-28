@@ -241,7 +241,7 @@ impl TextHandler {
             })
     }
 
-    pub fn with_state<R>(&self, f: impl FnOnce(&RichtextState) -> R) -> R {
+    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&RichtextState) -> R) -> R {
         self.state
             .upgrade()
             .unwrap()
@@ -253,7 +253,7 @@ impl TextHandler {
             })
     }
 
-    pub fn with_state_mut<R>(&self, f: impl FnOnce(&mut RichtextState) -> R) -> R {
+    pub(crate) fn with_state_mut<R>(&self, f: impl FnOnce(&mut RichtextState) -> R) -> R {
         self.state
             .upgrade()
             .unwrap()
@@ -277,15 +277,15 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn insert_(&self, pos: usize, s: &str) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert(txn, pos, s))
+    pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, s))
     }
 
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
+    pub fn insert_with_txn(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
         if s.is_empty() {
             return Ok(());
         }
@@ -341,15 +341,15 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn delete_(&self, pos: usize, len: usize) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete(txn, pos, len))
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
     }
 
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
         }
@@ -405,7 +405,7 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn mark_(
+    pub fn mark(
         &self,
         start: usize,
         end: usize,
@@ -414,7 +414,7 @@ impl TextHandler {
         flag: TextStyleInfoFlag,
     ) -> LoroResult<()> {
         with_txn(&self.txn, |txn| {
-            self.mark(txn, start, end, key, value, flag)
+            self.mark_with_txn(txn, start, end, key, value, flag)
         })
     }
 
@@ -422,7 +422,7 @@ impl TextHandler {
     ///
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
-    pub fn mark(
+    pub fn mark_with_txn(
         &self,
         txn: &mut Transaction,
         start: usize,
@@ -492,18 +492,22 @@ impl TextHandler {
         Ok(())
     }
 
-    pub fn apply_delta_(&self, delta: &[TextDelta]) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.apply_delta(txn, delta))
+    pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.apply_delta_with_txn(txn, delta))
     }
 
-    pub fn apply_delta(&self, txn: &mut Transaction, delta: &[TextDelta]) -> LoroResult<()> {
+    pub fn apply_delta_with_txn(
+        &self,
+        txn: &mut Transaction,
+        delta: &[TextDelta],
+    ) -> LoroResult<()> {
         let mut index = 0;
         let mut marks = Vec::new();
         for d in delta {
             match d {
                 TextDelta::Insert { insert, attributes } => {
                     let end = index + event_len(insert.as_str());
-                    self.insert(txn, index, insert.as_str())?;
+                    self.insert_with_txn(txn, index, insert.as_str())?;
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
                             for (key, value) in attr {
@@ -516,7 +520,7 @@ impl TextHandler {
                     index = end;
                 }
                 TextDelta::Delete { delete } => {
-                    self.delete(txn, index, *delete)?;
+                    self.delete_with_txn(txn, index, *delete)?;
                 }
                 TextDelta::Retain { attributes, retain } => {
                     let end = index + *retain;
@@ -535,10 +539,15 @@ impl TextHandler {
 
         for (start, end, key, value) in marks {
             // FIXME: allow users to set a config table to store the flag, so that we can use it directly
-            self.mark(txn, start, end, key, value, TextStyleInfoFlag::BOLD)?;
+            self.mark_with_txn(txn, start, end, key, value, TextStyleInfoFlag::BOLD)?;
         }
 
         Ok(())
+    }
+
+    #[allow(clippy::inherent_to_string)]
+    pub fn to_string(&self) -> String {
+        self.with_state_mut(|s| s.to_string_mut())
     }
 }
 
@@ -564,11 +573,16 @@ impl ListHandler {
         }
     }
 
-    pub fn insert_(&self, pos: usize, v: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert(txn, pos, v))
+    pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.insert_with_txn(txn, pos, v.into()))
     }
 
-    pub fn insert(&self, txn: &mut Transaction, pos: usize, v: LoroValue) -> LoroResult<()> {
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        v: LoroValue,
+    ) -> LoroResult<()> {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
@@ -577,7 +591,7 @@ impl ListHandler {
         }
 
         if let Some(container) = v.as_container() {
-            self.insert_container(txn, pos, container.container_type())?;
+            self.insert_container_with_txn(txn, pos, container.container_type())?;
             return Ok(());
         }
 
@@ -592,35 +606,37 @@ impl ListHandler {
         )
     }
 
-    pub fn push_(&self, v: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.push(txn, v))
+    pub fn push(&self, v: LoroValue) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.push_with_txn(txn, v))
     }
 
-    pub fn push(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
+    pub fn push_with_txn(&self, txn: &mut Transaction, v: LoroValue) -> LoroResult<()> {
         let pos = self.len();
-        self.insert(txn, pos, v)
+        self.insert_with_txn(txn, pos, v)
     }
 
-    pub fn pop_(&self) -> LoroResult<Option<LoroValue>> {
-        with_txn(&self.txn, |txn| self.pop(txn))
+    pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
+        with_txn(&self.txn, |txn| self.pop_with_txn(txn))
     }
 
-    pub fn pop(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
+    pub fn pop_with_txn(&self, txn: &mut Transaction) -> LoroResult<Option<LoroValue>> {
         let len = self.len();
         if len == 0 {
             return Ok(None);
         }
 
         let v = self.get(len - 1);
-        self.delete(txn, len - 1, 1)?;
+        self.delete_with_txn(txn, len - 1, 1)?;
         Ok(v)
     }
 
-    pub fn insert_container_(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
-        with_txn(&self.txn, |txn| self.insert_container(txn, pos, c_type))
+    pub fn insert_container(&self, pos: usize, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| {
+            self.insert_container_with_txn(txn, pos, c_type)
+        })
     }
 
-    pub fn insert_container(
+    pub fn insert_container_with_txn(
         &self,
         txn: &mut Transaction,
         pos: usize,
@@ -654,11 +670,11 @@ impl ListHandler {
         ))
     }
 
-    pub fn delete_(&self, pos: usize, len: usize) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete(txn, pos, len))
+    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, pos, len))
     }
 
-    pub fn delete(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
+    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
         if len == 0 {
             return Ok(());
         }
@@ -830,13 +846,20 @@ impl MapHandler {
         }
     }
 
-    pub fn insert_(&self, key: &str, value: LoroValue) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.insert(txn, key, value))
+    pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| {
+            self.insert_with_txn(txn, key, value.into())
+        })
     }
 
-    pub fn insert(&self, txn: &mut Transaction, key: &str, value: LoroValue) -> LoroResult<()> {
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        key: &str,
+        value: LoroValue,
+    ) -> LoroResult<()> {
         if let Some(value) = value.as_container() {
-            self.insert_container(txn, key, value.container_type())?;
+            self.insert_container_with_txn(txn, key, value.container_type())?;
             return Ok(());
         }
 
@@ -859,11 +882,13 @@ impl MapHandler {
         )
     }
 
-    pub fn insert_container_(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
-        with_txn(&self.txn, |txn| self.insert_container(txn, key, c_type))
+    pub fn insert_container(&self, key: &str, c_type: ContainerType) -> LoroResult<Handler> {
+        with_txn(&self.txn, |txn| {
+            self.insert_container_with_txn(txn, key, c_type)
+        })
     }
 
-    pub fn insert_container(
+    pub fn insert_container_with_txn(
         &self,
         txn: &mut Transaction,
         key: &str,
@@ -893,11 +918,11 @@ impl MapHandler {
         ))
     }
 
-    pub fn delete_(&self, key: &str) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete(txn, key))
+    pub fn delete(&self, key: &str) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, key))
     }
 
-    pub fn delete(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
+    pub fn delete_with_txn(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
@@ -1063,11 +1088,11 @@ impl TreeHandler {
         }
     }
 
-    pub fn create_(&self) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create(txn))
+    pub fn create(&self) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_with_txn(txn))
     }
 
-    pub fn create(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
+    pub fn create_with_txn(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
         let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
@@ -1087,11 +1112,11 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
-    pub fn delete_(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.delete(txn, target))
+    pub fn delete(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.delete_with_txn(txn, target))
     }
 
-    pub fn delete(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+    pub fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1106,11 +1131,15 @@ impl TreeHandler {
         )
     }
 
-    pub fn create_and_mov_(&self, parent: TreeID) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create_and_mov(txn, parent))
+    pub fn create_and_mov(&self, parent: TreeID) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_and_mov_with_txn(txn, parent))
     }
 
-    pub fn create_and_mov(&self, txn: &mut Transaction, parent: TreeID) -> LoroResult<TreeID> {
+    pub fn create_and_mov_with_txn(
+        &self,
+        txn: &mut Transaction,
+        parent: TreeID,
+    ) -> LoroResult<TreeID> {
         let tree_id = TreeID::from_id(txn.next_id());
         let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
@@ -1136,11 +1165,11 @@ impl TreeHandler {
         Ok(tree_id)
     }
 
-    pub fn as_root_(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.as_root(txn, target))
+    pub fn as_root(&self, target: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.as_root_with_txn(txn, target))
     }
 
-    pub fn as_root(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
+    pub fn as_root_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1155,11 +1184,16 @@ impl TreeHandler {
         )
     }
 
-    pub fn mov_(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.mov(txn, target, parent))
+    pub fn mov(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
+        with_txn(&self.txn, |txn| self.mov_with_txn(txn, target, parent))
     }
 
-    pub fn mov(&self, txn: &mut Transaction, target: TreeID, parent: TreeID) -> LoroResult<()> {
+    pub fn mov_with_txn(
+        &self,
+        txn: &mut Transaction,
+        target: TreeID,
+        parent: TreeID,
+    ) -> LoroResult<()> {
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
@@ -1301,14 +1335,14 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert(&mut txn, 2, " kk ").unwrap();
+        text.insert_with_txn(&mut txn, 2, " kk ").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "he kk llo");
         txn.abort();
         let mut txn = loro.txn().unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "");
-        text.insert(&mut txn, 0, "hi").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hi").unwrap();
         txn.commit().unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hi");
     }
@@ -1322,14 +1356,14 @@ mod test {
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let exported = loro.export_from(&Default::default());
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert(&mut txn, 5, " world").unwrap();
+        text.insert_with_txn(&mut txn, 5, " world").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
         loro.import(&loro2.export_from(&Default::default()))
@@ -1348,7 +1382,7 @@ mod test {
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         let exported = loro.export_from(&Default::default());
 
@@ -1356,7 +1390,7 @@ mod test {
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert(&mut txn, 5, " world").unwrap();
+        text.insert_with_txn(&mut txn, 5, " world").unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
 
@@ -1377,7 +1411,7 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_text("richtext");
-        handler.insert(&mut txn, 0, "hello").unwrap();
+        handler.insert_with_txn(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
         for i in 0..100 {
             let new_loro = LoroDoc::new();
@@ -1386,7 +1420,9 @@ mod test {
                 .unwrap();
             let mut txn = new_loro.txn().unwrap();
             let handler = new_loro.get_text("richtext");
-            handler.insert(&mut txn, i % 5, &i.to_string()).unwrap();
+            handler
+                .insert_with_txn(&mut txn, i % 5, &i.to_string())
+                .unwrap();
             txn.commit().unwrap();
             loro.import(&new_loro.export_from(&loro.oplog_vv()))
                 .unwrap();
@@ -1398,9 +1434,9 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_text("richtext");
-        handler.insert(&mut txn, 0, "hello world").unwrap();
+        handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 
@@ -1431,7 +1467,7 @@ mod test {
         // insert after bold should be bold
         {
             loro2
-                .with_txn(|txn| handler2.insert(txn, 5, " new"))
+                .with_txn(|txn| handler2.insert_with_txn(txn, 5, " new"))
                 .unwrap();
 
             let value = handler2.get_richtext_value();
@@ -1450,9 +1486,9 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_text("richtext");
-        handler.insert(&mut txn, 0, "hello world").unwrap();
+        handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), TextStyleInfoFlag::BOLD)
             .unwrap();
         txn.commit().unwrap();
 
@@ -1473,10 +1509,10 @@ mod test {
         let loro = LoroDoc::new();
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
-        let id = loro.with_txn(|txn| tree.create(txn)).unwrap();
+        let id = loro.with_txn(|txn| tree.create_with_txn(txn)).unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
-            meta.insert(txn, "a", 123.into())
+            meta.insert_with_txn(txn, "a", 123.into())
         })
         .unwrap();
         let meta = loro
@@ -1502,12 +1538,12 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create(txn)?;
+            let id = tree.create_with_txn(txn)?;
             let meta = tree.get_meta(id)?;
-            meta.insert(txn, "a", 1.into())?;
-            text.insert(txn, 0, "abc")?;
-            let _id2 = tree.create(txn)?;
-            meta.insert(txn, "b", 2.into())?;
+            meta.insert_with_txn(txn, "a", 1.into())?;
+            text.insert_with_txn(txn, 0, "abc")?;
+            let _id2 = tree.create_with_txn(txn)?;
+            meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })
         .unwrap();
@@ -1522,13 +1558,13 @@ mod test {
     fn richtext_apply_delta() {
         let loro = LoroDoc::new_auto_commit();
         let text = loro.get_text("text");
-        text.apply_delta_(&[TextDelta::Insert {
+        text.apply_delta(&[TextDelta::Insert {
             insert: "Hello World!".into(),
             attributes: None,
         }])
         .unwrap();
         dbg!(text.get_richtext_value());
-        text.apply_delta_(&[
+        text.apply_delta(&[
             TextDelta::Retain {
                 retain: 6,
                 attributes: Some(fx_map!("italic".into() => loro_common::LoroValue::Bool(true))),

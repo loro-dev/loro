@@ -40,7 +40,7 @@ mod utils;
 pub mod delta;
 pub mod event;
 
-pub use error::LoroError;
+pub use error::{LoroError, LoroResult};
 pub(crate) mod macros;
 pub(crate) mod value;
 pub(crate) use change::Timestamp;

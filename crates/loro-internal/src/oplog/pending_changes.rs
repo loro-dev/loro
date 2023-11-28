@@ -258,20 +258,25 @@ mod test {
         let b = LoroDoc::new();
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
-        a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
+            .unwrap();
 
         let update1 = a.export_from(&VersionVector::default());
         let version1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 0, "b")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "b"))
+            .unwrap();
         let update2 = a.export_from(&version1);
         let version2 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 0, "c")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "c"))
+            .unwrap();
         let update3 = a.export_from(&version2);
         let version3 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 0, "d")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "d"))
+            .unwrap();
         let update4 = a.export_from(&version3);
         // let version4 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 0, "e")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "e"))
+            .unwrap();
         let update3_5 = a.export_from(&version2);
         b.import(&update3_5).unwrap();
         b.import(&update4).unwrap();
@@ -288,10 +293,12 @@ mod test {
         let b = LoroDoc::new();
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
-        a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
+            .unwrap();
         let update1 = a.export_snapshot();
         let version1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 1, "b")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 1, "b"))
+            .unwrap();
         let update2 = a.export_from(&version1);
         let _version2 = a.oplog_vv();
         b.import(&update2).unwrap();
@@ -315,15 +322,18 @@ mod test {
         d.set_peer_id(4).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
-        a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
+            .unwrap();
         let version_a1 = a.oplog_vv();
         let update_a1 = a.export_from(&VersionVector::default());
         b.import(&update_a1).unwrap();
-        b.with_txn(|txn| text_b.insert(txn, 1, "b")).unwrap();
+        b.with_txn(|txn| text_b.insert_with_txn(txn, 1, "b"))
+            .unwrap();
         let update_b1 = b.export_from(&version_a1);
         a.import(&update_b1).unwrap();
         let version_a1b1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert(txn, 2, "c")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 2, "c"))
+            .unwrap();
         let update_a2 = a.export_from(&version_a1b1);
         c.import(&update_a2).unwrap();
         assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
@@ -354,11 +364,14 @@ mod test {
         c.set_peer_id(3).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
-        a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
+            .unwrap();
         b.import(&a.export_snapshot()).unwrap();
-        b.with_txn(|txn| text_b.insert(txn, 0, "1")).unwrap();
+        b.with_txn(|txn| text_b.insert_with_txn(txn, 0, "1"))
+            .unwrap();
         let b_change = b.export_from(&a.oplog_vv());
-        a.with_txn(|txn| text_a.insert(txn, 0, "1")).unwrap();
+        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
+            .unwrap();
         c.import(&b_change).unwrap();
         c.import(&a.export_snapshot()).unwrap();
         a.import(&b_change).unwrap();

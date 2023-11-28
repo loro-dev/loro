@@ -47,7 +47,7 @@ pub unsafe extern "C" fn text_insert(
     let ctx = ctx.as_ref().unwrap();
     let value = CStr::from_ptr(value).to_str().unwrap();
     let mut txn = ctx.txn().unwrap();
-    text.insert(&mut txn, pos, value).unwrap();
+    text.insert_with_txn(&mut txn, pos, value).unwrap();
 }
 
 #[no_mangle]

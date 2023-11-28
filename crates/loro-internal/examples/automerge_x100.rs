@@ -13,8 +13,8 @@ fn main() {
     for _ in 0..1 {
         let mut txn = loro.txn().unwrap();
         for TextAction { del, ins, pos } in actions.iter() {
-            text.delete(&mut txn, *pos, *del).unwrap();
-            text.insert(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
         }
     }
     loro.checkout(&Frontiers::from(ID::new(loro.peer_id(), 100)))
