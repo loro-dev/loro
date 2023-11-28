@@ -1832,10 +1832,10 @@ impl LoroTree {
     pub fn create(&mut self, parent: Option<JsTreeID>) -> JsResult<JsTreeID> {
         let id = if let Some(p) = parent {
             let parent: JsValue = p.into();
-            self.handler
-                .create_and_mov(parent.try_into().unwrap_throw())?
+            let parent: TreeID = parent.try_into().unwrap_throw();
+            self.handler.create(parent)?
         } else {
-            self.handler.create()?
+            self.handler.create(None)?
         };
         let js_id: JsValue = id.into();
         Ok(js_id.into())
@@ -1858,11 +1858,16 @@ impl LoroTree {
     /// // Error wiil be thrown if move operation creates a cycle
     /// tree.mov(root, node);
     /// ```
-    pub fn mov(&mut self, target: JsTreeID, parent: JsTreeID) -> JsResult<()> {
+    pub fn mov(&mut self, target: JsTreeID, parent: Option<JsTreeID>) -> JsResult<()> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).unwrap();
-        let parent: JsValue = parent.into();
-        let parent = TreeID::try_from(parent).unwrap();
+        let parent = if let Some(parent) = parent {
+            let parent: JsValue = parent.into();
+            let parent = TreeID::try_from(parent).unwrap();
+            Some(parent)
+        } else {
+            None
+        };
         self.handler.mov(target, parent)?;
         Ok(())
     }
@@ -1892,38 +1897,6 @@ impl LoroTree {
     pub fn delete(&mut self, target: JsTreeID) -> JsResult<()> {
         let target: JsValue = target.into();
         self.handler.delete(target.try_into().unwrap())?;
-        Ok(())
-    }
-
-    /// Set the tree node as root.
-    ///
-    /// @example
-    /// ```ts
-    /// import { Loro } from "loro-crdt";
-    ///
-    /// const doc = new Loro();
-    /// const tree = doc.getTree("tree");
-    /// const root = tree.create();
-    /// const node = tree.create(root);
-    /// tree.root(node);
-    /// /*
-    /// [
-    ///   {
-    ///     id: '1@40553779E43298C6',
-    ///     parent: null,
-    //     meta: 'cid:1@40553779E43298C6:Map'
-    ///   },
-    ///   {
-    ///     id: '0@40553779E43298C6',
-    ///     parent: null,
-    ///     meta: 'cid:0@40553779E43298C6:Map'
-    ///   }
-    /// ]
-    ///  *\/
-    /// ```
-    pub fn root(&mut self, target: JsTreeID) -> JsResult<()> {
-        let target: JsValue = target.into();
-        self.handler.as_root(target.try_into().unwrap())?;
         Ok(())
     }
 
@@ -1958,10 +1931,17 @@ impl LoroTree {
         value.into()
     }
 
+    /// Return `true` if the tree contains the TreeID, `false` if the target is deleted or wrong.
+    #[wasm_bindgen(js_name = "has")]
+    pub fn contains(&self, target: JsTreeID) -> bool {
+        let target: JsValue = target.into();
+        self.handler.contains(target.try_into().unwrap())
+    }
+
     /// Get the flat array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
-    /// but also the metatdata, you should use `getDeepValue`.
+    /// but also the metadata, you should use `getDeepValue`.
     #[wasm_bindgen(js_name = "value", method, getter)]
     pub fn get_value(&mut self) -> JsValue {
         self.handler.get_value().into()

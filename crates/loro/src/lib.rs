@@ -2,6 +2,8 @@ use loro_internal::container::richtext::TextStyleInfoFlag;
 pub use loro_internal::container::{ContainerID, ContainerType};
 use loro_internal::handler::TextDelta;
 pub use loro_internal::handler::ValueOrContainer;
+use loro_internal::id::PeerID;
+use loro_internal::id::TreeID;
 pub use loro_internal::version::Frontiers;
 pub use loro_internal::{LoroError, LoroResult, LoroValue};
 
@@ -136,6 +138,11 @@ impl LoroDoc {
     /// [Learn more about `Frontiers`]()
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        self.doc.set_peer_id(peer)
     }
 }
 
@@ -289,6 +296,117 @@ impl TextHandler {
 #[derive(Clone, Debug)]
 pub struct TreeHandler {
     handler: InnerTreeHandler,
+}
+
+impl TreeHandler {
+    /// Create a new tree node and return the [`TreeID`].
+    ///
+    /// If the `parent` is `None`, the created node is the root of a tree.
+    /// Otherwise, the created node is a child of the parent tree node.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// // create a root
+    /// let root = tree.create(None).unwrap();
+    /// // create a new child
+    /// let child = tree.create(root).unwrap();
+    /// ```
+    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
+        self.handler.create(parent)
+    }
+
+    /// Move the `target` node to be a child of the `parent` node.
+    ///
+    /// If the `parent` is `None`, the `target` node will be a root.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root2 = tree.create(None).unwrap();
+    /// // move `root2` to be a child of `root`.
+    /// tree.mov(root2, root).unwrap();
+    /// ```
+    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+        self.handler.mov(target, parent)
+    }
+
+    /// Delete a tree node.
+    ///
+    /// Note: If the deleted node has children, the children do not appear in the state
+    /// rather than actually being deleted.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// tree.delete(root).unwrap();
+    /// ```
+    pub fn delete(&self, target: TreeID) -> LoroResult<()> {
+        self.handler.delete(target)
+    }
+
+    /// Get the associated metadata map handler of a tree node.
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// let root_meta = tree.get_meta(root).unwrap();
+    /// root_meta.insert("color", "red");
+    /// ```
+    pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
+        self.handler
+            .get_meta(target)
+            .map(|h| MapHandler { handler: h })
+    }
+
+    /// Return the parent of target node.
+    ///
+    /// - If the target node does not exist, return `None`.
+    /// - If the target node is a root node, return `Some(None)`.
+    pub fn parent(&self, target: TreeID) -> Option<Option<TreeID>> {
+        self.handler.parent(target)
+    }
+
+    /// Return whether target node exists.
+    pub fn contains(&self, target: TreeID) -> bool {
+        self.handler.contains(target)
+    }
+
+    /// Return all nodes
+    pub fn nodes(&self) -> Vec<TreeID> {
+        self.handler.nodes()
+    }
+
+    /// Return the flat array of the forest.
+    ///
+    /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
+    /// but also the metadata, you should use [TreeHandler::get_value_with_meta()].
+    pub fn get_value(&self) -> LoroValue {
+        self.handler.get_value()
+    }
+
+    /// Return the flat array of the forest, each node is with metadata.
+    pub fn get_value_with_meta(&self) -> LoroValue {
+        self.handler.get_deep_value()
+    }
 }
 
 use enum_as_inner::EnumAsInner;

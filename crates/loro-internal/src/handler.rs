@@ -1088,30 +1088,6 @@ impl TreeHandler {
         }
     }
 
-    pub fn create(&self) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create_with_txn(txn))
-    }
-
-    pub fn create_with_txn(&self, txn: &mut Transaction) -> LoroResult<TreeID> {
-        let tree_id = TreeID::from_id(txn.next_id());
-        let container_id = tree_id.associated_meta_container();
-        let child_idx = txn.arena.register_container(&container_id);
-        txn.arena.set_parent(child_idx, Some(self.container_idx));
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target: tree_id,
-                parent: None,
-            }),
-            EventHint::Tree(smallvec![TreeDiffItem {
-                target: tree_id,
-                action: TreeExternalDiff::Create,
-            }]),
-            &self.state,
-        )?;
-        Ok(tree_id)
-    }
-
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
         with_txn(&self.txn, |txn| self.delete_with_txn(txn, target))
     }
@@ -1131,78 +1107,59 @@ impl TreeHandler {
         )
     }
 
-    pub fn create_and_mov(&self, parent: TreeID) -> LoroResult<TreeID> {
-        with_txn(&self.txn, |txn| self.create_and_mov_with_txn(txn, parent))
+    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
+        with_txn(&self.txn, |txn| self.create_with_txn(txn, parent))
     }
 
-    pub fn create_and_mov_with_txn(
+    pub fn create_with_txn<T: Into<Option<TreeID>>>(
         &self,
         txn: &mut Transaction,
-        parent: TreeID,
+        parent: T,
     ) -> LoroResult<TreeID> {
+        let parent = parent.into();
         let tree_id = TreeID::from_id(txn.next_id());
         let container_id = tree_id.associated_meta_container();
         let child_idx = txn.arena.register_container(&container_id);
         txn.arena.set_parent(child_idx, Some(self.container_idx));
+        let mut event_hint = smallvec![TreeDiffItem {
+            target: tree_id,
+            action: TreeExternalDiff::Create,
+        },];
+        if parent.is_some() {
+            event_hint.push(TreeDiffItem {
+                target: tree_id,
+                action: TreeExternalDiff::Move(parent),
+            });
+        }
         txn.apply_local_op(
             self.container_idx,
             crate::op::RawOpContent::Tree(TreeOp {
                 target: tree_id,
-                parent: Some(parent),
+                parent,
             }),
-            EventHint::Tree(smallvec![
-                TreeDiffItem {
-                    target: tree_id,
-                    action: TreeExternalDiff::Create,
-                },
-                TreeDiffItem {
-                    target: tree_id,
-                    action: TreeExternalDiff::Move(Some(parent)),
-                }
-            ]),
+            EventHint::Tree(event_hint),
             &self.state,
         )?;
         Ok(tree_id)
     }
 
-    pub fn as_root(&self, target: TreeID) -> LoroResult<()> {
-        with_txn(&self.txn, |txn| self.as_root_with_txn(txn, target))
-    }
-
-    pub fn as_root_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
-        txn.apply_local_op(
-            self.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target,
-                parent: None,
-            }),
-            EventHint::Tree(smallvec![TreeDiffItem {
-                target,
-                action: TreeExternalDiff::Move(None),
-            }]),
-            &self.state,
-        )
-    }
-
-    pub fn mov(&self, target: TreeID, parent: TreeID) -> LoroResult<()> {
+    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
         with_txn(&self.txn, |txn| self.mov_with_txn(txn, target, parent))
     }
 
-    pub fn mov_with_txn(
+    pub fn mov_with_txn<T: Into<Option<TreeID>>>(
         &self,
         txn: &mut Transaction,
         target: TreeID,
-        parent: TreeID,
+        parent: T,
     ) -> LoroResult<()> {
+        let parent = parent.into();
         txn.apply_local_op(
             self.container_idx,
-            crate::op::RawOpContent::Tree(TreeOp {
-                target,
-                parent: Some(parent),
-            }),
+            crate::op::RawOpContent::Tree(TreeOp { target, parent }),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
-                action: TreeExternalDiff::Move(Some(parent)),
+                action: TreeExternalDiff::Move(parent),
             }]),
             &self.state,
         )
@@ -1509,7 +1466,9 @@ mod test {
         let loro = LoroDoc::new();
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
-        let id = loro.with_txn(|txn| tree.create_with_txn(txn)).unwrap();
+        let id = loro
+            .with_txn(|txn| tree.create_with_txn(txn, None))
+            .unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 123.into())
@@ -1538,11 +1497,11 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create_with_txn(txn)?;
+            let id = tree.create_with_txn(txn, None)?;
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 1.into())?;
             text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create_with_txn(txn)?;
+            let _id2 = tree.create_with_txn(txn, None)?;
             meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })

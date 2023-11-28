@@ -17,3 +17,6 @@ enum-as-inner = "0.6.0"
 
 [dev-dependencies]
 serde_json = "1.0.87"
+
+[features]
+test_utils = ["loro-internal/test_utils"]
