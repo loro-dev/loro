@@ -22,9 +22,6 @@ fn size_of() {
         span::IdSpan,
         InternalString,
     };
-    use std::ops::Range;
-
-    use rle::rle_tree::{node::Node, tree_trait::CumulateTreeTrait};
 
     println!("Change {}", std::mem::size_of::<Change>());
     println!("Op {}", std::mem::size_of::<Op>());
@@ -37,8 +34,4 @@ fn size_of() {
     println!("IdSpan {}", std::mem::size_of::<IdSpan>());
     println!("ContainerID {}", std::mem::size_of::<ContainerID>());
     println!("InternalString {}", std::mem::size_of::<InternalString>());
-    println!(
-        "Node<Range<u32>, Cumulated> {}",
-        std::mem::size_of::<Node<'static, Range<u32>, CumulateTreeTrait<Range<u32>, 8>>>()
-    );
 }

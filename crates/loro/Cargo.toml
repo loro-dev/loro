@@ -3,6 +3,7 @@ name = "loro"
 version = "0.2.2"
 edition = "2021"
 license = "MIT"
+documentation = "https://docs.rs/loro/"
 description = "Loro is a high-performance CRDTs framework. Make your app collaborative efforlessly."
 homepage = "https://loro.dev"
 authors = ["Zixuan Chen", "Liang Zhao"]
