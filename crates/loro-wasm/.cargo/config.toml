@@ -1,2 +1,5 @@
 [profile.release]
 lto = true
+opt-level = "s"
+debug = false
+codegen-units = 1

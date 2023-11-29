@@ -9,7 +9,6 @@ edition = "2018"
 cargo-fuzz = true
 
 [dependencies]
-crdt-list = { version = "0.4.0" }
 libfuzzer-sys = "0.4"
 
 [dependencies.loro-internal]

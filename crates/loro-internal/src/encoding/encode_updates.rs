@@ -1,7 +1,6 @@
 use rle::{HasLength, RleVec};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tracing::instrument;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -127,7 +126,6 @@ where
     }
 }
 
-#[instrument(skip_all)]
 fn convert_encoded_to_changes(changes: EncodedClientChanges) -> Vec<Change<RemoteOp<'static>>> {
     let mut result = Vec::with_capacity(changes.data.len());
     let mut last_lamport = changes.meta.lamport;
