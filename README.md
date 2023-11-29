@@ -74,8 +74,9 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 5. **Rust Target**: Add with `rustup target add wasm32-unknown-unknown`.
 6. **wasm-bindgen-cli**: Install version 0.2.86 via `cargo install wasm-bindgen-cli --version 0.2.86`.
 6. **wasm-opt**: Install using `cargo install wasm-opt --locked`.
-7. **cargo-nextest**: Install using `cargo install cargo-nextest --locked`.
-8. **cargo-fuzz**: Run `cargo install cargo-fuzz`.
+7. **wasm-snip**: Install using `cargo install wasm-snip`.
+8. **cargo-nextest**: Install using `cargo install cargo-nextest --locked`.
+9. **cargo-fuzz**: Run `cargo install cargo-fuzz`.
 
 ### Test
 
